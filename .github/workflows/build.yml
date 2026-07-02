@@ -66,7 +66,7 @@ jobs:
           node-version: 22
 
       - name: Build frontend
-        working-directory: server/frontend
+        working-directory: frontend
         run: |
           npm install
           npm run build
@@ -90,7 +90,6 @@ jobs:
           fi
 
       - name: Build binary
-        working-directory: server
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -107,7 +106,7 @@ jobs:
 
       - name: Compress with UPX
         shell: bash
-        working-directory: server/bin
+        working-directory: bin
         run: |
           if command -v upx &>/dev/null; then
             upx --best --lzma "translator-server-${{ matrix.suffix }}-${{ steps.version.outputs.value }}" || true
@@ -117,13 +116,13 @@ jobs:
 
       - name: Fix permissions
         shell: bash
-        run: chmod +x server/bin/translator-server-${{ matrix.suffix }}-${{ steps.version.outputs.value }}
+        run: chmod +x bin/translator-server-${{ matrix.suffix }}-${{ steps.version.outputs.value }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: translator-server-${{ matrix.suffix }}
-          path: server/bin/translator-server-${{ matrix.suffix }}-${{ steps.version.outputs.value }}
+          path: bin/translator-server-${{ matrix.suffix }}-${{ steps.version.outputs.value }}
 
   release:
     needs: [build]
