@@ -38,6 +38,13 @@ All commands are run from the repo root unless noted.
 - Dev loop — terminal 1 `cd frontend && npm run dev` (port 5175, proxies `/api` and `/ai` to `127.0.0.1:5176`); terminal 2 `go run ./cmd/server --addr :5176 --data-dir ./data`.
 - If you change the frontend, re-run `make build` (or `npm run build` in `frontend/`) so `frontend/dist/` reflects your changes. `frontend_embed.go` embeds that directory; stale builds silently serve the old SPA.
 
+## Releases & tagging
+
+- Tags must use the `v` prefix (e.g. `v0.1.0`, `v1.2.3`) to trigger the CI release workflow in `.github/workflows/build.yml`.
+- The workflow pattern is `v*` — tags like `0.1.0` (without `v`) will **not** trigger the build/release pipeline.
+- To create a release: `git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin main --tags`
+- The workflow builds binaries for linux-amd64, linux-arm64, linux-armv7, android-arm64, and android-armv7, then creates a GitHub Release with all artifacts attached.
+
 ## Tests & verification
 
 - Backend: `go test ./...`. Integration tests live next to handlers (`internal/api/router_integration_test.go`, `import_url_test.go`, `runtime_config_test.go`, `refine_test.go`, `segmentation_test.go`, `cleaner_test.go`) and `internal/store/store_test.go`. They boot a real PocketBase against `t.TempDir()` via the shared `newAPITestEnv` helper — there is no in-memory mock.

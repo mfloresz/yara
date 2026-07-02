@@ -265,9 +265,9 @@ const SUMMARY_BATCH_SIZE = 50;
 let backgroundLoadToken = 0;
 let pendingSavedChapterRestore = false;
 
-const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 19));
+const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 15));
 const lineHeight = ref(saved?.lineHeight ?? 1.5);
-const contentWidth = ref(saved?.contentWidth ?? 860);
+const contentWidth = ref(saved?.contentWidth ?? 900);
 const novel = ref<Novel | null>(null);
 
 applyTypography();
@@ -578,9 +578,9 @@ function applyTypography() {
 
 <style scoped>
 :root {
-  --reader-fs-body: 19px;
+  --reader-fs-body: 15px;
   --reader-lh-body: 1.5;
-  --reader-content-w: 860px;
+  --reader-content-w: 900px;
 }
 
 @media (max-width: 720px) {

@@ -2,53 +2,45 @@ package api
 
 import (
 	"io/fs"
-	"net/http"
+	"os"
 	"path"
 	"strings"
 
+	"github.com/pocketbase/pocketbase/core"
+	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	translatorserver "translator-server"
 )
 
-func staticHandler() http.Handler {
-	sub, err := fs.Sub(translatorserver.FrontendFS, "frontend/dist")
-	if err != nil {
-		panic(err)
-	}
-	return &spaHandler{fs: http.FS(sub)}
-}
-
-type spaHandler struct {
-	fs http.FileSystem
-}
-
-func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p := strings.TrimPrefix(r.URL.Path, "/")
-	if p == "" {
-		p = "index.html"
-	}
-
-	ext := path.Ext(p)
-	if ext != "" {
-		f, err := h.fs.Open(p)
-		if err == nil {
-			f.Close()
-			if strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".css") {
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			}
-			http.FileServer(h.fs).ServeHTTP(w, r)
-			return
+func registerStaticHandler(router *pbrouter.Router[*core.RequestEvent], staticDir string) {
+	var fsys fs.FS
+	if staticDir != "" {
+		fsys = os.DirFS(staticDir)
+	} else {
+		sub, err := fs.Sub(translatorserver.FrontendFS, "frontend/dist")
+		if err != nil {
+			panic(err)
 		}
+		fsys = sub
 	}
+	static := func(e *core.RequestEvent) error {
+		filename := e.Request.PathValue("path")
+		filename = path.Clean(strings.TrimPrefix(filename, "/"))
+		if filename == "" || filename == "." {
+			filename = "index.html"
+		}
 
-	idx, err := h.fs.Open("index.html")
-	if err != nil {
-		http.Error(w, "Not Found", http.StatusNotFound)
-		return
+		if ext := path.Ext(filename); ext != "" {
+			f, err := fs.Stat(fsys, filename)
+			if err == nil && !f.IsDir() {
+				if strings.HasSuffix(filename, ".js") || strings.HasSuffix(filename, ".css") {
+					e.Response.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
+				return e.FileFS(fsys, filename)
+			}
+		}
+
+		return e.FileFS(fsys, "index.html")
 	}
-	defer idx.Close()
-	stat, _ := idx.Stat()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	http.ServeContent(w, r, "index.html", stat.ModTime(), idx)
+	router.GET("/{path...}", static)
+	router.GET("/{$}", static)
 }

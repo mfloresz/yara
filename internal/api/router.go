@@ -2,16 +2,13 @@ package api
 
 import (
 	"context"
-	"io/fs"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
-	translatorserver "translator-server"
 	"translator-server/internal/config"
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
@@ -90,7 +87,7 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 
 	registerAuthRoutes(router, s)
 	registerProtectedRoutes(router, s)
-	registerStaticRoutes(router, s.Cfg.StaticDir)
+	registerStaticHandler(router, s.Cfg.StaticDir)
 }
 
 func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
@@ -109,17 +106,4 @@ func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Ser
 	registerEpubExportRoutes(api, s)
 	registerReadingProgressRoutes(api, s)
 	registerBackupRoutes(api, s)
-}
-
-func registerStaticRoutes(router *pbrouter.Router[*core.RequestEvent], staticDir string) {
-	var fsys fs.FS
-	if staticDir != "" {
-		fsys = os.DirFS(staticDir)
-	} else {
-		fsys = apis.MustSubFS(translatorserver.FrontendFS, "frontend/dist")
-	}
-	router.GET("/{path...}", apis.Static(fsys, true))
-	router.GET("/{$}", func(e *core.RequestEvent) error {
-		return apis.Static(fsys, true)(e)
-	})
 }

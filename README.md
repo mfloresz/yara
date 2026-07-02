@@ -161,11 +161,15 @@ Todas las rutas protegidas requieren `Authorization: Bearer <token>`.
 - `POST /api/db/novels/batch/check-urls` — Batch check de URLs
 - `POST /api/db/novels/batch/update-from-urls` — Batch update desde URLs
 - `POST /api/db/novels/batch/translate` — Batch translate de novelas
-
 ### Batch / Utilidades
+
 - `POST /api/db/novels/batch/check-translate` — Batch check de novelas traducibles
 - `POST /api/chapters/segment` — Segmentar capítulo
 - `POST /api/chapters/clean` — Limpiar contenido con reglas
+
+### Operaciones (aún no implementadas)
+
+- **Refinamiento** — Refactor de traducciones mejoradas con IA aún no está implementado (está pendiente)
 
 ### Reading Progress
 - `GET /api/db/novels/{novelId}/progress` — Progreso de lectura
