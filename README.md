@@ -14,28 +14,76 @@ cmd/server/main.go          ← entrypoint
   │   ├── settings.go       ← Tipos de dominio (Novel, Chapter, Job…)
   │   ├── store_*.go        ← CRUD por recurso
   │   └── prompt_defaults.go / prompt_overrides.go
-  ├── internal/api/         ← HTTP handlers + workers
+  ├── internal/api/         ← HTTP handlers + workers (31 files)
   │   ├── router.go         ← Montaje de rutas, gestión de workers
-  │   ├── router_*.go       ← Handlers por recurso (auth, novels, chapters, jobs…)
-  │   ├── runtime_worker.go ← 2 colas: download + translate
-  │   ├── runtime_translate.go / runtime_refine.go / runtime_config.go
-  │   ├── segmentation.go / cleaner.go
+  │   ├── router_auth.go   ← Registro, login handlers
+  │   ├── router_backup.go ← Backup/restore functionality
+  │   ├── router_chapters.go       ← CRUD capítulos, reorder, segment, clean
+  │   ├── router_epubs.go      ← Generar y descargar EPUBs
+  │   ├── router_import.go      ← Import ZIP/EPUB/URL, update from URL
+  │   ├── router_jobs.go    ← Crear jobs, listar, cancelar
+  │   ├── router_novels.go  ← CRUD novelas, batch operations
+  │   ├── router_prompts.go      ← CRUD prompts personalizados
+  │   ├── router_providers.go    ← Listar providers, guardar API key
+  │   ├── router_reading_progress.go ← Progreso de lectura
+  │   ├── router_responses.go    ← Endpoint para respuestas raw de AI translate
+  │   ├── router_settings.go    ← Config global del usuario
+  │   ├── router_helpers.go  ← `notFoundOrForbidden()`, record helpers
+  │   ├── static.go       ← Sirve frontend embebido o static dir
+  │   ├── runtime_worker.go ← 2 colas: download + translate workers
+  │   ├── runtime_translate.go / runtime_refine.go / runtime_config.go / runtime_prompts.go
+  │   ├── runtime_types.go / runtime.go / segmentation.go / cleaner.go
   │   └── *test.go          ← Tests de integración
-  ├── internal/ai/          ← Proveedores de IA
+  ├── internal/ai/          ← Proveedores de IA (8 files)
   │   ├── provider.go       ← Interfaz (Translate, Refine, Check)
   │   ├── openai.go         ← OpenAI-compatible (goai)
   │   └── registry.go       ← Proveedores conocidos (venice, opencode-go)
-  ├── internal/epubimport/  ← Parser EPUB → capítulos
-  ├── internal/noveldownloader/ ← Descarga desde NovelBin / NovelFire
+  ├── internal/epubimport/  ← Parser EPUB → capítulos (10 files)
+  ├── internal/noveldownloader/ ← Descarga desde NovelBin / NovelFire (19 files)
   └── frontend_embed.go     ← Embed del frontend compilado
 
-frontend/                   ← Vue 3 + PrimeVue + TypeScript
+frontend/                   ← Vue 3 + PrimeVue + TypeScript (frontend/src/pages/ → 8 páginas)
   ├── src/pages/            ← 8 páginas (Dashboard, NovelDetail, Reader…)
+  │   ├── ChapterPage.vue
+  │   ├── DashboardPage.vue
+  │   ├── LoginPage.vue
+  │   ├── NovelDetailPage.vue
+  │   ├── OperationsPage.vue
+  │   ├── ReaderPage.vue
+  │   ├── RegisterPage.vue
+  │   └── SettingsPage.vue
   ├── src/components/       ← 6 componentes reutilizables
+  │   ├── AppLayout.vue
+  │   ├── ChapterList.vue
+  │   ├── FieldNumber.vue
+  │   ├── JobsDrawer.vue
+  │   ├── MetadataEditor.vue
+  │   └── PromptRoleEditor.vue
   ├── src/composables/      ← 8 composables (useNovels, useChapters…)
+  │   ├── useActiveJobStatus.ts
+  │   ├── useActiveJobs.ts
+  │   ├── useChapters.ts
+  │   ├── useNovels.ts
+  │   ├── useProjectSettings.ts
+  │   ├── useProviders.ts
+  │   ├── useReadingProgress.ts
+  │   └── useTranslationJobs.ts
   ├── src/api/              ← Cliente HTTP + tipos
+  │   ├── client.ts
+  │   ├── http.ts
+  │   └── types.ts (291 lines)
   ├── src/router/           ← vue-router (8 rutas)
-  └── src/theme/            ← Preset PrimeVue personalizado
+  │   └── index.ts
+  ├── src/theme/           ← Preset PrimeVue personalizado
+  │   └── pixeo-preset.ts
+  └── src/utils/            ← Utilidades
+      ├── api-base-url.ts
+      ├── cleaner.ts
+      ├── epub-generator.ts
+      ├── epub-importer.ts
+      ├── job-events.ts
+      ├── markdown.ts
+      └── project-settings.ts
 ```
 
 ## Colecciones PocketBase
@@ -138,6 +186,16 @@ Registrados en `internal/ai/registry.go`:
 - **opencode-go** — `opencode.ai/zen/go/v1`
 
 Implementación vía `github.com/zendev-sh/goai` con `useResponsesAPI: false` y `strictJsonSchema: true`.
+
+### Codificación de Trabajadores
+
+Los jobs se recuperan al arrancar si quedaron en estado `running` o `pending`. Los workers están en proceso con dos goroutines con colas bufferizadas (cap 128 c/u):
+- **downloadQueue** — Descarga capítulos desde NovelBin/NovelFire
+- **translateQueue** — Traducción, refinamiento y verificación vía AI
+
+### Concurrencia
+
+El `Concurrency` setting en `AISettings` está persistido pero **no está conectado** — todos los jobs corren secuencialmente por cola. Cada cola tiene una sola goroutine; nuevos jobs esperan hasta que el anterior termine. Dos colas independientes permiten descarga + traducción simultánea.
 
 ## Build
 

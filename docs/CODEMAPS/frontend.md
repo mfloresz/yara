@@ -1,11 +1,11 @@
 # Frontend Codemap
 
-**Last Updated:** 2026-06-30
+**Last Updated:** 2026-07-02
 **Entry Points:** `frontend/src/main.ts`, `frontend/src/app/App.vue`
 **Framework:** Vue 3 + TypeScript + Vite + PrimeVue
 **Dev Port:** 5175 (proxies `/api` and `/ai` to `127.0.0.1:5176`)
 
-## Architecture
+## Arquitectura
 
 ```
 frontend/
@@ -17,7 +17,7 @@ frontend/
     ├── main.ts               ← createApp, PrimeVue, router mount
     ├── vite-env.d.ts
     ├── app/
-    ├── api/
+    └── api/
     ├── components/
     ├── composables/
     ├── config/
@@ -87,7 +87,7 @@ frontend/
 
 ### Router — `src/router/index.ts`
 
-8 routes with auth guards (`requiresAuth`, `guestOnly` meta fields) and redirect logic.
+8 rutas con auth guards (`requiresAuth`, `guestOnly` meta fields) y redirect logic.
 
 ### Theme — `src/theme/pixeo-preset.ts`
 

@@ -108,6 +108,7 @@ func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Ser
 	registerEpubRoutes(api, s)
 	registerEpubExportRoutes(api, s)
 	registerReadingProgressRoutes(api, s)
+	registerBackupRoutes(api, s)
 }
 
 func registerStaticRoutes(router *pbrouter.Router[*core.RequestEvent], staticDir string) {

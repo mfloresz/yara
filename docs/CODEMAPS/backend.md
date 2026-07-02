@@ -1,10 +1,10 @@
 # Backend Codemap
 
-**Last Updated:** 2026-06-30
+**Last Updated:** 2026-07-02
 **Entry Points:** `cmd/server/main.go`, `internal/api/router.go`
 **Package:** `translator-server`
 
-## Architecture
+## Arquitectura
 
 ```
 cmd/server/main.go
@@ -30,22 +30,23 @@ cmd/server/main.go
 | `internal/store` | Persistence, schema |
 | `internal/api` | HTTP server, routes, workers |
 
-### HTTP Layer — `internal/api/` (29 files)
+### HTTP Layer — `internal/api/` (32 files)
 
 | File | Purpose |
 |------|---------|
 | `router.go` | `Server` struct, `Router()`, `registerRoutes()`, job cancel registry |
 | `router_auth.go` | Registro, login endpoints |
-| `router_novels.go` | CRUD novelas, batch operations |
+| `router_backup.go` | Backup/restore functionality |
 | `router_chapters.go` | CRUD capítulos, reorder, segment, clean |
-| `router_jobs.go` | Crear jobs, listar, cancelar |
 | `router_epubs.go` | Generar y descargar EPUBs |
-| `router_import.go` | Import ZIP/EPUB/URL, update from URL, batch check/update |
-| `router_settings.go` | Config global del usuario |
-| `router_providers.go` | Listar providers, guardar API key |
+| `router_import.go` | Import ZIP/EPUB/URL, update from URL |
+| `router_jobs.go` | Crear jobs, listar, cancelar |
+| `router_novels.go` | CRUD novelas, batch operations |
 | `router_prompts.go` | CRUD prompts personalizados |
-| `router_responses.go` | Endpoint para respuestas raw de AI translate |
+| `router_providers.go` | Listar providers, guardar API key |
 | `router_reading_progress.go` | Progreso de lectura |
+| `router_responses.go` | Endpoint para respuestas raw de AI translate |
+| `router_settings.go` | Config global del usuario |
 | `router_helpers.go` | `notFoundOrForbidden()`, record helpers |
 | `static.go` | Sirve frontend embebido o static dir |
 | `runtime_worker.go` | 2 goroutines (downloadQueue, translateQueue), enqueue/logic |
@@ -57,6 +58,7 @@ cmd/server/main.go
 | `runtime.go` | `dynamicSystemPrompt()`, helper de formato |
 | `segmentation.go` | Segmentación de capítulos largos |
 | `cleaner.go` | Reglas de limpieza post-traducción |
+| `*test.go` | Tests de integración |
 
 ### Store Layer — `internal/store/` (18 files)
 
@@ -116,23 +118,22 @@ cmd/server/main.go
 /api/db/novels                              [auth]
 /api/db/novels/{id}                         [auth]
 /api/db/novels/{id}/cover                   [auth]
-/api/db/novels/{id}/chapters                [auth]
-/api/db/novels/{id}/chapters/{chId}         [auth]
+/api/db/novels/{novelId}/chapters                [auth]
+/api/db/novels/{novelId}/chapters/{chId}         [auth]
 /api/db/chapters/{id}/title                 [auth]
 /api/db/chapters/reorder                    [auth]
 /api/db/chapters/{id}                       [auth]
-/api/db/novels/{id}/jobs                    [auth]
+/api/db/novels/{novelId}/jobs                    [auth]
 /api/db/jobs/{id}                           [auth]
 /api/db/jobs/{id}/cancel                    [auth]
 /api/db/jobs/active                         [auth]
-/api/db/novels/{id}/epubs                   [auth]
+/api/db/novels/{novelId}/epubs                   [auth]
 /api/db/epubs/{id}/download                 [auth]
 /api/db/novels/import-from-zip              [auth]
 /api/db/novels/import-from-epub             [auth]
 /api/db/novels/import-from-url              [auth]
 /api/db/novels/{id}/update-preview          [auth]
 /api/db/novels/{id}/update-from-url         [auth]
-/api/db/novels/batch/check-urls             [auth]
 /api/db/novels/batch/update-from-urls       [auth]
 /api/db/novels/batch/translate              [auth]
 /api/db/novels/batch/check-translate        [auth]

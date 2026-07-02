@@ -249,6 +249,8 @@ function saveReaderSettings() {
 const isMobile = window.innerWidth < 720;
 const saved = loadReaderSettings();
 const variant = ref<"translated" | "original">(saved?.variant ?? "translated");
+
+nextTick(() => applyTypography());
 const activeChapterId = ref<string | null>(null);
 const activeChapter = ref<Chapter | null>(null);
 const drawerOpen = ref(false);
@@ -267,6 +269,8 @@ const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 19));
 const lineHeight = ref(saved?.lineHeight ?? 1.5);
 const contentWidth = ref(saved?.contentWidth ?? 860);
 const novel = ref<Novel | null>(null);
+
+applyTypography();
 const {
   savedChapterId,
   savedScrollPercent,

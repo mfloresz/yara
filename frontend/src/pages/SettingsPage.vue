@@ -112,6 +112,21 @@
         </Card>
 
         <Card>
+          <template #title>Backup</template>
+          <template #content>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+              <div>
+                <div style="font-weight: 600">Descargar backup</div>
+                <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
+              </div>
+              <a href="/api/backup/download" target="_blank" rel="noopener" style="text-decoration: none">
+                <Button label="Descargar" icon="pi pi-download" severity="secondary" outlined />
+              </a>
+            </div>
+          </template>
+        </Card>
+
+        <Card>
           <template #title>Prompts generales</template>
           <template #content>
             <Accordion :value="0">
