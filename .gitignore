@@ -1,0 +1,11 @@
+bin/
+data/
+frontend/node_modules/
+frontend/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+app.key
