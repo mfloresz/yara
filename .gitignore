@@ -10,3 +10,4 @@ frontend/dist/
 *.test
 *.out
 app.key
+.env

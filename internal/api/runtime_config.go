@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,7 +26,9 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 	providerKey := appSettings.AI.Provider
 	modelOverride := appSettings.AI.Model
 	if novel != nil && strings.TrimSpace(novel.Glossary) != "" {
-		_ = json.Unmarshal([]byte(novel.Glossary), &cfg.Glossary)
+		if err := json.Unmarshal([]byte(novel.Glossary), &cfg.Glossary); err != nil {
+			slog.Warn("invalid glossary JSON in novel", "novelID", novel.ID, "err", err, "glossary", novel.Glossary)
+		}
 	}
 	if novel != nil && strings.TrimSpace(novel.AIOptions) != "" {
 		var aiOptions novelAIOptions

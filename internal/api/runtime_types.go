@@ -54,13 +54,3 @@ type chapterSegmentationStatus struct {
 	Applied      bool
 	SegmentCount int
 }
-
-type refineChunk struct {
-	Index              int
-	StartLine          int
-	EndLine            int
-	OriginalContext    string
-	OriginalChunk      string
-	TranslationContext string
-	TranslationChunk   string
-}

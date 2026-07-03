@@ -207,14 +207,40 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 	}
 
 	record.Set("chapter_order", chapter.ChapterOrder)
-	record.Set("title", chapter.Title)
-	record.Set("translated_title", chapter.TranslatedTitle)
-	record.Set("original_content", chapter.OriginalContent)
-	record.Set("translated_content", chapter.TranslatedContent)
-	record.Set("refined_content", chapter.RefinedContent)
-	setCharCounts(record, chapter.OriginalContent, chapter.TranslatedContent, chapter.RefinedContent)
+	if chapter.Title != "" {
+		record.Set("title", chapter.Title)
+	} else if record.IsNew() {
+		record.Set("title", "")
+	}
+	if chapter.TranslatedTitle != "" {
+		record.Set("translated_title", chapter.TranslatedTitle)
+	} else if record.IsNew() {
+		record.Set("translated_title", "")
+	}
+	if chapter.OriginalContent != "" {
+		record.Set("original_content", chapter.OriginalContent)
+	} else if record.IsNew() {
+		record.Set("original_content", "")
+	}
+	if chapter.TranslatedContent != "" {
+		record.Set("translated_content", chapter.TranslatedContent)
+	} else if record.IsNew() {
+		record.Set("translated_content", "")
+	}
+	if chapter.RefinedContent != "" {
+		record.Set("refined_content", chapter.RefinedContent)
+	} else if record.IsNew() {
+		record.Set("refined_content", "")
+	}
+	if chapter.OriginalContent != "" || chapter.TranslatedContent != "" || chapter.RefinedContent != "" || record.IsNew() {
+		setCharCounts(record, chapter.OriginalContent, chapter.TranslatedContent, chapter.RefinedContent)
+	}
 	record.Set("status", status)
-	record.Set("error_message", chapter.ErrorMessage)
+	if chapter.ErrorMessage != "" {
+		record.Set("error_message", chapter.ErrorMessage)
+	} else if record.IsNew() {
+		record.Set("error_message", "")
+	}
 	if err := s.App.Save(record); err != nil {
 		return nil, err
 	}
@@ -301,6 +327,40 @@ func (s *Store) UpdateChapterStatusForUser(userID, novelID, chapterID, status, e
 
 func (s *Store) SaveChapterTranslation(chapterID, translatedTitle, translatedContent, refinedContent, status string) error {
 	return s.saveChapterTranslation(chapterID, translatedTitle, translatedContent, refinedContent, status, true)
+}
+
+func (s *Store) SaveRefinedContentIfUnchanged(chapterID, expectedTranslatedContent, refinedContent, status string) (applied bool, err error) {
+	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil {
+		return false, ErrNotFound
+	}
+	if record.GetString("translated_content") != expectedTranslatedContent {
+		return false, nil
+	}
+	if refinedContent != "" {
+		record.Set("refined_content", refinedContent)
+	}
+	if status != "" {
+		record.Set("status", status)
+	}
+	record.Set("error_message", "")
+	setCharCounts(record, record.GetString("original_content"), record.GetString("translated_content"), record.GetString("refined_content"))
+	// Re-fetch and re-verify right before save to narrow the race window
+	// with any concurrent goroutine that might have modified the chapter.
+	fresh, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil {
+		return false, ErrNotFound
+	}
+	if fresh.GetString("translated_content") != expectedTranslatedContent {
+		return false, nil
+	}
+	if err := s.App.Save(record); err != nil {
+		return false, err
+	}
+	if err := s.RecalculateNovelStats(record.GetString("novel")); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) SaveChapterTranslationFast(chapterID, translatedTitle, translatedContent, refinedContent, status string) error {

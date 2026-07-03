@@ -19,7 +19,11 @@ func formatGlossary(glossary []glossaryEntry) string {
 	}
 	lines := make([]string, 0, len(glossary))
 	for _, entry := range glossary {
-		lines = append(lines, fmt.Sprintf("- %s → %s", entry.Source, entry.Target))
+		if entry.Context != "" {
+			lines = append(lines, fmt.Sprintf("- %s → %s (%s)", entry.Source, entry.Target, entry.Context))
+		} else {
+			lines = append(lines, fmt.Sprintf("- %s → %s", entry.Source, entry.Target))
+		}
 	}
 	return strings.Join(lines, "\n")
 }

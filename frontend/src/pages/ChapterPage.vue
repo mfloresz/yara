@@ -328,13 +328,8 @@ async function handleRefine() {
 async function handleMarkDone() {
   if (!chapter.value) return;
   try {
-    const updated = await api.chapters.upsert(novelId.value, {
-      id: chapter.value.id,
-      chapterOrder: chapter.value.chapterOrder,
-      title: chapter.value.title,
-      status: "done",
-    });
-    syncChapterFields(updated);
+    await api.chapters.updateStatus(novelId.value, chapter.value.id, "done");
+    chapter.value.status = "done";
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }

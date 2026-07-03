@@ -112,3 +112,73 @@ func TestJobRecordIncludesAutoSegmentEnabled(t *testing.T) {
 		t.Fatalf("expected autoSegmentCompletedCount=1, got %d", completedCount)
 	}
 }
+
+func TestResolveJobConfigHandlesInvalidGlossaryJSON(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-glossary@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Libro", "es", "en")
+
+	if _, err := env.store.SaveAppSettings(alice.User.ID, store.AppSettings{
+		AI: store.AISettings{
+			Provider:  "venice",
+			BaseURL:   "https://api.venice.ai/api/v1",
+			Model:     "deepseek-v4-flash",
+			TimeoutMs: 600000,
+		},
+		Translation: store.DefaultTranslationDefaults,
+	}); err != nil {
+		t.Fatalf("save app settings: %v", err)
+	}
+
+	// Test case 1: Object instead of array (common frontend mistake)
+	if _, err := env.store.UpdateNovel(alice.User.ID, novel.ID, map[string]any{
+		"glossary": `{"source":"dragon","target":"dragón"}`, // Object, not array
+	}); err != nil {
+		t.Fatalf("update novel glossary: %v", err)
+	}
+
+	storedNovel, err := env.store.GetOwnedNovel(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("get owned novel: %v", err)
+	}
+
+	cfg, err := New(env.store, nil).resolveJobConfig(storedNovel, &store.Job{
+		OwnerID: alice.User.ID,
+		NovelID: novel.ID,
+	})
+	if err != nil {
+		t.Fatalf("resolve job config: %v", err)
+	}
+
+	// The config should have an empty glossary since JSON was invalid
+	if len(cfg.Glossary) != 0 {
+		t.Fatalf("expected empty glossary for invalid JSON, got %v", cfg.Glossary)
+	}
+
+	// Test case 2: Valid JSON array (should work)
+	if _, err := env.store.UpdateNovel(alice.User.ID, novel.ID, map[string]any{
+		"glossary": []map[string]string{{"source": "dragon", "target": "dragón"}},
+	}); err != nil {
+		t.Fatalf("update novel glossary: %v", err)
+	}
+
+	storedNovel, err = env.store.GetOwnedNovel(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("get owned novel: %v", err)
+	}
+
+	cfg, err = New(env.store, nil).resolveJobConfig(storedNovel, &store.Job{
+		OwnerID: alice.User.ID,
+		NovelID: novel.ID,
+	})
+	if err != nil {
+		t.Fatalf("resolve job config: %v", err)
+	}
+
+	if len(cfg.Glossary) != 1 {
+		t.Fatalf("expected glossary with 1 entry, got %d", len(cfg.Glossary))
+	}
+	if cfg.Glossary[0].Source != "dragon" || cfg.Glossary[0].Target != "dragón" {
+		t.Fatalf("expected glossary entry to be correct")
+	}
+}

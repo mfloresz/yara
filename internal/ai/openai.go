@@ -99,35 +99,18 @@ func (p *OpenAIProvider) TranslateText(ctx context.Context, in TranslateTextInpu
 	return strings.TrimSpace(result.Text), nil
 }
 
-func (p *OpenAIProvider) Refine(ctx context.Context, in RefineInput) (RefineOutput, error) {
-	model, err := p.model()
-	if err != nil {
-		return RefineOutput{}, err
-	}
-	opts := append(p.opts(),
-		goai.WithPrompt(in.TranslatedText),
-		goai.WithTimeout(p.resolveTimeout()),
-	)
-	result, err := goai.GenerateObject[RefineOutput](ctx, model, opts...)
-	if err != nil {
-		return RefineOutput{}, fmt.Errorf("openai refine: %w", err)
-	}
-	return result.Object, nil
-}
-
 func (p *OpenAIProvider) Check(ctx context.Context, in CheckInput) (CheckOutput, error) {
 	model, err := p.model()
 	if err != nil {
 		return CheckOutput{}, err
 	}
-	user := fmt.Sprintf("Original: %s\nTranslated: %s", in.ContentOriginal, in.ContentTranslated)
 	system := "Analyze the following text for translation quality."
 	if trimmed := strings.TrimSpace(in.SystemPrompt); trimmed != "" {
 		system = trimmed
 	}
 	opts := append(p.opts(),
 		goai.WithSystem(system),
-		goai.WithPrompt(user),
+		goai.WithPrompt(strings.TrimSpace(in.UserPrompt)),
 		goai.WithTimeout(p.resolveTimeout()),
 	)
 	result, err := goai.GenerateObject[CheckOutput](ctx, model, opts...)

@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/merriweather": "^5.2.6",
+    "@fontsource-variable/newsreader": "^5.2.10",
+    "@fontsource-variable/playfair-display": "^5.2.8",
     "@primeuix/themes": "^1.2.3",
     "jszip": "^3.10.1",
     "primeicons": "^7.0.0",

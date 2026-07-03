@@ -29,33 +29,58 @@ type TranslateTextInput struct {
 	Options         map[string]string `json:"options"`
 }
 
+// RefineInput carries a fully-rendered system/user prompt pair (built by
+// internal/api from the novel's configured refine prompt template) plus a
+// callback the provider must invoke whenever the model calls the apply_edits
+// tool. ApplyEdits must be called with every edit from a single tool call in
+// one invocation; the caller (internal/api) applies them immediately and
+// returns per-edit results so the provider can report only the failures back
+// to the model.
 type RefineInput struct {
-	OriginalText   string `json:"originalText"`
-	TranslatedText string `json:"translatedText"`
-	SourceLanguage string `json:"sourceLanguage"`
-	TargetLanguage string `json:"targetLanguage"`
+	SystemPrompt   string
+	UserPrompt     string
+	SourceLanguage string
+	TargetLanguage string
+	ApplyEdits     func(edits []RefineEdit) []RefineEditResult
+	CurrentText    func() string
 }
 
+// RefineEdit is what the model submits via the apply_edits tool. There is no
+// "reason" field: it is never shown to a user, so asking the model to
+// produce it only spends output tokens for no benefit.
 type RefineEdit struct {
 	Original    string `json:"original"`
 	Replacement string `json:"replacement"`
-	Reason      string `json:"reason,omitempty"`
 }
 
+// RefineEditResult is the outcome of attempting one RefineEdit. Reason is
+// for internal logging and for building the model-facing feedback message;
+// it is never sent back to the model as structured data, only folded into a
+// free-text tool result string.
+type RefineEditResult struct {
+	Edit    RefineEdit
+	Applied bool
+	Reason  string // one of: not_found, multiple_matches, no_op, empty_original ("" when Applied)
+}
+
+// RefineOutput summarizes one Refine call across however many tool-loop
+// turns it took. Unresolved holds whatever edits were still failing the last
+// time the tool was called (empty if everything succeeded or the model never
+// called the tool).
 type RefineOutput struct {
-	Edits []RefineEdit `json:"edits"`
+	TotalProposed int
+	TotalApplied  int
+	Unresolved    []RefineEdit
 }
 
+// CheckInput carries a fully-rendered system/user prompt pair, mirroring
+// RefineInput. SystemPrompt holds only instructions + glossary; UserPrompt
+// holds the original and translated chapter text. Keeping them separate (and
+// sending each exactly once) avoids duplicating chapter content across
+// messages.
 type CheckInput struct {
-	SystemPrompt       string `json:"systemPrompt"`
-	TitleOriginal      string `json:"titleOriginal"`
-	TitleTranslated    string `json:"titleTranslated"`
-	ContentOriginal    string `json:"contentOriginal"`
-	ContentTranslated  string `json:"contentTranslated"`
-	PreviousTitleOrig  string `json:"previousTitleOriginal"`
-	PreviousTitleTrans string `json:"previousTitleTranslated"`
-	SourceLanguage     string `json:"sourceLanguage"`
-	TargetLanguage     string `json:"targetLanguage"`
+	SystemPrompt string
+	UserPrompt   string
 }
 
 type CheckOutput struct {

@@ -207,7 +207,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from "vue";
-import "@fontsource-variable/merriweather";
+import "@fontsource-variable/newsreader";
+import "@fontsource-variable/playfair-display";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
 import Card from "primevue/card";
@@ -265,7 +266,7 @@ const SUMMARY_BATCH_SIZE = 50;
 let backgroundLoadToken = 0;
 let pendingSavedChapterRestore = false;
 
-const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 15));
+const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 16));
 const lineHeight = ref(saved?.lineHeight ?? 1.5);
 const contentWidth = ref(saved?.contentWidth ?? 900);
 const novel = ref<Novel | null>(null);
@@ -578,7 +579,7 @@ function applyTypography() {
 
 <style scoped>
 :root {
-  --reader-fs-body: 15px;
+  --reader-fs-body: 16px;
   --reader-lh-body: 1.5;
   --reader-content-w: 900px;
 }
@@ -802,7 +803,7 @@ function applyTypography() {
 /* ── Article ── */
 .reader-article {
   max-width: 100%;
-  font-family: 'Merriweather Variable', 'Merriweather', 'Georgia', serif;
+  font-family: 'Newsreader Variable', 'Newsreader', 'Georgia', serif;
   font-size: var(--reader-fs-body);
   line-height: var(--reader-lh-body);
   color: var(--reader-ink);
@@ -814,10 +815,9 @@ function applyTypography() {
 }
 
 .reader-chapter-heading {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
-  font-size: 2.6em;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
+  font-size: 2.6rem;
   font-weight: 700;
-  font-style: italic;
   text-align: center;
   margin: 0 0 12px;
   color: var(--reader-ink);
@@ -850,7 +850,7 @@ function applyTypography() {
 }
 
 .reader-body :deep(p:first-of-type)::first-letter {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
   font-size: 4.2em;
   font-weight: 700;
   color: var(--accent-link);
@@ -861,10 +861,9 @@ function applyTypography() {
 }
 
 .reader-body :deep(h1) {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
-  font-size: 2.6em;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
+  font-size: 2.6rem;
   font-weight: 700;
-  font-style: italic;
   text-align: center;
   margin: 0 0 12px;
   color: var(--reader-ink);
@@ -873,10 +872,9 @@ function applyTypography() {
 }
 
 .reader-body :deep(h2) {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
-  font-size: 1.75em;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
+  font-size: 1.75rem;
   font-weight: 600;
-  font-style: italic;
   margin: 52px 0 20px;
   color: var(--reader-ink);
   text-align: center;
@@ -891,8 +889,8 @@ function applyTypography() {
 }
 
 .reader-body :deep(h3) {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
-  font-size: 1.3em;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
+  font-size: 1.3rem;
   font-weight: 600;
   margin: 36px 0 14px;
   color: var(--reader-ink);
@@ -902,7 +900,7 @@ function applyTypography() {
 .reader-body :deep(h4),
 .reader-body :deep(h5),
 .reader-body :deep(h6) {
-  font-family: 'Merriweather Variable', 'Merriweather', serif;
+  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
   font-size: 1.05em;
   font-weight: 600;
   font-variant: small-caps;
