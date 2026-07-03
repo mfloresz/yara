@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -77,9 +76,6 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 		if len(body.ChapterIDs) == 0 {
 			return e.BadRequestError("chapterIds is required", nil)
-		}
-		if len(body.ChapterIDs) > maxCleanChapters {
-			return e.BadRequestError("too many chapters", fmt.Errorf("max %d", maxCleanChapters))
 		}
 
 		if _, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("novelId")); err != nil {

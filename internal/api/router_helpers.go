@@ -69,8 +69,6 @@ func cleaningSource(ch *store.Chapter, applyTo string) string {
 	}
 }
 
-const maxCleanChapters = 500
-
 func isValidCleanMode(mode string) bool {
 	switch CleanMode(mode) {
 	case CleanModeRemoveAfter, CleanModeRemoveDuplicates, CleanModeRemoveLine, CleanModeRemoveMultipleBlanks, CleanModeSearchReplace:
