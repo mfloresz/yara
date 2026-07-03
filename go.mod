@@ -5,9 +5,10 @@ go 1.26.4
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/PuerkitoBio/goquery v1.10.3
+	github.com/gorilla/websocket v1.5.3
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.4
-	github.com/zendev-sh/goai v0.7.2
+	github.com/zendev-sh/goai v0.8.5
 	golang.org/x/net v0.55.0
 )
 

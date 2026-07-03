@@ -169,6 +169,9 @@ func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
 		if baseURL == "" {
 			baseURL = info.BaseURL
 		}
+		if info.ID == "google" {
+			return &ai.GoogleProvider{APIKey: apiKey, Model: model, Timeout: timeout}, nil
+		}
 		return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, ProviderOptions: info.GoAIOptions}, nil
 	}
 	return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout}, nil

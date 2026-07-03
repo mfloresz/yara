@@ -36,6 +36,15 @@ var knownProviders = []ProviderInfo{
 			"strictJsonSchema": true,
 		},
 	},
+
+	{
+		ID:           "google",
+		Name:         "Google Gemma",
+		BaseURL:      "https://generativelanguage.googleapis.com",
+		Models:       []string{"gemma-4-26b-a4b-it", "gemma-4-31b-it"},
+		DefaultModel: "gemma-4-31b-it",
+		OpenAICompat: false,
+	},
 }
 
 func Providers() []ProviderInfo {
