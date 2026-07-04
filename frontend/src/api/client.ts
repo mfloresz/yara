@@ -24,6 +24,7 @@ import type {
   ProvidersResponse,
   ServerSettings,
   UpdateUrlResult,
+  WorkerToken,
 } from "@/api/types";
 import type {
   Chapter,
@@ -576,6 +577,20 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       download(id: string, cacheBust?: string) {
         const suffix = cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : "";
         return http.downloadBlob(`/api/epubs/${id}/download${suffix}`);
+      },
+    },
+    workerTokens: {
+      async list(): Promise<WorkerToken[]> {
+        const result = await http.get<{ tokens: WorkerToken[]; count: number }>(
+          "/api/worker-auth/tokens",
+        );
+        return result.tokens;
+      },
+      async revoke(tokenId: string): Promise<void> {
+        await http.post(`/api/worker-auth/revoke/${tokenId}`);
+      },
+      async delete(tokenId: string): Promise<void> {
+        await http.post(`/api/worker-auth/delete/${tokenId}`);
       },
     },
   };

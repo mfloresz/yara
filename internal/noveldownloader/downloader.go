@@ -41,6 +41,7 @@ func NewDownloader() *Downloader {
 			NewNovelfireParser(),
 			NewNovelbinParser(),
 			NewFenrirRealmParser(),
+			New69ShubaParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -58,6 +59,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewNovelfireParser(),
 			NewNovelbinParser(),
 			NewFenrirRealmParser(),
+			New69ShubaParser(),
 		},
 		client: client,
 	}

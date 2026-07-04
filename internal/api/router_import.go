@@ -218,14 +218,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if strings.TrimSpace(body.URL) == "" {
 			return e.BadRequestError("url is required", nil)
 		}
-		dl := s.DownloaderFactory()
-		parser := dl.FindParser(body.URL)
-		if parser == nil {
-			return e.BadRequestError("unsupported URL: only novelfire.net, novelbin.com, and fenrirealm.com are supported", nil)
-		}
-		info, err := dl.GetNovelInfo(e.Request.Context(), body.URL)
+		info, err := s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
 		if err != nil {
-			return e.InternalServerError("failed to fetch novel info", err)
+			return e.BadRequestError(err.Error(), nil)
 		}
 		return e.JSON(http.StatusOK, map[string]any{
 			"title":         info.Title,
@@ -258,14 +253,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if targetLang == "" {
 			targetLang = "es"
 		}
-		dl := s.DownloaderFactory()
-		parser := dl.FindParser(body.URL)
-		if parser == nil {
-			return e.BadRequestError("unsupported URL: only novelfire.net, novelbin.com, and fenrirealm.com are supported", nil)
-		}
-		info, err := dl.GetNovelInfo(e.Request.Context(), body.URL)
+		info, err := s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
 		if err != nil {
-			return e.InternalServerError("failed to fetch novel info", err)
+			return e.BadRequestError(err.Error(), nil)
 		}
 		startCh := body.StartChapter
 		if startCh < 1 {
@@ -275,7 +265,20 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if endCh < startCh || endCh > len(info.Chapters) {
 			endCh = len(info.Chapters)
 		}
-		firstChapter, err := dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
+
+		var firstChapter []noveldownloader.Chapter
+		dl := s.DownloaderFactory()
+		parser := dl.FindParser(body.URL)
+		useProxy := (parser == nil || noveldownloader.IsBrowserRequiredSite(body.URL)) && s.HasBrowserWorker()
+
+		if useProxy {
+			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+			firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
+		} else if parser != nil {
+			firstChapter, err = dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
+		} else {
+			return e.InternalServerError("failed to download first chapter", fmt.Errorf("no download method available"))
+		}
 		if err != nil {
 			return e.InternalServerError("failed to download first chapter", err)
 		}

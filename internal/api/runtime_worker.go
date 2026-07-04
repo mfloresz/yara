@@ -251,13 +251,23 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}); err != nil {
 		return fmt.Errorf("set job running: %w", err)
 	}
+
 	parser := dl.FindParser(opts.URL)
-	if parser == nil {
+	useProxy := (parser == nil || noveldownloader.IsBrowserRequiredSite(opts.URL)) && s.HasBrowserWorker()
+
+	if parser == nil && !useProxy {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
 			slog.Error("update job status on unsupported URL", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("unsupported URL: %s", opts.URL)
 	}
+
+	// If using proxy, create a downloader that fetches through the browser
+	var proxyDL *noveldownloader.Downloader
+	if useProxy {
+		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+	}
+
 	completed := 0
 	failed := 0
 	for idx, chInfo := range opts.Chapters {
@@ -269,16 +279,34 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 				return err
 			}
 		}
+
+		var ch *noveldownloader.Chapter
+		var downloadErr error
 		chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
-		downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
-		if err != nil {
+
+		if useProxy {
+			downloaded, err := proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
+			if err != nil {
+				downloadErr = err
+			} else if len(downloaded) > 0 {
+				ch = &downloaded[0]
+			}
+		} else {
+			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
+			if err != nil {
+				downloadErr = err
+			} else if len(downloaded) > 0 {
+				ch = &downloaded[0]
+			}
+		}
+
+		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil
 			}
 			failed++
-			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", err)
-		} else if len(downloaded) > 0 {
-			ch := downloaded[0]
+			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", downloadErr)
+		} else if ch != nil {
 			chTitle := ch.Title
 			if chTitle == "" {
 				chTitle = chInfo.Title

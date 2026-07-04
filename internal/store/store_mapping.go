@@ -134,6 +134,18 @@ func readingProgressFromRecord(record *core.Record) ReadingProgress {
 	}
 }
 
+func workerTokenFromRecord(record *core.Record) WorkerToken {
+	return WorkerToken{
+		ID:          record.Id,
+		UserID:      record.GetString("owner"),
+		ExtensionID: record.GetString("extension_id"),
+		Label:       record.GetString("label"),
+		LastUsedAt:  record.GetString("last_used_at"),
+		CreatedAt:   record.GetString("created"),
+		Revoked:     record.GetBool("revoked"),
+	}
+}
+
 func applyNovelToRecord(record *core.Record, novel *Novel) {
 	record.Set("source_language", novel.SourceLanguage)
 	record.Set("target_language", novel.TargetLanguage)

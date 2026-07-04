@@ -522,6 +522,32 @@ func (s *Store) ensureReadingProgressCollection(users, novels *core.Collection) 
 	return c, nil
 }
 
+func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(WorkerTokensCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(WorkerTokensCollection)
+	ownerOnly := "@request.auth.id != '' && owner = @request.auth.id"
+	c.ListRule = types.Pointer(ownerOnly)
+	c.ViewRule = types.Pointer(ownerOnly)
+	c.CreateRule = nil
+	c.UpdateRule = types.Pointer(ownerOnly)
+	c.DeleteRule = types.Pointer(ownerOnly)
+	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	c.Fields.Add(&core.TextField{Name: "extension_id", Required: true, Max: 128})
+	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
+	c.Fields.Add(&core.TextField{Name: "label", Max: 250})
+	c.Fields.Add(&core.DateField{Name: "last_used_at"})
+	c.Fields.Add(&core.BoolField{Name: "revoked"})
+	addSystemDateFields(c)
+	c.AddIndex("idx_worker_tokens_hash", true, "token_hash", "")
+	c.AddIndex("idx_worker_tokens_owner", false, "owner", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 func (s *Store) seedProviders() error {
 	collection, err := s.App.FindCollectionByNameOrId(ProvidersCollection)
 	if err != nil {
