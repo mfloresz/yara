@@ -3,6 +3,7 @@ package noveldownloader
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -26,6 +27,14 @@ func (p *NovelfireParser) GetNovelInfo(ctx context.Context, client HTTPClient, p
 		return nil, fmt.Errorf("fetching novel page: %w", err)
 	}
 
+	// Check if we got a redirect/loading page (novelfire.net -> novelphoenix.com)
+	if isNovelfireRedirectPage(mainDoc) {
+		fallbackURL := buildFallbackURL(pageURL)
+		if fallbackURL != "" {
+			return p.GetNovelInfo(ctx, client, fallbackURL)
+		}
+	}
+
 	title := extractNovelfireTitle(mainDoc)
 	author := extractNovelfireAuthor(mainDoc)
 	description := extractNovelfireDescription(mainDoc)
@@ -35,6 +44,15 @@ func (p *NovelfireParser) GetNovelInfo(ctx context.Context, client HTTPClient, p
 	if err != nil {
 		return nil, fmt.Errorf("fetching chapters page: %w", err)
 	}
+
+	// Check if chapters page is also a redirect
+	if isNovelfireRedirectPage(chaptersDoc) {
+		fallbackURL := buildFallbackURL(pageURL)
+		if fallbackURL != "" {
+			return p.GetNovelInfo(ctx, client, fallbackURL)
+		}
+	}
+
 	chapters, err := p.GetChapterURLs(ctx, client, chaptersDoc, chaptersURL)
 	if err != nil {
 		return nil, fmt.Errorf("getting chapter URLs: %w", err)
@@ -48,6 +66,53 @@ func (p *NovelfireParser) GetNovelInfo(ctx context.Context, client HTTPClient, p
 		SourceURL:   pageURL,
 		Chapters:    chapters,
 	}, nil
+}
+
+// isNovelfireRedirectPage detects if the page is the JS redirect from
+// novelfire.net to novelphoenix.com (a small loading page with a
+// setTimeout redirect).
+func isNovelfireRedirectPage(doc *goquery.Document) bool {
+	title := strings.TrimSpace(doc.Find("title").First().Text())
+	if title == "Loading..." {
+		return true
+	}
+	found := false
+	doc.Find("script").Each(func(_ int, s *goquery.Selection) {
+		if strings.Contains(s.Text(), "novelphoenix.com") {
+			found = true
+		}
+	})
+	return found
+}
+
+// buildFallbackURL converts a novelfire.net URL to novelphoenix.com or
+// vice-versa, adjusting the path prefix (/book/ <-> /novel/).
+func buildFallbackURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+
+	host := strings.ToLower(u.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+
+	switch host {
+	case "novelfire.net":
+		u.Host = strings.Replace(u.Host, "novelfire.net", "novelphoenix.com", 1)
+		if strings.HasPrefix(u.Path, "/book/") {
+			u.Path = "/novel" + strings.TrimPrefix(u.Path, "/book")
+		}
+		return u.String()
+
+	case "novelphoenix.com":
+		u.Host = strings.Replace(u.Host, "novelphoenix.com", "novelfire.net", 1)
+		if strings.HasPrefix(u.Path, "/novel/") {
+			u.Path = "/book" + strings.TrimPrefix(u.Path, "/novel")
+		}
+		return u.String()
+	}
+
+	return ""
 }
 
 func extractNovelfireTitle(doc *goquery.Document) string {

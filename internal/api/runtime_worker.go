@@ -279,15 +279,19 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", err)
 		} else if len(downloaded) > 0 {
 			ch := downloaded[0]
+			chOrder := chInfo.Order
+			if chOrder <= 0 {
+				chOrder = opts.StartOrder + idx
+			}
 			chTitle := ch.Title
 			if chTitle == "" {
 				chTitle = chInfo.Title
 			}
 			if chTitle == "" {
-				chTitle = fmt.Sprintf("Capítulo %d", opts.StartOrder+idx)
+				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 			}
 			if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
-				ChapterOrder:    opts.StartOrder + idx,
+				ChapterOrder:    chOrder,
 				Title:           chTitle,
 				OriginalContent: ch.Markdown,
 				Status:          "pending",

@@ -95,6 +95,8 @@ type Novel struct {
 	Tags                    string `json:"tags,omitempty"`
 	CoverPath               string `json:"coverPath,omitempty"`
 	CoverFile               string `json:"coverFile,omitempty"`
+	ThumbnailPath           string `json:"thumbnailPath,omitempty"`
+	ThumbnailFile           string `json:"thumbnailFile,omitempty"`
 	IsPublic                bool   `json:"isPublic,omitempty"`
 	ChapterCount            int    `json:"chapterCount,omitempty"`
 	TranslatedCount         int    `json:"translatedCount,omitempty"`
@@ -262,6 +264,7 @@ type ReadingProgress struct {
 type DownloadChapterInfo struct {
 	URL   string `json:"url"`
 	Title string `json:"title"`
+	Order int    `json:"order"`
 }
 
 type BatchCheckNovelResult struct {

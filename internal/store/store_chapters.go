@@ -477,10 +477,11 @@ func (s *Store) GetMaxChapterOrder(userID, novelID string) (int, error) {
 }
 
 func (s *Store) GetExistingChapterURLs(userID, novelID string) (map[string]bool, error) {
-	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+	novel, err := s.GetNovelAccessible(userID, novelID)
+	if err != nil {
 		return nil, err
 	}
-	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel}", "chapter_order", 5000, 0, dbx.Params{"novel": novelID})
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel}", "chapter_order", dynamicChapterLimit(novel.ChapterCount), 0, dbx.Params{"novel": novelID})
 	if err != nil {
 		return nil, err
 	}
@@ -492,4 +493,68 @@ func (s *Store) GetExistingChapterURLs(userID, novelID string) (map[string]bool,
 		}
 	}
 	return existing, nil
+}
+
+func (s *Store) GetExistingChapterOrders(userID, novelID string) (map[int]bool, error) {
+	novel, err := s.GetNovelAccessible(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel}", "chapter_order", dynamicChapterLimit(novel.ChapterCount), 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return nil, err
+	}
+	existing := make(map[int]bool, len(records))
+	for _, record := range records {
+		order := asInt(record.GetFloat("chapter_order"), 0)
+		if order > 0 {
+			existing[order] = true
+		}
+	}
+	return existing, nil
+}
+
+type ChapterGap struct {
+	From  int `json:"from"`
+	To    int `json:"to"`
+	Count int `json:"count"`
+}
+
+func (s *Store) GetChapterGaps(userID, novelID string) ([]ChapterGap, error) {
+	novel, err := s.GetNovelAccessible(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && chapter_order > 0", "chapter_order", dynamicChapterLimit(novel.ChapterCount), 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	orders := make([]int, 0, len(records))
+	for _, record := range records {
+		orders = append(orders, asInt(record.GetFloat("chapter_order"), 0))
+	}
+	var gaps []ChapterGap
+	for i := 1; i < len(orders); i++ {
+		prev := orders[i-1]
+		curr := orders[i]
+		if curr-prev > 1 {
+			gaps = append(gaps, ChapterGap{
+				From:  prev + 1,
+				To:    curr - 1,
+				Count: curr - prev - 1,
+			})
+		}
+	}
+	return gaps, nil
+}
+
+func dynamicChapterLimit(chapterCount int) int {
+	limit := chapterCount + 500
+	if limit < 5000 {
+		return 5000
+	}
+	return limit
 }

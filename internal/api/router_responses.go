@@ -7,6 +7,13 @@ import (
 	"translator-server/internal/store"
 )
 
+func coverResponsePath(n *store.Novel) string {
+	if n.ThumbnailPath != "" {
+		return n.ThumbnailPath
+	}
+	return n.CoverPath
+}
+
 func parseJSONFields(n *store.Novel) map[string]any {
 	m := map[string]any{
 		"id": n.ID, "ownerId": n.OwnerID,
@@ -15,7 +22,7 @@ func parseJSONFields(n *store.Novel) map[string]any {
 		"sourceSeries": n.SourceSeries, "sourceNumber": n.SourceNumber,
 		"targetTitle": n.TargetTitle, "targetAuthor": n.TargetAuthor, "targetDescription": n.TargetDescription,
 		"targetSeries": n.TargetSeries, "targetNumber": n.TargetNumber,
-		"url": n.URL, "customCommands": n.CustomCommands, "status": n.Status, "coverPath": n.CoverPath,
+		"url": n.URL, "customCommands": n.CustomCommands, "status": n.Status, "coverPath": coverResponsePath(n),
 		"isPublic":     n.IsPublic,
 		"chapterCount": n.ChapterCount, "translatedCount": n.TranslatedCount, "completedCount": n.CompletedCount,
 		"originalCharCount": n.OriginalCharCount, "translatedCharCount": n.TranslatedCharCount,
@@ -79,7 +86,7 @@ func parseJSONFieldsSubset(n *store.Novel, fields []string) map[string]any {
 		case "status":
 			m["status"] = n.Status
 		case "coverPath":
-			m["coverPath"] = n.CoverPath
+			m["coverPath"] = coverResponsePath(n)
 		case "isPublic":
 			m["isPublic"] = n.IsPublic
 		case "chapterCount":

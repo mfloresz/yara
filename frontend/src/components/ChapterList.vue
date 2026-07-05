@@ -4,6 +4,10 @@
       <div class="chapter-list-selection">
         <Button size="small" severity="secondary" text label="Todos" @click="selectAll" />
         <Button size="small" severity="secondary" text label="Ninguno" @click="clearSelection" />
+        <span v-if="totalMissingChapters > 0" class="chapter-list-gap-badge">
+          <i class="pi pi-exclamation-triangle" aria-hidden="true" />
+          {{ totalMissingChapters === 1 ? 'Falta 1 capítulo' : `Faltan ${totalMissingChapters} capítulos` }}
+        </span>
         <span v-if="selected.length > 0" class="small muted">{{ selected.length }} seleccionados</span>
       </div>
       <div v-if="isOwner" class="chapter-list-actions">
@@ -53,46 +57,53 @@
     </Card>
 
     <div v-else class="chapter-list-items">
-      <article
-        v-for="chapter in chapters"
-        :key="chapter.id"
-        class="chapter-list-item"
-        :class="{ 'chapter-list-item--selected': isSelected(chapter) }"
-      >
-        <Checkbox
-          v-if="isOwner"
-          :model-value="isSelected(chapter)"
-          binary
-          class="chapter-list-checkbox"
-          :aria-label="`Seleccionar capítulo ${chapter.chapterOrder}`"
-          @update:model-value="toggleSelected(chapter, $event)"
-        />
-
-        <RouterLink
-          :to="`/novels/${chapter.novelId}/chapters/${chapter.id}`"
-          class="chapter-list-link"
-          :aria-label="`Editar capítulo ${chapter.chapterOrder}: ${chapter.title}`"
-        >
-          <span class="chapter-list-order mono small muted">#{{ String(chapter.chapterOrder).padStart(2, "0") }}</span>
-          <span class="chapter-list-title line-clamp-2">{{ chapter.title }}</span>
-        </RouterLink>
-
-        <Tag
-          :severity="chapterSeverity(resolvedStatus(chapter))"
-          :value="chapterStatusLabel(resolvedStatus(chapter))"
-          class="chapter-list-status"
-        />
-
-        <div v-if="isOwner" class="chapter-list-item-actions">
-          <Button
-            icon="pi pi-trash"
-            text
-            class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
-            aria-label="Eliminar"
-            @click="emit('delete', { event: $event, chapter })"
-          />
+      <template v-for="item in mergedItems" :key="item.key">
+        <div v-if="item.type === 'gap'" class="chapter-list-gap-row">
+          <i class="pi pi-exclamation-triangle chapter-list-gap-icon" aria-hidden="true" />
+          <span class="chapter-list-gap-text">
+            {{ item.gap.count === 1 ? 'Falta 1 capítulo' : `Faltan ${item.gap.count} capítulos` }}
+          </span>
         </div>
-      </article>
+        <article
+          v-else
+          class="chapter-list-item"
+          :class="{ 'chapter-list-item--selected': isSelected(item.chapter) }"
+        >
+          <Checkbox
+            v-if="isOwner"
+            :model-value="isSelected(item.chapter)"
+            binary
+            class="chapter-list-checkbox"
+            :aria-label="`Seleccionar capítulo ${item.chapter.chapterOrder}`"
+            @update:model-value="toggleSelected(item.chapter, $event)"
+          />
+
+          <RouterLink
+            :to="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
+            class="chapter-list-link"
+            :aria-label="`Editar capítulo ${item.chapter.chapterOrder}: ${item.chapter.title}`"
+          >
+            <span class="chapter-list-order mono small muted">#{{ String(item.chapter.chapterOrder).padStart(2, "0") }}</span>
+            <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
+          </RouterLink>
+
+          <Tag
+            :severity="chapterSeverity(resolvedStatus(item.chapter))"
+            :value="chapterStatusLabel(resolvedStatus(item.chapter))"
+            class="chapter-list-status"
+          />
+
+          <div v-if="isOwner" class="chapter-list-item-actions">
+            <Button
+              icon="pi pi-trash"
+              text
+              class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
+              aria-label="Eliminar"
+              @click="emit('delete', { event: $event, chapter: item.chapter })"
+            />
+          </div>
+        </article>
+      </template>
     </div>
 
     <div class="chapter-list-footer">
@@ -140,6 +151,7 @@ const props = defineProps<{
   pageSize: number;
   selected: ChapterSummary[];
   isOwner: boolean;
+  gaps?: Array<{ from: number; to: number; count: number }>;
 }>();
 
 const emit = defineEmits<{
@@ -152,6 +164,44 @@ const emit = defineEmits<{
 }>();
 
 const selectedIds = computed(() => new Set(props.selected.map((item) => item.id)));
+
+const totalMissingChapters = computed(() => {
+  if (!props.gaps || props.gaps.length === 0) return 0;
+  return props.gaps.reduce((acc, g) => acc + g.count, 0);
+});
+
+type MergedItem =
+  | { type: "chapter"; chapter: ChapterSummary; key: string }
+  | { type: "gap"; gap: { from: number; to: number; count: number }; key: string };
+
+const mergedItems = computed<MergedItem[]>(() => {
+  if (!props.gaps || props.gaps.length === 0) {
+    return props.chapters.map((ch) => ({ type: "chapter", chapter: ch, key: ch.id }));
+  }
+  const items: MergedItem[] = [];
+  const sortedGaps = [...props.gaps].sort((a, b) => a.from - b.from);
+  let lastOrder = 0;
+
+  for (const chapter of props.chapters) {
+    for (const gap of sortedGaps) {
+      if (gap.from >= lastOrder + 1 && gap.from <= chapter.chapterOrder) {
+        items.push({ type: "gap", gap, key: `gap-${gap.from}` });
+        lastOrder = gap.to;
+      }
+    }
+    if (chapter.chapterOrder > lastOrder + 1) {
+      items.push({
+        type: "gap",
+        gap: { from: lastOrder + 1, to: chapter.chapterOrder - 1, count: chapter.chapterOrder - lastOrder - 1 },
+        key: `gap-${lastOrder + 1}`,
+      });
+    }
+    items.push({ type: "chapter", chapter, key: chapter.id });
+    lastOrder = chapter.chapterOrder;
+  }
+
+  return items;
+});
 
 function resolvedStatus(chapter: ChapterSummary): Chapter["status"] {
   if (chapter.status === "processing") {
@@ -235,6 +285,41 @@ function clearSelection() {
   border-radius: var(--radius-md);
   background: var(--surface-base);
   overflow: hidden;
+}
+
+.chapter-list-gap-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in oklab, var(--p-orange-500) 5%, var(--surface-base));
+  border-bottom: 1px solid var(--divide);
+  font-size: 0.8125rem;
+  color: var(--p-orange-700);
+}
+
+.chapter-list-gap-icon {
+  color: var(--p-orange-500);
+  font-size: 0.875rem;
+}
+
+.chapter-list-gap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--p-orange-500) 10%, transparent);
+  color: var(--p-orange-600);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chapter-list-gap-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
 }
 
 .chapter-list-item {

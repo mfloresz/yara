@@ -267,4 +267,17 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 		return e.JSON(http.StatusOK, chapterRecord(*chapter))
 	})
+	api.GET("/db/novels/{novelId}/chapters/gaps", func(e *core.RequestEvent) error {
+		novelID := e.Request.PathValue("novelId")
+		if _, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		gaps, err := s.Store.GetChapterGaps(e.Auth.Id, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to get chapter gaps", err)
+		}
+		return e.JSON(http.StatusOK, map[string]any{
+			"gaps": gaps,
+		})
+	})
 }
