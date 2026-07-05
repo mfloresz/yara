@@ -81,6 +81,8 @@ export type ServerSettings = {
     model: string;
     timeoutMs: number;
   };
+  titleProvider: string;
+  titleModel: string;
   translation: {
     autoSegment: boolean;
     thresholdChars: number;

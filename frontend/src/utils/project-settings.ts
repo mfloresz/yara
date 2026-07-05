@@ -41,6 +41,9 @@ export function buildProjectSettings(
       provider: novel?.aiOptions?.provider ?? "",
       model: novel?.aiOptions?.model ?? "",
       timeoutMs: novel?.aiOptions?.timeoutMs ?? undefined,
+      titleEnabled: novel?.aiOptions?.titleEnabled ?? false,
+      titleProvider: novel?.aiOptions?.titleProvider ?? "",
+      titleModel: novel?.aiOptions?.titleModel ?? "",
     },
     translation: normalizeTranslationOptions({
       ...normalizeTranslationOptions(translationDefaults),

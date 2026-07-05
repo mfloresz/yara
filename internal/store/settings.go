@@ -23,8 +23,10 @@ type AISettings struct {
 }
 
 type AppSettings struct {
-	AI          AISettings          `json:"ai"`
-	Translation TranslationDefaults `json:"translation"`
+	AI            AISettings          `json:"ai"`
+	TitleProvider string              `json:"titleProvider,omitempty"`
+	TitleModel    string              `json:"titleModel,omitempty"`
+	Translation   TranslationDefaults `json:"translation"`
 }
 
 type User struct {

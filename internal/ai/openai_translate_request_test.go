@@ -41,7 +41,7 @@ func extractUserText(req capturedResponsesRequest) string {
 	return ""
 }
 
-func TestOpenAITranslateTitle_SendsStructuredTitlePayloadAndParsesSchemaResponse(t *testing.T) {
+func TestOpenAITranslateTitle_SendsTitleContextAndReturnsPlainText(t *testing.T) {
 	var captured capturedResponsesRequest
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,12 +62,6 @@ func TestOpenAITranslateTitle_SendsStructuredTitlePayloadAndParsesSchemaResponse
 			t.Fatalf("failed decoding request body: %v\nbody: %s", err, string(body))
 		}
 
-		responseContent, err := json.Marshal(map[string]string{
-			"title_translated": "Capítulo Siete",
-		})
-		if err != nil {
-			t.Fatalf("failed encoding provider response content: %v", err)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":     "resp-test",
@@ -78,7 +72,7 @@ func TestOpenAITranslateTitle_SendsStructuredTitlePayloadAndParsesSchemaResponse
 				"role": "assistant",
 				"content": []map[string]any{{
 					"type": "output_text",
-					"text": string(responseContent),
+					"text": "Capítulo Siete",
 				}},
 			}},
 			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
@@ -138,12 +132,8 @@ func TestOpenAITranslateTitle_SendsStructuredTitlePayloadAndParsesSchemaResponse
 		}
 	}
 
-	textFormat, ok := captured.Text["format"].(map[string]any)
-	if !ok {
-		t.Fatalf("text.format must be set, got: %#v", captured.Text)
-	}
-	if textFormat["type"] != "json_schema" {
-		t.Fatalf("text.format.type = %v, want json_schema", textFormat["type"])
+	if format, ok := captured.Text["format"]; ok {
+		t.Fatalf("plain-text title translation must not request text.format schema, got: %#v", format)
 	}
 }
 
@@ -165,7 +155,7 @@ func TestOpenAITranslateTitle_IncludesPreviousTitleInUserPayload(t *testing.T) {
 				"role": "assistant",
 				"content": []map[string]any{{
 					"type": "output_text",
-					"text": `{"title_translated":"Capítulo Siete"}`,
+					"text": "Capítulo Siete",
 				}},
 			}},
 		})

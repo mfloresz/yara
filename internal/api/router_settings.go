@@ -20,13 +20,26 @@ func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.InternalServerError("failed to load settings", err)
 		}
 		theme, _ := s.Store.GetTheme(e.Auth.Id)
-		return e.JSON(http.StatusOK, map[string]any{"theme": theme, "ai": settings.AI, "translation": settings.Translation})
+		resp := map[string]any{
+			"theme":       theme,
+			"ai":          settings.AI,
+			"translation": settings.Translation,
+		}
+		if settings.TitleProvider != "" {
+			resp["titleProvider"] = settings.TitleProvider
+		}
+		if settings.TitleModel != "" {
+			resp["titleModel"] = settings.TitleModel
+		}
+		return e.JSON(http.StatusOK, resp)
 	})
 	api.PUT("/user/settings", func(e *core.RequestEvent) error {
 		body := struct {
-			Theme       string                    `json:"theme"`
-			AI          store.AISettings          `json:"ai"`
-			Translation store.TranslationDefaults `json:"translation"`
+			Theme         string                    `json:"theme"`
+			AI            store.AISettings          `json:"ai"`
+			TitleProvider string                    `json:"titleProvider"`
+			TitleModel    string                    `json:"titleModel"`
+			Translation   store.TranslationDefaults `json:"translation"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -36,11 +49,27 @@ func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 				return e.InternalServerError("failed to save theme", err)
 			}
 		}
-		settings, err := s.Store.SaveAppSettings(e.Auth.Id, store.AppSettings{AI: body.AI, Translation: body.Translation})
+		settings, err := s.Store.SaveAppSettings(e.Auth.Id, store.AppSettings{
+			AI:            body.AI,
+			TitleProvider: body.TitleProvider,
+			TitleModel:    body.TitleModel,
+			Translation:   body.Translation,
+		})
 		if err != nil {
 			return e.InternalServerError("failed to save settings", err)
 		}
 		theme, _ := s.Store.GetTheme(e.Auth.Id)
-		return e.JSON(http.StatusOK, map[string]any{"theme": theme, "ai": settings.AI, "translation": settings.Translation})
+		resp := map[string]any{
+			"theme":       theme,
+			"ai":          settings.AI,
+			"translation": settings.Translation,
+		}
+		if settings.TitleProvider != "" {
+			resp["titleProvider"] = settings.TitleProvider
+		}
+		if settings.TitleModel != "" {
+			resp["titleModel"] = settings.TitleModel
+		}
+		return e.JSON(http.StatusOK, resp)
 	})
 }

@@ -26,15 +26,6 @@ func buildTranslationTitleSystemPrompt(in TranslateTitleInput) string {
 	if trimmed := strings.TrimSpace(in.SystemPrompt); trimmed != "" {
 		instructions = append(instructions, trimmed)
 	}
-	instructions = append(instructions,
-		"The user message is a JSON object with structured fields.",
-		"Read title_original as the chapter title to translate.",
-		"Use previous_title_original and previous_title_translated as context for consistency with the previous chapter's title translation.",
-		"Return only the translated title in structured output.",
-		"Respond with valid JSON matching this format:",
-		`{"title_translated": "..."}`,
-		"Return the translated data matching the required structured output schema.",
-	)
 	return strings.Join(instructions, "\n\n")
 }
 

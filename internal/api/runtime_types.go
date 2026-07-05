@@ -9,6 +9,7 @@ type promptTemplate struct {
 
 type promptSettings struct {
 	Translation promptTemplate `json:"translation"`
+	Title       promptTemplate `json:"title"`
 	Refine      promptTemplate `json:"refine"`
 	Check       promptTemplate `json:"check"`
 }
@@ -20,9 +21,12 @@ type glossaryEntry struct {
 }
 
 type novelAIOptions struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	TimeoutMs int    `json:"timeoutMs"`
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	TimeoutMs     int    `json:"timeoutMs"`
+	TitleEnabled  *bool  `json:"titleEnabled,omitempty"`
+	TitleProvider string `json:"titleProvider"`
+	TitleModel    string `json:"titleModel"`
 }
 
 type novelTranslationOptions struct {
@@ -37,6 +41,7 @@ type novelTranslationOptions struct {
 
 type resolvedJobConfig struct {
 	AI               store.AISettings
+	TitleAI          *store.AISettings
 	Translation      store.TranslationDefaults
 	Glossary         []glossaryEntry
 	Prompts          promptSettings

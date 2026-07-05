@@ -8,7 +8,8 @@ import (
 )
 
 func (s *Store) GetAppSettings(userID string) (AppSettings, error) {
-	if _, err := s.App.FindRecordById(UsersCollection, userID); err != nil {
+	user, err := s.App.FindRecordById(UsersCollection, userID)
+	if err != nil {
 		return AppSettings{}, err
 	}
 	translation, _ := s.getUserTranslationSettings(userID)
@@ -27,7 +28,9 @@ func (s *Store) GetAppSettings(userID string) (AppSettings, error) {
 			Model:     providerSettings.Model,
 			TimeoutMs: aiTimeout,
 		},
-		Translation: translation,
+		TitleProvider: defaultString(user.GetString("title_provider"), ""),
+		TitleModel:    defaultString(user.GetString("title_model"), ""),
+		Translation:   translation,
 	}, nil
 }
 
@@ -52,16 +55,23 @@ func (s *Store) SaveAppSettings(userID string, cfg AppSettings) (AppSettings, er
 	if err := s.saveUserTranslationSettings(userID, cfg.Translation); err != nil {
 		return AppSettings{}, err
 	}
+	user, err := s.App.FindRecordById(UsersCollection, userID)
+	if err != nil {
+		return AppSettings{}, err
+	}
 	if strings.TrimSpace(cfg.AI.Provider) != "" {
-		user, err := s.App.FindRecordById(UsersCollection, userID)
-		if err != nil {
-			return AppSettings{}, err
-		}
 		user.Set("active_provider", cfg.AI.Provider)
 		if err := s.App.Save(user); err != nil {
 			return AppSettings{}, err
 		}
 		if _, err := s.UpsertProviderSettings(userID, cfg.AI.Provider, cfg.AI.Model, cfg.AI.BaseURL, cfg.AI.TimeoutMs); err != nil {
+			return AppSettings{}, err
+		}
+	}
+	if strings.TrimSpace(cfg.TitleProvider) != "" || strings.TrimSpace(cfg.TitleModel) != "" {
+		user.Set("title_provider", strings.TrimSpace(cfg.TitleProvider))
+		user.Set("title_model", strings.TrimSpace(cfg.TitleModel))
+		if err := s.App.Save(user); err != nil {
 			return AppSettings{}, err
 		}
 	}

@@ -11,37 +11,49 @@ import (
 )
 
 // TestOpenAITranslateTitle_DynamicSystemPromptFlowsToProvider exercises the full
-// real-world title flow: a dynamic system prompt (containing glossary entries,
-// source and target languages substituted from the novel) must reach the wire
-// intact, wrapped with the title-only JSON-schema hints, and placed in the
-// right field for the configured provider (Responses `instructions` or Chat
-// Completions `messages[role=system]`). Acts as a regression guard so that
-// future changes to the title prompt pipeline do not silently drop dynamic
-// content.
+// real-world title flow: the title translation system prompt (containing glossary
+// entries, source and target languages substituted from the novel) must reach
+// the wire intact, without being overwritten or appended with extra instructions.
+// Acts as a regression guard so that future changes to the title prompt pipeline
+// do not silently drop content.
 func TestOpenAITranslateTitle_DynamicSystemPromptFlowsToProvider(t *testing.T) {
-	const dynamicBase = `You are a professional literary translator.
+	dynamicBase := `You are a professional literary title translator. Translate chapter titles from English to Spanish.
 
-Source language: English
-Target language: Spanish
+<title_translation_rules>
 
-Glossary:
+  <consistency>
+    - When previous_title_original and previous_title_translated are provided, use them as reference for style, terminology, and structure. Apply the same translation choices to the current title.
+    - When a title belongs to a recurring series (same base with numeric variants like "Part 1 / Part 2", "Vol. I / Vol. II", or parenthetical suffixes), treat each occurrence as a continuation of the same pattern. Translate the base once and keep the variant marker unchanged.
+    - Do not translate numeric suffixes (1, 2, 3), Roman numerals (I, II, III), or volume abbreviations (Vol., Ch.) unless they appear as written-out words in English.
+  </consistency>
+
+</title_translation_rules>
+
+<terminology_reference>
+Mandatory term translations (entries in parentheses are additional context, do NOT include them in the output):
 - house → casa
 - storm → tormenta
 - child → niño/a
+</terminology_reference>
 
-Preserve narrative voice. Do not add commentary.`
+The user message is a JSON object with these fields:
+- title_original: the title to translate.
+- previous_title_original: the previous chapter's title in English (absent for the first chapter).
+- previous_title_translated: the previous chapter's title already translated to Spanish (absent for the first chapter).
+
+Return ONLY the translated title as plain text. No JSON, no quotes, no explanations, no notes, no commentary.`
 
 	wantSubstrings := []string{
-		"professional literary translator",
-		"Source language: English",
-		"Target language: Spanish",
+		"professional literary title translator",
+		"English",
+		"Spanish",
 		"house → casa",
 		"storm → tormenta",
 		"child → niño/a",
-		"JSON object with structured fields",
 		"title_original",
-		`{"title_translated": "..."}`,
-		"structured output schema",
+		"previous_title_original",
+		"previous_title_translated",
+		"plain text",
 	}
 
 	cases := []struct {
@@ -98,11 +110,11 @@ Preserve narrative voice. Do not add commentary.`
 				capturedPath = r.URL.Path
 				capturedBody, _ = io.ReadAll(r.Body)
 				w.Header().Set("Content-Type", "application/json")
-				if strings.HasSuffix(r.URL.Path, "/responses") {
-					_, _ = w.Write([]byte(`{"id":"resp-x","model":"m","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{\"title_translated\":\"T\"}"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`))
-				} else {
-					_, _ = w.Write([]byte(`{"id":"chatcmpl-x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"{\"title_translated\":\"T\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-				}
+			if strings.HasSuffix(r.URL.Path, "/responses") {
+				_, _ = w.Write([]byte(`{"id":"resp-x","model":"m","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Título Traducido"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"id":"chatcmpl-x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"Título Traducido"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+			}
 			}))
 			defer ts.Close()
 

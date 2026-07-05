@@ -68,18 +68,16 @@ func (p *OpenAIProvider) TranslateTitle(ctx context.Context, in TranslateTitleIn
 	if err != nil {
 		return "", err
 	}
-	opts := append(p.opts(),
+	opts := append(p.textOpts(),
 		goai.WithSystem(buildTranslationTitleSystemPrompt(in)),
 		goai.WithPrompt(buildTranslationTitlePrompt(in)),
 		goai.WithTimeout(p.resolveTimeout()),
 	)
-	result, err := goai.GenerateObject[struct {
-		TitleTranslated string `json:"title_translated"`
-	}](ctx, model, opts...)
+	result, err := goai.GenerateText(ctx, model, opts...)
 	if err != nil {
 		return "", fmt.Errorf("openai translate title: %w", err)
 	}
-	return result.Object.TitleTranslated, nil
+	return strings.TrimSpace(result.Text), nil
 }
 
 func (p *OpenAIProvider) TranslateText(ctx context.Context, in TranslateTextInput) (string, error) {

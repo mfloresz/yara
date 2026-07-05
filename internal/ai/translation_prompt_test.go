@@ -62,19 +62,13 @@ func TestBuildTranslationTitlePrompt_IncludesPreviousTitleWhenSet(t *testing.T) 
 	}
 }
 
-func TestBuildTranslationTitleSystemPrompt_AppendsSchemaHint(t *testing.T) {
+func TestBuildTranslationTitleSystemPrompt_PassesThroughBasePrompt(t *testing.T) {
 	got := buildTranslationTitleSystemPrompt(TranslateTitleInput{SystemPrompt: "Translate faithfully."})
 	if !strings.Contains(got, "Translate faithfully.") {
 		t.Fatalf("system prompt missing user base:\n%s", got)
 	}
-	if !strings.Contains(got, "title_original") {
-		t.Fatal("system prompt must mention title_original field semantics")
-	}
-	if !strings.Contains(got, `{"title_translated": "..."}`) {
-		t.Fatal("system prompt must require title_translated-only structured output")
-	}
-	if !strings.Contains(got, "structured output schema") {
-		t.Fatal("system prompt must reference the structured output schema")
+	if strings.TrimSpace(got) != "Translate faithfully." {
+		t.Fatalf("system prompt should pass through unchanged, got:\n%s", got)
 	}
 }
 
