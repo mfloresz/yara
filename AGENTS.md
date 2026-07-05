@@ -38,12 +38,67 @@ All commands are run from the repo root unless noted.
 - Dev loop — terminal 1 `cd frontend && npm run dev` (port 5175, proxies `/api` and `/ai` to `127.0.0.1:5176`); terminal 2 `go run ./cmd/server --addr :5176 --data-dir ./data`.
 - If you change the frontend, re-run `make build` (or `npm run build` in `frontend/`) so `frontend/dist/` reflects your changes. `frontend_embed.go` embeds that directory; stale builds silently serve the old SPA.
 
+## Release preparation
+
+The project follows Semantic Versioning (SemVer). Current development stage: **0.x**.
+
+### Version bump policy
+
+- **PATCH** — bug fixes, performance improvements, internal refactoring, dependency updates, documentation-only releases.
+- **MINOR** — new user-facing features, new scrapers, new AI providers, new import/export capabilities, significant UI/UX improvements. Before 1.0.0, breaking changes may also be released as MINOR.
+- **MAJOR** — breaking changes, incompatible project format, configuration format changes, public API incompatibilities. Not applicable until 1.0.0+.
+
+When uncertain whether a release should be PATCH or MINOR, ask instead of assuming.
+
+### Definition
+
+"Prepare a release" means:
+- determine the next version
+- review commits since the previous release
+- write the changelog
+- commit the version bump (if the project has a version reference)
+- create the release tag
+
+It does **not** mean:
+- pushing commits or tags
+- creating the GitHub Release
+- merging branches
+
+Those actions require explicit user confirmation.
+
 ## Releases & tagging
 
 - Tags must use the `v` prefix (e.g. `v0.1.0`, `v1.2.3`) to trigger the CI release workflow in `.github/workflows/build.yml`.
 - The workflow pattern is `v*` — tags like `0.1.0` (without `v`) will **not** trigger the build/release pipeline.
-- To create a release: `git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin main --tags`
 - The workflow builds binaries for linux-amd64, linux-arm64, linux-armv7, android-arm64, and android-armv7, then creates a GitHub Release with all artifacts attached.
+- The version number must already have been updated before creating the tag.
+- Use annotated tags only: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`. Never create lightweight tags.
+
+### Release workflow (ask the agent)
+
+When asked "create release vX.Y.Z", the agent should:
+
+1. **Check state** — `git status`, `git log --oneline -5`, and verify `git diff vX.Y.Z-1..HEAD` captures the intended changes.
+2. **Build frontend** — Run `npm run build` in `frontend/` so `frontend/dist/` is up to date.
+3. **Stage & commit** — `git add -A`, then commit with an appropriate conventional-commit prefix (`feat:`, `chore:`, `fix:`).
+4. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
+5. **Push** — `git push origin main --tags`.
+6. **Generate changelog** — See `## Changelog` below.
+
+## Changelog
+
+Release notes should use the following sections when applicable, in this order:
+
+- **⚠️ Breaking changes** (prefixed with ⚠️) — any migration steps or config changes required.
+- **## What's new** — user-facing features and improvements.
+- **## Fixes** — bug fixes.
+- **## Housekeeping** — internal refactoring, dependency updates, docs removal, CI changes.
+
+Do not create empty sections. Keep entries concise and user-focused. Group related changes into a single bullet when appropriate. Avoid implementation details unless they affect users.
+
+Every item must correspond to an actual code change — do not invent release notes.
+
+When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff vPREV..HEAD --stat` against the previous tag. Reference the previous tag URL at the bottom (e.g. `https://github.com/mfloresz/yara/releases/tag/vPREV`).
 
 ## Tests & verification
 
