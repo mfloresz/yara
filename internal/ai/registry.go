@@ -15,7 +15,7 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it"},
+		Models:       []string{"deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it", "e2ee-gpt-oss-20b-p"},
 		DefaultModel: "deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
@@ -34,6 +34,32 @@ var knownProviders = []ProviderInfo{
 		GoAIOptions: map[string]any{
 			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
+		},
+	},
+
+	{
+		ID:           "groq",
+		Name:         "Groq",
+		BaseURL:      "https://api.groq.com/openai/v1",
+		Models:       []string{"openai/gpt-oss-120b", "openai/gpt-oss-20b"},
+		DefaultModel: "openai/gpt-oss-20b",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
+		ID:           "lmstudio",
+		Name:         "LM Studio",
+		BaseURL:      "http://localhost:1234/v1",
+		Models:       []string{"local-model"},
+		DefaultModel: "local-model",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": false,
 		},
 	},
 

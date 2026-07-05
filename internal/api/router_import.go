@@ -407,9 +407,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				}
 			}
 		})
-		maxOrder, err := s.Store.GetMaxChapterOrder(e.Auth.Id, novelID)
+		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
 		if err != nil {
-			return e.InternalServerError("failed to get max chapter order", err)
+			return e.InternalServerError("failed to get existing chapter orders", err)
 		}
 		existingTitles, err := s.Store.GetExistingChapterURLs(e.Auth.Id, novelID)
 		if err != nil {
@@ -420,7 +420,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		lastNew := 0
 		for _, ch := range info.Chapters {
 			chNum := extractChapterOrder(ch.Title)
-			if chNum > 0 && chNum <= maxOrder {
+			if chNum > 0 && existingOrders[chNum] {
 				continue
 			}
 			if existingTitles[ch.Title] {
@@ -484,9 +484,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			}
 			chapters = info.Chapters
 		}
-		maxOrder, err := s.Store.GetMaxChapterOrder(e.Auth.Id, novelID)
+		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
 		if err != nil {
-			return e.InternalServerError("failed to get max chapter order", err)
+			return e.InternalServerError("failed to get existing chapter orders", err)
 		}
 		existingTitles, err := s.Store.GetExistingChapterURLs(e.Auth.Id, novelID)
 		if err != nil {
@@ -495,7 +495,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		sourceToDownload := make([]int, 0)
 		for i, ch := range chapters {
 			chNum := extractChapterOrder(ch.Title)
-			if chNum > 0 && chNum <= maxOrder {
+			if chNum > 0 && existingOrders[chNum] {
 				continue
 			}
 			if existingTitles[ch.Title] {
@@ -523,9 +523,14 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if chTitle == "" {
 				chTitle = fmt.Sprintf("Capítulo %d", srcIdx+1)
 			}
+			chOrder := extractChapterOrder(ch.Title)
+			if chOrder <= 0 {
+				chOrder = srcIdx + 1
+			}
 			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
 				URL:   ch.URL,
 				Title: chTitle,
+				Order: chOrder,
 			})
 		}
 		firstNewOrder := extractChapterOrder(chapters[sourceToDownload[0]].Title)
@@ -603,7 +608,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				})
 				continue
 			}
-			maxOrder, err := s.Store.GetMaxChapterOrder(e.Auth.Id, novel.ID)
+			existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novel.ID)
 			if err != nil {
 				errCount++
 				results = append(results, store.BatchCheckNovelResult{
@@ -628,7 +633,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			startOrder := 0
 			for srcIdx, ch := range info.Chapters {
 				chNum := extractChapterOrder(ch.Title)
-				if chNum > 0 && chNum <= maxOrder {
+				if chNum > 0 && existingOrders[chNum] {
 					continue
 				}
 				if existingTitles[ch.Title] {
@@ -654,9 +659,14 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				if chTitle == "" {
 					chTitle = fmt.Sprintf("Capítulo %d", pos)
 				}
+				chOrder := extractChapterOrder(ch.Title)
+				if chOrder <= 0 {
+					chOrder = pos
+				}
 				newCh = append(newCh, store.DownloadChapterInfo{
 					URL:   ch.URL,
 					Title: chTitle,
+					Order: chOrder,
 				})
 			}
 			checked++

@@ -383,6 +383,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           `/api/db/novels/${novelId}/chapter-summaries${suffix}`,
         );
       },
+      gaps(novelId: string) {
+        return http.get<{ gaps: Array<{ from: number; to: number; count: number }> }>(
+          `/api/db/novels/${novelId}/chapters/gaps`,
+        );
+      },
 
       get(novelId: string, chapterId: string) {
         return http.get<Chapter | null>(

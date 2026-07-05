@@ -138,6 +138,7 @@
           :page-size="chapterPageSize"
           v-model:selected="selectedChapters"
           :is-owner="isOwner"
+          :gaps="chapterGaps"
           @delete="onDeleteChapter"
           @bulk-delete="onBulkDeleteChapters"
           @create="openCreateChapter"
@@ -558,6 +559,8 @@ const exportBuilding = ref(false);
 const exportProgress = ref(0);
 const exportFeedback = ref<string | null>(null);
 
+const chapterGaps = ref<Array<{ from: number; to: number; count: number }>>([]);
+
 const descriptionEl = ref<HTMLElement | null>(null);
 const descriptionExpanded = ref(false);
 const descriptionOverflow = ref(false);
@@ -829,16 +832,21 @@ async function loadChapterSummaries() {
   if (!novelId.value) {
     chapterSummaries.value = [];
     chapterSummaryTotal.value = 0;
+    chapterGaps.value = [];
     return;
   }
   chapterSummariesLoading.value = true;
   try {
-    const result = await api.chapters.listSummaries(novelId.value, {
-      limit: chapterPageSize,
-      offset: chapterPage.value * chapterPageSize,
-    });
+    const [result, gapsResult] = await Promise.all([
+      api.chapters.listSummaries(novelId.value, {
+        limit: chapterPageSize,
+        offset: chapterPage.value * chapterPageSize,
+      }),
+      api.chapters.gaps(novelId.value),
+    ]);
     chapterSummaryTotal.value = result.total;
     mergeChapterSummaries(result.items);
+    chapterGaps.value = gapsResult.gaps;
     selectedChapters.value = selectedChapters.value.filter((selected) =>
       result.items.some((item) => item.id === selected.id),
     );

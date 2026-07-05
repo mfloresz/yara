@@ -545,7 +545,11 @@ func (s *Store) attachNovelCover(novelID string, blob []byte, mimeType string) e
 		return err
 	}
 	record.Set("cover", []*filesystem.File{file})
-	return s.App.Save(record)
+	if err := s.App.Save(record); err != nil {
+		return err
+	}
+	s.attachCoverThumbnail(novelID, blob)
+	return nil
 }
 
 func (s *Store) AttachCoverBlob(novelID string, blob []byte, mimeType string) error {

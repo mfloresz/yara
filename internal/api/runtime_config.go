@@ -25,6 +25,8 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 
 	providerKey := appSettings.AI.Provider
 	modelOverride := appSettings.AI.Model
+	titleProviderKey := appSettings.TitleProvider
+	titleModelOverride := appSettings.TitleModel
 	if novel != nil && strings.TrimSpace(novel.Glossary) != "" {
 		if err := json.Unmarshal([]byte(novel.Glossary), &cfg.Glossary); err != nil {
 			slog.Warn("invalid glossary JSON in novel", "novelID", novel.ID, "err", err, "glossary", novel.Glossary)
@@ -38,6 +40,19 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 			}
 			if strings.TrimSpace(aiOptions.Model) != "" {
 				modelOverride = strings.TrimSpace(aiOptions.Model)
+			}
+			if aiOptions.TitleEnabled != nil {
+				if *aiOptions.TitleEnabled {
+					if strings.TrimSpace(aiOptions.TitleProvider) != "" {
+						titleProviderKey = strings.TrimSpace(aiOptions.TitleProvider)
+					}
+					if strings.TrimSpace(aiOptions.TitleModel) != "" {
+						titleModelOverride = strings.TrimSpace(aiOptions.TitleModel)
+					}
+				} else {
+					titleProviderKey = ""
+					titleModelOverride = ""
+				}
 			}
 		}
 	}
@@ -100,6 +115,23 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 			cfg.AI.Model = info.DefaultModel
 		}
 	}
+	if strings.TrimSpace(titleProviderKey) != "" {
+		titleAI, err := s.Store.ResolveProviderAISettings(job.OwnerID, titleProviderKey)
+		if err != nil {
+			slog.Warn("failed to resolve title provider, will use content provider", "provider", titleProviderKey, "err", err)
+		} else {
+			if strings.TrimSpace(titleModelOverride) != "" {
+				titleAI.Model = strings.TrimSpace(titleModelOverride)
+				titleAI.CustomModel = strings.TrimSpace(titleModelOverride)
+			}
+			if strings.TrimSpace(titleAI.Model) == "" {
+				if info, ok := ai.ProviderByID(titleAI.Provider); ok {
+					titleAI.Model = info.DefaultModel
+				}
+			}
+			cfg.TitleAI = &titleAI
+		}
+	}
 	return cfg, nil
 }
 
@@ -113,6 +145,13 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 			}
 			if strings.TrimSpace(dst.Translation.UserPrompt) == "" {
 				dst.Translation.UserPrompt = tpl.UserPrompt
+			}
+		case "title":
+			if strings.TrimSpace(dst.Title.SystemPrompt) == "" {
+				dst.Title.SystemPrompt = tpl.SystemPrompt
+			}
+			if strings.TrimSpace(dst.Title.UserPrompt) == "" {
+				dst.Title.UserPrompt = tpl.UserPrompt
 			}
 		case "refine":
 			if strings.TrimSpace(dst.Refine.SystemPrompt) == "" {
@@ -135,6 +174,12 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 	}
 	if strings.TrimSpace(dst.Translation.UserPrompt) == "" {
 		dst.Translation.UserPrompt = store.DefaultTranslationUserPrompt
+	}
+	if strings.TrimSpace(dst.Title.SystemPrompt) == "" {
+		dst.Title.SystemPrompt = store.DefaultTitleTranslationSystemPrompt
+	}
+	if strings.TrimSpace(dst.Title.UserPrompt) == "" {
+		dst.Title.UserPrompt = store.DefaultTitleTranslationUserPrompt
 	}
 	if strings.TrimSpace(dst.Refine.SystemPrompt) == "" {
 		dst.Refine.SystemPrompt = store.DefaultRefineSystemPrompt

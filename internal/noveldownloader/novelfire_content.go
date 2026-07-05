@@ -14,6 +14,14 @@ func (p *NovelfireParser) ParseChapter(ctx context.Context, client HTTPClient, c
 		return nil, fmt.Errorf("fetching chapter: %w", err)
 	}
 
+	// Check if we got a redirect/loading page
+	if isNovelfireRedirectPage(doc) {
+		fallbackURL := buildFallbackURL(chapterURL)
+		if fallbackURL != "" {
+			return p.ParseChapter(ctx, client, fallbackURL)
+		}
+	}
+
 	title := strings.TrimSpace(doc.Find("span.chapter-title").First().Text())
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("h1, h2").First().Text())
@@ -25,6 +33,11 @@ func (p *NovelfireParser) ParseChapter(ctx context.Context, client HTTPClient, c
 	}
 
 	if contentSel.Length() == 0 {
+		// Try fallback domain if content not found
+		fallbackURL := buildFallbackURL(chapterURL)
+		if fallbackURL != "" {
+			return p.ParseChapter(ctx, client, fallbackURL)
+		}
 		return nil, fmt.Errorf("no chapter content found")
 	}
 

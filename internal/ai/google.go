@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,13 +36,11 @@ func (p *GoogleProvider) TranslateTitle(ctx context.Context, in TranslateTitleIn
 		goai.WithPrompt(buildTranslationTitlePrompt(in)),
 		goai.WithTimeout(p.resolveTimeout()),
 	}
-	result, err := goai.GenerateObject[struct {
-		TitleTranslated string `json:"title_translated"`
-	}](ctx, model, opts...)
+	result, err := goai.GenerateText(ctx, model, opts...)
 	if err != nil {
 		return "", fmt.Errorf("google translate title: %w", err)
 	}
-	return result.Object.TitleTranslated, nil
+	return strings.TrimSpace(result.Text), nil
 }
 
 func (p *GoogleProvider) TranslateText(ctx context.Context, in TranslateTextInput) (string, error) {
@@ -75,11 +74,16 @@ func (p *GoogleProvider) Check(ctx context.Context, in CheckInput) (CheckOutput,
 		goai.WithPrompt(strings.TrimSpace(in.UserPrompt)),
 		goai.WithTimeout(p.resolveTimeout()),
 	}
-	result, err := goai.GenerateObject[CheckOutput](ctx, model, opts...)
+	result, err := goai.GenerateText(ctx, model, opts...)
 	if err != nil {
 		return CheckOutput{}, fmt.Errorf("google check: %w", err)
 	}
-	return result.Object, nil
+	text := stripJSONFences(strings.TrimSpace(result.Text))
+	var out CheckOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return CheckOutput{}, fmt.Errorf("google check: parsing response: %w (raw: %s)", err, truncateString(text, 200))
+	}
+	return out, nil
 }
 
 func (p *GoogleProvider) Refine(ctx context.Context, in RefineInput) (RefineOutput, error) {
@@ -152,4 +156,22 @@ func (p *GoogleProvider) resolveTimeout() time.Duration {
 		return p.Timeout
 	}
 	return 60 * time.Second
+}
+
+// stripJSONFences removes markdown code fences wrapping a JSON response.
+func stripJSONFences(s string) string {
+	s = strings.TrimSpace(s)
+	re := regexp.MustCompile(`(?i)^` + "```" + `(?:json)?\s*\n`)
+	s = re.ReplaceAllString(s, "")
+	re = regexp.MustCompile(`\n` + "```" + `\s*$`)
+	s = re.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+// truncateString truncates a string to maxLen, adding "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

@@ -22,5 +22,17 @@ func (p *NovelfireParser) CanHandle(urlStr string) bool {
 	}
 	host := strings.ToLower(u.Host)
 	host = strings.TrimPrefix(host, "www.")
-	return host == "novelfire.net"
+	// Both domains are mirrors; accept either.
+	return host == "novelfire.net" || host == "novelphoenix.com"
+}
+
+// isNovelPhoenix returns true if the URL points to the novelphoenix.com domain.
+func isNovelPhoenix(urlStr string) bool {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	host = strings.TrimPrefix(host, "www.")
+	return host == "novelphoenix.com"
 }

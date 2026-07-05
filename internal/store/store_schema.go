@@ -93,6 +93,8 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.Fields.Add(&core.TextField{Name: "name", Max: 120})
 	c.Fields.Add(&core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "active_provider", Max: 120})
+	c.Fields.Add(&core.TextField{Name: "title_provider", Max: 120})
+	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
@@ -107,6 +109,12 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.TextField{Name: "active_provider", Max: 120}); err != nil {
+		return nil, err
+	}
+	if err := s.ensureField(c, &core.TextField{Name: "title_provider", Max: 120}); err != nil {
+		return nil, err
+	}
+	if err := s.ensureField(c, &core.TextField{Name: "title_model", Max: 200}); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -258,6 +266,7 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"ongoing", "completed", "hiatus", "cancelled"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "tags"})
 	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1})
+	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1})
 	c.Fields.Add(&core.BoolField{Name: "is_public"})
 	c.Fields.Add(&core.NumberField{Name: "chapter_count"})
 	c.Fields.Add(&core.NumberField{Name: "translated_count"})

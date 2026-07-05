@@ -156,6 +156,7 @@
           <div style="min-width: 220px; flex: 1">
             <label class="small muted">Modelo</label>
             <Select
+              v-if="modelOptions.length > 1"
               v-model="settingsDraft.ai.model"
               :options="modelOptions"
               :disabled="!settingsDraft.ai.provider || providersLoading"
@@ -163,10 +164,63 @@
               fluid
               showClear
             />
+            <InputText
+              v-else
+              v-model="settingsDraft.ai.model"
+              :disabled="!settingsDraft.ai.provider || providersLoading"
+              placeholder="Ej: local-model"
+              fluid
+            />
           </div>
           <FieldNumber v-model="timeoutSec" label="Timeout (segundos)" :min="10" allow-clear placeholder="Usar global" wrapper-style="min-width: 180px; flex: 1" />
         </div>
         <Message severity="info">Si dejas estos campos vacíos, el backend usará la configuración global. El timeout aplica solo si se configura un valor.</Message>
+
+        <div style="border-top: 1px solid var(--p-border-color); padding-top: 1rem; margin-top: 0.5rem">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+            <div>
+              <div style="font-weight: 600">Usar modelo diferente para traducir títulos</div>
+              <div class="small muted">Usa un modelo más pequeño para títulos de capítulos. Si falla, se usa el modelo de contenido.</div>
+            </div>
+            <ToggleSwitch v-model="settingsDraft.ai.titleEnabled" style="flex-shrink: 0" />
+          </div>
+          <div v-if="settingsDraft.ai.titleEnabled" class="row-wrap" style="margin-top: 0.75rem">
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Proveedor para títulos</label>
+              <Select
+                v-model="settingsDraft.ai.titleProvider"
+                :options="providerOptions"
+                optionLabel="name"
+                optionValue="id"
+                :loading="providersLoading"
+                :disabled="providersLoading"
+                placeholder="Usar proveedor de contenido"
+                fluid
+                showClear
+                @change="onTitleProviderChange"
+              />
+            </div>
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Modelo para títulos</label>
+              <Select
+                v-if="titleModelOptions.length > 1"
+                v-model="settingsDraft.ai.titleModel"
+                :options="titleModelOptions"
+                :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                placeholder="Usar modelo de contenido"
+                fluid
+                showClear
+              />
+              <InputText
+                v-else
+                v-model="settingsDraft.ai.titleModel"
+                :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                placeholder="Ej: local-model"
+                fluid
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <div v-else-if="activeTab === 'translation'" class="stack-md">
@@ -298,11 +352,25 @@ const modelOptions = computed(() => {
   return [];
 });
 
+const titleModelOptions = computed(() => {
+  const info = byId.value.get(settingsDraft.value.ai.titleProvider ?? "");
+  if (info) return [...info.models];
+  return [];
+});
+
 function onProviderChange(event: { value: string }) {
   const info = byId.value.get(event.value);
   if (!info) return;
   if (!info.models.includes(settingsDraft.value.ai.model)) {
     settingsDraft.value.ai.model = info.defaultModel;
+  }
+}
+
+function onTitleProviderChange(event: { value: string }) {
+  const info = byId.value.get(event.value);
+  if (!info) return;
+  if (!info.models.includes(settingsDraft.value.ai.titleModel)) {
+    settingsDraft.value.ai.titleModel = info.defaultModel;
   }
 }
 
@@ -408,7 +476,7 @@ function reset() {
     notes: "",
     glossary: [],
     prompts: {},
-    ai: { provider: "", model: "", timeoutMs: undefined },
+    ai: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
     translation: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
   };
@@ -418,7 +486,7 @@ function reset() {
     glossary: [],
     prompts: {},
     notes: "",
-    aiOptions: { provider: "", model: "", timeoutMs: undefined },
+    aiOptions: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
     translationOptions: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
     url: "",
@@ -430,6 +498,10 @@ async function save() {
   saving.value = true;
   try {
     settingsDraft.value.ai.timeoutMs = timeoutSec.value != null ? timeoutSec.value * 1000 : undefined;
+    if (!settingsDraft.value.ai.titleEnabled) {
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    }
     await props.onSaveNovel({
       sourceLanguage: novelDraft.value.sourceLanguage,
       targetLanguage: novelDraft.value.targetLanguage,

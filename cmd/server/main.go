@@ -18,6 +18,7 @@ var Version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	migrateThumbnails := flag.Bool("migrate-thumbnails", false, "generate thumbnails for all existing covers and exit")
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
@@ -62,6 +63,16 @@ func main() {
 	// 		log.Fatal("legacy novel schema/data detected; run ./translator-server --migrate-db before starting the server")
 	// 	}
 	// }
+
+	if *migrateThumbnails {
+		slog.Info("running thumbnail migration")
+		if err := st.RunThumbnailMigration(); err != nil {
+			slog.Error("thumbnail migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("thumbnail migration finished, exiting")
+		os.Exit(0)
+	}
 
 	server := api.New(st, cfg)
 	handler := api.Router(server)

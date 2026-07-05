@@ -40,6 +40,9 @@ export type NovelAIOptions = {
   provider: string;
   model: string;
   timeoutMs?: number;
+  titleEnabled?: boolean | null;
+  titleProvider?: string;
+  titleModel?: string;
 };
 
 export type NovelTranslationOptions = {

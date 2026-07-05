@@ -17,6 +17,7 @@ func userFromRecord(record *core.Record) User {
 
 func (s *Store) novelFromRecord(record *core.Record) Novel {
 	coverFile := firstString(record.GetStringSlice("cover"))
+	thumbFile := firstString(record.GetStringSlice("thumbnail"))
 	return Novel{
 		ID:                      record.Id,
 		OwnerID:                 record.GetString("owner"),
@@ -49,6 +50,8 @@ func (s *Store) novelFromRecord(record *core.Record) Novel {
 		Tags:                    jsonString(parseNovelTagsJSON(record.GetString("tags")), "[]"),
 		CoverFile:               coverFile,
 		CoverPath:               buildPBFileURL(NovelsCollection, record.Id, coverFile),
+		ThumbnailFile:           thumbFile,
+		ThumbnailPath:           buildPBFileURL(NovelsCollection, record.Id, thumbFile),
 		IsPublic:                record.GetBool("is_public"),
 		ChapterCount:            asInt(record.GetFloat("chapter_count"), 0),
 		TranslatedCount:         asInt(record.GetFloat("translated_count"), 0),

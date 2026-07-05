@@ -5,7 +5,7 @@
         <label class="small muted">URL de la novela</label>
         <InputText
           v-model="url"
-          placeholder="https://novelfire.net/book/..."
+          placeholder="https://novelphoenix.com/novel/..."
           fluid
           :disabled="loading"
           @keydown.enter="handleSearch"
@@ -52,7 +52,7 @@ const visible = computed({
   set: (value) => emit("update:open", value),
 });
 
-const supportedSites = ["novelfire.net", "novelbin.com"];
+const supportedSites = ["novelfire.net", "novelphoenix.com", "novelbin.com"];
 
 const url = ref("");
 const loading = ref(false);

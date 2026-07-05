@@ -18,8 +18,10 @@ type jobContext struct {
 	chapters          []store.Chapter
 	cfg               resolvedJobConfig
 	provider          ai.Provider
+	titleProvider     ai.Provider
 	glossaryText      string
 	baseSystemPrompt  string
+	titleSystemPrompt string
 	statsDirty        bool
 	pendingSegIndex   int
 	pendingSegDone    int
@@ -46,6 +48,15 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobConte
 	if err != nil {
 		return nil, fmt.Errorf("new AI provider: %w", err)
 	}
+	var titleProvider ai.Provider
+	if cfg.TitleAI != nil {
+		tp, err := s.newAIProvider(*cfg.TitleAI)
+		if err != nil {
+			slog.Warn("failed to create title provider, will fallback to content provider", "err", err)
+		} else {
+			titleProvider = tp
+		}
+	}
 	glossaryText := formatGlossary(cfg.Glossary)
 	baseValues := map[string]string{
 		"{SOURCE_LANG}": novel.SourceLanguage,
@@ -54,6 +65,7 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobConte
 		"{TEXT}":        "",
 	}
 	baseSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, baseValues))
+	titleSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Title.SystemPrompt, baseValues))
 	return &jobContext{
 		jobID:            job.ID,
 		runCtx:           ctx,
@@ -61,8 +73,10 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobConte
 		chapters:         chapters,
 		cfg:              cfg,
 		provider:         provider,
+		titleProvider:    titleProvider,
 		glossaryText:     glossaryText,
 		baseSystemPrompt: baseSystemPrompt,
+		titleSystemPrompt: titleSystemPrompt,
 	}, nil
 }
 
@@ -177,30 +191,65 @@ func (s *Server) translateChapterTitle(ctx context.Context, jc *jobContext, idx 
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
+	titleProvider := jc.titleProvider
+	fallbackProvider := jc.provider
+	titleModel := ""
+	if jc.cfg.TitleAI != nil {
+		titleModel = effectiveModel(*jc.cfg.TitleAI)
+	}
+	contentModel := effectiveModel(jc.cfg.AI)
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		translatedTitle, err := jc.provider.TranslateTitle(ctx, ai.TranslateTitleInput{
-			SystemPrompt:       jc.baseSystemPrompt,
-			TitleOriginal:      chapter.Title,
-			PreviousTitleOrig:  previousOriginal,
-			PreviousTitleTrans: previousTranslated,
-			SourceLanguage:     jc.novel.SourceLanguage,
-			TargetLanguage:     jc.novel.TargetLanguage,
-			Options: map[string]string{
-				"provider": jc.cfg.AI.Provider,
-				"model":    effectiveModel(jc.cfg.AI),
-			},
-		})
+		activeProvider := titleProvider
+		activeModel := titleModel
+		if activeProvider == nil {
+			activeProvider = fallbackProvider
+			activeModel = contentModel
+		}
+		translatedTitle, err := jc.callTranslateTitle(ctx, activeProvider, activeModel, chapter, previousOriginal, previousTranslated)
 		if err != nil {
-			lastErr = err
-			if attempt < maxRetries {
-				if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
-					return "", err
-				}
+			if titleProvider != nil && activeProvider == titleProvider {
+				slog.Warn("title provider failed, falling back to content provider", "err", err, "chapter", chapter.ID)
+				activeProvider = fallbackProvider
+				activeModel = contentModel
+				translatedTitle, err = jc.callTranslateTitle(ctx, activeProvider, activeModel, chapter, previousOriginal, previousTranslated)
 			}
-			continue
+			if err != nil {
+				lastErr = err
+				if attempt < maxRetries {
+					if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
+						return "", err
+					}
+				}
+				continue
+			}
 		}
 		if err := validateTranslatedTitle(translatedTitle); err != nil {
+			if titleProvider != nil && activeProvider == titleProvider {
+				slog.Warn("title provider returned invalid title, falling back to content provider", "err", err, "chapter", chapter.ID)
+				activeProvider = fallbackProvider
+				activeModel = contentModel
+				translatedTitle, err = jc.callTranslateTitle(ctx, activeProvider, activeModel, chapter, previousOriginal, previousTranslated)
+				if err != nil {
+					lastErr = err
+					if attempt < maxRetries {
+						if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
+							return "", err
+						}
+					}
+					continue
+				}
+				if err := validateTranslatedTitle(translatedTitle); err != nil {
+					lastErr = err
+					if attempt < maxRetries {
+						if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
+							return "", err
+						}
+					}
+					continue
+				}
+				return strings.TrimSpace(translatedTitle), nil
+			}
 			lastErr = err
 			if attempt < maxRetries {
 				if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
@@ -212,6 +261,21 @@ func (s *Server) translateChapterTitle(ctx context.Context, jc *jobContext, idx 
 		return strings.TrimSpace(translatedTitle), nil
 	}
 	return "", lastErr
+}
+
+func (jc *jobContext) callTranslateTitle(ctx context.Context, provider ai.Provider, model string, chapter *store.Chapter, previousOriginal, previousTranslated string) (string, error) {
+	return provider.TranslateTitle(ctx, ai.TranslateTitleInput{
+		SystemPrompt:       jc.titleSystemPrompt,
+		TitleOriginal:      chapter.Title,
+		PreviousTitleOrig:  previousOriginal,
+		PreviousTitleTrans: previousTranslated,
+		SourceLanguage:     jc.novel.SourceLanguage,
+		TargetLanguage:     jc.novel.TargetLanguage,
+		Options: map[string]string{
+			"provider": jc.cfg.AI.Provider,
+			"model":    model,
+		},
+	})
 }
 
 func (s *Server) translateSegmentText(ctx context.Context, jc *jobContext, segment chapterSegment) (string, error) {

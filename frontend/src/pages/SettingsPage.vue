@@ -40,9 +40,17 @@
                 <div style="flex: 1; min-width: 220px">
                   <label class="small muted">Modelo</label>
                   <Select
+                    v-if="modelOptions.length > 1"
                     v-model="settings.ai.model"
                     :options="modelOptions"
                     :disabled="!settings.ai.provider"
+                    fluid
+                  />
+                  <InputText
+                    v-else
+                    v-model="settings.ai.model"
+                    :disabled="!settings.ai.provider"
+                    placeholder="Ej: local-model"
                     fluid
                   />
                 </div>
@@ -65,6 +73,56 @@
               </div>
               <div class="row-wrap">
                 <FieldNumber v-model.number="timeoutSec" label="Timeout (segundos)" :min="10" wrapper-style="min-width: 180px; flex: 1" />
+              </div>
+            </div>
+          </template>
+        </Card>
+
+        <Card>
+          <template #title>Modelo para títulos</template>
+          <template #content>
+            <div class="stack-md">
+              <div class="row-between">
+                <div>
+                  <strong>Usar modelo diferente para traducir títulos</strong>
+                  <div class="small muted">Permite usar un modelo más pequeño y económico para traducir solo los títulos de los capítulos, ya que al ser una línea no requiere un modelo grande. Si falla, se usará el modelo de traducción de contenido.</div>
+                </div>
+                <ToggleSwitch v-model="titleEnabled" style="flex-shrink: 0" />
+              </div>
+              <div v-if="titleEnabled" class="row-wrap">
+                <div style="flex: 1; min-width: 220px">
+                  <label class="small muted">Proveedor para títulos</label>
+                  <Select
+                    v-model="settings.titleProvider"
+                    :options="providerOptions"
+                    optionLabel="name"
+                    optionValue="id"
+                    :loading="providersLoading"
+                    placeholder="Usar proveedor de contenido"
+                    fluid
+                    showClear
+                    @change="onTitleProviderChange"
+                  />
+                </div>
+                <div style="flex: 1; min-width: 220px">
+                  <label class="small muted">Modelo para títulos</label>
+                  <Select
+                    v-if="titleModelOptions.length > 1"
+                    v-model="settings.titleModel"
+                    :options="titleModelOptions"
+                    :disabled="!settings.titleProvider"
+                    placeholder="Usar modelo de contenido"
+                    fluid
+                    showClear
+                  />
+                  <InputText
+                    v-else
+                    v-model="settings.titleModel"
+                    :disabled="!settings.titleProvider"
+                    placeholder="Ej: local-model"
+                    fluid
+                  />
+                </div>
               </div>
             </div>
           </template>
@@ -281,6 +339,7 @@ const settings = ref<ServerSettings | null>(null);
 const prompts = ref<GeneralPromptRecord[]>([]);
 const providerApiKey = ref("");
 const timeoutSec = ref(120);
+const titleEnabled = ref(false);
 
 const workerTokens = ref<WorkerToken[]>([]);
 const workerTokensLoading = ref(false);
@@ -350,6 +409,7 @@ async function load() {
     timeoutSec.value = settingsResponse.ai.timeoutMs
       ? Math.round(settingsResponse.ai.timeoutMs / 1000)
       : 120;
+    titleEnabled.value = Boolean(settingsResponse.titleProvider);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -368,6 +428,11 @@ const modelOptions = computed(() => {
   const info = byId.value.get(settings.value.ai.provider);
   return info?.models ?? [];
 });
+const titleModelOptions = computed(() => {
+  if (!settings.value) return [] as string[];
+  const info = byId.value.get(settings.value.titleProvider);
+  return info?.models ?? [];
+});
 
 function onProviderChange() {
   if (!settings.value) return;
@@ -378,6 +443,15 @@ function onProviderChange() {
   }
   settings.value.ai.baseUrl = info.baseUrl;
   providerApiKey.value = "";
+}
+
+function onTitleProviderChange() {
+  if (!settings.value) return;
+  const info = byId.value.get(settings.value.titleProvider);
+  if (!info) return;
+  if (!info.models.includes(settings.value.titleModel)) {
+    settings.value.titleModel = info.defaultModel;
+  }
 }
 
 async function replaceKey() {
@@ -415,6 +489,10 @@ async function save() {
   error.value = null;
   try {
     settings.value.ai.timeoutMs = timeoutSec.value * 1000;
+    if (!titleEnabled.value) {
+      settings.value.titleProvider = "";
+      settings.value.titleModel = "";
+    }
     settings.value = await api.settings.update(settings.value);
     applyTheme(settings.value.theme);
     await Promise.all([

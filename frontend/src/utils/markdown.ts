@@ -16,7 +16,9 @@ function renderInlineMarkdown(input: string): string {
 }
 
 export function markdownToHtml(markdown: string): string {
-  let text = escapeHtml((markdown || "").replace(/\r\n/g, "\n"));
+  let text = (markdown || "").replace(/\r\n/g, "\n");
+  text = text.replace(/\\([*_~`#>[\]])/g, "$1");
+  text = escapeHtml(text);
   text = text.replace(/^### (.*)$/gm, "<h3>$1</h3>");
   text = text.replace(/^## (.*)$/gm, "<h2>$1</h2>");
   text = text.replace(/^# (.*)$/gm, "<h1>$1</h1>");

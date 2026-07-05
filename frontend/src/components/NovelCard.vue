@@ -1,9 +1,9 @@
 <template>
   <article class="library-card" role="listitem">
     <RouterLink
-      :to="`/novels/${novel.id}/read`"
+      :to="`/novels/${novel.id}`"
       class="library-cover-link"
-      :aria-label="`Leer ${getNovelDisplayTitle(novel)}`"
+      :aria-label="`Ver detalle de ${getNovelDisplayTitle(novel)}`"
     >
       <div class="library-cover">
         <img
@@ -160,7 +160,8 @@ defineEmits<{
 
 .novel-series-badge {
   display: inline-block;
-  background: var(--surface-muted);
+  background: var(--surface-elevated);
+  border: 1px solid var(--divide);
   padding: 0.0625rem 0.375rem;
   border-radius: var(--radius-sm);
   font-size: 0.6875rem;
