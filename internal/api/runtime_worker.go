@@ -251,13 +251,17 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}); err != nil {
 		return fmt.Errorf("set job running: %w", err)
 	}
+
 	parser := dl.FindParser(opts.URL)
-	if parser == nil {
+	needsProxy := parser == nil || noveldownloader.IsBrowserRequiredSite(opts.URL)
+
+	if parser == nil && !s.HasBrowserWorker() {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
 			slog.Error("update job status on unsupported URL", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("unsupported URL: %s", opts.URL)
 	}
+
 	completed := 0
 	failed := 0
 	for idx, chInfo := range opts.Chapters {
@@ -269,16 +273,42 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 				return err
 			}
 		}
+
+		var ch *noveldownloader.Chapter
+		var downloadErr error
 		chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
-		downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
-		if err != nil {
+
+		if parser != nil {
+			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
+			if err != nil && needsProxy && s.HasBrowserWorker() {
+				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
+				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+				downloaded, err = proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
+			}
+			if err != nil {
+				downloadErr = err
+			} else if len(downloaded) > 0 {
+				ch = &downloaded[0]
+			}
+		} else if s.HasBrowserWorker() {
+			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+			downloaded, err := proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
+			if err != nil {
+				downloadErr = err
+			} else if len(downloaded) > 0 {
+				ch = &downloaded[0]
+			}
+		} else {
+			downloadErr = fmt.Errorf("no download method available")
+		}
+
+		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil
 			}
 			failed++
-			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", err)
-		} else if len(downloaded) > 0 {
-			ch := downloaded[0]
+			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", downloadErr)
+		} else if ch != nil {
 			chOrder := chInfo.Order
 			if chOrder <= 0 {
 				chOrder = opts.StartOrder + idx

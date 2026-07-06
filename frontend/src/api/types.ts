@@ -291,3 +291,13 @@ export type BatchTranslateStartResponse = {
   jobs: BatchTranslateJobResult[];
   totalPending: number;
 };
+
+export type WorkerToken = {
+  id: string;
+  userId: string;
+  extensionId: string;
+  label: string;
+  lastUsedAt?: string;
+  createdAt?: string;
+  revoked: boolean;
+};

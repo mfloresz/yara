@@ -20,6 +20,7 @@ const (
 	JobsCollection                 = "translation_jobs"
 	EpubsCollection                = "epubs"
 	ReadingProgressCollection      = "reading_progress"
+	WorkerTokensCollection         = "worker_tokens"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -78,6 +79,9 @@ func (s *Store) EnsureSchema() error {
 		return err
 	}
 	if _, err := s.ensureReadingProgressCollection(users, novels); err != nil {
+		return err
+	}
+	if _, err := s.ensureWorkerTokensCollection(users); err != nil {
 		return err
 	}
 	if err := s.seedProviders(); err != nil {

@@ -215,6 +215,87 @@
             </Accordion>
           </template>
         </Card>
+
+        <Card>
+          <template #title>Tokens de Browser Worker</template>
+          <template #content>
+            <div class="stack-md">
+              <p class="small muted" style="margin: 0">
+                Tokens de autenticación para la extensión del navegador. Cada token está vinculado a tu cuenta y puede ser revocado en cualquier momento.
+              </p>
+              
+              <div v-if="workerTokensLoading" style="text-align: center; padding: 1rem">
+                <ProgressSpinner style="width: 24px; height: 24px" strokeWidth="4" />
+              </div>
+              
+              <div v-else-if="workerTokens.length === 0" class="empty-tokens">
+                <p>No hay tokens activos. Usa la extensión del navegador para autenticarte.</p>
+              </div>
+              
+              <DataTable v-else :value="workerTokens" size="small">
+                <Column field="label" header="Etiqueta" />
+                <Column field="extensionId" header="Extensión">
+                  <template #body="{ data }">
+                    <span class="mono small">{{ data.extensionId.substring(0, 12) }}...</span>
+                  </template>
+                </Column>
+                <Column field="createdAt" header="Creado">
+                  <template #body="{ data }">
+                    {{ formatDate(data.createdAt) }}
+                  </template>
+                </Column>
+                <Column field="lastUsedAt" header="Último uso">
+                  <template #body="{ data }">
+                    {{ data.lastUsedAt ? formatDate(data.lastUsedAt) : 'Nunca' }}
+                  </template>
+                </Column>
+                <Column field="revoked" header="Estado">
+                  <template #body="{ data }">
+                    <Tag :severity="data.revoked ? 'danger' : 'success'" :value="data.revoked ? 'Revocado' : 'Activo'" />
+                  </template>
+                </Column>
+                <Column header="Acciones" style="width: 120px">
+                  <template #body="{ data }">
+                    <div class="row-gap" v-if="!data.revoked">
+                      <Button 
+                        icon="pi pi-ban" 
+                        severity="warn" 
+                        text 
+                        rounded 
+                        size="small"
+                        v-tooltip.top="'Revocar'"
+                        :loading="revokingTokenId === data.id"
+                        @click="revokeToken(data.id)" 
+                      />
+                      <Button 
+                        icon="pi pi-trash" 
+                        severity="danger" 
+                        text 
+                        rounded 
+                        size="small"
+                        v-tooltip.top="'Eliminar'"
+                        :loading="deletingTokenId === data.id"
+                        @click="deleteToken(data.id)" 
+                      />
+                    </div>
+                  </template>
+                </Column>
+              </DataTable>
+              
+              <div class="row-wrap" style="margin-top: 0.5rem">
+                <Button 
+                  label="Recargar" 
+                  icon="pi pi-refresh" 
+                  severity="secondary" 
+                  outlined 
+                  size="small"
+                  :loading="workerTokensLoading"
+                  @click="loadWorkerTokens" 
+                />
+              </div>
+            </div>
+          </template>
+        </Card>
       </template>
     </div>
   </AppLayout>
@@ -238,11 +319,13 @@ import AccordionPanel from "primevue/accordionpanel";
 import AccordionHeader from "primevue/accordionheader";
 import AccordionContent from "primevue/accordioncontent";
 import Select from "primevue/select";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { applyTheme } from "@/app/auth";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
-import type { GeneralPromptRecord, ServerSettings } from "@/api/types";
+import type { GeneralPromptRecord, ServerSettings, WorkerToken } from "@/api/types";
 
 const toast = useToast();
 const { api, loadProviders } = useAppServices();
@@ -258,6 +341,11 @@ const providerApiKey = ref("");
 const timeoutSec = ref(120);
 const titleEnabled = ref(false);
 
+const workerTokens = ref<WorkerToken[]>([]);
+const workerTokensLoading = ref(false);
+const revokingTokenId = ref<string | null>(null);
+const deletingTokenId = ref<string | null>(null);
+
 const themeOptions = [
   { label: "Sistema", value: "system" },
   { label: "Claro", value: "light" },
@@ -266,7 +354,45 @@ const themeOptions = [
 
 onMounted(() => {
   void load();
+  void loadWorkerTokens();
 });
+
+async function loadWorkerTokens() {
+  workerTokensLoading.value = true;
+  try {
+    workerTokens.value = await api.workerTokens.list();
+  } catch (err) {
+    console.error("Failed to load worker tokens:", err);
+  } finally {
+    workerTokensLoading.value = false;
+  }
+}
+
+async function revokeToken(tokenId: string) {
+  revokingTokenId.value = tokenId;
+  try {
+    await api.workerTokens.revoke(tokenId);
+    await loadWorkerTokens();
+    toast.add({ severity: "success", summary: "Token revocado", life: 2500 });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    revokingTokenId.value = null;
+  }
+}
+
+async function deleteToken(tokenId: string) {
+  deletingTokenId.value = tokenId;
+  try {
+    await api.workerTokens.delete(tokenId);
+    await loadWorkerTokens();
+    toast.add({ severity: "success", summary: "Token eliminado", life: 2500 });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    deletingTokenId.value = null;
+  }
+}
 
 async function load() {
   loading.value = true;
