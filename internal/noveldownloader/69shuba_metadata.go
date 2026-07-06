@@ -194,6 +194,8 @@ func (s *sixtyNineShuba) extractChaptersFromInfoPage(doc *goquery.Document) []Ch
 			href = sixtyNineShubaBaseURL + href
 		}
 
+		href = ensureChapterExtension(href)
+
 		chapters = append(chapters, ChapterURL{
 			Title: title,
 			URL:   href,
@@ -251,6 +253,8 @@ func (s *sixtyNineShuba) fetchChapterList(ctx context.Context, client HTTPClient
 				href = sixtyNineShubaBaseURL + href
 			}
 
+			href = ensureChapterExtension(href)
+
 			chapters = append(chapters, ChapterURL{
 				Title: title,
 				URL:   href,
@@ -278,6 +282,7 @@ func (s *sixtyNineShuba) fetchChapterList(ctx context.Context, client HTTPClient
 				if !strings.HasPrefix(href, "http") {
 					href = sixtyNineShubaBaseURL + href
 				}
+				href = ensureChapterExtension(href)
 				chapters = append(chapters, ChapterURL{
 					Title: title,
 					URL:   href,
@@ -313,4 +318,13 @@ func (s *sixtyNineShuba) getWordCount(html string) int {
 		}
 	}
 	return 0
+}
+
+func ensureChapterExtension(url string) string {
+	// 69shuba recently removed the .html extension from /txt/ chapter URLs.
+	// Strip it if present — the extensionless URL is the canonical form.
+	if strings.Contains(url, "/txt/") {
+		return strings.TrimSuffix(url, ".html")
+	}
+	return url
 }

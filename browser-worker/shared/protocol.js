@@ -3,6 +3,7 @@ export const MessageType = {
   JOB_REQUEST: 'job_request',
   PING: 'ping',
   CANCEL_JOB: 'cancel_job',
+  REGISTER_RESPONSE: 'register_response',
 
   // Extension -> Server
   JOB_RESULT: 'job_result',

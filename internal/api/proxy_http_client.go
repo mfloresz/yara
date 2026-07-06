@@ -13,6 +13,10 @@ import (
 // ProxyHTTPClient implements noveldownloader.HTTPClient by fetching pages
 // through the Browser Worker extension. This allows the Go parsers to work
 // on Cloudflare-protected sites without any site-specific JS in the extension.
+//
+// All calls are serialized through the browser job queue (EnqueueBrowserJob),
+// which guarantees sequential execution — critical for Cloudflare challenge
+// handling.
 type ProxyHTTPClient struct {
 	server *Server
 }
@@ -22,14 +26,15 @@ func NewProxyHTTPClient(s *Server) *ProxyHTTPClient {
 }
 
 func (c *ProxyHTTPClient) Fetch(ctx context.Context, url string) ([]byte, error) {
-	result, err := c.server.fetchViaBrowserWorker(url, 120)
+	result, err := c.server.EnqueueBrowserJob("fetch_page", url, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("proxy fetch: %w", err)
 	}
-	if result.HTML == "" {
+	html := getStringFromData(result.Data, "html")
+	if html == "" {
 		return nil, fmt.Errorf("proxy returned empty HTML for %s", url)
 	}
-	return []byte(result.HTML), nil
+	return []byte(html), nil
 }
 
 func (c *ProxyHTTPClient) FetchDocument(ctx context.Context, url string) (*goquery.Document, error) {

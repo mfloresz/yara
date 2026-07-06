@@ -15,6 +15,15 @@ import (
 	"translator-server/internal/store"
 )
 
+// BrowserJob is a browser worker request waiting to be dispatched.
+// The Result channel is written to by the consumer goroutine and read
+// by the caller that originally enqueued the job.
+type BrowserJob struct {
+	Request BrowserWorkerJobRequest
+	Result  chan *BrowserWorkerJobResult
+	UserID  string
+}
+
 type Server struct {
 	Store                  *store.Store
 	Cfg                    *config.Config
@@ -27,17 +36,20 @@ type Server struct {
 	DownloaderFactory      func() *noveldownloader.Downloader
 	previewCacheMu         sync.RWMutex
 	previewCache           map[string]previewCacheEntry
-	browserWorkerResultCh  chan *BrowserWorkerJobResult
+	browserQueue           chan BrowserJob
+	pendingBrowserJobs     map[string]chan *BrowserWorkerJobResult
+	pendingBrowserJobsMu   sync.Mutex
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {
 	s := &Server{
-		Store:                 st,
-		Cfg:                   cfg,
-		queuedJobs:            map[string]struct{}{},
-		jobCancels:            map[string]context.CancelFunc{},
-		previewCache:          make(map[string]previewCacheEntry),
-		browserWorkerResultCh: make(chan *BrowserWorkerJobResult, 64),
+		Store:              st,
+		Cfg:                cfg,
+		queuedJobs:         map[string]struct{}{},
+		jobCancels:         map[string]context.CancelFunc{},
+		previewCache:       make(map[string]previewCacheEntry),
+		browserQueue:       make(chan BrowserJob, 64),
+		pendingBrowserJobs: make(map[string]chan *BrowserWorkerJobResult),
 	}
 	s.DownloaderFactory = func() *noveldownloader.Downloader {
 		dl := noveldownloader.NewDownloader()
@@ -52,6 +64,7 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		return dl
 	}
 	s.startJobWorker()
+	go s.processBrowserJobs()
 	return s
 }
 
@@ -161,7 +174,7 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 			return e.BadRequestError("no browser worker connected", nil)
 		}
 
-		result, err := s.fetchViaBrowserWorker(body.URL, timeout)
+		result, err := s.fetchViaBrowserWorker(body.URL, timeout, "")
 		if err != nil {
 			if err == ErrBrowserWorkerTimeout {
 				return e.BadRequestError("timeout waiting for browser worker", nil)
@@ -184,7 +197,7 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	})
 
 	registerAuthRoutes(router, s)
-	registerWorkerAuthProtectedRoutes(router.Group("/api"), s)
+	registerWorkerAuthPublicRoutes(router, s)
 	registerProtectedRoutes(router, s)
 	registerStaticHandler(router, s.Cfg.StaticDir)
 }
@@ -194,6 +207,7 @@ func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Ser
 	api.Bind(loadAuthFromCookie())
 	api.Bind(apis.RequireAuth())
 
+	registerWorkerAuthProtectedRoutes(api, s)
 	registerSettingsRoutes(api, s)
 	registerProviderRoutes(api, s)
 	registerPromptRoutes(api, s)

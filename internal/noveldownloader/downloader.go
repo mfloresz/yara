@@ -100,7 +100,7 @@ func (d *Downloader) DownloadChapter(ctx context.Context, chapterURL string) (*C
 		if err != nil {
 			return nil, fmt.Errorf("converting to markdown: %w", err)
 		}
-		chapter.Markdown = stripLeadingTitle(cleanMarkdown(markdown))
+		chapter.Markdown = stripLeadingTitle(cleanMarkdown(markdown), chapter.Title)
 	}
 	return chapter, nil
 }
@@ -176,7 +176,9 @@ func (d *Downloader) SleepBetweenChapters(ctx context.Context) error {
 // content when it looks like a duplicate of the chapter title.
 // Some sites (novelfire, novelbin) inject the chapter title as a heading
 // inside the content body, causing a duplicate title in the stored content.
-func stripLeadingTitle(content string) string {
+// It also removes the first line if it matches the chapter title (with or
+// without numeric prefixes like "1." or "01.").
+func stripLeadingTitle(content, chapterTitle string) string {
 	trimmed := strings.TrimLeft(content, "\n\t ")
 	if trimmed == "" {
 		return ""
@@ -194,7 +196,35 @@ func stripLeadingTitle(content string) string {
 		}
 		return ""
 	}
+	// Check if the first line matches the chapter title (exact or without numeric prefix)
+	if chapterTitle != "" && matchesTitle(first, chapterTitle) {
+		if len(lines) > 1 {
+			return strings.TrimSpace(lines[1])
+		}
+		return ""
+	}
 	return content
+}
+
+// matchesTitle checks if text matches the chapter title, either exactly
+// or after removing common numeric prefixes like "1.", "01.", etc.
+func matchesTitle(text, title string) bool {
+	if text == title {
+		return true
+	}
+	// Try removing numeric prefix from title (e.g., "1.第1章" -> "第1章")
+	trimmedTitle := strings.TrimLeft(title, "0123456789.")
+	trimmedTitle = strings.TrimSpace(trimmedTitle)
+	if trimmedTitle != "" && text == trimmedTitle {
+		return true
+	}
+	// Try removing numeric prefix from text
+	trimmedText := strings.TrimLeft(text, "0123456789.")
+	trimmedText = strings.TrimSpace(trimmedText)
+	if trimmedText != "" && trimmedText == trimmedTitle {
+		return true
+	}
+	return false
 }
 
 func cleanMarkdown(markdown string) string {

@@ -11,6 +11,26 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
+// fetchViaBrowserWorker sends a fetch_page job through the browser job queue.
+// All requests are serialized (FIFO) through a single goroutine, which
+// guarantees sequential page loads — critical for Cloudflare session handling.
+func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int, userID string) (*ProxyFetchResult, error) {
+	params := map[string]interface{}{
+		"timeout": timeoutSec,
+	}
+	result, err := s.EnqueueBrowserJob("fetch_page", url, params, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ProxyFetchResult{
+		URL:    url,
+		Title:  getStringFromData(result.Data, "title"),
+		HTML:   getStringFromData(result.Data, "html"),
+		Text:   getStringFromData(result.Data, "text"),
+		Status: "ok",
+	}, nil
+}
+
 // registerProxyRoutes registers the raw HTML proxy endpoint.
 func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/proxy/fetch", func(e *core.RequestEvent) error {
@@ -38,7 +58,7 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			return e.BadRequestError("no browser worker connected", nil)
 		}
 
-		result, err := s.fetchViaBrowserWorker(body.URL, timeout)
+		result, err := s.fetchViaBrowserWorker(body.URL, timeout, e.Auth.Id)
 		if err != nil {
 			if err == ErrBrowserWorkerTimeout {
 				return e.BadRequestError("timeout waiting for browser worker", nil)
@@ -56,74 +76,6 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	})
 }
 
-func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int) (*ProxyFetchResult, error) {
-	browserWorkersMu.RLock()
-	var worker *BrowserWorker
-	for _, w := range browserWorkers {
-		if w.Conn != nil {
-			worker = w
-			break
-		}
-	}
-	browserWorkersMu.RUnlock()
-
-	if worker == nil {
-		return nil, ErrNoBrowserWorker
-	}
-
-	jobID := generateJobID()
-	req := BrowserWorkerJobRequest{
-		JobID:     jobID,
-		Operation: "fetch_page",
-		URL:       url,
-		Params:    map[string]interface{}{"timeout": timeoutSec},
-	}
-
-	payload, _ := json.Marshal(req)
-	msg := BrowserWorkerMessage{
-		Type:      "job_request",
-		Payload:   payload,
-		Timestamp: time.Now().UnixMilli(),
-	}
-
-	worker.mu.Lock()
-	err := worker.Conn.WriteJSON(msg)
-	worker.mu.Unlock()
-
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Info("sent fetch job to browser worker", "workerId", worker.ID, "jobId", jobID, "url", url)
-
-	timeout := time.After(time.Duration(timeoutSec) * time.Second)
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			return nil, ErrBrowserWorkerTimeout
-		case result := <-s.browserWorkerResultCh:
-			if result.JobID == jobID {
-				if result.Status != "ok" {
-					return nil, &BrowserWorkerError{msg: "browser worker error: " + result.Status}
-				}
-				return &ProxyFetchResult{
-					URL:    url,
-					Title:  getStringFromData(result.Data, "title"),
-					HTML:   getStringFromData(result.Data, "html"),
-					Text:   getStringFromData(result.Data, "text"),
-					Status: "ok",
-				}, nil
-			}
-			s.browserWorkerResultCh <- result
-		case <-ticker.C:
-			continue
-		}
-	}
-}
-
 type ProxyFetchResult struct {
 	URL    string `json:"url"`
 	Title  string `json:"title"`
@@ -138,3 +90,7 @@ func getStringFromData(data map[string]interface{}, key string) string {
 	}
 	return ""
 }
+
+// Ensure unused imports are referenced.
+var _ = json.Marshal
+var _ = time.Now

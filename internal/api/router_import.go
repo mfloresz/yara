@@ -269,13 +269,17 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		var firstChapter []noveldownloader.Chapter
 		dl := s.DownloaderFactory()
 		parser := dl.FindParser(body.URL)
-		useProxy := (parser == nil || noveldownloader.IsBrowserRequiredSite(body.URL)) && s.HasBrowserWorker()
 
-		if useProxy {
+		if parser != nil {
+			firstChapter, err = dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
+			if err != nil && s.HasBrowserWorker() {
+				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
+				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+				firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
+			}
+		} else if s.HasBrowserWorker() {
 			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
 			firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
-		} else if parser != nil {
-			firstChapter, err = dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
 		} else {
 			return e.InternalServerError("failed to download first chapter", fmt.Errorf("no download method available"))
 		}

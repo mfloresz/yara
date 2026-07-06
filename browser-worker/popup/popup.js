@@ -33,14 +33,16 @@ async function init() {
   serverAddrInput.value = config.serverAddr;
   autoConnectCheckbox.checked = config.autoConnect;
 
-  const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-  updateUI(response.state, response.connected);
-
   const tokenData = await getWorkerToken();
   updateAuthUI(tokenData);
 
+  const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+  updateUI(response.state, response.connected, tokenData);
+
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'STATE_CHANGED') updateUI(msg.state);
+    if (msg.type === 'STATE_CHANGED') {
+      getWorkerToken().then(td => updateUI(msg.state, null, td));
+    }
     if (msg.type === 'CHALLENGE_DETECTED') showChallenge(msg.url, msg.tabId);
     if (msg.type === 'AUTH_COMPLETE') {
       getWorkerToken().then(updateAuthUI);
@@ -48,19 +50,27 @@ async function init() {
   });
 }
 
-function updateUI(state, connected) {
+async function updateUI(state, connected, tokenData) {
+  if (!tokenData) tokenData = await getWorkerToken();
+  const hasToken = !!(tokenData && tokenData.token);
+
   statusEl.className = `status-bar ${state}`;
   statusText.textContent = stateNames[state] || state;
 
   const isConnected = state === 'connected' || state === 'downloading' || connected;
-  btnConnect.disabled = isConnected;
-  btnDisconnect.disabled = !isConnected;
 
-  if (state === 'unauthenticated') {
+  if (!hasToken) {
     authPanel.classList.remove('hidden');
     btnConnect.disabled = true;
+    btnDisconnect.disabled = true;
+  } else if (state === 'unauthenticated') {
+    authPanel.classList.remove('hidden');
+    btnConnect.disabled = true;
+    btnDisconnect.disabled = !isConnected;
   } else {
     authPanel.classList.add('hidden');
+    btnConnect.disabled = isConnected;
+    btnDisconnect.disabled = !isConnected;
   }
 
   if (state === 'connected' || state === 'downloading') {
@@ -124,6 +134,13 @@ btnAuth.addEventListener('click', async () => {
 btnConnect.addEventListener('click', async () => {
   const addr = serverAddrInput.value.trim();
   if (!addr) return;
+
+  const tokenData = await getWorkerToken();
+  if (!tokenData || !tokenData.token) {
+    authPanel.classList.remove('hidden');
+    return;
+  }
+
   errorPanel.classList.add('hidden');
   await setConfig({ serverAddr: addr, autoConnect: autoConnectCheckbox.checked });
   chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', config: { serverAddr: addr, autoConnect: autoConnectCheckbox.checked } });

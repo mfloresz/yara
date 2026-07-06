@@ -253,19 +253,13 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}
 
 	parser := dl.FindParser(opts.URL)
-	useProxy := (parser == nil || noveldownloader.IsBrowserRequiredSite(opts.URL)) && s.HasBrowserWorker()
+	needsProxy := parser == nil || noveldownloader.IsBrowserRequiredSite(opts.URL)
 
-	if parser == nil && !useProxy {
+	if parser == nil && !s.HasBrowserWorker() {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
 			slog.Error("update job status on unsupported URL", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("unsupported URL: %s", opts.URL)
-	}
-
-	// If using proxy, create a downloader that fetches through the browser
-	var proxyDL *noveldownloader.Downloader
-	if useProxy {
-		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
 	}
 
 	completed := 0
@@ -284,7 +278,20 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		var downloadErr error
 		chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
 
-		if useProxy {
+		if parser != nil {
+			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
+			if err != nil && needsProxy && s.HasBrowserWorker() {
+				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
+				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+				downloaded, err = proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
+			}
+			if err != nil {
+				downloadErr = err
+			} else if len(downloaded) > 0 {
+				ch = &downloaded[0]
+			}
+		} else if s.HasBrowserWorker() {
+			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
 			downloaded, err := proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
 			if err != nil {
 				downloadErr = err
@@ -292,12 +299,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 				ch = &downloaded[0]
 			}
 		} else {
-			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
-			if err != nil {
-				downloadErr = err
-			} else if len(downloaded) > 0 {
-				ch = &downloaded[0]
-			}
+			downloadErr = fmt.Errorf("no download method available")
 		}
 
 		if downloadErr != nil {

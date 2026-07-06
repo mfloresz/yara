@@ -90,6 +90,7 @@ func (s *Store) ValidateWorkerToken(token string) (*WorkerToken, error) {
 	record := records[0]
 	ownerID := record.GetString("owner")
 
+	record.Set("last_used_at", time.Now().Format(time.RFC3339))
 	if err := s.App.Save(record); err != nil {
 		return nil, fmt.Errorf("update last used: %w", err)
 	}

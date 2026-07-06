@@ -49,20 +49,6 @@ func main() {
 		slog.Error("failed to ensure schema", "error", err)
 		os.Exit(1)
 	}
-	// if cfg.MigrateDB {
-	// 	log.Printf("running database migrations")
-	// 	if err := st.RunDatabaseMigrations(); err != nil {
-	// 		log.Fatal(err)
-	// 	}
-	// } else {
-	// 	needsMigration, err := st.NeedsDatabaseMigration()
-	// 	if err != nil {
-	// 		log.Fatal(err)
-	// 	}
-	// 	if needsMigration {
-	// 		log.Fatal("legacy novel schema/data detected; run ./translator-server --migrate-db before starting the server")
-	// 	}
-	// }
 
 	if *migrateThumbnails {
 		slog.Info("running thumbnail migration")

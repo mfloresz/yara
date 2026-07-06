@@ -40,6 +40,14 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 			return e.BadRequestError("extension_id is required", nil)
 		}
 
+		cookie, err := e.Request.Cookie(authCookieName)
+		if err != nil || cookie.Value == "" {
+			return e.HTML(http.StatusOK, loginRequiredHTML())
+		}
+		if _, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth); err != nil {
+			return e.HTML(http.StatusOK, loginRequiredHTML())
+		}
+
 		state := generateState()
 		pendingAuthsMu.Lock()
 		pendingAuths[state] = &pendingAuth{
@@ -80,6 +88,19 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 			"label":       validated.Label,
 		})
 	})
+
+	router.GET("/api/worker-auth/callback", func(e *core.RequestEvent) error {
+		token := e.Request.URL.Query().Get("token")
+		userID := e.Request.URL.Query().Get("user")
+		if token == "" || userID == "" {
+			return e.BadRequestError("missing token or user", nil)
+		}
+
+		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		e.Response.WriteHeader(http.StatusOK)
+		e.Response.Write([]byte(callbackSuccessHTML(token, userID)))
+		return nil
+	})
 }
 
 func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
@@ -113,7 +134,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 			return e.InternalServerError("failed to create token", err)
 		}
 
-		callbackURL := fmt.Sprintf("chrome-extension://%s/auth.html?token=%s&user=%s", pending.ExtensionID, plaintext, e.Auth.Id)
+		callbackURL := fmt.Sprintf("/api/worker-auth/callback?token=%s&user=%s", plaintext, e.Auth.Id)
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		e.Response.WriteHeader(http.StatusOK)
 		page := approvalSuccessHTML(label, callbackURL)
@@ -129,6 +150,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 		if err := s.Store.RevokeWorkerToken(e.Auth.Id, tokenID); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		CloseWorkerByTokenID(tokenID)
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
@@ -140,6 +162,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 		if err := s.Store.DeleteWorkerToken(e.Auth.Id, tokenID); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		CloseWorkerByTokenID(tokenID)
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
@@ -360,10 +383,9 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
         <h1>Conexión Autorizada</h1>
         <p>{{.Label}} está conectada a tu cuenta.</p>
         <div class="label">Puedes cerrar esta pestaña.</div>
-        <a href="{{.CallbackURL}}" class="btn">Volver a la Extensión</a>
     </div>
     <script>
-        setTimeout(function() { window.location.href = "{{.CallbackURL}}"; }, 1500);
+        setTimeout(function() { window.location.href = "{{.CallbackURL}}"; }, 1000);
     </script>
 </body>
 </html>`))
@@ -375,6 +397,161 @@ func approvalSuccessHTML(label, callbackURL string) string {
 		"CallbackURL": callbackURL,
 	})
 	return buf.String()
+}
+
+func loginRequiredHTML() string {
+	return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sesión Requerida</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 420px;
+            width: 90%;
+            text-align: center;
+        }
+        .icon {
+            width: 64px;
+            height: 64px;
+            background: #7c2d12;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+        }
+        .icon svg {
+            width: 32px;
+            height: 32px;
+            stroke: #fb923c;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        p {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 24px;
+            background: #3b82f6;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: #2563eb; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+        </div>
+        <h1>Sesión Requerida</h1>
+        <p>Debes iniciar sesión en Yara primero para autorizar la extensión del navegador.</p>
+        <a href="/#/login" class="btn">Iniciar Sesión</a>
+    </div>
+</body>
+</html>`
+}
+
+func callbackSuccessHTML(token, userID string) string {
+	return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autenticación Completa</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 420px;
+            width: 90%;
+            text-align: center;
+        }
+        .icon {
+            width: 64px;
+            height: 64px;
+            background: #166534;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+        }
+        .icon svg {
+            width: 32px;
+            height: 32px;
+            stroke: #4ade80;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        p {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </div>
+        <h1>Autenticación Completa</h1>
+        <p>La extensión del navegador está conectada. Puedes cerrar esta pestaña.</p>
+    </div>
+    <script>setTimeout(function() { window.close(); }, 2000);</script>
+</body>
+</html>`
 }
 
 func init() {

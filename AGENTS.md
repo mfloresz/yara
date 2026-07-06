@@ -130,6 +130,64 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 - Frontend uses `vue-router` and the `appServicesKey` provide/inject pattern (`frontend/src/app/services.ts`) for cross-page state. New composables live in `frontend/src/composables/`; new pages in `frontend/src/pages/`. The dev proxy in `frontend/vite.config.ts` proxies `/api` and `/ai` to the Go backend — both are required because some routes are mounted at the root level by PocketBase.
 - Don't add `//nolint`, doc-comments explaining obvious code, or new top-level `cmd/...` binaries without checking with the user — the project ships a single binary and the planning docs flag god-object growth as the main risk.
 
+## Database migrations
+
+When a new feature breaks backward compatibility with existing data (schema changes, data backfills, field renames, etc.), use a **manual migration flag** instead of adding auto-migration logic to `EnsureSchema()`.
+
+### When to create a migration flag
+
+- New required fields that need default values for existing records
+- Data transformations (e.g., splitting fields, restructuring JSON)
+- Renaming/removing collections or fields
+- Any change that would break the server if old data is present
+
+### Implementation pattern
+
+1. **Add flag** to `internal/config/config.go`:
+   ```go
+   MigrateX bool
+   // ...
+   flag.BoolVar(&cfg.MigrateX, "migrate-x", false, "description of what this migration does")
+   ```
+
+2. **Create migration function** in `internal/store/store_db_migrations.go`:
+   ```go
+   func (s *Store) RunXMigration() error {
+       // migration logic
+   }
+   ```
+
+3. **Handle flag in main.go** (after `EnsureSchema`, before server start):
+   ```go
+   if *migrateX {
+       slog.Info("running X migration")
+       if err := st.RunXMigration(); err != nil {
+           slog.Error("X migration failed", "error", err)
+           os.Exit(1)
+       }
+       slog.Info("X migration finished, exiting")
+       os.Exit(0)
+   }
+   ```
+
+4. **Document in changelog** under "⚠️ Breaking changes":
+   ```
+   - Run `./bin/translator-server --migrate-x` before starting the server
+   ```
+
+### User workflow
+
+```bash
+# Stop old server, start new version with migration flag
+./bin/translator-server --migrate-x
+# Output: "X migration finished, exiting"
+
+# Start server normally
+./bin/translator-server
+```
+
+This keeps migration code isolated, avoids boot-time overhead for non-migration runs, and gives users explicit control over when data transformations happen.
+
 ## Frontend is a pure consumer
 
 All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA that only renders state and fires HTTP requests — it does not run jobs, parse EPUBs, call AI providers, or own any business rules. Anything that feels like "real work" (translation, refinement, cleaning, scoring, scheduling, downloading) belongs in `internal/api` / `internal/store` / `internal/ai` / `internal/noveldownloader` / `internal/epubimport`. When extending a feature, push the logic into a new backend handler/store method and have the frontend call it; do not duplicate the logic in TypeScript.
@@ -140,6 +198,6 @@ All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA 
 - New persistence field → `internal/store/store_schema.go` (collection def) + relevant `store_*.go` (record mapping in `store_mapping.go` and persistence) + `internal/store/settings.go` (struct type if it's a domain object).
 - New AI provider → `internal/ai/registry.go` (catalog entry; sets `GoAIOptions` like `useResponsesAPI` and `strictJsonSchema`) and verify `internal/ai/openai.go` honors those options.
 - New job operation → extend the switch in `internal/api/runtime_worker.go` (`enqueueJob`) and add a `runtime_*.go` workflow file. Status transitions live in `store_jobs.go`; the worker respects `cancelled` / `done` / `failed` short-circuits.
-- Schema/migration change → prefer `ensureField` over touching raw collection JSON; for data backfills add to `EnsureSchema` after the new fields are in place.
+- Schema/migration change → prefer `ensureField` over touching raw collection JSON; for breaking changes with existing data, use the manual migration flag pattern (see `## Database migrations`).
 - Anything that touches the persisted collection names in `internal/store/store.go` (e.g. `NovelsCollection`) is a breaking change for existing `data/` directories.
 

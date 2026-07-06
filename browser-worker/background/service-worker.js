@@ -3,7 +3,6 @@ import { getConfig, setConfig, getWorkerToken } from '../shared/storage.js';
 
 let ws = null;
 let state = WorkerState.DISCONNECTED;
-let heartbeatTimer = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
@@ -25,6 +24,29 @@ async function init() {
   const config = await getConfig();
   if (config.autoConnect) connect();
   chrome.runtime.onMessage.addListener(handleInternalMessage);
+  chrome.tabs.onUpdated.addListener(handleTabUpdate);
+}
+
+function handleTabUpdate(tabId, changeInfo, tab) {
+  if (changeInfo.status !== 'complete') return;
+  const url = tab.url || '';
+  const match = url.match(/\/api\/worker-auth\/callback\?token=([^&]+)&user=([^&]+)/);
+  if (!match) return;
+
+  const token = decodeURIComponent(match[1]);
+  const userId = decodeURIComponent(match[2]);
+  log('Auth callback detected, saving token...');
+
+  chrome.storage.local.set({
+    workerToken: token,
+    workerUserId: userId,
+    workerConnectedAt: new Date().toISOString()
+  }, () => {
+    chrome.tabs.remove(tabId).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'auth_complete', token, userId }).catch(() => {});
+    disconnect();
+    connect();
+  });
 }
 
 function handleInternalMessage(msg, sender, sendResponse) {
@@ -79,12 +101,10 @@ async function connect() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      log('WebSocket connected');
-      setState(WorkerState.CONNECTED);
+      log('WebSocket connected, waiting for registration...');
+      setState(WorkerState.CONNECTING);
       reconnectDelay = 1000;
       sendRegister(tokenData.token);
-      startHeartbeat(config.heartbeatInterval);
-      broadcastState();
     };
 
     ws.onmessage = (event) => {
@@ -96,7 +116,6 @@ async function connect() {
     ws.onclose = (event) => {
       log('WebSocket closed:', event.code);
       setState(WorkerState.DISCONNECTED);
-      stopHeartbeat();
       broadcastState();
       if (!event.wasClean) scheduleReconnect();
     };
@@ -111,7 +130,6 @@ async function connect() {
 
 function disconnect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  stopHeartbeat();
   if (ws) { ws.close(1000, 'User disconnect'); ws = null; }
   setState(WorkerState.DISCONNECTED);
   broadcastState();
@@ -124,19 +142,6 @@ function scheduleReconnect() {
     connect();
   }, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
-}
-
-function startHeartbeat(interval) {
-  stopHeartbeat();
-  heartbeatTimer = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(createMessage(MessageType.HEARTBEAT, { state, timestamp: Date.now() }));
-    }
-  }, interval || 5000);
-}
-
-function stopHeartbeat() {
-  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
 function sendRegister(token) {
@@ -155,6 +160,17 @@ function sendRegister(token) {
 
 async function handleServerMessage(msg) {
   switch (msg.type) {
+    case MessageType.REGISTER_RESPONSE:
+      if (msg.payload.ok) {
+        log('Registration successful');
+        setState(WorkerState.CONNECTED);
+        broadcastState();
+      } else {
+        warn('Registration failed:', msg.payload.error);
+        setState(WorkerState.UNAUTHENTICATED);
+        broadcastState();
+      }
+      break;
     case MessageType.JOB_REQUEST:
       await handleJobRequest(msg.payload);
       break;
@@ -168,7 +184,7 @@ async function handleServerMessage(msg) {
 
 // ── Job handler ────────────────────────────────────────────────────
 async function handleJobRequest(payload) {
-  const { jobId, url, params } = payload;
+  const { jobId, url, params = {} } = payload;
   log(`Job ${jobId}: fetch_page ${url}`);
   setState(WorkerState.DOWNLOADING);
 
@@ -228,7 +244,42 @@ async function tryBackgroundFetch(url) {
       return null;
     }
 
-    const html = await resp.text();
+    // Detect charset from Content-Type header or HTML <meta> tag, then
+    // decode manually with TextDecoder. Using resp.text() would rely only
+    // on the HTTP header charset, ignoring <meta charset="gbk"> in the
+    // HTML body — sites like 69shuba serve GBK-encoded pages without a
+    // charset in the HTTP header, so resp.text() would garble them.
+    const buffer = await resp.arrayBuffer();
+    let charset = 'utf-8';
+
+    // 1. Check Content-Type header for charset
+    const contentType = resp.headers.get('content-type') || '';
+    const csMatch = contentType.match(/charset\s*=\s*([^;]+)/i);
+    if (csMatch) {
+      charset = csMatch[1].trim().toLowerCase();
+    }
+
+    // 2. If still utf-8, peek at raw bytes for <meta charset="gbk">
+    if (charset === 'utf-8' || charset === 'utf8') {
+      const peekLen = Math.min(4096, buffer.byteLength);
+      const peekBytes = new Uint8Array(buffer, 0, peekLen);
+      // Decode as windows-1252 (one-byte-per-char) so GBK non-ASCII bytes
+      // don't interfere. The ASCII subset is identical across all these
+      // encodings, so "charset=gbk" reads the same in raw bytes.
+      const peekStr = new TextDecoder('windows-1252').decode(peekBytes);
+      if (/charset\s*=\s*["']?\s*gb/i.test(peekStr)) {
+        charset = 'gbk';
+      }
+    }
+
+    let html;
+    try {
+      html = new TextDecoder(charset, { fatal: false }).decode(buffer);
+    } catch (e) {
+      log(`TextDecoder failed for charset "${charset}", falling back to utf-8`, e);
+      html = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+    }
+
     const lowerHtml = html.toLowerCase();
 
     // Check for Cloudflare / challenge indicators
@@ -305,17 +356,58 @@ async function fetchViaChallengeTab(url, maxWait) {
           await sleep(3000);
           continue;
         }
-        log('Challenge solved, extracting HTML...');
-        const results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => ({
-            html: document.documentElement.outerHTML,
-            text: document.body.innerText,
-            title: document.title,
-            url: window.location.href,
-          }),
-        });
-        return results[0]?.result || { html: '', text: '', title: '', url };
+        log('Challenge solved, waiting for redirects to settle...');
+        // Wait a few seconds for any post-challenge redirects to complete
+        // (many sites redirect after cf_clearance is set).
+        await sleep(4000);
+
+        // Verify the page actually loaded (not another challenge)
+        const verifyChallenge = await checkForChallenge(tab.id);
+        if (verifyChallenge) {
+          log('Page still shows challenge after wait, continuing to poll...');
+          await sleep(3000);
+          continue;
+        }
+
+        log('Challenge fully resolved, extracting HTML...');
+
+        // Log the current tab URL for diagnostics
+        const tabInfo2 = await chrome.tabs.get(tab.id);
+        log(`Tab URL before extraction: ${tabInfo2.url}`);
+
+        // Retry extraction up to 3 times — the tab might still be settling.
+        let data = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => ({
+                html: document.documentElement.outerHTML,
+                text: document.body.innerText,
+                title: document.title,
+                url: window.location.href,
+              }),
+            });
+            data = results[0]?.result;
+            if (data && data.html && data.html.length > 100) {
+              log(`Extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes)`);
+              break;
+            }
+            log(`Extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, retrying...`);
+            await sleep(2000);
+          } catch (e) {
+            err(`Extraction attempt ${attempt + 1} failed:`, e);
+            await sleep(2000);
+          }
+        }
+
+        // Close the challenge tab — cf_clearance cookie persists in the
+        // browser's cookie store regardless of whether the tab is open.
+        try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+        challengeTabId = null;
+        challengeOrigin = null;
+
+        return data || { html: '', text: '', title: '', url };
       }
       await sleep(500);
     } catch (e) {
