@@ -3,6 +3,7 @@ package noveldownloader
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"strings"
 
@@ -165,7 +166,9 @@ func (p *BrowserWorkerProvider) ParseChapter(ctx context.Context, url string) (*
 		if err != nil {
 			slog.Warn("browser worker failed to convert to markdown", "error", err)
 		} else {
-			chapter.Markdown = strings.TrimSpace(markdown)
+			// Mirror DownloadChapter: the converter escapes in-text angle
+			// brackets, so unescape to keep literal characters in the markdown.
+			chapter.Markdown = strings.TrimSpace(html.UnescapeString(markdown))
 		}
 	}
 

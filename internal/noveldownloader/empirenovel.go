@@ -2,6 +2,8 @@ package noveldownloader
 
 import (
 	"context"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -9,6 +11,12 @@ import (
 )
 
 var empireNovelBaseURL = "https://www.empirenovel.com"
+
+// chapterDateRe matches a publication date that some chapter listings append
+// directly to the chapter title (e.g. "Chapter 7Jun 24, 2026" — the date has
+// no separator from the title). It is stripped so the stored chapter title is
+// just "Chapter 7".
+var chapterDateRe = regexp.MustCompile(`(?i)(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?,?\s+\d{4}`)
 
 type empirenovelParser struct{}
 
@@ -183,7 +191,37 @@ func (p *empirenovelParser) fetchAllChapterURLs(ctx context.Context, client HTTP
 		extractChaptersFromDoc(doc, novelURL, seen, &allChapters)
 	}
 
+	// The source lists chapters newest-first (descending). Sort ascending by
+	// chapter number so the returned slice order matches the chapter ordering
+	// the rest of the app expects (position N ≈ chapter N), which keeps
+	// range-based downloads (startChapter..endChapter) correct.
+	sort.SliceStable(allChapters, func(i, j int) bool {
+		return empireNovelChapterNumber(allChapters[i].URL) < empireNovelChapterNumber(allChapters[j].URL)
+	})
+
 	return allChapters
+}
+
+func empireNovelChapterNumber(urlStr string) int {
+	u := strings.TrimSuffix(urlStr, "/")
+	idx := strings.LastIndex(u, "/")
+	if idx == -1 {
+		return 0
+	}
+	suffix := u[idx+1:]
+	// Parse the leading integer so range-style suffixes (e.g. "420-421")
+	// still sort by their starting chapter.
+	for i, c := range suffix {
+		if c < '0' || c > '9' {
+			suffix = suffix[:i]
+			break
+		}
+	}
+	n, err := strconv.Atoi(suffix)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func (p *empirenovelParser) findTotalPages(doc *goquery.Document) int {
@@ -241,6 +279,9 @@ func extractChaptersFromDoc(doc *goquery.Document, novelURL string, seen map[str
 		if idx := strings.Index(title, "\n"); idx != -1 {
 			title = strings.TrimSpace(title[:idx])
 		}
+		// Strip a publication date that may be glued to the title with no
+		// separator (e.g. "Chapter 7Jun 24, 2026").
+		title = chapterDateRe.ReplaceAllString(title, "")
 		// Remove redundant "Chapter N" prefix if it appears twice
 		title = strings.Join(strings.Fields(title), " ")
 

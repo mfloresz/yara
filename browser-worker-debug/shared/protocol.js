@@ -9,6 +9,7 @@ export const MessageType = {
   JOB_RESULT: 'job_result',
   PONG: 'pong',
   HEARTBEAT: 'heartbeat',
+  HEARTBEAT_ACK: 'heartbeat_ack',
   REGISTER: 'register',
 
   // Internal

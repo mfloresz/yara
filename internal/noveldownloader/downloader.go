@@ -1,8 +1,10 @@
 package noveldownloader
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"math/rand"
 	"net/http"
@@ -87,7 +89,11 @@ func (d *Downloader) GetNovelInfo(ctx context.Context, url string) (*NovelInfo, 
 	if parser == nil {
 		return nil, fmt.Errorf("unsupported URL: %s", url)
 	}
-	return parser.GetNovelInfo(ctx, d.client, url)
+	info, err := parser.GetNovelInfo(ctx, d.client, url)
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 func (d *Downloader) DownloadChapter(ctx context.Context, chapterURL string) (*Chapter, error) {
@@ -104,6 +110,11 @@ func (d *Downloader) DownloadChapter(ctx context.Context, chapterURL string) (*C
 		if err != nil {
 			return nil, fmt.Errorf("converting to markdown: %w", err)
 		}
+		// The HTML->Markdown converter escapes in-text angle brackets
+		// (&lt;…&gt;). Unescape so the stored markdown holds the literal
+		// characters; the EPUB pipeline re-escapes them with escapeXML and
+		// the translation step sees clean text instead of entities.
+		markdown = html.UnescapeString(markdown)
 		chapter.Markdown = stripLeadingTitle(cleanMarkdown(markdown), chapter.Title)
 	}
 	return chapter, nil
@@ -272,5 +283,39 @@ func (d *Downloader) DownloadCover(ctx context.Context, coverURL string) ([]byte
 	if mimeType == "" {
 		mimeType = "image/jpeg"
 	}
+	// The browser-worker proxy always returns page text, so for a
+	// hotlink-protected or redirecting cover URL it can hand back a small
+	// HTML placeholder/error page instead of the actual image bytes. Storing
+	// that as the cover corrupts it and makes thumbnail generation fail.
+	// Reject payloads that are not real image data before persisting.
+	if !isLikelyImage(body) {
+		return nil, "", fmt.Errorf("downloaded cover is not a valid image (content-type %q, %d bytes)", mimeType, len(body))
+	}
 	return body, mimeType, nil
+}
+
+// isLikelyImage reports whether data begins with a known image file signature.
+// Used to reject HTML error/placeholder pages that the proxy may return for
+// cover URLs instead of the binary image.
+func isLikelyImage(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	// JPEG: FF D8 FF
+	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return true
+	}
+	// PNG: 89 50 4E 47
+	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return true
+	}
+	// GIF: 47 49 46 38 ("GIF8")
+	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x38 {
+		return true
+	}
+	// WEBP: RIFF....WEBP
+	if len(data) >= 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+		return true
+	}
+	return false
 }

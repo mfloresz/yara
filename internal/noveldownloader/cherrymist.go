@@ -3,7 +3,6 @@ package noveldownloader
 import (
 	"context"
 	"encoding/base64"
-	"html"
 	"net/url"
 	"regexp"
 	"strings"
@@ -261,9 +260,12 @@ func (p *cherrymistParser) decryptContent(doc *goquery.Document) string {
 		decodedStr = string(decoded)
 	}
 
-	// Decode HTML entities (&lt; → <, &gt; → >, etc.) so the markdown
-	// converter receives actual characters instead of escaped text.
-	return html.UnescapeString(decodedStr)
+	// Keep the HTML entities escaped. The decoded blob is already valid
+	// HTML where in-text angle brackets are stored as &lt;…&gt; while
+	// structural tags remain real. Feeding it escaped to the downstream
+	// html-to-markdown converter lets its HTML parser treat &lt;…&gt; as
+	// literal text instead of stripping it as an unknown tag.
+	return decodedStr
 }
 
 // rot13Decode applies ROT13 to alphabetic characters.

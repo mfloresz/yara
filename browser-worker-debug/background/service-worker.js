@@ -16,6 +16,8 @@ const err = (msg, ...args) => console.error(`[DebugWorker] ${msg}`, ...args);
 
 const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MS = 20000;
+const STALE_THRESHOLD_MS = 60000;
+let lastTraffic = 0;
 
 async function init() {
   log('Initializing (DEBUG mode - no auth required)...');
@@ -42,6 +44,14 @@ async function keepAlive() {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     log('KeepAlive: socket not open, reconnecting...');
     reconnectDelay = 1000;
+    connect();
+    return;
+  }
+
+  if (lastTraffic > 0 && Date.now() - lastTraffic > STALE_THRESHOLD_MS) {
+    log('KeepAlive: no traffic from server, reconnecting...');
+    reconnectDelay = 1000;
+    disconnect();
     connect();
     return;
   }
@@ -103,6 +113,7 @@ async function connect() {
     };
 
     ws.onmessage = (event) => {
+      lastTraffic = Date.now();
       const msg = parseMessage(event.data);
       if (!msg) return;
       handleServerMessage(msg);
@@ -173,13 +184,30 @@ async function handleServerMessage(msg) {
     case MessageType.PING:
       ws.send(createMessage(MessageType.PONG, { timestamp: Date.now() }));
       break;
+    case MessageType.HEARTBEAT_ACK:
+      lastTraffic = Date.now();
+      break;
     case MessageType.CANCEL_JOB:
       break;
   }
 }
 
 async function handleJobRequest(payload) {
-  const { jobId, url, params = {} } = payload;
+  const { jobId, url, operation, params = {} } = payload;
+  if (operation === 'fetch_image') {
+    log(`Job ${jobId}: fetch_image ${url}`);
+    setState(WorkerState.DOWNLOADING);
+    try {
+      const result = await fetchImage(url, params);
+      sendJobResult(jobId, JobStatus.OK, result);
+    } catch (e) {
+      err(`Job ${jobId} fetch_image failed:`, e);
+      sendJobResult(jobId, JobStatus.ERROR, { error: e.message });
+    } finally {
+      setState(WorkerState.CONNECTED);
+    }
+    return;
+  }
   log(`Job ${jobId}: fetch_page ${url}`);
   setState(WorkerState.DOWNLOADING);
 
@@ -193,6 +221,168 @@ async function handleJobRequest(payload) {
   } finally {
     setState(WorkerState.CONNECTED);
   }
+}
+
+// Fetches a binary image (e.g. a novel cover) through the browser so it
+// inherits site cookies such as cf_clearance. Hosts that hotlink- or
+// Cloudflare-protect their images return a 403 challenge to a plain HTTP GET,
+// but the authenticated browser resolves to the real bytes. The image is
+// returned base64-encoded because the WebSocket transport carries JSON.
+//
+// Strategy mirrors how a human loads the cover: the background fetch() shares
+// cookies but is still flagged by Cloudflare's bot checks, so on failure we
+// fall back to a hidden tab (a real navigation that passes the checks) and
+// read the bytes from the page context.
+async function fetchImage(url, params = {}) {
+  const maxWait = (params.timeout || 120) * 1000;
+  try {
+    return await fetchImageBackground(url);
+  } catch (e) {
+    log(`fetch_image background failed (${e.message}), falling back to tab`);
+    return await fetchImageViaTab(url, maxWait);
+  }
+}
+
+async function fetchImageBackground(url) {
+  const resp = await fetch(url, {
+    credentials: 'include',
+    headers: {
+      'User-Agent': navigator.userAgent,
+      'Accept': 'image/avif,image/webp,image/apng,image/png,image/*,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': new URL(url).origin + '/',
+    },
+  });
+  if (!resp.ok) {
+    let snippet = '';
+    try { snippet = (await resp.text()).slice(0, 200); } catch { /* ignore */ }
+    throw new Error(`HTTP ${resp.status} :: ${snippet}`);
+  }
+  const buffer = await resp.arrayBuffer();
+  const { dataBase64 } = bytesToBase64(buffer);
+  const contentType = resp.headers.get('content-type') || '';
+  log(`fetch_image (background) succeeded for ${url} (${buffer.byteLength} bytes, ${contentType})`);
+  return { dataBase64, contentType, url, size: buffer.byteLength };
+}
+
+// Opens a hidden tab to the image (a real navigation that satisfies
+// Cloudflare) and extracts the raw bytes from the page context. Falls back to
+// a canvas re-encode if the in-page fetch is blocked.
+async function fetchImageViaTab(url, maxWait) {
+  const parsed = new URL(url);
+  const origin = parsed.origin;
+  const startTime = Date.now();
+
+  let tab;
+  if (challengeTabId !== null && challengeOrigin === origin) {
+    try {
+      tab = await chrome.tabs.get(challengeTabId);
+      await chrome.tabs.update(tab.id, { url, active: false });
+    } catch {
+      challengeTabId = null; challengeOrigin = null;
+      tab = await chrome.tabs.create({ url, active: false });
+      challengeTabId = tab.id; challengeOrigin = origin;
+    }
+  } else {
+    if (challengeTabId !== null) { try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ } }
+    tab = await chrome.tabs.create({ url, active: false });
+    challengeTabId = tab.id; challengeOrigin = origin;
+  }
+
+  const cleanup = async () => {
+    try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+    challengeTabId = null; challengeOrigin = null;
+  };
+
+  while (Date.now() - startTime < maxWait) {
+    let tabInfo;
+    try { tabInfo = await chrome.tabs.get(tab.id); } catch { break; }
+    if (tabInfo.status === 'complete') {
+      const isChallenge = await checkForChallenge(tab.id);
+      if (isChallenge) {
+        log('fetch_image tab hit Cloudflare challenge, waiting for user...');
+        chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
+        await sleep(3000);
+        continue;
+      }
+
+      // 1. In-page fetch (lossless, same-origin, carries cf_clearance).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              try {
+                const run = async () => {
+                  const resp = await fetch(self.location.href, { credentials: 'include', cache: 'force-cache' });
+                  if (!resp.ok) return { error: 'page fetch ' + resp.status };
+                  const buf = await resp.arrayBuffer();
+                  const bytes = new Uint8Array(buf);
+                  let binary = '';
+                  const c = 0x8000;
+                  for (let i = 0; i < bytes.length; i += c) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + c));
+                  return { dataBase64: btoa(binary), contentType: resp.headers.get('content-type') || 'image/jpeg', size: bytes.length };
+                };
+                return run();
+              } catch (e) { return { error: e.message }; }
+            },
+          });
+          const r = results[0]?.result;
+          if (r && r.dataBase64) { await cleanup(); return r; }
+          if (r && r.error) log(`tab image page-fetch error (attempt ${attempt + 1}): ${r.error}`);
+        } catch (e) {
+          err(`fetch_image tab script failed (attempt ${attempt + 1}):`, e);
+        }
+        await sleep(2000);
+      }
+
+      // 2. Canvas fallback (re-encodes; last resort).
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const img = document.querySelector('img');
+            if (!img) return { error: 'no img element' };
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png');
+            return { dataUrl, contentType: 'image/png' };
+          },
+        });
+        const r = results[0]?.result;
+        if (r && r.dataUrl) {
+          const dataBase64 = r.dataUrl.split(',')[1] || '';
+          await cleanup();
+          log(`fetch_image (canvas fallback) succeeded for ${url} (${dataBase64.length} b64 chars)`);
+          return { dataBase64, contentType: r.contentType, url, size: Math.floor(dataBase64.length * 3 / 4) };
+        }
+      } catch (e) {
+        err('fetch_image canvas fallback failed:', e);
+      }
+
+      await cleanup();
+      throw new Error('failed to extract image bytes from tab');
+    }
+    await sleep(500);
+  }
+
+  await cleanup();
+  throw new Error('timeout loading image tab');
+}
+
+// Converts an ArrayBuffer to a base64 string using chunked String.fromCharCode
+// to avoid call-stack limits on large images.
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return { dataBase64: btoa(binary), contentType: '' };
 }
 
 function sendJobResult(jobId, status, data) {
@@ -382,7 +572,7 @@ async function checkForChallenge(tabId) {
         const b = (document.body?.innerText || '').toLowerCase();
         const indicators = [
           'just a moment', 'checking your browser', 'verifying you are human',
-          'challenge', 'cloudflare', 'cf-challenge', 'ray id',
+          'cf-challenge', 'ray id',
           'attention required', 'access denied',
         ];
         if (indicators.some(i => t.includes(i) || b.includes(i))) return true;

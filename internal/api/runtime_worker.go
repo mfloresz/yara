@@ -5,10 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
+
+// chapterDownloadMaxRetries is how many extra attempts are made when a single
+// chapter download fails transiently (e.g. a Cloudflare challenge that the
+// browser worker could not solve on the first try). A single transient
+// failure must not drop the chapter permanently from the novel.
+const chapterDownloadMaxRetries = 3
+
+// chapterDownloadRetryBaseDelay scales the backoff between retries: attempt n
+// waits n * baseDelay before retrying.
+const chapterDownloadRetryBaseDelay = 5 * time.Second
 
 func (s *Server) startJobWorker() {
 	s.downloadQueue = make(chan string, 128)
@@ -263,6 +274,10 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 
 	completed := 0
 	failed := 0
+	var proxyDL *noveldownloader.Downloader
+	if parser == nil && s.HasBrowserWorker() {
+		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+	}
 	for idx, chInfo := range opts.Chapters {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -273,29 +288,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			}
 		}
 
-		var ch *noveldownloader.Chapter
-		var downloadErr error
-		chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
-
-		if parser != nil {
-			// Fallback to proxy is handled automatically by LazyFallbackClient
-			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
-			if err != nil {
-				downloadErr = err
-			} else if len(downloaded) > 0 {
-				ch = &downloaded[0]
-			}
-		} else if s.HasBrowserWorker() {
-			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
-			downloaded, err := proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
-			if err != nil {
-				downloadErr = err
-			} else if len(downloaded) > 0 {
-				ch = &downloaded[0]
-			}
-		} else {
-			downloadErr = fmt.Errorf("no download method available")
-		}
+		ch, downloadErr := s.downloadChapterWithRetry(ctx, dl, proxyDL, parser, chInfo, job.ID)
 
 		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -354,4 +347,54 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		"completedChapters": completed,
 		"failedChapters":    failed,
 	})
+}
+
+// downloadChapterWithRetry downloads a single chapter, retrying transient
+// failures (Cloudflare challenges, timeouts, empty responses) a few times
+// with a small backoff before giving up. A single transient failure should
+// not permanently drop a chapter from the novel.
+func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *noveldownloader.Downloader, parser noveldownloader.Parser, chInfo store.DownloadChapterInfo, jobID string) (*noveldownloader.Chapter, error) {
+	chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
+	var lastErr error
+	for attempt := 0; attempt <= chapterDownloadMaxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt) * chapterDownloadRetryBaseDelay
+			slog.Warn("retrying chapter download after transient failure",
+				"jobId", jobID, "chapter", chInfo.Title, "attempt", attempt+1,
+				"maxAttempts", chapterDownloadMaxRetries+1, "backoff", backoff, "error", lastErr)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+
+		var downloaded []noveldownloader.Chapter
+		var err error
+		switch {
+		case parser != nil:
+			// Fallback to proxy is handled automatically by LazyFallbackClient
+			downloaded, err = dl.DownloadChapters(ctx, chURLs, 1, 1)
+		case s.HasBrowserWorker():
+			localProxy := proxyDL
+			if localProxy == nil {
+				localProxy = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+			}
+			downloaded, err = localProxy.DownloadChapters(ctx, chURLs, 1, 1)
+		default:
+			return nil, fmt.Errorf("no download method available")
+		}
+
+		if err == nil && len(downloaded) > 0 {
+			return &downloaded[0], nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("empty download result for %s", chInfo.URL)
+		}
+	}
+	return nil, lastErr
 }
