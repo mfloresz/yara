@@ -253,7 +253,6 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}
 
 	parser := dl.FindParser(opts.URL)
-	needsProxy := parser == nil || noveldownloader.IsBrowserRequiredSite(opts.URL)
 
 	if parser == nil && !s.HasBrowserWorker() {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
@@ -279,12 +278,8 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
 
 		if parser != nil {
+			// Fallback to proxy is handled automatically by LazyFallbackClient
 			downloaded, err := dl.DownloadChapters(ctx, chURLs, 1, 1)
-			if err != nil && needsProxy && s.HasBrowserWorker() {
-				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
-				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
-				downloaded, err = proxyDL.DownloadChapters(ctx, chURLs, 1, 1)
-			}
 			if err != nil {
 				downloadErr = err
 			} else if len(downloaded) > 0 {

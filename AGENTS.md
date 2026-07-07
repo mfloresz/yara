@@ -22,6 +22,9 @@ Layout:
 - `internal/epubimport/`, `internal/noveldownloader/` — pure parsers/scrappers with no HTTP or store dependencies.
 - `frontend/` — Vue 3 + Vite + PrimeVue SPA. Vite dev port is fixed at 5175 and proxies `/api` and `/ai` to the Go backend on `127.0.0.1:5176`.
 - `frontend_embed.go` — `package translatorserver`, `//go:embed all:frontend/dist`. The Go import alias `translatorserver "translator-server"` (note: matches the module name, NOT the kebab-case path) is what makes the embed reachable from `internal/api`.
+- `browser-worker/` — Chrome extension (Manifest V3) that proxies HTTP requests through a real browser to bypass Cloudflare. Requires user authentication via `/api/worker-auth/`.
+- `browser-worker-debug/` — Debug version of the browser worker extension. **No authentication required**. Uses a standalone debug proxy server (port 5177). For development/testing with Cloudflare-protected sites. Install as unpacked extension in Chrome developer mode.
+- `cmd/debug-proxy/` — Standalone micro-server for debug browser worker. Listens on `:5177`, accepts WebSocket connections without auth, and exposes `POST /api/proxy/fetch` to relay requests through the connected extension. Used for parser development against Cloudflare-protected sites.
 - `docs/` — historical planning notes (`pocketbase-multiuser-plan.md`, `go-backend-refactor-plan.md`). Treat as context, not current truth.
 - `test/` — gitignored fixtures (EPUBs, chapter text) used by some manual tests. Not used by `go test`.
 - `data/` — runtime PocketBase SQLite + uploaded files. Gitignored.
@@ -37,6 +40,63 @@ All commands are run from the repo root unless noted.
 - Run the server: `./bin/translator-server` (defaults: `:5176`, `./data` next to binary) or `go run ./cmd/server --addr :5176 --data-dir ./data`.
 - Dev loop — terminal 1 `cd frontend && npm run dev` (port 5175, proxies `/api` and `/ai` to `127.0.0.1:5176`); terminal 2 `go run ./cmd/server --addr :5176 --data-dir ./data`.
 - If you change the frontend, re-run `make build` (or `npm run build` in `frontend/`) so `frontend/dist/` reflects your changes. `frontend_embed.go` embeds that directory; stale builds silently serve the old SPA.
+
+## Debug proxy for Cloudflare-protected sites
+
+When adding or debugging parsers for sites protected by Cloudflare, use the debug proxy workflow. This lets the agent fetch real HTML through the user's browser without needing auth tokens.
+
+### When to use
+
+- **Adding a new site** that is behind Cloudflare (detectable by "Just a moment", "Checking your browser", Turnstile challenges, etc.)
+- **Debugging a parser** that fails with HTTP errors on Cloudflare-protected sites
+- The user explicitly mentions a site is behind Cloudflare
+
+### Workflow
+
+1. **Start the debug proxy** (agent runs this):
+   ```bash
+   go run ./cmd/debug-proxy &
+   ```
+   Output shows: `Debug proxy listening on :5177`
+
+2. **User opens Chrome** with the `browser-worker-debug` extension installed. The extension auto-connects to `ws://localhost:5177/ws/browser-worker-debug`. Verify connection:
+   ```bash
+   curl -s http://localhost:5177/api/workers
+   ```
+
+3. **Fetch pages** through the proxy:
+   ```bash
+   curl -s -X POST http://localhost:5177/api/proxy/fetch \
+     -H "Content-Type: application/json" \
+     -d '{"url": "https://example.com/novel/", "timeout": 120}'
+   ```
+   Returns: `{ "status": "ok", "data": { "html": "...", "title": "...", "url": "..." } }`
+
+4. **If Cloudflare challenge appears**, the extension opens a background tab. The user solves the challenge once. Subsequent fetches to the same origin use cached cookies automatically.
+
+5. **When done**, kill the proxy: `pkill -9 -f debug-proxy`
+
+### Key details
+
+- Debug proxy runs on port **5177** (separate from the main server on 5176)
+- The `browser-worker-debug` extension uses separate storage (`yara_browser_worker_debug`) — no conflict with the production extension
+- The proxy accepts connections without auth — it's a standalone dev tool
+- After debugging, the user does `make build` and tests with the production extension (which requires auth)
+
+### If no parser exists yet
+
+1. Fetch the novel info page via proxy to get the HTML structure
+2. Inspect the HTML to understand the site's layout (chapter list, pagination, etc.)
+3. Write the parser in `internal/noveldownloader/`
+4. Register it in the parser catalog
+5. Test with: `go test -short ./internal/noveldownloader/...`
+
+### If a parser already exists but fails
+
+1. Fetch the page via proxy to see what the real HTML looks like
+2. Compare with what the parser expects
+3. Fix the parser's selectors/regex
+4. Test again
 
 ## Release preparation
 

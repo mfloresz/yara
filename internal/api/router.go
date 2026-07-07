@@ -52,7 +52,16 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		pendingBrowserJobs: make(map[string]chan *BrowserWorkerJobResult),
 	}
 	s.DownloaderFactory = func() *noveldownloader.Downloader {
-		dl := noveldownloader.NewDownloader()
+		directClient := noveldownloader.NewHTTPClient()
+		var client noveldownloader.HTTPClient = directClient
+
+		// Wrap with lazy fallback if browser worker might be available
+		if s.HasBrowserWorker() {
+			checker := NewBrowserWorkerChecker(s)
+			client = noveldownloader.NewLazyFallbackClient(directClient, checker)
+		}
+
+		dl := noveldownloader.NewDownloaderWithClient(client)
 		if cfg != nil {
 			if cfg.DownloadMinDelayMs > 0 {
 				dl.MinChapterDelay = time.Duration(cfg.DownloadMinDelayMs) * time.Millisecond

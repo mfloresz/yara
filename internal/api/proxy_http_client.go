@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"translator-server/internal/noveldownloader"
 )
 
 // ProxyHTTPClient implements noveldownloader.HTTPClient by fetching pages
@@ -67,3 +68,23 @@ var _ interface {
 	FetchDocument(ctx context.Context, url string) (*goquery.Document, error)
 	Do(req *http.Request) (*http.Response, error)
 } = (*ProxyHTTPClient)(nil)
+
+// BrowserWorkerCheckerImpl implements noveldownloader.BrowserWorkerChecker.
+type BrowserWorkerCheckerImpl struct {
+	server *Server
+}
+
+func NewBrowserWorkerChecker(s *Server) *BrowserWorkerCheckerImpl {
+	return &BrowserWorkerCheckerImpl{server: s}
+}
+
+func (c *BrowserWorkerCheckerImpl) HasBrowserWorker() bool {
+	return c.server.HasBrowserWorker()
+}
+
+func (c *BrowserWorkerCheckerImpl) NewProxyHTTPClient() noveldownloader.HTTPClient {
+	return NewProxyHTTPClient(c.server)
+}
+
+// Ensure interface compliance at compile time.
+var _ noveldownloader.BrowserWorkerChecker = (*BrowserWorkerCheckerImpl)(nil)

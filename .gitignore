@@ -13,3 +13,4 @@ app.key
 .env
 docs/refine-process.md
 scripts/*
+debug-proxy
