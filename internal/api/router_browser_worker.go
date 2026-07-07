@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -209,6 +211,13 @@ func (s *Server) handleWorkerMessage(worker *BrowserWorker, msg *BrowserWorkerMe
 			return
 		}
 		s.deliverBrowserJobResult(worker, &result)
+
+	case "heartbeat":
+		// Lightweight liveness ack so the extension can detect a dead/half-open
+		// server (its outbound send() may succeed even when the server is gone).
+		s.sendWorkerMessage(worker, "heartbeat_ack", map[string]interface{}{
+			"timestamp": time.Now().UnixMilli(),
+		})
 	}
 }
 
@@ -254,7 +263,7 @@ func (s *Server) deliverBrowserJobResult(worker *BrowserWorker, result *BrowserW
 	slog.Info("browser worker job result", attrs...)
 
 	s.pendingBrowserJobsMu.Lock()
-	ch, ok := s.pendingBrowserJobs[result.JobID]
+	pj, ok := s.pendingBrowserJobs[result.JobID]
 	s.pendingBrowserJobsMu.Unlock()
 
 	if !ok {
@@ -262,13 +271,19 @@ func (s *Server) deliverBrowserJobResult(worker *BrowserWorker, result *BrowserW
 		return
 	}
 
-	// Non-blocking send: if the caller timed out and closed the channel,
-	// this drops the result silently instead of blocking.
-	select {
-	case ch <- result:
-	default:
-		slog.Warn("browser worker result channel closed (caller timed out), dropping", "jobId", result.JobID)
+	// Cancel the safety-net timeout for this job: a real result arrived, so
+	// the 5-minute timeout goroutine must not fire later and log a false
+	// "timed out" warning.
+	if pj.cancel != nil {
+		pj.cancel()
 	}
+
+	// Resolve exactly once. If the timeout already won the race and resolved
+	// this job, this is a no-op (the caller already moved on).
+	pj.resolveOnce.Do(func() {
+		pj.result <- result
+		close(pj.result)
+	})
 }
 
 // ── FIFO consumer goroutine ────────────────────────────────────────────────
@@ -305,12 +320,11 @@ func (s *Server) dispatchBrowserJob(job BrowserJob) {
 
 	if worker == nil {
 		slog.Warn("no browser worker available for job", "jobId", job.Request.JobID)
-		job.Result <- &BrowserWorkerJobResult{
+		s.resolvePending(job.Request.JobID, &BrowserWorkerJobResult{
 			JobID:  job.Request.JobID,
 			Status: "error",
 			Data:   map[string]interface{}{"error": "no browser worker connected"},
-		}
-		close(job.Result)
+		})
 		return
 	}
 
@@ -328,12 +342,11 @@ func (s *Server) dispatchBrowserJob(job BrowserJob) {
 	if err != nil {
 		slog.Error("failed to send job to browser worker",
 			"workerId", worker.ID, "jobId", job.Request.JobID, "error", err)
-		job.Result <- &BrowserWorkerJobResult{
+		s.resolvePending(job.Request.JobID, &BrowserWorkerJobResult{
 			JobID:  job.Request.JobID,
 			Status: "error",
 			Data:   map[string]interface{}{"error": err.Error()},
-		}
-		close(job.Result)
+		})
 		return
 	}
 
@@ -346,26 +359,51 @@ func (s *Server) dispatchBrowserJob(job BrowserJob) {
 	// Timeout handler runs in background — processBrowserJobs must not block
 	// waiting for the timeout so it can process the next job in the queue.
 	//
-	// EnqueueBrowserJob reads the result from job.Result and returns once
-	// deliverBrowserJobResult sends it. The timeout handler closes the channel
-	// after 5 minutes as a safety net if the worker never responds.
-	// deliverBrowserJobResult uses non-blocking send so closed-channel panics
-	// cannot happen.
+	// EnqueueBrowserJob reads the result from the pending job's channel and
+	// returns once deliverBrowserJobResult sends it. The timeout handler
+	// resolves with an error after 5 minutes as a safety net if the worker
+	// never responds. deliverBrowserJobResult cancels the underlying context
+	// when a real result arrives, so this goroutine exits early and never
+	// logs a false "timed out" warning for a job that already succeeded.
+	//
+	// The context is looked up from the pending map so it is the exact one
+	// EnqueueBrowserJob created and deliverBrowserJobResult will cancel.
+	timeoutCtx := context.Background()
+	if pj, ok := s.lookupPendingJob(job.Request.JobID); ok && pj.ctx != nil {
+		timeoutCtx = pj.ctx
+	}
 	go func() {
 		select {
+		case <-timeoutCtx.Done():
+			return
 		case <-time.After(5 * time.Minute):
 			slog.Warn("browser worker job timed out", "jobId", job.Request.JobID)
-			select {
-			case job.Result <- &BrowserWorkerJobResult{
+			s.resolvePending(job.Request.JobID, &BrowserWorkerJobResult{
 				JobID:  job.Request.JobID,
 				Status: "error",
 				Data:   map[string]interface{}{"error": "browser worker job timed out (5m)"},
-			}:
-			default:
-			}
+			})
 		}
-		close(job.Result)
 	}()
+}
+
+// resolvePending sends result to the pending job's channel and closes it, but
+// only if no other caller (the real result or a previous timeout) has already
+// resolved it. Returns true if this call performed the resolution.
+func (s *Server) resolvePending(jobID string, result *BrowserWorkerJobResult) bool {
+	s.pendingBrowserJobsMu.Lock()
+	pj, ok := s.pendingBrowserJobs[jobID]
+	s.pendingBrowserJobsMu.Unlock()
+	if !ok {
+		return false
+	}
+	resolved := false
+	pj.resolveOnce.Do(func() {
+		pj.result <- result
+		close(pj.result)
+		resolved = true
+	})
+	return resolved
 }
 
 // ── Public enqueue API ─────────────────────────────────────────────────────
@@ -401,17 +439,21 @@ func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]inte
 		Params:    params,
 	}
 
+	// Context whose cancellation stops the safety-net timeout once a real
+	// result is delivered (see deliverBrowserJobResult).
+	jobCtx, jobCancel := context.WithCancel(context.Background())
 	s.pendingBrowserJobsMu.Lock()
-	s.pendingBrowserJobs[jobID] = resultCh
+	s.pendingBrowserJobs[jobID] = &pendingBrowserJob{result: resultCh, ctx: jobCtx, cancel: jobCancel}
 	s.pendingBrowserJobsMu.Unlock()
 
 	defer func() {
+		jobCancel()
 		s.pendingBrowserJobsMu.Lock()
 		delete(s.pendingBrowserJobs, jobID)
 		s.pendingBrowserJobsMu.Unlock()
 	}()
 
-	s.browserQueue <- BrowserJob{Request: req, Result: resultCh, UserID: userID}
+	s.browserQueue <- BrowserJob{Request: req, UserID: userID}
 
 	result, ok := <-resultCh
 	if !ok {
@@ -429,6 +471,66 @@ func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]inte
 	return result, nil
 }
 
+// FetchImageViaWorker downloads a binary image (e.g. a novel cover) through
+// the browser worker. This is required for hosts that hotlink-protect or
+// Cloudflare-protect their images: a direct HTTP GET returns a 403 challenge
+// page, but the worker's background fetch carries the site cookies
+// (incl. cf_clearance) and resolves to the real bytes. The extension returns
+// the image as a base64 string which we decode back into raw bytes here.
+func (s *Server) FetchImageViaWorker(ctx context.Context, imageURL string, userID string, timeoutSec int) ([]byte, string, error) {
+	if !s.HasBrowserWorker() {
+		return nil, "", ErrNoBrowserWorker
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 60
+	}
+	result, err := s.EnqueueBrowserJob("fetch_image", imageURL, map[string]interface{}{"timeout": timeoutSec}, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	b64, _ := result.Data["dataBase64"].(string)
+	if b64 == "" {
+		return nil, "", fmt.Errorf("worker returned no image data for %s", imageURL)
+	}
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, "", fmt.Errorf("decoding image from worker: %w", err)
+	}
+	const maxImageBytes = 10 << 20
+	if len(data) < 4 {
+		return nil, "", fmt.Errorf("worker returned suspiciously small image (%d bytes)", len(data))
+	}
+	if len(data) > maxImageBytes {
+		return nil, "", fmt.Errorf("worker returned oversized image (%d bytes, max %d)", len(data), maxImageBytes)
+	}
+	if !isImageBytes(data) {
+		return nil, "", fmt.Errorf("worker returned non-image data (%d bytes, magic %x)", len(data), data[:4])
+	}
+	contentType, _ := result.Data["contentType"].(string)
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	return data, contentType, nil
+}
+
+// isImageBytes reports whether data begins with a known image file signature.
+func isImageBytes(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	switch {
+	case data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF: // JPEG
+		return true
+	case data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47: // PNG
+		return true
+	case len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50: // WebP (RIFF....WEBP)
+		return true
+	case data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x38: // GIF
+		return true
+	}
+	return false
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func (s *Server) HasBrowserWorker() bool {
@@ -440,6 +542,16 @@ func (s *Server) HasBrowserWorker() bool {
 		}
 	}
 	return false
+}
+
+// lookupPendingJob returns the pending job entry for jobID (if still present)
+// under the pending map lock. Used by the dispatch goroutine to obtain the
+// cancellation context associated with a job.
+func (s *Server) lookupPendingJob(jobID string) (*pendingBrowserJob, bool) {
+	s.pendingBrowserJobsMu.Lock()
+	defer s.pendingBrowserJobsMu.Unlock()
+	pj, ok := s.pendingBrowserJobs[jobID]
+	return pj, ok
 }
 
 func GetBrowserWorkerCount() int {

@@ -31,6 +31,20 @@ type previewCacheEntry struct {
 	createdAt time.Time
 }
 
+type importInfoCacheEntry struct {
+	info      *noveldownloader.NovelInfo
+	createdAt time.Time
+}
+
+// normalizeImportURL returns a canonical key for a source URL so that the
+// preview and the import requests (which may differ only in trailing slashes
+// or query params) hit the same cache entry.
+func normalizeImportURL(url string) string {
+	u := strings.TrimSpace(url)
+	u = strings.TrimSuffix(u, "/")
+	return u
+}
+
 func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/db/novels/import-epub", func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(64 << 20); err != nil {
@@ -222,6 +236,21 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err != nil {
 			return e.BadRequestError(err.Error(), nil)
 		}
+		// Cache the full list (with chapter URLs) so the subsequent import
+		// request reuses it instead of re-scraping every chapter page.
+		cacheKey := e.Auth.Id + ":" + normalizeImportURL(body.URL)
+		s.importInfoCacheMu.Lock()
+		s.importInfoCache[cacheKey] = importInfoCacheEntry{info: info, createdAt: time.Now()}
+		s.importInfoCacheMu.Unlock()
+		time.AfterFunc(previewCacheTTL, func() {
+			s.importInfoCacheMu.Lock()
+			defer s.importInfoCacheMu.Unlock()
+			if entry, exists := s.importInfoCache[cacheKey]; exists {
+				if time.Since(entry.createdAt) >= previewCacheTTL {
+					delete(s.importInfoCache, cacheKey)
+				}
+			}
+		})
 		return e.JSON(http.StatusOK, map[string]any{
 			"title":         info.Title,
 			"author":        info.Author,
@@ -253,9 +282,25 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if targetLang == "" {
 			targetLang = "es"
 		}
-		info, err := s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
-		if err != nil {
-			return e.BadRequestError(err.Error(), nil)
+		// Reuse the full chapter list cached by the preview request instead
+		// of re-scraping every chapter page again.
+		cacheKey := e.Auth.Id + ":" + normalizeImportURL(body.URL)
+		s.importInfoCacheMu.RLock()
+		cachedInfo, cached := s.importInfoCache[cacheKey]
+		s.importInfoCacheMu.RUnlock()
+
+		var info *noveldownloader.NovelInfo
+		var err error
+		if cached {
+			info = cachedInfo.info
+			s.importInfoCacheMu.Lock()
+			delete(s.importInfoCache, cacheKey)
+			s.importInfoCacheMu.Unlock()
+		} else {
+			info, err = s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
+			if err != nil {
+				return e.BadRequestError(err.Error(), nil)
+			}
 		}
 		startCh := body.StartChapter
 		if startCh < 1 {
@@ -319,6 +364,10 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 
 		if info.CoverURL != "" {
 			coverBlob, coverMime, coverErr := dl.DownloadCover(e.Request.Context(), info.CoverURL)
+			if coverErr != nil && s.HasBrowserWorker() {
+				slog.Info("direct cover download failed, retrying via browser worker", "novel", result.Novel.ID, "error", coverErr)
+				coverBlob, coverMime, coverErr = s.FetchImageViaWorker(e.Request.Context(), info.CoverURL, e.Auth.Id, 60)
+			}
 			if coverErr != nil {
 				slog.Warn("failed to download cover", "novel", result.Novel.ID, "error", coverErr)
 			} else if err := s.Store.AttachCoverBlob(result.Novel.ID, coverBlob, coverMime); err != nil {

@@ -20,8 +20,23 @@ import (
 // by the caller that originally enqueued the job.
 type BrowserJob struct {
 	Request BrowserWorkerJobRequest
-	Result  chan *BrowserWorkerJobResult
 	UserID  string
+}
+
+// pendingBrowserJob tracks an in-flight browser job: the result channel the
+// caller blocks on, the context whose cancellation stops the safety-net
+// timeout, and the cancel func invoked once a real result has been delivered.
+// Without the cancel, the 5-minute timeout goroutine fires for jobs that
+// already succeeded, emitting misleading "browser worker job timed out" warnings.
+//
+// resolveOnce guarantees the result channel is sent to and closed exactly once,
+// whether the real result or the timeout wins the race — preventing a panic
+// from sending on a closed channel.
+type pendingBrowserJob struct {
+	result      chan *BrowserWorkerJobResult
+	ctx         context.Context
+	cancel      context.CancelFunc
+	resolveOnce sync.Once
 }
 
 type Server struct {
@@ -36,8 +51,10 @@ type Server struct {
 	DownloaderFactory      func() *noveldownloader.Downloader
 	previewCacheMu         sync.RWMutex
 	previewCache           map[string]previewCacheEntry
+	importInfoCacheMu      sync.RWMutex
+	importInfoCache        map[string]importInfoCacheEntry
 	browserQueue           chan BrowserJob
-	pendingBrowserJobs     map[string]chan *BrowserWorkerJobResult
+	pendingBrowserJobs     map[string]*pendingBrowserJob
 	pendingBrowserJobsMu   sync.Mutex
 }
 
@@ -48,11 +65,21 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		queuedJobs:         map[string]struct{}{},
 		jobCancels:         map[string]context.CancelFunc{},
 		previewCache:       make(map[string]previewCacheEntry),
+		importInfoCache:    make(map[string]importInfoCacheEntry),
 		browserQueue:       make(chan BrowserJob, 64),
-		pendingBrowserJobs: make(map[string]chan *BrowserWorkerJobResult),
+		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
 	}
 	s.DownloaderFactory = func() *noveldownloader.Downloader {
-		dl := noveldownloader.NewDownloader()
+		directClient := noveldownloader.NewHTTPClient()
+
+		// Always wrap with the lazy fallback client. It checks for an
+		// available browser worker per-request, so it transparently starts
+		// using the proxy the moment a worker connects — even mid-job — and
+		// adds no overhead when none is connected.
+		checker := NewBrowserWorkerChecker(s)
+		client := noveldownloader.NewLazyFallbackClient(directClient, checker)
+
+		dl := noveldownloader.NewDownloaderWithClient(client)
 		if cfg != nil {
 			if cfg.DownloadMinDelayMs > 0 {
 				dl.MinChapterDelay = time.Duration(cfg.DownloadMinDelayMs) * time.Millisecond

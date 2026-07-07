@@ -1,5 +1,5 @@
 import { MessageType, JobStatus, WorkerState, createMessage, parseMessage } from '../shared/protocol.js';
-import { getConfig, setConfig, getWorkerToken } from '../shared/storage.js';
+import { getConfig, setConfig } from '../shared/storage.js';
 
 let ws = null;
 let state = WorkerState.DISCONNECTED;
@@ -7,35 +7,23 @@ let reconnectTimer = null;
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
-// ── KeepAlive (MV3 service-worker survival) ─────────────────────────
-// MV3 service workers are terminated when idle. A one-shot alarm wakes
-// the worker periodically to verify/restore the WebSocket. `lastTraffic`
-// records the last successful send/recv so we can surface staleness.
+let challengeTabId = null;
+let challengeOrigin = null;
+
+const log = (msg, ...args) => console.log(`[DebugWorker] ${msg}`, ...args);
+const warn = (msg, ...args) => console.warn(`[DebugWorker] ${msg}`, ...args);
+const err = (msg, ...args) => console.error(`[DebugWorker] ${msg}`, ...args);
+
 const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MS = 20000;
-// If the server hasn't acked our heartbeats within this window (3x the
-// interval), the socket is considered dead even if it still "looks" open.
 const STALE_THRESHOLD_MS = 60000;
 let lastTraffic = 0;
 
-// ── Challenge tab management ───────────────────────────────────────
-// We reuse a single hidden tab for Cloudflare challenges. Most fetch_page
-// requests are served by background fetch() (which inherits the cf_clearance
-// cookie once solved). Only when fetch() returns a challenge page do we
-// open / reuse the challenge tab.
-let challengeTabId = null;
-let challengeOrigin = null; // e.g. "https://www.69shuba.com"
-
-const log = (msg, ...args) => console.log(`[BrowserWorker] ${msg}`, ...args);
-const warn = (msg, ...args) => console.warn(`[BrowserWorker] ${msg}`, ...args);
-const err = (msg, ...args) => console.error(`[BrowserWorker] ${msg}`, ...args);
-
 async function init() {
-  log('Initializing...');
+  log('Initializing (DEBUG mode - no auth required)...');
   const config = await getConfig();
   if (config.autoConnect) connect();
   chrome.runtime.onMessage.addListener(handleInternalMessage);
-  chrome.tabs.onUpdated.addListener(handleTabUpdate);
   chrome.alarms.onAlarm.addListener(onAlarm);
   scheduleKeepAlive();
 }
@@ -49,8 +37,6 @@ function onAlarm(alarm) {
   keepAlive().finally(scheduleKeepAlive);
 }
 
-// Wakes the service worker, reconnects if the socket is dead, and sends a
-// heartbeat to detect a half-open socket (send() throws when truly broken).
 async function keepAlive() {
   const config = await getConfig();
   if (config.autoConnect === false) return;
@@ -62,9 +48,6 @@ async function keepAlive() {
     return;
   }
 
-  // The socket may appear OPEN but be half-open (server gone). The server
-  // acks every HEARTBEAT we send; if no traffic arrived within the window,
-  // the server is unreachable and we must force a reconnect.
   if (lastTraffic > 0 && Date.now() - lastTraffic > STALE_THRESHOLD_MS) {
     log('KeepAlive: no traffic from server, reconnecting...');
     reconnectDelay = 1000;
@@ -74,9 +57,6 @@ async function keepAlive() {
   }
 
   try {
-    // Note: lastTraffic is intentionally NOT updated here. It must only
-    // advance on *received* traffic (onmessage / HEARTBEAT_ACK) so a half-open
-    // socket (server gone but send() still succeeds) is detected as stale.
     ws.send(createMessage(MessageType.HEARTBEAT, { timestamp: Date.now() }));
   } catch (e) {
     err('KeepAlive: heartbeat failed, reconnecting:', e);
@@ -84,28 +64,6 @@ async function keepAlive() {
     disconnect();
     connect();
   }
-}
-
-function handleTabUpdate(tabId, changeInfo, tab) {
-  if (changeInfo.status !== 'complete') return;
-  const url = tab.url || '';
-  const match = url.match(/\/api\/worker-auth\/callback\?token=([^&]+)&user=([^&]+)/);
-  if (!match) return;
-
-  const token = decodeURIComponent(match[1]);
-  const userId = decodeURIComponent(match[2]);
-  log('Auth callback detected, saving token...');
-
-  chrome.storage.local.set({
-    workerToken: token,
-    workerUserId: userId,
-    workerConnectedAt: new Date().toISOString()
-  }, () => {
-    chrome.tabs.remove(tabId).catch(() => {});
-    chrome.runtime.sendMessage({ type: 'auth_complete', token, userId }).catch(() => {});
-    disconnect();
-    connect();
-  });
 }
 
 function handleInternalMessage(msg, sender, sendResponse) {
@@ -119,7 +77,7 @@ function handleInternalMessage(msg, sender, sendResponse) {
     return false;
   }
   if (msg.type === 'GET_STATE') {
-    sendResponse({ state, connected: ws?.readyState === WebSocket.OPEN, lastTraffic });
+    sendResponse({ state, connected: ws?.readyState === WebSocket.OPEN });
     return false;
   }
   if (msg.type === 'UPDATE_CONFIG') {
@@ -132,27 +90,15 @@ function handleInternalMessage(msg, sender, sendResponse) {
     });
     return true;
   }
-  if (msg.type === 'auth_complete') {
-    log('Auth complete, reconnecting with token...');
-    disconnect();
-    connect();
-    return false;
-  }
 }
 
 async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   const config = await getConfig();
-  const tokenData = await getWorkerToken();
   
-  if (!tokenData.token) {
-    warn('No worker token found, setting state to unauthenticated');
-    setState(WorkerState.UNAUTHENTICATED);
-    return;
-  }
-
-  const wsUrl = `ws://${config.serverAddr}/ws/browser-worker`;
+  // Use debug endpoint - no token required
+  const wsUrl = `ws://${config.serverAddr}/ws/browser-worker-debug`;
   log('Connecting to:', wsUrl);
   setState(WorkerState.CONNECTING);
 
@@ -160,11 +106,10 @@ async function connect() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      log('WebSocket connected, waiting for registration...');
+      log('WebSocket connected, sending registration (no auth)...');
       setState(WorkerState.CONNECTING);
       reconnectDelay = 1000;
-      lastTraffic = Date.now();
-      sendRegister(tokenData.token);
+      sendRegister();
     };
 
     ws.onmessage = (event) => {
@@ -205,17 +150,18 @@ function scheduleReconnect() {
   reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
 }
 
-function sendRegister(token) {
+function sendRegister() {
   if (ws?.readyState !== WebSocket.OPEN) return;
   const ua = navigator.userAgent;
   let browser = 'chrome';
   if (ua.includes('Firefox')) browser = 'firefox';
   else if (ua.includes('Edg/')) browser = 'edge';
+  
+  // No token sent - debug mode
   ws.send(createMessage(MessageType.REGISTER, {
     browser: { name: browser, userAgent: ua },
     capabilities: ['cookies', 'dom', 'javascript'],
-    version: '1.0.0',
-    token: token,
+    version: '1.0.0-debug',
   }));
 }
 
@@ -223,7 +169,7 @@ async function handleServerMessage(msg) {
   switch (msg.type) {
     case MessageType.REGISTER_RESPONSE:
       if (msg.payload.ok) {
-        log('Registration successful');
+        log('Registration successful (DEBUG mode)');
         setState(WorkerState.CONNECTED);
         broadcastState();
       } else {
@@ -246,7 +192,6 @@ async function handleServerMessage(msg) {
   }
 }
 
-// ── Job handler ────────────────────────────────────────────────────
 async function handleJobRequest(payload) {
   const { jobId, url, operation, params = {} } = payload;
   if (operation === 'fetch_image') {
@@ -440,35 +385,21 @@ function bytesToBase64(buffer) {
   return { dataBase64: btoa(binary), contentType: '' };
 }
 
-
 function sendJobResult(jobId, status, data) {
   if (ws?.readyState !== WebSocket.OPEN) return;
   ws.send(createMessage(MessageType.JOB_RESULT, { jobId, status, data }));
 }
 
-// ── Core proxy logic ───────────────────────────────────────────────
-// Strategy:
-//   1. Try background fetch() first (shares cookies, incl. cf_clearance).
-//   2. If the response is a Cloudflare challenge page, fall back to a
-//      dedicated challenge tab where the user can solve it once.
-//   3. Subsequent requests to the same origin use background fetch()
-//      since cf_clearance is now valid — no tab navigation needed.
 async function fetchRawPage(url, params = {}) {
   const maxWait = (params.timeout || 120) * 1000;
 
-  // ── Phase 1: background fetch() ──────────────────────────────────
   const bgResult = await tryBackgroundFetch(url);
   if (bgResult) return bgResult;
 
-  // ── Phase 2: challenge page fallback ─────────────────────────────
   log('Background fetch hit Cloudflare challenge, using tab...');
   return fetchViaChallengeTab(url, maxWait);
 }
 
-// ── Background fetch ───────────────────────────────────────────────
-// Uses the extension's own fetch() which inherits browser cookies,
-// including cf_clearance from previously solved Cloudflare challenges.
-// Returns null if the page is a Cloudflare challenge.
 async function tryBackgroundFetch(url) {
   try {
     const resp = await fetch(url, {
@@ -485,28 +416,18 @@ async function tryBackgroundFetch(url) {
       return null;
     }
 
-    // Detect charset from Content-Type header or HTML <meta> tag, then
-    // decode manually with TextDecoder. Using resp.text() would rely only
-    // on the HTTP header charset, ignoring <meta charset="gbk"> in the
-    // HTML body — sites like 69shuba serve GBK-encoded pages without a
-    // charset in the HTTP header, so resp.text() would garble them.
     const buffer = await resp.arrayBuffer();
     let charset = 'utf-8';
 
-    // 1. Check Content-Type header for charset
     const contentType = resp.headers.get('content-type') || '';
     const csMatch = contentType.match(/charset\s*=\s*([^;]+)/i);
     if (csMatch) {
       charset = csMatch[1].trim().toLowerCase();
     }
 
-    // 2. If still utf-8, peek at raw bytes for <meta charset="gbk">
     if (charset === 'utf-8' || charset === 'utf8') {
       const peekLen = Math.min(4096, buffer.byteLength);
       const peekBytes = new Uint8Array(buffer, 0, peekLen);
-      // Decode as windows-1252 (one-byte-per-char) so GBK non-ASCII bytes
-      // don't interfere. The ASCII subset is identical across all these
-      // encodings, so "charset=gbk" reads the same in raw bytes.
       const peekStr = new TextDecoder('windows-1252').decode(peekBytes);
       if (/charset\s*=\s*["']?\s*gb/i.test(peekStr)) {
         charset = 'gbk';
@@ -523,7 +444,6 @@ async function tryBackgroundFetch(url) {
 
     const lowerHtml = html.toLowerCase();
 
-    // Check for Cloudflare / challenge indicators
     const challengeIndicators = [
       'just a moment', 'checking your browser', 'verifying you are human',
       'cf-challenge', 'challenge-platform', 'turnstile',
@@ -538,7 +458,6 @@ async function tryBackgroundFetch(url) {
 
     log(`Background fetch succeeded for ${url} (${html.length} bytes)`);
 
-    // Extract title for the result object
     let title = '';
     const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
     if (titleMatch) title = titleMatch[1];
@@ -550,24 +469,17 @@ async function tryBackgroundFetch(url) {
   }
 }
 
-// ── Challenge tab ──────────────────────────────────────────────────
-// Opens (or reuses) a hidden tab for the site's origin when Cloudflare
-// needs user interaction. After the challenge is solved, the tab stays
-// open so the cf_clearance cookie remains active.
 async function fetchViaChallengeTab(url, maxWait) {
   const parsedUrl = new URL(url);
   const origin = parsedUrl.origin;
   const startTime = Date.now();
 
-  // If we already have a challenge tab for this origin, navigate it.
-  // Otherwise create a new one.
   let tab;
   if (challengeTabId !== null && challengeOrigin === origin) {
     try {
       tab = await chrome.tabs.get(challengeTabId);
       await chrome.tabs.update(tab.id, { url, active: false });
     } catch {
-      // Tab was closed, create a new one
       challengeTabId = null;
       challengeOrigin = null;
       tab = await chrome.tabs.create({ url, active: false });
@@ -575,7 +487,6 @@ async function fetchViaChallengeTab(url, maxWait) {
       challengeOrigin = origin;
     }
   } else {
-    // If we have a challenge tab for a different origin, close it first
     if (challengeTabId !== null) {
       try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
     }
@@ -598,11 +509,8 @@ async function fetchViaChallengeTab(url, maxWait) {
           continue;
         }
         log('Challenge solved, waiting for redirects to settle...');
-        // Wait a few seconds for any post-challenge redirects to complete
-        // (many sites redirect after cf_clearance is set).
         await sleep(4000);
 
-        // Verify the page actually loaded (not another challenge)
         const verifyChallenge = await checkForChallenge(tab.id);
         if (verifyChallenge) {
           log('Page still shows challenge after wait, continuing to poll...');
@@ -612,11 +520,9 @@ async function fetchViaChallengeTab(url, maxWait) {
 
         log('Challenge fully resolved, extracting HTML...');
 
-        // Log the current tab URL for diagnostics
         const tabInfo2 = await chrome.tabs.get(tab.id);
         log(`Tab URL before extraction: ${tabInfo2.url}`);
 
-        // Retry extraction up to 3 times — the tab might still be settling.
         let data = null;
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
@@ -642,8 +548,6 @@ async function fetchViaChallengeTab(url, maxWait) {
           }
         }
 
-        // Close the challenge tab — cf_clearance cookie persists in the
-        // browser's cookie store regardless of whether the tab is open.
         try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
         challengeTabId = null;
         challengeOrigin = null;
@@ -659,7 +563,6 @@ async function fetchViaChallengeTab(url, maxWait) {
   throw new Error('Timeout waiting for Cloudflare challenge to be solved.');
 }
 
-// ── Challenge detection ────────────────────────────────────────────
 async function checkForChallenge(tabId) {
   try {
     const results = await chrome.scripting.executeScript({

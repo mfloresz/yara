@@ -29,6 +29,16 @@
           />
 
           <Button
+            icon="pi pi-bolt"
+            severity="secondary"
+            text
+            rounded
+            class="touch-target"
+            aria-label="Operaciones"
+            @click="router.push('/operations')"
+          />
+
+          <Button
             :icon="currentThemeIcon"
             severity="secondary"
             text
@@ -198,11 +208,6 @@ const userMenuItems = computed(() => [
     label: "Configuración",
     icon: "pi pi-cog",
     command: () => router.push("/settings"),
-  },
-  {
-    label: "Operaciones",
-    icon: "pi pi-bolt",
-    command: () => router.push("/operations"),
   },
   {
     label: "Cerrar sesión",
