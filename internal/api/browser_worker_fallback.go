@@ -64,6 +64,8 @@ func (s *Server) getNovelInfoViaProxy(ctx context.Context, url string, parser no
 // DownloaderFactoryWithClient creates a Downloader with a custom HTTP client.
 func (s *Server) DownloaderFactoryWithClient(client noveldownloader.HTTPClient) *noveldownloader.Downloader {
 	dl := noveldownloader.NewDownloaderWithClient(client)
+	dl.MinChapterDelay = noveldownloader.DefaultMinChapterDelay
+	dl.MaxChapterDelay = noveldownloader.DefaultMaxChapterDelay
 	if s.Cfg != nil {
 		if s.Cfg.DownloadMinDelayMs > 0 {
 			dl.MinChapterDelay = time.Duration(s.Cfg.DownloadMinDelayMs) * time.Millisecond

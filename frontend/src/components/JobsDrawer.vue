@@ -27,11 +27,11 @@
                   {{ job.novelTitle || job.novelId }}
                 </n-button>
                 <div class="small muted" style="margin-top: 0.2rem">
-                  {{ job.operation === 'download' ? 'Descarga' : job.operation === 'refine' ? 'Refinamiento' : 'Traducción' }}
-                  <span v-if="job.operation !== 'download' && (job.provider || job.model)"> · </span>
-                  <span v-if="job.operation !== 'download' && job.provider">{{ job.provider }}</span>
-                  <span v-if="job.operation !== 'download' && job.provider && job.model">/</span>
-                  <span v-if="job.operation !== 'download' && job.model">{{ job.model }}</span>
+                  {{ job.operation === 'download' ? 'Descarga' : job.operation === 'check' ? 'Verificación' : job.operation === 'refine' ? 'Refinamiento' : 'Traducción' }}
+                  <span v-if="job.operation !== 'download' && job.operation !== 'check' && (job.provider || job.model)"> · </span>
+                  <span v-if="job.operation !== 'download' && job.operation !== 'check' && job.provider">{{ job.provider }}</span>
+                  <span v-if="job.operation !== 'download' && job.operation !== 'check' && job.provider && job.model">/</span>
+                  <span v-if="job.operation !== 'download' && job.operation !== 'check' && job.model">{{ job.model }}</span>
                 </div>
               </div>
               <n-tag :type="jobTagType(job.status)" size="small" round>
@@ -154,7 +154,7 @@ function jobTagType(status: TranslationJob["status"]) {
 }
 
 function showAutoSegmentMeta(job: TranslationJob) {
-  return job.operation !== "refine" && job.operation !== "download" && Boolean(job.autoSegmentChapterTitle || (job.autoSegmentCount ?? 0) > 1);
+  return job.operation !== "refine" && job.operation !== "download" && job.operation !== "check" && Boolean(job.autoSegmentChapterTitle || (job.autoSegmentCount ?? 0) > 1);
 }
 
 function showAutoSegmentProgress(job: TranslationJob) {

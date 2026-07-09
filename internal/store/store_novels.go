@@ -228,6 +228,16 @@ func (s *Store) UpdateNovel(userID, novelID string, patch map[string]any) (*Nove
 	return &updated, nil
 }
 
+func (s *Store) UpdateNovelCheckResult(novelID, checkedAt string, newChapters int) error {
+	record, err := s.App.FindRecordById(NovelsCollection, novelID)
+	if err != nil {
+		return ErrNotFound
+	}
+	record.Set("last_checked_at", checkedAt)
+	record.Set("last_check_new_chapters", newChapters)
+	return s.App.Save(record)
+}
+
 func (s *Store) DeleteNovel(userID, novelID string) error {
 	record, err := s.App.FindRecordById(NovelsCollection, novelID)
 	if err != nil {

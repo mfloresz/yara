@@ -106,6 +106,8 @@ type Novel struct {
 	RefinedCharCount        int    `json:"refinedCharCount,omitempty"`
 	TotalCharCount          int    `json:"totalCharCount,omitempty"`
 	MaxChapterOrder         int    `json:"maxChapterOrder,omitempty"`
+	LastCheckedAt           string `json:"lastCheckedAt,omitempty"`
+	LastCheckNewChapters    int    `json:"lastCheckNewChapters,omitempty"`
 	LastReadAt              string `json:"lastReadAt,omitempty"`
 	CreatedAt               string `json:"createdAt,omitempty"`
 	UpdatedAt               string `json:"updatedAt,omitempty"`
@@ -176,6 +178,7 @@ type Job struct {
 	AutoSegmentCompletedCount int    `json:"autoSegmentCompletedCount,omitempty"`
 	AutoSegmentChapterID      string `json:"autoSegmentChapterId,omitempty"`
 	AutoSegmentChapterTitle   string `json:"autoSegmentChapterTitle,omitempty"`
+	NewChapters               int    `json:"newChapters,omitempty"`
 	CreatedAt                 string `json:"createdAt,omitempty"`
 	UpdatedAt                 string `json:"updatedAt,omitempty"`
 	NovelTitle                string `json:"novelTitle,omitempty"`

@@ -61,6 +61,8 @@ func (s *Store) novelFromRecord(record *core.Record) Novel {
 		RefinedCharCount:        asInt(record.GetFloat("refined_char_count"), 0),
 		TotalCharCount:          asInt(record.GetFloat("total_char_count"), 0),
 		MaxChapterOrder:         asInt(record.GetFloat("max_chapter_order"), 0),
+		LastCheckedAt:           record.GetString("last_checked_at"),
+		LastCheckNewChapters:    asInt(record.GetFloat("last_check_new_chapters"), 0),
 		CreatedAt:               record.GetString("created"),
 		UpdatedAt:               record.GetString("updated"),
 	}
@@ -105,6 +107,7 @@ func jobFromRecord(record *core.Record) Job {
 		AutoSegmentCompletedCount: asInt(record.GetFloat("auto_segment_completed_count"), 0),
 		AutoSegmentChapterID:      record.GetString("auto_segment_chapter_id"),
 		AutoSegmentChapterTitle:   record.GetString("auto_segment_chapter_title"),
+		NewChapters:               asInt(record.GetFloat("new_chapters"), 0),
 		CreatedAt:                 record.GetString("created"),
 		UpdatedAt:                 record.GetString("updated"),
 	}
@@ -186,4 +189,6 @@ func applyNovelToRecord(record *core.Record, novel *Novel) {
 	record.Set("refined_char_count", novel.RefinedCharCount)
 	record.Set("total_char_count", novel.TotalCharCount)
 	record.Set("max_chapter_order", novel.MaxChapterOrder)
+	record.Set("last_checked_at", novel.LastCheckedAt)
+	record.Set("last_check_new_chapters", novel.LastCheckNewChapters)
 }

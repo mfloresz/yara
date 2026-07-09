@@ -44,13 +44,13 @@
           <span class="small muted">
             {{ filteredNovels.length }} novelas
             <template v-if="actualizableCount > 0"> · {{ actualizableCount }} actualizables</template>
-            <template v-if="checkResults.size > 0"> · {{ checkedCount }} verificadas</template>
-            <template v-if="downloadingNovelIds.size > 0"> · {{ downloadingNovelIds.size }} descargando</template>
+            <template v-if="activeCheckJobs.length > 0"> · {{ activeCheckJobs.length }} verificando</template>
+            <template v-if="activeDownloadCount > 0"> · {{ activeDownloadCount }} descargando</template>
           </span>
           <n-button
-            v-if="checkResults.size > 0 && selectedRowKeys.length > 0"
+            v-if="selectedRowKeys.length > 0 && selectedHasUpdates"
             size="small"
-            :loading="downloading"
+            :loading="bulkDownloading"
             @click="handleDownloadSelected"
           >
             <template #icon><n-icon><DownloadOutline /></n-icon></template>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onScopeDispose, ref, watch } from "vue";
+import { computed, h, onMounted, ref, watch } from "vue";
 import {
   NButton,
   NCard,
@@ -85,7 +85,8 @@ import {
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
 import { useActiveJobs } from "@/composables/useActiveJobs";
-import type { Novel } from "@/domain";
+import { emitJobChanged } from "@/utils/job-events";
+import type { Novel, TranslationJob } from "@/domain";
 
 const SUPPORTED_DOMAINS = [
   "novelfire.net",
@@ -94,12 +95,9 @@ const SUPPORTED_DOMAINS = [
   "fenrirealm.com",
 ];
 
-type FilterValue = "all" | "actualizable" | "completed";
+const PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 
-interface CheckResult {
-  newChapters: number;
-  error?: string;
-}
+type FilterValue = "all" | "actualizable" | "completed";
 
 interface UpdateResult {
   added: number;
@@ -117,13 +115,33 @@ const filter = ref<FilterValue>("all");
 const selectedRowKeys = ref<string[]>([]);
 
 const updatingAll = ref(false);
-const translatingNovelId = ref<string | null>(null);
-const downloading = ref(false);
+const bulkDownloading = ref(false);
 
-const checkResults = ref<Map<string, CheckResult>>(new Map());
 const updateResults = ref<Map<string, UpdateResult>>(new Map());
 
-const downloadingNovelIds = ref<Map<string, string>>(new Map());
+function activeJobForNovel(novelId: string, operation: string): TranslationJob | undefined {
+  return activeJobs.value.find((j) => j.novelId === novelId && j.operation === operation);
+}
+
+function isChecking(novelId: string): boolean {
+  return !!activeJobForNovel(novelId, "check");
+}
+
+const activeCheckJobs = computed(() =>
+  activeJobs.value.filter((j) => j.operation === "check"),
+);
+
+const activeDownloadCount = computed(() =>
+  activeJobs.value.filter((j) => j.operation === "download").length,
+);
+
+function jobStatusLabel(job: TranslationJob): string {
+  if (job.status === "pending") return "En cola";
+  if (job.operation === "check") return "Verificando...";
+  if (job.operation === "download") return "Descargando...";
+  if (job.operation === "refine") return "Refinando...";
+  return "Traduciendo...";
+}
 
 function isActualizable(novel: Novel): boolean {
   if (!novel.url) return false;
@@ -135,24 +153,16 @@ function isActualizable(novel: Novel): boolean {
   }
 }
 
-const activeDownloadNovelIds = computed(() => {
-  const ids = new Set<string>();
-  for (const job of activeJobs.value) {
-    if (job.operation === "download") {
-      ids.add(job.novelId);
-    }
-  }
-  return ids;
-});
-
-function isDownloading(novelId: string): boolean {
-  return downloadingNovelIds.value.has(novelId) || activeDownloadNovelIds.value.has(novelId);
-}
-
 const actualizableCount = computed(() =>
   novels.value.filter((n) => isActualizable(n) && n.status !== "completed").length,
 );
-const checkedCount = computed(() => checkResults.value.size);
+
+const selectedHasUpdates = computed(() =>
+  selectedRowKeys.value.some((id) => {
+    const novel = novels.value.find((n) => n.id === id);
+    return novel && hasNewChapters(novel);
+  }),
+);
 
 const filteredNovels = computed(() => {
   switch (filter.value) {
@@ -165,12 +175,21 @@ const filteredNovels = computed(() => {
   }
 });
 
-function checkResultsLabel(novel: Novel): string {
-  const r = checkResults.value.get(novel.id);
-  if (!r) return "";
-  if (r.error) return "Error";
-  if (r.newChapters === 0) return "Al día";
-  return `+${r.newChapters}`;
+function isCheckStale(novel: Novel): boolean {
+  if (!novel.lastCheckedAt) return true;
+  const checkedAt = new Date(novel.lastCheckedAt).getTime();
+  return Date.now() - checkedAt > PREVIEW_CACHE_TTL_MS;
+}
+
+function persistedCheckLabel(novel: Novel): string {
+  if (!novel.lastCheckedAt || isCheckStale(novel)) return "";
+  if ((novel.lastCheckNewChapters ?? 0) === 0) return "Al día";
+  return `+${novel.lastCheckNewChapters}`;
+}
+
+function hasNewChapters(novel: Novel): boolean {
+  if (!isCheckStale(novel)) return (novel.lastCheckNewChapters ?? 0) > 0;
+  return false;
 }
 
 function updateResultsLabel(novel: Novel): string {
@@ -210,16 +229,25 @@ const columns: DataTableColumns<Novel> = [
     width: 140,
     align: "center",
     render(row) {
-      if (isDownloading(row.id)) {
-        return h(NTag, { type: "warning", size: "small", round: true }, { default: () => "Descargando..." });
+      const downloadJob = activeJobForNovel(row.id, "download");
+      const translateJob = activeJobForNovel(row.id, "translate");
+      const checkJob = activeJobForNovel(row.id, "check");
+      if (downloadJob) {
+        return h(NTag, { type: "warning", size: "small", round: true }, { default: () => jobStatusLabel(downloadJob) });
+      }
+      if (translateJob) {
+        return h(NTag, { type: "info", size: "small", round: true }, { default: () => jobStatusLabel(translateJob) });
+      }
+      if (checkJob) {
+        return h(NTag, { type: "info", size: "small", round: true }, { default: () => jobStatusLabel(checkJob) });
       }
       if (updateResults.value.has(row.id)) {
         const r = updateResults.value.get(row.id)!;
         return h(NTag, { type: r.error ? "error" : "success", size: "small", round: true }, { default: () => updateResultsLabel(row) });
       }
-      if (checkResults.value.has(row.id)) {
-        const r = checkResults.value.get(row.id)!;
-        return h(NTag, { type: r.error ? "error" : "info", size: "small", round: true }, { default: () => checkResultsLabel(row) });
+      const checkLabel = persistedCheckLabel(row);
+      if (checkLabel) {
+        return h(NTag, { type: "info", size: "small", round: true }, { default: () => checkLabel });
       }
       if (isActualizable(row) && row.status !== "completed") {
         return h(NTag, { type: "warning", size: "small", round: true }, { default: () => "Actualizable" });
@@ -236,41 +264,41 @@ const columns: DataTableColumns<Novel> = [
     width: 180,
     align: "center",
     render(row) {
+      const translateJob = activeJobForNovel(row.id, "translate");
+      const downloadJob = activeJobForNovel(row.id, "download");
+      const checkJob = activeJobForNovel(row.id, "check");
+      const hasAnyActive = !!translateJob || !!downloadJob || !!checkJob;
       return h("div", { class: "operations-row-actions" }, [
         h(NButton, {
           size: "small",
           type: "primary",
-          loading: translatingNovelId.value === row.id,
-          disabled: isDownloading(row.id) || translatingNovelId.value === row.id,
+          loading: !!translateJob,
+          disabled: hasAnyActive,
           onClick: () => handleTranslateNovel(row),
         }, {
           icon: () => h(NIcon, null, { default: () => h(PlayOutline) }),
-          default: () => "Traducir",
+          default: () => translateJob ? jobStatusLabel(translateJob) : "Traducir",
         }),
         isActualizable(row) && row.status !== "completed"
           ? h(NButton, {
               size: "small",
               secondary: true,
-              loading: isDownloading(row.id),
-              disabled: isDownloading(row.id) || translatingNovelId.value === row.id,
+              loading: !!downloadJob || !!checkJob,
+              disabled: hasAnyActive,
               onClick: () => handleUpdateNovel(row),
             }, {
               icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
-              default: () => "Actualizar",
+              default: () => {
+                if (downloadJob) return jobStatusLabel(downloadJob);
+                if (checkJob) return jobStatusLabel(checkJob);
+                return "Actualizar";
+              },
             })
           : null,
       ]);
     },
   },
 ];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randomDelay(): number {
-  return 5000 + Math.random() * 5000;
-}
 
 function updateNovelLocal(id: string, patch: Partial<Novel>) {
   const idx = novels.value.findIndex((n) => n.id === id);
@@ -279,12 +307,33 @@ function updateNovelLocal(id: string, patch: Partial<Novel>) {
   }
 }
 
-watch(activeDownloadNovelIds, (current, prev) => {
-  for (const novelId of prev) {
-    if (!current.has(novelId)) {
-      downloadingNovelIds.value.delete(novelId);
+watch(activeJobs, (current, prev) => {
+  const prevIds = new Set(prev.map((j) => `${j.novelId}:${j.operation}`));
+  const currIds = new Set(current.map((j) => `${j.novelId}:${j.operation}`));
+  for (const key of prevIds) {
+    if (!currIds.has(key)) {
+      const [novelId, operation] = key.split(":");
       const novel = novels.value.find((n) => n.id === novelId);
-      if (novel) {
+      if (!novel) continue;
+      if (operation === "check") {
+        const completedJob = prev.find((j) => j.novelId === novelId && j.operation === "check");
+        const newChapters = completedJob?.newChapters ?? 0;
+        api.novels.get(novelId).then((updated) => {
+          if (updated) {
+            updateNovelLocal(novelId, {
+              chapterCount: updated.chapterCount,
+              translatedCount: updated.translatedCount,
+              lastCheckedAt: updated.lastCheckedAt,
+              lastCheckNewChapters: updated.lastCheckNewChapters,
+            });
+          }
+        }).catch(() => {});
+        if (completedJob?.status === "failed") {
+          message.error(`${novel.sourceTitle}: Error al verificar`);
+        } else if (newChapters > 0) {
+          message.success(`${novel.sourceTitle}: ${newChapters} capítulos nuevos`);
+        }
+      } else {
         api.novels.get(novelId).then((updated) => {
           if (updated) {
             updateNovelLocal(novelId, {
@@ -319,60 +368,27 @@ async function handleUpdateAll() {
     return;
   }
   updatingAll.value = true;
-  checkResults.value = new Map();
-  let checked = 0;
-  let withUpdates = 0;
-  let errors = 0;
-  for (const novel of actualizable) {
-    try {
-      const result = await api.novels.updatePreviewFromUrl(novel.id);
-      const newChapters = result.newChapters;
-      checkResults.value.set(novel.id, { newChapters });
-      if (newChapters > 0) withUpdates++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      checkResults.value.set(novel.id, { newChapters: 0, error: msg });
-      errors++;
-    }
-    checked++;
-    if (checked < actualizable.length) {
-      await sleep(randomDelay());
-    }
+  try {
+    const novelIds = actualizable.map((n) => n.id);
+    const result = await api.novels.batchCheck(novelIds);
+    emitJobChanged();
+    message.info(`${result.jobs.length} novelas en verificación`);
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    updatingAll.value = false;
   }
-  updatingAll.value = false;
-  message.info(
-    `${checked} verificadas · ${withUpdates} con actualizaciones${errors > 0 ? ` · ${errors} errores` : ""}`,
-  );
 }
 
 async function handleUpdateNovel(novel: Novel) {
-  const next = new Map(downloadingNovelIds.value);
-  next.set(novel.id, "pending");
-  downloadingNovelIds.value = next;
-
   updateResults.value.delete(novel.id);
-
   try {
-    const result = await api.novels.updateFromUrl(novel.id, {});
-    const added = result.chaptersAdded ?? 0;
-    if (result.downloadJobId) {
-      const map = new Map(downloadingNovelIds.value);
-      map.set(novel.id, result.downloadJobId);
-      downloadingNovelIds.value = map;
-    } else {
-      downloadingNovelIds.value.delete(novel.id);
-      updateResults.value.set(novel.id, { added });
-      updateNovelLocal(novel.id, {
-        chapterCount: result.totalChapters ?? novel.chapterCount + added,
-      });
-      if (added > 0) {
-        message.success(`${novel.sourceTitle}: ${added} capítulos descargados`);
-      } else {
-        message.info(`${novel.sourceTitle}: ${result.message ?? "Sin nuevos capítulos"}`);
-      }
+    const result = await api.novels.batchCheck([novel.id]);
+    emitJobChanged();
+    if (result.jobs.length > 0) {
+      message.info(`${novel.sourceTitle}: Verificando...`);
     }
   } catch (err) {
-    downloadingNovelIds.value.delete(novel.id);
     const msg = err instanceof Error ? err.message : String(err);
     updateResults.value.set(novel.id, { added: 0, error: msg });
     message.error(`${novel.sourceTitle}: ${msg}`);
@@ -384,52 +400,41 @@ async function handleTranslateNovel(novel: Novel) {
     message.warning("Esta novela no tiene capítulos.");
     return;
   }
-  translatingNovelId.value = novel.id;
   try {
     await api.novels.batchTranslate([{ novelId: novel.id }]);
+    emitJobChanged();
     message.success(`${novel.sourceTitle}: Trabajo de traducción iniciado`);
   } catch (err) {
     message.error(`${novel.sourceTitle}: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    translatingNovelId.value = null;
   }
 }
 
 async function handleDownloadSelected() {
   if (selectedRowKeys.value.length === 0) return;
-  downloading.value = true;
+  bulkDownloading.value = true;
   let enqueued = 0;
   let errors = 0;
   for (const novelId of selectedRowKeys.value) {
     const novel = novels.value.find((n) => n.id === novelId);
-    if (!novel) continue;
-    const cr = checkResults.value.get(novel.id);
-    if (!cr || cr.error || cr.newChapters === 0) continue;
+    if (!novel || !hasNewChapters(novel)) continue;
     try {
-      const result = await api.novels.updateFromUrl(novel.id, {});
+      const result = await api.novels.updateFromUrl(novelId, {});
       if (result.downloadJobId) {
-        const map = new Map(downloadingNovelIds.value);
-        map.set(novel.id, result.downloadJobId);
-        downloadingNovelIds.value = map;
         enqueued++;
       }
     } catch {
       errors++;
     }
   }
-  downloading.value = false;
+  bulkDownloading.value = false;
   selectedRowKeys.value = [];
-  checkResults.value = new Map();
+  emitJobChanged();
   message.success(
     `${enqueued} novelas en proceso${errors > 0 ? ` · ${errors} errores` : ""}`,
   );
 }
 
 onMounted(loadNovels);
-
-onScopeDispose(() => {
-  downloadingNovelIds.value = new Map();
-});
 </script>
 
 <style scoped>

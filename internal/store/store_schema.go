@@ -276,6 +276,8 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.NumberField{Name: "refined_char_count"})
 	c.Fields.Add(&core.NumberField{Name: "total_char_count"})
 	c.Fields.Add(&core.NumberField{Name: "max_chapter_order"})
+	c.Fields.Add(&core.TextField{Name: "last_checked_at", Max: 30})
+	c.Fields.Add(&core.NumberField{Name: "last_check_new_chapters"})
 	addSystemDateFields(c)
 	c.AddIndex("idx_novels_owner", false, "owner", "")
 	if err := s.App.Save(c); err != nil {
@@ -308,6 +310,8 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 		&core.NumberField{Name: "refined_char_count"},
 		&core.NumberField{Name: "total_char_count"},
 		&core.NumberField{Name: "max_chapter_order"},
+		&core.TextField{Name: "last_checked_at", Max: 30},
+		&core.NumberField{Name: "last_check_new_chapters"},
 		&core.EditorField{Name: "translation_system_prompt"},
 		&core.EditorField{Name: "translation_user_prompt"},
 		&core.EditorField{Name: "refine_system_prompt"},
@@ -384,8 +388,9 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 			&core.NumberField{Name: "auto_segment_count"},
 			&core.NumberField{Name: "auto_segment_current_index"},
 			&core.NumberField{Name: "auto_segment_completed_count"},
-			&core.TextField{Name: "auto_segment_chapter_id", Max: 64},
-			&core.TextField{Name: "auto_segment_chapter_title", Max: 500},
+		&core.TextField{Name: "auto_segment_chapter_id", Max: 64},
+		&core.TextField{Name: "auto_segment_chapter_title", Max: 500},
+		&core.NumberField{Name: "new_chapters"},
 		} {
 			if err := s.ensureField(c, field); err != nil {
 				return nil, err
@@ -393,15 +398,22 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 		}
 		if opField := c.Fields.GetByName("operation"); opField != nil {
 			if sel, ok := opField.(*core.SelectField); ok {
-				hasDownload := false
-				for _, v := range sel.Values {
-					if v == "download" {
-						hasDownload = true
-						break
+				needed := []string{"download", "check"}
+				changed := false
+				for _, v := range needed {
+					found := false
+					for _, existing := range sel.Values {
+						if existing == v {
+							found = true
+							break
+						}
+					}
+					if !found {
+						sel.Values = append(sel.Values, v)
+						changed = true
 					}
 				}
-				if !hasDownload {
-					sel.Values = append(sel.Values, "download")
+				if changed {
 					if err := s.App.Save(c); err != nil {
 						return nil, err
 					}
@@ -436,7 +448,7 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
 	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"pending", "running", "done", "cancelled", "failed"}, MaxSelect: 1})
-	c.Fields.Add(&core.SelectField{Name: "operation", Values: []string{"translate", "refine", "download"}, MaxSelect: 1})
+	c.Fields.Add(&core.SelectField{Name: "operation", Values: []string{"translate", "refine", "download", "check"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "model", Max: 200})
 	c.Fields.Add(&core.TextField{Name: "chapter_ids", Max: 10000000})
@@ -452,6 +464,7 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	c.Fields.Add(&core.NumberField{Name: "auto_segment_completed_count"})
 	c.Fields.Add(&core.TextField{Name: "auto_segment_chapter_id", Max: 64})
 	c.Fields.Add(&core.TextField{Name: "auto_segment_chapter_title", Max: 500})
+	c.Fields.Add(&core.NumberField{Name: "new_chapters"})
 	addSystemDateFields(c)
 	c.AddIndex("idx_jobs_owner", false, "owner", "")
 	if err := s.App.Save(c); err != nil {

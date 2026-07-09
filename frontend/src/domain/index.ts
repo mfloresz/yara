@@ -53,6 +53,8 @@ export type Novel = {
   refinedCharCount: number;
   totalCharCount: number;
   maxChapterOrder: number;
+  lastCheckedAt?: string;
+  lastCheckNewChapters?: number;
   lastReadAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -92,7 +94,7 @@ export type TranslationJob = {
   id: string;
   novelId: string;
   status: TranslationJobStatus;
-  operation?: "translate" | "refine" | "download";
+  operation?: "translate" | "refine" | "download" | "check";
   provider?: string;
   model?: string;
   totalChapters: number;
@@ -107,6 +109,7 @@ export type TranslationJob = {
   autoSegmentCompletedCount?: number;
   autoSegmentChapterId?: string;
   autoSegmentChapterTitle?: string;
+  newChapters?: number;
   createdAt: string;
   updatedAt: string;
   novelTitle?: string;
@@ -152,7 +155,7 @@ export type ChapterUpsertInput = {
 };
 
 export type TranslationJobOptions = {
-  operation?: "translate" | "refine" | "download";
+  operation?: "translate" | "refine" | "download" | "check";
   provider?: string;
   model?: string;
 };

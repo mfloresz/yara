@@ -489,6 +489,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				}
 			}
 		}
+		_ = s.Store.UpdateNovelCheckResult(novelID, time.Now().Format(time.RFC3339), newAvailable)
 		return e.JSON(http.StatusOK, map[string]any{
 			"title":           info.Title,
 			"author":          info.Author,
@@ -723,6 +724,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				})
 			}
 			checked++
+			_ = s.Store.UpdateNovelCheckResult(novel.ID, time.Now().Format(time.RFC3339), newAvailable)
 			if newAvailable > 0 {
 				withUpdates++
 			}
@@ -912,6 +914,44 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		return e.JSON(http.StatusOK, store.BatchTranslateStartResponse{
 			Jobs: jobs, TotalPending: totalPending,
 		})
+	})
+	api.POST("/db/novels/batch-check", func(e *core.RequestEvent) error {
+		body := struct {
+			NovelIDs []string `json:"novelIds"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+		if len(body.NovelIDs) == 0 {
+			return e.BadRequestError("novelIds required", nil)
+		}
+		type checkResult struct {
+			NovelID string `json:"novelId"`
+			JobID   string `json:"jobId"`
+		}
+		results := make([]checkResult, 0, len(body.NovelIDs))
+		for _, novelID := range body.NovelIDs {
+			novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
+			if err != nil {
+				continue
+			}
+			if novel.URL == "" {
+				continue
+			}
+			optionsJSON, _ := json.Marshal(map[string]any{"url": novel.URL})
+			job := &store.Job{
+				NovelID:     novelID,
+				Status:      "pending",
+				Operation:   "check",
+				OptionsJSON: string(optionsJSON),
+			}
+			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+				continue
+			}
+			s.enqueueJob(job.ID)
+			results = append(results, checkResult{NovelID: novelID, JobID: job.ID})
+		}
+		return e.JSON(http.StatusOK, map[string]any{"jobs": results})
 	})
 }
 

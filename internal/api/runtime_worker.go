@@ -125,6 +125,9 @@ func (s *Server) processJob(jobID string) error {
 	if job.Operation == "download" {
 		return s.processDownloadJob(runCtx, job)
 	}
+	if job.Operation == "check" {
+		return s.processCheckJob(runCtx, job)
+	}
 
 	jc, err := s.buildJobContext(runCtx, job)
 	if err != nil {
@@ -397,4 +400,87 @@ func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *nove
 		}
 	}
 	return nil, lastErr
+}
+
+type checkJobOptions struct {
+	URL string `json:"url"`
+}
+
+func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
+	var opts checkJobOptions
+	if err := json.Unmarshal([]byte(job.OptionsJSON), &opts); err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": fmt.Sprintf("invalid job options: %v", err)}); ue != nil {
+			slog.Error("update job status on invalid options", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("parse check options: %w", err)
+	}
+	if opts.URL == "" {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "no source URL"}); ue != nil {
+			slog.Error("update job status on missing URL", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("check job %s has no URL", job.ID)
+	}
+
+	if err := s.Store.UpdateJob(job.ID, map[string]interface{}{
+		"status":       "running",
+		"errorMessage": "",
+	}); err != nil {
+		return fmt.Errorf("set job running: %w", err)
+	}
+
+	dl := s.DownloaderFactory()
+	if err := dl.SleepBetweenChapters(ctx); err != nil {
+		return err
+	}
+	info, err := dl.GetNovelInfo(ctx, opts.URL)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on fetch failure", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("fetch novel info: %w", err)
+	}
+
+	existingOrders, err := s.Store.GetExistingChapterOrders(job.OwnerID, job.NovelID)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on existing orders failure", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("get existing orders: %w", err)
+	}
+	existingTitles, err := s.Store.GetExistingChapterURLs(job.OwnerID, job.NovelID)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on existing titles failure", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("get existing titles: %w", err)
+	}
+
+	newAvailable := 0
+	for _, ch := range info.Chapters {
+		chNum := extractChapterOrder(ch.Title)
+		if chNum > 0 && existingOrders[chNum] {
+			continue
+		}
+		if existingTitles[ch.Title] {
+			continue
+		}
+		newAvailable++
+	}
+
+	checkedAt := time.Now().Format(time.RFC3339)
+	_ = s.Store.UpdateNovelCheckResult(job.NovelID, checkedAt, newAvailable)
+
+	return s.Store.UpdateJob(job.ID, map[string]interface{}{
+		"status":      "done",
+		"newChapters": newAvailable,
+	})
 }
