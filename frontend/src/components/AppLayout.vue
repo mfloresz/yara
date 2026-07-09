@@ -27,10 +27,9 @@
             @click="jobsOpen = true"
           >
             <template #icon>
-              <n-icon>
-                <n-spin v-if="hasActive" :size="16" />
-                <TimeOutline v-else />
-              </n-icon>
+              <n-badge dot :show="hasActive" :offset="[-4, 4]">
+                <n-icon><TimeOutline /></n-icon>
+              </n-badge>
             </template>
           </n-button>
 
@@ -153,7 +152,7 @@
 <script setup lang="ts">
 import { computed, ref, h } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { NButton, NIcon, NDropdown, NDrawer, NDrawerContent, NDivider } from "naive-ui";
+import { NButton, NIcon, NDropdown, NDrawer, NDrawerContent, NDivider, NBadge } from "naive-ui";
 import {
   BookOutline,
   TimeOutline,

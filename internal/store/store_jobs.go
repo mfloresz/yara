@@ -37,6 +37,7 @@ func (s *Store) CreateJob(userID string, job *Job) error {
 	record.Set("auto_segment_completed_count", job.AutoSegmentCompletedCount)
 	record.Set("auto_segment_chapter_id", job.AutoSegmentChapterID)
 	record.Set("auto_segment_chapter_title", job.AutoSegmentChapterTitle)
+	record.Set("new_chapters", job.NewChapters)
 	if err := s.App.Save(record); err != nil {
 		return err
 	}

@@ -80,6 +80,8 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		client := noveldownloader.NewLazyFallbackClient(directClient, checker)
 
 		dl := noveldownloader.NewDownloaderWithClient(client)
+		dl.MinChapterDelay = noveldownloader.DefaultMinChapterDelay
+		dl.MaxChapterDelay = noveldownloader.DefaultMaxChapterDelay
 		if cfg != nil {
 			if cfg.DownloadMinDelayMs > 0 {
 				dl.MinChapterDelay = time.Duration(cfg.DownloadMinDelayMs) * time.Millisecond

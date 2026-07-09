@@ -342,6 +342,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           "/api/db/novels/check-batch-updates",
         );
       },
+      async batchCheck(novelIds: string[]): Promise<{ jobs: { novelId: string; jobId: string }[] }> {
+        return http.post("/api/db/novels/batch-check", { novelIds });
+      },
       async batchUpdateFromUrl(
         selections: BatchUpdateSelection[],
       ): Promise<BatchUpdateResponse> {
