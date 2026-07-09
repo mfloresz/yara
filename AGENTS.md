@@ -138,12 +138,12 @@ Those actions require explicit user confirmation.
 
 When asked "create release vX.Y.Z", the agent should:
 
-1. **Check state** — `git status`, `git log --oneline -5`, and verify `git diff vX.Y.Z-1..HEAD` captures the intended changes.
-2. **Build frontend** — Run `npm run build` in `frontend/` so `frontend/dist/` is up to date.
-3. **Stage & commit** — `git add -A`, then commit with an appropriate conventional-commit prefix (`feat:`, `chore:`, `fix:`).
-4. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
+1. **Determine version** — Run `git tag -l 'v*' --sort=-v:refname | head -1` to find the current version. Use the version provided by the user (e.g. `v0.2.0`).
+2. **Review changes** — Run `git log --oneline vPREV..HEAD` and `git diff --stat vPREV..HEAD` to understand what changed.
+3. **Stage & commit** — `git add -A` then `git commit -m "chore: prepare release vX.Y.Z"`.
+4. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"` (annotated tag only, never lightweight).
 5. **Push** — `git push origin main --tags`.
-6. **Generate changelog** — See `## Changelog` below.
+6. **Generate changelog** — Write the changelog for the GitHub Release. See `## Changelog` below.
 
 ## Changelog
 
@@ -184,7 +184,29 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 
 - HTTP handlers live in `internal/api` and follow one-file-per-resource. Add a new resource by creating `router_<thing>.go` with a `register<Thing>Routes(api, s)` function, then wire it from `registerProtectedRoutes` in `router.go`. Public (unauthenticated) routes go via `registerAuthRoutes` or directly on `router` in `registerRoutes`.
 - Store layer returns `store.ErrNotFound` / `store.ErrForbidden` for permission/missing cases. Map them in handlers with `notFoundOrForbidden(e, err)` (in `router_helpers.go`) — don't inline the switch.
-- Response shaping is bespoke: handlers return `map[string]any` or call small `*Record(...)` helpers (e.g. `novelRecord`, `jobRecord`, `epubRecord`, `parseJSONFields`) instead of serializing structs directly. The frontend expects this exact shape. Tests in `router_integration_test.go` assert on field names, so changing them is a breaking change.
+- Response shaping is bespoke: handlers return `map[string]any` or call small `*Record(...)` helpers (e.g. `novelRecord`, `jobRecord`, `epubRecord`, `parseJSONFields`) instead of serializing structs directly. The frontend expects this exact shape. Tests in `router_integration_test.go` assert on field names, so changing them is a breaking change. All shapers live in `internal/api/router_responses.go`. Example pattern:
+
+  ```go
+  // router_responses.go — every entity has its own shaper
+  func epubRecord(e store.Epub) map[string]any {
+      return map[string]any{
+          "id": e.ID, "novelId": e.NovelID, "fileKind": e.FileKind,
+          "label": e.Label, "fileName": e.FileName, "url": e.URL,
+          "createdAt": e.CreatedAt, "updatedAt": e.UpdatedAt,
+      }
+  }
+
+  // handler — never serialize store structs directly
+  api.GET("/db/epubs/{id}", func(e *core.RequestEvent) error {
+      epub, err := s.Store.GetEpubAccessible(e.Auth.Id, e.Request.PathValue("id"))
+      if err != nil {
+          return notFoundOrForbidden(e, err)
+      }
+      return e.JSON(http.StatusOK, epubRecord(epub))
+  })
+  ```
+
+  Key rules: (a) store layer stores JSON as strings; shapers call `json.Unmarshal` to return parsed objects to the frontend (`parseJSONFields`). (b) list endpoints wrap items in `{"items": [...]}` or return plain arrays depending on the resource. (c) composite responses combine multiple shapers in one map (e.g. `{"novel": parseJSONFields(...), "epub": epubRecord(...), "chaptersImported": n}`).
 - All PocketBase collections are defined in code (see `store_schema.go`) and seeded in `EnsureSchema`. There are no JSON migration files. If you add a field, add it to the relevant `ensure*Collection` and use `ensureField` for idempotent migration.
 - The `translatorserver` import alias in `internal/api/router.go` and `static.go` is the **module-name alias** for the `translator-server` module — its only job is to expose the `FrontendFS` embed declared in `frontend_embed.go`. The package name on that file is `translatorserver` (single word), which is why the alias matches.
 - Frontend uses `vue-router` and the `appServicesKey` provide/inject pattern (`frontend/src/app/services.ts`) for cross-page state. New composables live in `frontend/src/composables/`; new pages in `frontend/src/pages/`. The dev proxy in `frontend/vite.config.ts` proxies `/api` and `/ai` to the Go backend — both are required because some routes are mounted at the root level by PocketBase.
@@ -260,4 +282,83 @@ All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA 
 - New job operation → extend the switch in `internal/api/runtime_worker.go` (`enqueueJob`) and add a `runtime_*.go` workflow file. Status transitions live in `store_jobs.go`; the worker respects `cancelled` / `done` / `failed` short-circuits.
 - Schema/migration change → prefer `ensureField` over touching raw collection JSON; for breaking changes with existing data, use the manual migration flag pattern (see `## Database migrations`).
 - Anything that touches the persisted collection names in `internal/store/store.go` (e.g. `NovelsCollection`) is a breaking change for existing `data/` directories.
+
+## Configuration reference
+
+All configuration is centralized in `internal/config/config.go` (`config.Load()`). Resolution order: **CLI flag > env var > hardcoded default**.
+
+### CLI flags
+
+| Flag | Type | Default | Purpose |
+|---|---|---|---|
+| `-addr` | `string` | `:5176` | Listen address (host:port). Falls back to `ADDR` env, then `:5176`. |
+| `-port` | `string` | `:5176` | Listen port. Falls back to `PORT` env, then `:5176`. |
+| `-data-dir` | `string` | `<binary-dir>/data` | PocketBase data directory. Falls back to `DATA_DIR` env. Resolved to absolute path. |
+| `-static-dir` | `string` | `""` (use embed) | Dev-only: serve frontend from disk instead of embed. Falls back to `STATIC_DIR` env. Also sets PocketBase `DefaultDev: true`. |
+| `-migrate-db` | `bool` | `false` | Run legacy database migration and exit. |
+| `-migrate-thumbnails` | `bool` | `false` | Generate thumbnails for existing covers and exit. |
+| `-version` | `bool` | `false` | Print version and exit. |
+
+### Environment variables
+
+| Env var | Type | Default | Purpose |
+|---|---|---|---|
+| `APP_ENCRYPTION_KEY` | `string` | auto-generated at `<data-dir>/app.key` | AES-GCM key for provider API keys. Must decode (base64/hex) to exactly 32 bytes. |
+| `STATIC_DIR` | `string` | `""` (use embed) | Dev-only: path to frontend dist files on disk. |
+| `DOWNLOAD_MIN_DELAY_MS` | `int` | `0` (default: 5000) | Lower bound (ms) of random wait between chapter fetches. Only for import-from-URL flow. |
+| `DOWNLOAD_MAX_DELAY_MS` | `int` | `0` (default: 10000) | Upper bound (ms) of random wait between chapter fetches. Only for import-from-URL flow. |
+| `ADDR` | `string` | `:5176` | Listen address. Only used if `-addr` flag is empty. |
+| `PORT` | `string` | `:5176` | Listen port. Only used if `-port` flag is empty. |
+| `DATA_DIR` | `string` | `<binary-dir>/data` | PocketBase data directory. Only used if `-data-dir` flag is empty. |
+| `VITE_API_URL` | `string` | `""` (same-origin) | Frontend only: overrides API base URL for the Vue SPA. |
+
+### Build-time variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VERSION` | `dev` | Injected via `-ldflags -X main.Version=$(VERSION)`. Printed by `-version` flag. |
+
+## Checklists for adding new components
+
+### Adding a new parser/scraper
+
+1. Create `internal/noveldownloader/yoursite.go` implementing the `Parser` interface (`Name`, `CanHandle`, `GetNovelInfo`, `GetChapterURLs`, `ParseChapter`).
+2. Add `NewYourSiteParser()` to **both** `NewDownloader()` and `NewDownloaderWithClient()` in `downloader.go` (lines ~40-72). Both lists must stay in sync.
+3. If the site is behind Cloudflare, add the domain to `BrowserRequiredSites` in `browser_required.go`.
+4. Write tests: unit tests in the same file; live-URL tests in `realtest_test.go` gated by `if testing.Short() { t.Skip(...) }`.
+5. Test with: `go test -short ./internal/noveldownloader/...`
+6. If behind Cloudflare, use the debug proxy workflow to fetch real HTML first (see `## Debug proxy for Cloudflare-protected sites`).
+
+### Adding a new API route
+
+1. Create `internal/api/router_<resource>.go` with a `register<Resource>Routes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server)` function.
+2. Wire it into `registerProtectedRoutes` in `router.go` (or `registerAuthRoutes` for public routes).
+3. In the handler, call the store layer and use `notFoundOrForbidden(e, err)` for error mapping — never inline the switch.
+4. Shape responses with helpers from `router_responses.go` (`*Record(...)` or `parseJSONFields`). Never serialize store structs directly.
+5. Write integration tests in `internal/api/router_integration_test.go` using the `newAPITestEnv` helper.
+
+### Adding a new AI provider
+
+1. Add a catalog entry in `internal/ai/registry.go` (sets `GoAIOptions` like `useResponsesAPI`, `strictJsonSchema`).
+2. Verify `internal/ai/openai.go` honors those options.
+3. Store the API key encrypted via the existing encryptor — do not handle raw keys.
+
+## Logging conventions
+
+The project uses **`log/slog`** exclusively (Go stdlib). No third-party logging libraries.
+
+### Rules
+
+- **Always use `slog.<Level>` directly** — never `log.Print`, `log.Fatal`, `fmt.Print`, or `fmt.Fprintf(os.Stderr, ...)` for runtime logging.
+- **Plain key-value pairs** — use `slog.Info("message", "key", value, "key2", value2)`. Never use `slog.String()`, `slog.Int()`, `slog.Group()`, or `slog.With()`.
+- **Error key is always `"error"`** — pass the Go error as the value, not embedded in the message string.
+- **Message describes the action**, not the error — e.g. `"failed to load config"` not `"config error"`.
+- **Level conventions:**
+  - `slog.Info` — lifecycle events, connections, dispatches, milestones.
+  - `slog.Warn` — degraded situations: retries, fallbacks, partial failures, queue-full.
+  - `slog.Error` — internal failures, status update failures, corrupt data.
+  - `slog.Debug` — verbose internals (used sparingly).
+- **No per-package loggers** — do not create `slog.With("component", "api")` or child loggers. All logging goes through `slog.Info/Warn/Error` directly.
+- **No custom handlers** — the project relies on the default slog JSON handler. Do not add handlers or formatters.
+- **Do not log in `internal/ai/`** — AI provider code returns errors; the caller in `internal/api/` decides whether to log.
 
