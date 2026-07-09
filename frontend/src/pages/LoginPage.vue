@@ -1,34 +1,28 @@
 <template>
   <div class="auth-page">
-    <Card class="auth-card">
-      <template #title>Iniciar sesión</template>
-      <template #content>
-        <div class="stack-md">
-          <div>
-            <label class="small muted">Email</label>
-            <InputText v-model="email" type="email" fluid />
-          </div>
-          <div>
-            <label class="small muted">Contraseña</label>
-            <Password v-model="password" fluid toggleMask :feedback="false" />
-          </div>
-          <Message v-if="error" severity="error">{{ error }}</Message>
-          <Button label="Entrar" :loading="loading" @click="submit" />
-          <Button label="Crear cuenta" severity="secondary" outlined @click="router.push('/register')" />
+    <n-card class="auth-card" size="small">
+      <template #header>Iniciar sesión</template>
+      <div class="stack-md">
+        <div>
+          <label class="small muted">Email</label>
+          <n-input v-model:value="email" type="text" placeholder="Email" @keydown.enter="submit" />
         </div>
-      </template>
-    </Card>
+        <div>
+          <label class="small muted">Contraseña</label>
+          <n-input v-model:value="password" type="password" show-password-on="click" placeholder="Contraseña" @keydown.enter="submit" />
+        </div>
+        <n-alert v-if="error" type="error" :title="error" />
+        <n-button type="primary" block :loading="loading" @click="submit">Entrar</n-button>
+        <n-button block secondary @click="router.push('/register')">Crear cuenta</n-button>
+      </div>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import Card from "primevue/card";
-import InputText from "primevue/inputtext";
-import Password from "primevue/password";
-import Button from "primevue/button";
-import Message from "primevue/message";
+import { NCard, NInput, NButton, NAlert } from "naive-ui";
 import { useAppServices } from "@/app/services";
 
 const router = useRouter();
@@ -64,21 +58,6 @@ async function submit() {
 .auth-card {
   width: 100%;
   max-width: 420px;
-}
-
-:deep(.p-card) {
-  width: 100%;
-  max-width: 100%;
-}
-
-:deep(.p-card-body),
-:deep(.p-card-content),
-:deep(.p-password),
-:deep(.p-password-input),
-:deep(.p-inputtext),
-:deep(.p-button) {
-  width: 100%;
-  max-width: 100%;
 }
 
 @media (max-width: 640px) {

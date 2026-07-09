@@ -1,94 +1,111 @@
 <template>
   <AppLayout>
     <div v-if="!chapter" class="stack-md">
-      <Button label="Volver" icon="pi pi-arrow-left" severity="secondary" text @click="router.push(`/novels/${novelId}`)" />
-      <ProgressSpinner v-if="chaptersLoading || novelLoading" style="width: 48px; height: 48px" strokeWidth="4" />
-      <Message v-else severity="warn">Capítulo no encontrado.</Message>
+      <n-button secondary @click="router.push(`/novels/${novelId}`)">
+        <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+        Volver
+      </n-button>
+      <n-spin v-if="chaptersLoading || novelLoading" :size="48" />
+      <n-alert v-else type="warning" title="Capítulo no encontrado." />
     </div>
 
     <div v-else class="stack-lg">
-      <Button label="Volver a capítulos" icon="pi pi-arrow-left" severity="secondary" text @click="router.push(`/novels/${novelId}`)" />
+      <n-button secondary @click="router.push(`/novels/${novelId}`)">
+        <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+        Volver a capítulos
+      </n-button>
 
       <div class="row-between">
         <div style="min-width: 0">
           <h1 style="margin: 0 0 0.25rem">{{ translatedTitle || title }}</h1>
           <div v-if="translatedTitle" class="small muted">{{ title }}</div>
           <div class="row-wrap" style="margin-top: 0.75rem">
-            <Tag severity="secondary" :value="`#${chapter.chapterOrder}`" />
-            <Tag :severity="chapterSeverity(displayStatus)" :value="chapterStatusLabel(displayStatus)" />
+            <n-tag size="small" round> #{{ chapter.chapterOrder }} </n-tag>
+            <n-tag :type="chapterTagType(displayStatus)" size="small" round>
+              {{ chapterStatusLabel(displayStatus) }}
+            </n-tag>
           </div>
         </div>
         <div class="row-wrap">
-          <Button
-            label="Traducir"
-            icon="pi pi-sparkles"
+          <n-button
+            type="primary"
             :loading="translateLoading"
             :disabled="!originalContent || chapterIsProcessing || translateLoading || refineLoading"
             @click="handleTranslate"
-          />
-          <Button
-            label="Refinar"
-            icon="pi pi-wand"
-            severity="secondary"
-            outlined
+          >
+            <template #icon><n-icon><SparklesOutline /></n-icon></template>
+            Traducir
+          </n-button>
+          <n-button
+            secondary
             :loading="refineLoading"
             :disabled="!translatedContent || chapterIsProcessing || translateLoading || refineLoading"
             @click="handleRefine"
-          />
-          <Button
+          >
+            <template #icon><n-icon><ColorWandOutline /></n-icon></template>
+            Refinar
+          </n-button>
+          <n-button
             v-if="chapter.status === 'refined' || chapter.status === 'done'"
-            label="Marcar completado"
-            icon="pi pi-check"
-            severity="success"
-            outlined
+            type="success"
+            secondary
             @click="handleMarkDone"
-          />
-          <Button label="Guardar" icon="pi pi-save" :loading="saving" @click="handleSave" />
+          >
+            <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+            Marcar completado
+          </n-button>
+          <n-button type="primary" :loading="saving" @click="handleSave">
+            <template #icon><n-icon><SaveOutline /></n-icon></template>
+            Guardar
+          </n-button>
         </div>
       </div>
 
-      <Message v-if="error" severity="error">{{ error }}</Message>
+      <n-alert v-if="error" type="error" :title="error" />
 
-      <Card>
-        <template #content>
-          <div class="stack-md">
-            <div class="row-wrap">
-              <div style="flex: 1; min-width: 240px">
-                <label class="small muted">Título original</label>
-                <InputText v-model="title" fluid />
-              </div>
-              <div style="flex: 1; min-width: 240px">
-                <label class="small muted">Título traducido</label>
-                <InputText v-model="translatedTitle" fluid />
-              </div>
+      <n-card size="small">
+        <div class="stack-md">
+          <div class="row-wrap">
+            <div style="flex: 1; min-width: 240px">
+              <label class="small muted">Título original</label>
+              <n-input v-model:value="title" />
+            </div>
+            <div style="flex: 1; min-width: 240px">
+              <label class="small muted">Título traducido</label>
+              <n-input v-model:value="translatedTitle" />
             </div>
           </div>
-        </template>
-      </Card>
+        </div>
+      </n-card>
 
       <div class="stack-lg">
-        <Card v-for="panel in panels" :key="panel.id">
-          <template #title>{{ panel.label }}</template>
-          <template #content>
-            <div class="stack-md">
-              <div class="row-between">
-                <div class="small muted">{{ panel.languageLabel }} · {{ panel.value.length }} chars</div>
-                <div class="row-wrap">
-                  <SelectButton :model-value="contentViewMode[panel.id]" :options="viewModeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @update:model-value="setPanelMode(panel.id, $event)" />
-                </div>
+        <n-card v-for="panel in panels" :key="panel.id" :title="panel.label" size="small">
+          <div class="stack-md">
+            <div class="row-between">
+              <div class="small muted">{{ panel.languageLabel }} · {{ panel.value.length }} chars</div>
+              <div class="row-wrap">
+                <n-radio-group :value="contentViewMode[panel.id]" @update:value="setPanelMode(panel.id, $event)">
+                  <n-radio-button value="plain">Texto plano</n-radio-button>
+                  <n-radio-button value="markdown">Markdown</n-radio-button>
+                </n-radio-group>
               </div>
-
-              <template v-if="contentViewMode[panel.id] === 'plain'">
-                <Textarea :model-value="panel.value" rows="14" fluid class="mono" @update:model-value="panel.onChange($event)" />
-              </template>
-              <template v-else>
-                <div class="markdown-preview" style="border: 1px solid var(--p-content-border-color); border-radius: 12px; padding: 1rem; min-height: 220px" v-html="markdownToHtml(panel.value || panel.placeholder)" />
-              </template>
             </div>
-          </template>
-        </Card>
-      </div>
 
+            <template v-if="contentViewMode[panel.id] === 'plain'">
+              <n-input
+                :value="panel.value"
+                type="textarea"
+                :rows="14"
+                :style="{ fontFamily: 'monospace' }"
+                @update:value="panel.onChange($event)"
+              />
+            </template>
+            <template v-else>
+              <div class="markdown-preview" style="border: 1px solid var(--divide); border-radius: 12px; padding: 1rem; min-height: 220px" v-html="markdownToHtml(panel.value || panel.placeholder)" />
+            </template>
+          </div>
+        </n-card>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -96,16 +113,25 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import {
+  NButton,
+  NCard,
+  NInput,
+  NAlert,
+  NSpin,
+  NRadioGroup,
+  NRadioButton,
+  NTag,
+  NIcon,
+} from "naive-ui";
+import {
+  ArrowBackOutline,
+  SparklesOutline,
+  ColorWandOutline,
+  CheckmarkOutline,
+  SaveOutline,
+} from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import InputText from "primevue/inputtext";
-import Message from "primevue/message";
-import ProgressSpinner from "primevue/progressspinner";
-import SelectButton from "primevue/selectbutton";
-import Tag from "primevue/tag";
-import Textarea from "primevue/textarea";
-import { useToast } from "primevue/usetoast";
 import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useAppServices } from "@/app/services";
@@ -134,7 +160,6 @@ const saving = ref(false);
 const translateLoading = ref(false);
 const refineLoading = ref(false);
 const error = ref<string | null>(null);
-const toast = useToast();
 const contentViewMode = reactive<Record<"original" | "translated" | "refined", "plain" | "markdown">>({
   original: "plain",
   translated: "plain",
@@ -172,10 +197,6 @@ const panels = computed(() => [
     onChange: (value: string) => { refinedContent.value = value; },
   },
 ]);
-const viewModeOptions = [
-  { label: "Texto plano", value: "plain" },
-  { label: "Markdown", value: "markdown" },
-];
 
 async function loadNovel() {
   if (!novelId.value) {
@@ -255,15 +276,15 @@ function chapterStatusLabel(status: Chapter["status"]) {
   }[status] || status;
 }
 
-function chapterSeverity(status: Chapter["status"]) {
-  return {
-    pending: "secondary",
-    processing: "info",
-    translated: "warn",
-    refined: "help",
+function chapterTagType(status: Chapter["status"]) {
+  return ({
+    pending: "default",
+    processing: "warning",
+    translated: "success",
+    refined: "info",
     done: "success",
-    failed: "danger",
-  }[status] as "secondary" | "info" | "warn" | "help" | "success" | "danger";
+    failed: "error",
+  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
 }
 
 async function handleSave() {
@@ -300,7 +321,7 @@ async function handleTranslate() {
     markChapterProcessing();
     emitJobChanged();
   } catch (err) {
-    toast.add({ severity: "error", summary: "Falló la traducción", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    error.value = err instanceof Error ? err.message : String(err);
   } finally {
     translateLoading.value = false;
   }

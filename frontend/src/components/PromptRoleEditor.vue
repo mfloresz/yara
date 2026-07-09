@@ -1,27 +1,29 @@
 <template>
-  <Card>
-    <template #title>{{ title }}</template>
-    <template #content>
-      <div class="stack-md">
-        <div>
-          <div class="row-between" style="margin-bottom: 0.25rem">
-            <label class="small muted">System prompt</label>
-            <span v-if="overridden" class="small" style="color: var(--p-primary-color)">Override de la novela</span>
-            <span v-else-if="globalValue" class="small muted">Usando prompt global</span>
-          </div>
-          <Textarea :model-value="modelValue" rows="6" fluid class="mono" @update:model-value="emit('update:modelValue', $event)" />
-          <div v-if="!modelValue && globalValue" class="small muted" style="margin-top: 0.25rem">
-            Vacío = usa el prompt global. Edita para crear un override.
-          </div>
+  <n-card :title="title" size="small">
+    <div class="stack-md">
+      <div>
+        <div class="row-between" style="margin-bottom: 0.25rem">
+          <label class="small muted">System prompt</label>
+          <span v-if="overridden" class="small" style="color: var(--accent-link)">Override de la novela</span>
+          <span v-else-if="globalValue" class="small muted">Usando prompt global</span>
+        </div>
+        <n-input
+          :value="modelValue"
+          type="textarea"
+          :rows="6"
+          :style="{ fontFamily: 'monospace' }"
+          @update:value="emit('update:modelValue', $event)"
+        />
+        <div v-if="!modelValue && globalValue" class="small muted" style="margin-top: 0.25rem">
+          Vacío = usa el prompt global. Edita para crear un override.
         </div>
       </div>
-    </template>
-  </Card>
+    </div>
+  </n-card>
 </template>
 
 <script setup lang="ts">
-import Card from 'primevue/card';
-import Textarea from 'primevue/textarea';
+import { NCard, NInput } from "naive-ui";
 
 defineProps<{
   title: string;
@@ -30,5 +32,5 @@ defineProps<{
   overridden?: boolean;
 }>();
 
-const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>();
+const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
 </script>

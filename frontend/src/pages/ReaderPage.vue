@@ -6,37 +6,37 @@
 
     <header class="reader-header">
       <div class="reader-header-left">
-        <Button
-          icon="pi pi-arrow-left"
-          severity="secondary"
-          text
-          rounded
+        <n-button
+          quaternary
+          circle
           class="reader-back-btn"
           aria-label="Volver a la novela"
           @click="router.push(`/novels/${novelId}`)"
-        />
-        <Button
-          icon="pi pi-bars"
-          severity="secondary"
-          text
-          rounded
+        >
+          <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+        </n-button>
+        <n-button
+          quaternary
+          circle
           class="reader-menu-btn"
           aria-label="Menú de capítulos"
           @click="drawerOpen = !drawerOpen"
-        />
+        >
+          <template #icon><n-icon><MenuOutline /></n-icon></template>
+        </n-button>
       </div>
       <div class="reader-header-title-group">
         <h1 class="reader-header-title">{{ novel ? getNovelDisplayTitle(novel) : 'Lector' }}</h1>
       </div>
-      <Button
-        icon="pi pi-cog"
-        severity="secondary"
-        text
-        rounded
+      <n-button
+        quaternary
+        circle
         class="reader-settings-btn"
         aria-label="Configuración"
         @click="settingsOpen = !settingsOpen"
-      />
+      >
+        <template #icon><n-icon><SettingsOutline /></n-icon></template>
+      </n-button>
     </header>
 
     <div class="reader-layout">
@@ -62,43 +62,45 @@
               <span class="reader-ch-title">{{ summaryDisplayTitle(item) }}</span>
             </button>
             <div v-else class="reader-sidebar-skeleton">
-              <Skeleton width="100%" height="1rem" />
+              <n-skeleton width="100%" height="1rem" />
             </div>
           </li>
         </ul>
       </nav>
 
       <main ref="scrollContainer" class="reader-main">
-        <Card v-if="showEmpty">
-          <template #content>
-            <div class="reader-empty-state">
-              <h2>Sin contenido</h2>
-              <p class="muted">
-                <template v-if="variant === 'translated' && stats.totalChapters > 0">
-                  No hay capítulos traducidos todavía. Puedes cambiar a originales.
-                </template>
-                <template v-else>
-                  No hay capítulos disponibles para esta variante.
-                </template>
-              </p>
-              <div class="reader-empty-actions">
-                <Button v-if="variant === 'translated' && stats.totalChapters > 0" label="Ver originales" severity="secondary" outlined @click="variant = 'original'" />
-                <Button label="Volver al proyecto" @click="router.push(`/novels/${novelId}`)" />
-              </div>
+        <n-card v-if="showEmpty">
+          <div class="reader-empty-state">
+            <h2>Sin contenido</h2>
+            <p class="muted">
+              <template v-if="variant === 'translated' && stats.totalChapters > 0">
+                No hay capítulos traducidos todavía. Puedes cambiar a originales.
+              </template>
+              <template v-else>
+                No hay capítulos disponibles para esta variante.
+              </template>
+            </p>
+            <div class="reader-empty-actions">
+              <n-button v-if="variant === 'translated' && stats.totalChapters > 0" secondary @click="variant = 'original'">
+                <template #icon><n-icon><EyeOutline /></n-icon></template>
+                Ver originales
+              </n-button>
+              <n-button type="primary" @click="router.push(`/novels/${novelId}`)">
+                <template #icon><n-icon><HomeOutline /></n-icon></template>
+                Volver al proyecto
+              </n-button>
             </div>
-          </template>
-        </Card>
+          </div>
+        </n-card>
 
-        <Card v-else-if="chapterLoading">
-          <template #content>
-            <div class="reader-loading">
-              <Skeleton width="10rem" height="1rem" />
-              <Skeleton width="50%" height="2rem" />
-              <Skeleton width="100%" height="8rem" borderRadius="12px" />
-              <Skeleton width="100%" height="8rem" borderRadius="12px" />
-            </div>
-          </template>
-        </Card>
+        <n-card v-else-if="chapterLoading">
+          <div class="reader-loading">
+            <n-skeleton width="10rem" height="1rem" />
+            <n-skeleton width="50%" height="2rem" />
+            <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
+            <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
+          </div>
+        </n-card>
 
         <article v-else-if="activeChapter" class="reader-article">
           <header class="reader-chapter-header">
@@ -108,25 +110,25 @@
           <div class="reader-body markdown-preview" v-html="markdownToHtml(activeChapterContent)" />
 
           <nav class="reader-chapter-nav" aria-label="Navegación entre capítulos">
-            <Button
+            <n-button
               v-if="previousChapterId"
-              icon="pi pi-arrow-left"
-              label="Anterior"
-              severity="secondary"
-              outlined
+              secondary
               class="reader-nav-prev"
               @click="selectChapter(previousChapterId)"
-            />
+            >
+              <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+              Anterior
+            </n-button>
             <span v-else class="reader-nav-spacer" />
-            <Button
+            <n-button
               v-if="nextChapterId"
-              label="Siguiente"
-              icon="pi pi-arrow-right"
-              iconPos="right"
-              severity="primary"
+              type="primary"
               class="reader-nav-next"
               @click="selectChapter(nextChapterId)"
-            />
+            >
+              Siguiente
+              <template #icon><n-icon><ArrowForwardOutline /></n-icon></template>
+            </n-button>
             <span v-else class="reader-nav-spacer" />
           </nav>
         </article>
@@ -210,9 +212,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSPro
 import "@fontsource-variable/newsreader";
 import "@fontsource-variable/playfair-display";
 import { useRoute, useRouter } from "vue-router";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Skeleton from "primevue/skeleton";
+import {
+  NButton,
+  NCard,
+  NIcon,
+  NSkeleton,
+} from "naive-ui";
+import {
+  ArrowBackOutline,
+  MenuOutline,
+  SettingsOutline,
+  ArrowForwardOutline,
+  EyeOutline,
+  HomeOutline,
+} from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
 import { useNovels } from "@/composables/useNovels";

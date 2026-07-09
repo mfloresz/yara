@@ -1,12 +1,11 @@
 <template>
-  <Dialog v-model:visible="visible" modal header="Importar novela desde URL" :style="{ width: 'min(520px, 96vw)' }" @after-hide="reset">
+  <n-modal v-model:show="visible" preset="card" title="Importar novela desde URL" :style="{ width: 'min(520px, 96vw)' }" @after-leave="reset">
     <div class="stack-md">
       <div>
         <label class="small muted">URL de la novela</label>
-        <InputText
-          v-model="url"
+        <n-input
+          v-model:value="url"
           placeholder="https://novelphoenix.com/novel/..."
-          fluid
           :disabled="loading"
           @keydown.enter="handleSearch"
         />
@@ -15,27 +14,27 @@
         </div>
       </div>
 
-      <Message v-if="error" severity="error">{{ error }}</Message>
+      <n-alert v-if="error" type="error">{{ error }}</n-alert>
     </div>
-    <template #footer>
-      <Button severity="secondary" outlined label="Cancelar" :disabled="loading" @click="visible = false" />
-      <Button
-        :label="loading ? 'Buscando...' : 'Buscar'"
-        icon="pi pi-search"
+    <template #action>
+      <n-button secondary :disabled="loading" @click="visible = false">Cancelar</n-button>
+      <n-button
+        type="primary"
         :loading="loading"
         :disabled="!url.trim()"
         @click="handleSearch"
-      />
+      >
+        <template #icon><n-icon><SearchOutline /></n-icon></template>
+        {{ loading ? 'Buscando...' : 'Buscar' }}
+      </n-button>
     </template>
-  </Dialog>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import Button from "primevue/button";
-import Dialog from "primevue/dialog";
-import InputText from "primevue/inputtext";
-import Message from "primevue/message";
+import { NModal, NInput, NAlert, NButton, NIcon } from "naive-ui";
+import { SearchOutline } from "@vicons/ionicons5";
 import { useNovels } from "@/composables/useNovels";
 import type { PreviewUrlResult } from "@/api/types";
 

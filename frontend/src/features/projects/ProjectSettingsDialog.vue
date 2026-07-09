@@ -1,296 +1,373 @@
 <template>
-  <Dialog :visible="open" modal header="Configuración del proyecto" :style="{ width: 'min(1100px, 96vw)' }" @update:visible="emit('update:open', false)">
-    <div class="stack-md">
-      <div class="row-wrap">
-        <Button
-          v-for="tab in tabs"
-          :key="tab.value"
-          :label="tab.label"
-          size="small"
-          :outlined="activeTab !== tab.value"
-          @click="activeTab = tab.value"
-        />
-      </div>
-
-      <div v-if="activeTab === 'novel'" class="stack-md">
-        <div class="row-wrap">
-          <div style="min-width: 220px; flex: 1">
-            <label class="small muted">Idioma origen</label>
-            <InputText v-model="novelDraft.sourceLanguage" fluid />
-          </div>
-          <div style="min-width: 220px; flex: 1">
-            <label class="small muted">Idioma destino</label>
-            <InputText v-model="novelDraft.targetLanguage" fluid />
-          </div>
-        </div>
-
-        <div class="row-wrap">
-          <Card style="flex: 1; min-width: 280px">
-            <template #title>Metadatos idioma origen</template>
-            <template #content>
-              <MetadataEditor
-                :metadata-title="novelDraft.sourceTitle"
-                :metadata-author="novelDraft.sourceAuthor"
-                :metadata-description="novelDraft.sourceDescription"
-                :metadata-series="novelDraft.sourceSeries"
-                :metadata-number="novelDraft.sourceNumber"
-                :status="novelDraft.status"
-                :tags="novelDraft.tags"
-                :tag-suggestions="tagSuggestions"
-                :series-suggestions="seriesSuggestions"
-                show-novel-meta
-                :cover-path="novel.coverPath"
-                cover-editable
-                :novel-id="novel.id"
-                is-owner
-                @update:metadata-title="(v) => (novelDraft.sourceTitle = v)"
-                @update:metadata-author="(v) => (novelDraft.sourceAuthor = v)"
-                @update:metadata-description="(v) => (novelDraft.sourceDescription = v)"
-                @update:metadata-series="(v) => (novelDraft.sourceSeries = v)"
-                @update:metadata-number="(v) => (novelDraft.sourceNumber = v)"
-                @update:status="(v) => (novelDraft.status = v)"
-                @update:tags="(v) => (novelDraft.tags = v)"
-                @select-cover="onSelectCover"
-                @remove-cover="onRemoveCover"
-                @delete="onDeleteNovel"
-              />
-            </template>
-          </Card>
-
-          <Card style="flex: 1; min-width: 280px">
-            <template #title>Metadatos idioma destino</template>
-            <template #content>
-              <MetadataEditor
-                :metadata-title="novelDraft.targetTitle"
-                :metadata-author="novelDraft.targetAuthor"
-                :metadata-description="novelDraft.targetDescription"
-                :metadata-series="novelDraft.targetSeries"
-                :metadata-number="novelDraft.targetNumber"
-                :series-suggestions="seriesSuggestions"
-                @update:metadata-title="(v) => (novelDraft.targetTitle = v)"
-                @update:metadata-author="(v) => (novelDraft.targetAuthor = v)"
-                @update:metadata-description="(v) => (novelDraft.targetDescription = v)"
-                @update:metadata-series="(v) => (novelDraft.targetSeries = v)"
-                @update:metadata-number="(v) => (novelDraft.targetNumber = v)"
-              />
-            </template>
-          </Card>
-        </div>
-
-        <div class="row-wrap">
-          <div style="min-width: 280px; flex: 1">
-            <label class="small muted">URL fuente</label>
-            <InputText v-model="novelDraft.url" fluid />
-          </div>
-          <div style="min-width: 280px; flex: 1">
-            <label class="small muted">Custom commands</label>
-            <Textarea v-model="novelDraft.customCommands" rows="5" fluid class="mono" />
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="activeTab === 'glossary'" class="stack-md">
-        <div class="row-between">
-          <h4 style="margin: 0">Glosario</h4>
-          <Button label="Añadir entrada" icon="pi pi-plus" size="small" @click="addGlossaryEntry" />
-        </div>
-        <div v-if="novelDraft.glossary.length === 0" class="muted small">Sin entradas de glosario.</div>
-        <Card v-for="entry in novelDraft.glossary" :key="entry.id">
-          <template #content>
-            <div class="stack-md">
-              <div class="row-wrap">
-                <InputText v-model="entry.source" placeholder="Origen" style="flex: 1; min-width: 180px" />
-                <InputText v-model="entry.target" placeholder="Destino" style="flex: 1; min-width: 180px" />
-                <Button severity="danger" outlined icon="pi pi-trash" @click="removeGlossaryEntry(entry.id)" />
-              </div>
-              <InputText v-model="entry.context" placeholder="Contexto opcional" fluid />
-            </div>
-          </template>
-        </Card>
-      </div>
-
-      <div v-else-if="activeTab === 'prompts'" class="stack-md">
-        <Message severity="info">
-          Edita un system prompt para crear un override en la novela. Déjalo vacío (o restáuralo al global) para usar el prompt configurado en Configuración general. El user prompt se genera automáticamente con los datos del capítulo y no se expone aquí.
-        </Message>
-        <PromptRoleEditor
-          title="Traducción"
-          :model-value="effectiveSystemPrompt('translation')"
-          :global-value="globalSystemPrompt('translation')"
-          :overridden="isOverridden('translation')"
-          @update:model-value="setSystemPrompt('translation', $event)"
-        />
-        <PromptRoleEditor
-          title="Refinamiento"
-          :model-value="effectiveSystemPrompt('refine')"
-          :global-value="globalSystemPrompt('refine')"
-          :overridden="isOverridden('refine')"
-          @update:model-value="setSystemPrompt('refine', $event)"
-        />
-        <PromptRoleEditor
-          title="Verificación"
-          :model-value="effectiveSystemPrompt('check')"
-          :global-value="globalSystemPrompt('check')"
-          :overridden="isOverridden('check')"
-          @update:model-value="setSystemPrompt('check', $event)"
-        />
-      </div>
-
-      <div v-else-if="activeTab === 'ai'" class="stack-md">
-        <div class="row-wrap">
-          <div style="min-width: 220px; flex: 1">
-            <label class="small muted">Proveedor</label>
-            <Select
-              v-model="settingsDraft.ai.provider"
-              :options="providerOptions"
-              optionLabel="name"
-              optionValue="id"
-              :loading="providersLoading"
-              :disabled="providersLoading"
-              placeholder="Usar proveedor global"
-              fluid
-              showClear
-              @change="onProviderChange"
-            />
-          </div>
-          <div style="min-width: 220px; flex: 1">
-            <label class="small muted">Modelo</label>
-            <Select
-              v-if="modelOptions.length > 1"
-              v-model="settingsDraft.ai.model"
-              :options="modelOptions"
-              :disabled="!settingsDraft.ai.provider || providersLoading"
-              placeholder="Usar modelo global"
-              fluid
-              showClear
-            />
-            <InputText
-              v-else
-              v-model="settingsDraft.ai.model"
-              :disabled="!settingsDraft.ai.provider || providersLoading"
-              placeholder="Ej: local-model"
-              fluid
-            />
-          </div>
-          <FieldNumber v-model="timeoutSec" label="Timeout (segundos)" :min="10" allow-clear placeholder="Usar global" wrapper-style="min-width: 180px; flex: 1" />
-        </div>
-        <Message severity="info">Si dejas estos campos vacíos, el backend usará la configuración global. El timeout aplica solo si se configura un valor.</Message>
-
-        <div style="border-top: 1px solid var(--p-border-color); padding-top: 1rem; margin-top: 0.5rem">
-          <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-            <div>
-              <div style="font-weight: 600">Usar modelo diferente para traducir títulos</div>
-              <div class="small muted">Usa un modelo más pequeño para títulos de capítulos. Si falla, se usa el modelo de contenido.</div>
-            </div>
-            <ToggleSwitch v-model="settingsDraft.ai.titleEnabled" style="flex-shrink: 0" />
-          </div>
-          <div v-if="settingsDraft.ai.titleEnabled" class="row-wrap" style="margin-top: 0.75rem">
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Proveedor para títulos</label>
-              <Select
-                v-model="settingsDraft.ai.titleProvider"
-                :options="providerOptions"
-                optionLabel="name"
-                optionValue="id"
-                :loading="providersLoading"
-                :disabled="providersLoading"
-                placeholder="Usar proveedor de contenido"
-                fluid
-                showClear
-                @change="onTitleProviderChange"
-              />
-            </div>
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Modelo para títulos</label>
-              <Select
-                v-if="titleModelOptions.length > 1"
-                v-model="settingsDraft.ai.titleModel"
-                :options="titleModelOptions"
-                :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                placeholder="Usar modelo de contenido"
-                fluid
-                showClear
-              />
-              <InputText
-                v-else
-                v-model="settingsDraft.ai.titleModel"
-                :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                placeholder="Ej: local-model"
-                fluid
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="activeTab === 'translation'" class="stack-md">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-          <div>
-            <div style="font-weight: 600">Auto segmentación</div>
-            <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor AI.</div>
-          </div>
-          <ToggleSwitch v-model="settingsDraft.translation.autoSegment" />
-        </div>
-
-        <div class="row-wrap">
-          <FieldNumber v-model="settingsDraft.translation.thresholdChars" label="Umbral auto" :min="1000" wrapper-style="min-width: 180px; flex: 1" />
-          <FieldNumber v-model="settingsDraft.translation.maxChars" label="Máx. por segmento" :min="500" wrapper-style="min-width: 180px; flex: 1" />
-          <FieldNumber v-model="settingsDraft.translation.minChars" label="Mín. por segmento" :min="100" wrapper-style="min-width: 180px; flex: 1" />
-          <FieldNumber v-model="settingsDraft.translation.maxRetries" label="Reintentos" :min="0" wrapper-style="min-width: 180px; flex: 1" />
-        </div>
-
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-          <div>
-            <div style="font-weight: 600">Enable check</div>
-            <div class="small muted">Permite verificación adicional en el backend.</div>
-          </div>
-          <ToggleSwitch v-model="settingsDraft.translation.enableCheck" />
-        </div>
-
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-          <div>
-            <div style="font-weight: 600">Incluir títulos anteriores</div>
-            <div class="small muted">Añade contexto de títulos previos al traducir.</div>
-          </div>
-          <ToggleSwitch v-model="settingsDraft.translation.includePreviousChapterTitles" />
-        </div>
-      </div>
-
-      <div v-else class="stack-md">
-        <label class="small muted">Notas del proyecto</label>
-        <Textarea v-model="settingsDraft.notes" rows="10" fluid />
-      </div>
+  <n-modal v-model:show="visible" preset="card" :style="{ width: 'min(1100px, 96vw)', height: 'min(720px, 85vh)' }" :content-style="{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: 0 }" :segmented="{ content: true, action: true }" @after-leave="emit('update:open', false)">
+    <div :style="{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', padding: '0 1.25rem', paddingTop: '0.75rem', flexShrink: 0 }">
+      <n-button
+        v-for="tab in tabs"
+        :key="tab.value"
+        size="small"
+        :type="activeTab === tab.value ? 'primary' : 'default'"
+        :secondary="activeTab !== tab.value"
+        @click="activeTab = tab.value"
+      >
+        {{ tab.label }}
+      </n-button>
     </div>
 
-    <template #footer>
-      <Button severity="secondary" outlined label="Cerrar" @click="emit('update:open', false)" />
-      <Button severity="warn" outlined label="Reset" @click="reset" />
-      <Button label="Guardar" :loading="saving" @click="save" />
+    <div :style="{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }">
+
+      <n-scrollbar v-if="activeTab === 'novel'" :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <div class="row-wrap">
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Idioma origen</label>
+              <n-select v-model:value="novelDraft.sourceLanguage" :options="languageOptions" />
+            </div>
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Idioma destino</label>
+              <n-select v-model:value="novelDraft.targetLanguage" :options="languageOptionsNoAuto" />
+            </div>
+          </div>
+
+          <div class="row-wrap">
+            <n-card style="flex: 1; min-width: 280px" title="Metadatos idioma origen">
+                <div class="stack-md">
+                  <div v-if="coverEditable" class="cover-editor">
+                    <label class="small muted">Portada</label>
+                    <div class="cover-preview">
+                      <img v-if="displayCoverUrl" :src="displayCoverUrl" alt="Portada actual" />
+                      <div v-else class="cover-placeholder">
+                        <n-icon :size="32"><ImageOutline /></n-icon>
+                      </div>
+                    </div>
+                    <div class="row-wrap" style="margin-top: 0.5rem">
+                      <n-button size="small" secondary @click="triggerFileInput">
+                        {{ displayCoverUrl ? 'Cambiar portada' : 'Subir portada' }}
+                      </n-button>
+                      <n-button v-if="displayCoverUrl" size="small" type="error" secondary @click="removeCover">
+                        Eliminar
+                      </n-button>
+                    </div>
+                    <input ref="fileInputRef" type="file" accept="image/*" hidden @change="onFileSelected" />
+                  </div>
+
+                  <div class="row-wrap">
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Título</label>
+                      <n-input :value="novelDraft.sourceTitle" @update:value="(v) => (novelDraft.sourceTitle = v)" />
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Autor</label>
+                      <n-input :value="novelDraft.sourceAuthor" @update:value="(v) => (novelDraft.sourceAuthor = v)" />
+                    </div>
+                  </div>
+
+                  <div class="row-wrap">
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Serie</label>
+                      <n-auto-complete
+                        :value="novelDraft.sourceSeries"
+                        :options="sourceSeriesOptions"
+                        placeholder="Nombre de la serie"
+                        @update:value="(v) => (novelDraft.sourceSeries = v ?? '')"
+                      />
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Número</label>
+                      <n-input :value="novelDraft.sourceNumber" @update:value="(v) => (novelDraft.sourceNumber = v)" />
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="small muted">Descripción</label>
+                    <n-input
+                      :value="novelDraft.sourceDescription"
+                      type="textarea"
+                      :rows="4"
+                      @update:value="(v) => (novelDraft.sourceDescription = v)"
+                    />
+                  </div>
+
+                  <div class="form-group" style="max-width: 220px">
+                    <label class="small muted">Estatus</label>
+                    <n-select
+                      :value="novelDraft.status"
+                      :options="statusOptions"
+                      @update:value="(v) => (novelDraft.status = v ?? 'ongoing')"
+                    />
+                  </div>
+
+                  <div class="form-group">
+                    <label class="small muted">Etiquetas</label>
+                    <n-dynamic-tags
+                      :value="novelDraft.tags"
+                      placeholder="Escribe una etiqueta y presiona Enter"
+                      @update:value="(v: string[]) => (novelDraft.tags = v)"
+                    />
+                  </div>
+
+                  <div class="row-wrap" style="justify-content: flex-end; padding-top: 0.5rem; border-top: 1px solid var(--divide)">
+                    <n-button size="small" type="error" secondary @click="onDeleteNovel">
+                      <template #icon><n-icon><TrashOutline /></n-icon></template>
+                      Eliminar novela
+                    </n-button>
+                  </div>
+                </div>
+            </n-card>
+
+            <n-card style="flex: 1; min-width: 280px" title="Metadatos idioma destino">
+                <div class="stack-md">
+                  <div class="row-wrap">
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Título</label>
+                      <n-input :value="novelDraft.targetTitle" @update:value="(v) => (novelDraft.targetTitle = v)" />
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Autor</label>
+                      <n-input :value="novelDraft.targetAuthor" @update:value="(v) => (novelDraft.targetAuthor = v)" />
+                    </div>
+                  </div>
+
+                  <div class="row-wrap">
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Serie</label>
+                      <n-auto-complete
+                        :value="novelDraft.targetSeries"
+                        :options="targetSeriesOptions"
+                        placeholder="Nombre de la serie"
+                        @update:value="(v) => (novelDraft.targetSeries = v ?? '')"
+                      />
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 180px">
+                      <label class="small muted">Número</label>
+                      <n-input :value="novelDraft.targetNumber" @update:value="(v) => (novelDraft.targetNumber = v)" />
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="small muted">Descripción</label>
+                    <n-input
+                      :value="novelDraft.targetDescription"
+                      type="textarea"
+                      :rows="4"
+                      @update:value="(v) => (novelDraft.targetDescription = v)"
+                    />
+                  </div>
+                </div>
+            </n-card>
+          </div>
+
+          <div class="row-wrap">
+            <div style="min-width: 280px; flex: 1">
+              <label class="small muted">URL fuente</label>
+              <n-input v-model:value="novelDraft.url" />
+            </div>
+            <div style="min-width: 280px; flex: 1">
+              <label class="small muted">Custom commands</label>
+              <n-input v-model:value="novelDraft.customCommands" type="textarea" :autosize="{ minRows: 5 }" class="mono" />
+            </div>
+          </div>
+        </div>
+      </n-scrollbar>
+
+      <n-scrollbar v-else-if="activeTab === 'glossary'" :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <div class="row-between">
+            <h4 style="margin: 0">Glosario</h4>
+            <n-button size="small" @click="addGlossaryEntry">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              Añadir entrada
+            </n-button>
+          </div>
+          <div v-if="novelDraft.glossary.length === 0" class="muted small">Sin entradas de glosario.</div>
+          <n-card v-for="entry in novelDraft.glossary" :key="entry.id">
+              <div :style="{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }">
+                <n-input v-model:value="entry.source" placeholder="Origen" style="flex: 1; min-width: 140px" />
+                <n-input v-model:value="entry.target" placeholder="Destino" style="flex: 1; min-width: 140px" />
+                <n-input v-model:value="entry.context" placeholder="Contexto" style="flex: 1; min-width: 140px" />
+                <n-button type="error" secondary @click="removeGlossaryEntry(entry.id)">
+                  <template #icon><n-icon><TrashOutline /></n-icon></template>
+                </n-button>
+              </div>
+          </n-card>
+        </div>
+      </n-scrollbar>
+
+      <n-scrollbar v-else-if="activeTab === 'prompts'" :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <n-alert type="info">
+            Edita un system prompt para crear un override en la novela. Déjalo vacío (o restáuralo al global) para usar el prompt configurado en Configuración general. El user prompt se genera automáticamente con los datos del capítulo y no se expone aquí.
+          </n-alert>
+          <PromptRoleEditor
+            title="Traducción"
+            :model-value="effectiveSystemPrompt('translation')"
+            :global-value="globalSystemPrompt('translation')"
+            :overridden="isOverridden('translation')"
+            @update:model-value="setSystemPrompt('translation', $event)"
+          />
+          <PromptRoleEditor
+            title="Refinamiento"
+            :model-value="effectiveSystemPrompt('refine')"
+            :global-value="globalSystemPrompt('refine')"
+            :overridden="isOverridden('refine')"
+            @update:model-value="setSystemPrompt('refine', $event)"
+          />
+          <PromptRoleEditor
+            title="Verificación"
+            :model-value="effectiveSystemPrompt('check')"
+            :global-value="globalSystemPrompt('check')"
+            :overridden="isOverridden('check')"
+            @update:model-value="setSystemPrompt('check', $event)"
+          />
+        </div>
+      </n-scrollbar>
+
+      <n-scrollbar v-else-if="activeTab === 'ai'" :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <div class="row-wrap">
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Proveedor</label>
+              <n-select
+                v-model:value="settingsDraft.ai.provider"
+                :options="providerOptions"
+                :loading="providersLoading"
+                :disabled="providersLoading"
+                placeholder="Usar proveedor global"
+                clearable
+                @update:value="onProviderChange"
+              />
+            </div>
+            <div style="min-width: 220px; flex: 1">
+              <label class="small muted">Modelo</label>
+              <n-select
+                v-if="modelOptions.length > 1"
+                v-model:value="settingsDraft.ai.model"
+                :options="modelOptions"
+                :disabled="!settingsDraft.ai.provider || providersLoading"
+                placeholder="Usar modelo global"
+                clearable
+              />
+              <n-input
+                v-else
+                v-model:value="settingsDraft.ai.model"
+                :disabled="!settingsDraft.ai.provider || providersLoading"
+                placeholder="Ej: local-model"
+              />
+            </div>
+            <FieldNumber v-model="timeoutSec" label="Timeout (segundos)" :min="10" allow-clear placeholder="Usar global" wrapper-style="min-width: 180px; flex: 1" />
+          </div>
+          <n-alert type="info">Si dejas estos campos vacíos, el backend usará la configuración global. El timeout aplica solo si se configura un valor.</n-alert>
+
+          <div style="border-top: 1px solid var(--divide); padding-top: 1rem; margin-top: 0.5rem">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+              <div>
+                <div style="font-weight: 600">Usar modelo diferente para traducir títulos</div>
+                <div class="small muted">Usa un modelo más pequeño para títulos de capítulos. Si falla, se usa el modelo de contenido.</div>
+              </div>
+              <n-switch v-model:value="settingsDraft.ai.titleEnabled" style="flex-shrink: 0" />
+            </div>
+            <div v-if="settingsDraft.ai.titleEnabled" class="row-wrap" style="margin-top: 0.75rem">
+              <div style="min-width: 220px; flex: 1">
+                <label class="small muted">Proveedor para títulos</label>
+                <n-select
+                  v-model:value="settingsDraft.ai.titleProvider"
+                  :options="providerOptions"
+                  :loading="providersLoading"
+                  :disabled="providersLoading"
+                  placeholder="Usar proveedor de contenido"
+                  clearable
+                  @update:value="onTitleProviderChange"
+                />
+              </div>
+              <div style="min-width: 220px; flex: 1">
+                <label class="small muted">Modelo para títulos</label>
+                <n-select
+                  v-if="titleModelOptions.length > 1"
+                  v-model:value="settingsDraft.ai.titleModel"
+                  :options="titleModelOptions"
+                  :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                  placeholder="Usar modelo de contenido"
+                  clearable
+                />
+                <n-input
+                  v-else
+                  v-model:value="settingsDraft.ai.titleModel"
+                  :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                  placeholder="Ej: local-model"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </n-scrollbar>
+
+      <n-scrollbar v-else-if="activeTab === 'translation'" :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
+            <div>
+              <div style="font-weight: 600">Auto segmentación</div>
+              <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor AI.</div>
+            </div>
+            <n-switch v-model:value="settingsDraft.translation.autoSegment" />
+          </div>
+
+          <div class="row-wrap">
+            <FieldNumber v-model="settingsDraft.translation.thresholdChars" label="Umbral auto" :min="1000" wrapper-style="min-width: 180px; flex: 1" />
+            <FieldNumber v-model="settingsDraft.translation.maxChars" label="Máx. por segmento" :min="500" wrapper-style="min-width: 180px; flex: 1" />
+            <FieldNumber v-model="settingsDraft.translation.minChars" label="Mín. por segmento" :min="100" wrapper-style="min-width: 180px; flex: 1" />
+            <FieldNumber v-model="settingsDraft.translation.maxRetries" label="Reintentos" :min="0" wrapper-style="min-width: 180px; flex: 1" />
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
+            <div>
+              <div style="font-weight: 600">Enable check</div>
+              <div class="small muted">Permite verificación adicional en el backend.</div>
+            </div>
+            <n-switch v-model:value="settingsDraft.translation.enableCheck" />
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
+            <div>
+              <div style="font-weight: 600">Incluir títulos anteriores</div>
+              <div class="small-muted">Añade contexto de títulos previos al traducir.</div>
+            </div>
+            <n-switch v-model:value="settingsDraft.translation.includePreviousChapterTitles" />
+          </div>
+        </div>
+      </n-scrollbar>
+
+      <n-scrollbar v-else :style="{ flex: 1, minHeight: 0 }">
+        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <label class="small muted">Notas del proyecto</label>
+          <n-input v-model:value="settingsDraft.notes" type="textarea" :autosize="{ minRows: 10 }" />
+        </div>
+      </n-scrollbar>
+
+    </div>
+
+    <template #action>
+      <div :style="{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }">
+        <n-button secondary @click="emit('update:open', false)">Cerrar</n-button>
+        <n-button type="warning" secondary @click="reset">Reset</n-button>
+        <n-button type="primary" :loading="saving" @click="save">Guardar</n-button>
+      </div>
     </template>
-  </Dialog>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useToast } from "primevue/usetoast";
-import Dialog from "primevue/dialog";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import InputText from "primevue/inputtext";
-import Textarea from "primevue/textarea";
-import Message from "primevue/message";
-import ToggleSwitch from "primevue/toggleswitch";
-import Select from "primevue/select";
-import MetadataEditor from "@/components/MetadataEditor.vue";
+import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags } from "naive-ui";
+import { AddOutline, TrashOutline, ImageOutline } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { useProjectSettings } from "@/composables/useProjectSettings";
 import { useProviders } from "@/composables/useProviders";
 import { useNovels } from "@/composables/useNovels";
-import { type Novel, type UpdateNovelInput } from "@/domain";
+import { type Novel, type NovelStatus, type UpdateNovelInput } from "@/domain";
 import { normalizeTranslationOptions } from "@/domain/project-settings";
 import { useAppServices } from "@/app/services";
+import { LANGUAGES } from "@/config/languages";
 
 const props = defineProps<{
   open: boolean;
@@ -305,7 +382,7 @@ const emit = defineEmits<{
 
 const { api, defaults } = useAppServices();
 const router = useRouter();
-const toast = useToast();
+const message = useMessage();
 const { deleteNovel } = useNovels();
 const novelRef = computed(() => props.novel);
 const { settings, globalPrompts, loading: settingsLoading } = useProjectSettings(novelRef);
@@ -319,55 +396,129 @@ const novelDraft = ref<Novel>(JSON.parse(JSON.stringify(props.novel)) as Novel);
 const settingsDraft = ref(JSON.parse(JSON.stringify(settings.value)));
 const timeoutSec = ref<number | null>(null);
 let pendingCoverFile: File | undefined;
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const localCoverUrl = ref<string | undefined>();
+
+const displayCoverUrl = computed(() => localCoverUrl.value || props.novel.coverPath);
+
+const visible = computed({
+  get: () => props.open,
+  set: (value) => emit("update:open", value),
+});
+
+const languageOptions = LANGUAGES.map((l) => ({ label: l.name, value: l.code }));
+const languageOptionsNoAuto = LANGUAGES.filter((l) => l.code !== "auto").map((l) => ({ label: l.name, value: l.code }));
+
+const coverEditable = computed(() => true);
+
+const statusOptions: Array<{ label: string; value: NovelStatus }> = [
+  { label: "En curso", value: "ongoing" },
+  { label: "Completada", value: "completed" },
+  { label: "Hiatus", value: "hiatus" },
+  { label: "Cancelada", value: "cancelled" },
+];
 
 function onSelectCover(file: File) {
   pendingCoverFile = file;
+  localCoverUrl.value = URL.createObjectURL(file);
 }
 
 async function onRemoveCover() {
   pendingCoverFile = undefined;
+  if (localCoverUrl.value) {
+    URL.revokeObjectURL(localCoverUrl.value);
+    localCoverUrl.value = undefined;
+  }
 }
+
+function triggerFileInput() {
+  fileInputRef.value?.click();
+}
+
+function onFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  localCoverUrl.value = URL.createObjectURL(file);
+  onSelectCover(file);
+}
+
+function removeCover() {
+  if (localCoverUrl.value) {
+    URL.revokeObjectURL(localCoverUrl.value);
+    localCoverUrl.value = undefined;
+  }
+  onRemoveCover();
+}
+
+function buildSeriesOptions(query: string, available: string[]) {
+  let filtered: string[];
+  if (!query) {
+    filtered = available.slice(0, 8);
+  } else {
+    const startsWith = available.filter((s) => s.toLowerCase().startsWith(query));
+    const contains = available.filter(
+      (s) => !s.toLowerCase().startsWith(query) && s.toLowerCase().includes(query),
+    );
+    filtered = [...startsWith, ...contains].slice(0, 8);
+  }
+  return filtered.map((s) => ({ label: s, value: s }));
+}
+
+const sourceSeriesOptions = computed(() => {
+  const query = novelDraft.value.sourceSeries?.trim().toLowerCase() ?? "";
+  return buildSeriesOptions(query, seriesSuggestions.value);
+});
+
+const targetSeriesOptions = computed(() => {
+  const query = novelDraft.value.targetSeries?.trim().toLowerCase() ?? "";
+  return buildSeriesOptions(query, seriesSuggestions.value);
+});
+
+watch(
+  () => props.novel.coverPath,
+  () => {
+    localCoverUrl.value = undefined;
+  },
+);
 
 async function onDeleteNovel() {
   try {
     await deleteNovel(props.novel.id);
     emit("update:open", false);
-    toast.add({ severity: "success", summary: "Novela eliminada", life: 2500 });
+    message.success("Novela eliminada", { duration: 2500 });
     await router.push("/");
   } catch (err) {
-    toast.add({
-      severity: "error",
-      summary: "No se pudo eliminar la novela",
-      detail: err instanceof Error ? err.message : String(err),
-      life: 4000,
-    });
+    message.error(
+      `No se pudo eliminar la novela: ${err instanceof Error ? err.message : String(err)}`,
+      { duration: 4000 },
+    );
   }
 }
 
-const providerOptions = computed(() => providers.value);
+const providerOptions = computed(() => providers.value.map((p) => ({ label: p.name, value: p.id })));
 
 const modelOptions = computed(() => {
   const info = byId.value.get(settingsDraft.value.ai.provider);
-  if (info) return [...info.models];
+  if (info) return info.models.map((m) => ({ label: m, value: m }));
   return [];
 });
 
 const titleModelOptions = computed(() => {
   const info = byId.value.get(settingsDraft.value.ai.titleProvider ?? "");
-  if (info) return [...info.models];
+  if (info) return info.models.map((m) => ({ label: m, value: m }));
   return [];
 });
 
-function onProviderChange(event: { value: string }) {
-  const info = byId.value.get(event.value);
+function onProviderChange(value: string) {
+  const info = byId.value.get(value);
   if (!info) return;
   if (!info.models.includes(settingsDraft.value.ai.model)) {
     settingsDraft.value.ai.model = info.defaultModel;
   }
 }
 
-function onTitleProviderChange(event: { value: string }) {
-  const info = byId.value.get(event.value);
+function onTitleProviderChange(value: string) {
+  const info = byId.value.get(value);
   if (!info) return;
   if (!info.models.includes(settingsDraft.value.ai.titleModel)) {
     settingsDraft.value.ai.titleModel = info.defaultModel;
@@ -539,3 +690,32 @@ async function save() {
   }
 }
 </script>
+
+<style scoped>
+.cover-editor {
+  margin-bottom: 0.5rem;
+}
+
+.cover-preview {
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--n-color-embedded);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-placeholder {
+  color: var(--text-color-3);
+}
+</style>

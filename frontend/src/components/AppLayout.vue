@@ -8,144 +8,139 @@
           <slot name="back-button" />
           <RouterLink to="/" class="app-brand" aria-label="Yara - Inicio">
             <span class="app-brand-icon" aria-hidden="true">
-              <i class="pi pi-book" />
+              <n-icon :size="20"><BookOutline /></n-icon>
             </span>
             <span class="app-brand-text">Yara</span>
           </RouterLink>
         </div>
 
         <div class="app-topbar-end">
-          <Button
-            :icon="hasActive ? 'pi pi-spin pi-spinner' : 'pi pi-spinner-dotted'"
-            :severity="hasActive ? 'info' : 'secondary'"
-            :outlined="!hasActive"
+          <n-button
+            :secondary="hasActive"
+            :quaternary="!hasActive"
+            circle
+            size="small"
+            class="touch-target"
             :aria-label="hasActive ? 'Hay trabajos activos' : 'No hay trabajos activos'"
             :aria-expanded="jobsOpen"
             aria-controls="jobs-drawer"
-            text
-            rounded
-            class="touch-target"
             @click="jobsOpen = true"
-          />
+          >
+            <template #icon>
+              <n-icon>
+                <n-spin v-if="hasActive" :size="16" />
+                <TimeOutline v-else />
+              </n-icon>
+            </template>
+          </n-button>
 
-          <Button
-            icon="pi pi-bolt"
-            severity="secondary"
-            text
-            rounded
+          <n-button
+            quaternary
+            circle
+            size="small"
             class="touch-target"
             aria-label="Operaciones"
             @click="router.push('/operations')"
-          />
+          >
+            <template #icon>
+              <n-icon><FlashOutline /></n-icon>
+            </template>
+          </n-button>
 
-          <Button
-            :icon="currentThemeIcon"
-            severity="secondary"
-            text
-            rounded
+          <n-button
+            quaternary
+            circle
+            size="small"
             class="touch-target"
             :aria-label="`Cambiar tema (actual: ${themeLabel})`"
             @click="cycleTheme"
-          />
+          >
+            <template #icon>
+              <n-icon>
+                <DesktopOutline v-if="theme === 'system'" />
+                <SunnyOutline v-else-if="theme === 'light'" />
+                <MoonOutline v-else />
+              </n-icon>
+            </template>
+          </n-button>
 
-          <Button
-            icon="pi pi-user"
-            severity="secondary"
-            outlined
-            rounded
-            class="touch-target"
-            aria-label="Menú de usuario"
-            @click="userMenu.toggle($event)"
-          />
-          <Menu ref="userMenu" :model="userMenuItems" :popup="true" />
+          <n-dropdown
+            trigger="click"
+            :options="userMenuDropdownItems"
+            @select="handleUserMenuSelect"
+          >
+            <n-button
+              quaternary
+              circle
+              size="small"
+              class="touch-target"
+              aria-label="Menú de usuario"
+            >
+              <template #icon>
+                <n-icon><PersonOutline /></n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
 
-          <Button
+          <n-button
             class="mobile-menu-btn touch-target"
-            icon="pi pi-bars"
-            severity="secondary"
-            text
-            rounded
+            quaternary
+            circle
+            size="small"
             aria-label="Abrir menú de navegación"
             :aria-expanded="mobileNavOpen"
             aria-controls="mobile-nav-drawer"
             style="display: none"
             @click="mobileNavOpen = !mobileNavOpen"
-          />
+          >
+            <template #icon>
+              <n-icon><MenuOutline /></n-icon>
+            </template>
+          </n-button>
         </div>
       </div>
     </header>
 
-    <Teleport to="body">
-      <div
-        v-if="mobileNavOpen"
-        class="mobile-nav-overlay"
-        aria-hidden="true"
-        @click="mobileNavOpen = false"
-      />
-      <nav
-        v-if="mobileNavOpen"
-        id="mobile-nav-drawer"
-        class="mobile-nav-drawer"
-        aria-label="Navegación móvil"
-      >
-        <div class="mobile-nav-header">
-          <span class="app-brand-text">Yara</span>
-          <Button
-            icon="pi pi-times"
-            severity="secondary"
-            text
-            rounded
-            class="touch-target"
-            aria-label="Cerrar menú"
-            @click="mobileNavOpen = false"
-          />
-        </div>
-        <div class="mobile-nav-items">
-          <button
-            type="button"
-            class="mobile-nav-item touch-target"
-            @click="handleMobileNav(() => jobsOpen = true)"
-          >
-            <i class="pi pi-briefcase" aria-hidden="true" />
-            <span>Trabajos</span>
-            <span v-if="hasActive" class="mobile-nav-badge">•</span>
-          </button>
-          <button
-            type="button"
-            class="mobile-nav-item touch-target"
-            @click="handleMobileNav(cycleTheme)"
-          >
-            <i :class="currentThemeIcon" aria-hidden="true" />
-            <span>Tema: {{ themeLabel }}</span>
-          </button>
-          <button
-            type="button"
-            class="mobile-nav-item touch-target"
-            @click="handleMobileNav(() => router.push('/settings'))"
-          >
-            <i class="pi pi-cog" aria-hidden="true" />
-            <span>Configuración</span>
-          </button>
-          <button
-            type="button"
-            class="mobile-nav-item touch-target"
-            @click="handleMobileNav(() => router.push('/operations'))"
-          >
-            <i class="pi pi-bolt" aria-hidden="true" />
-            <span>Operaciones</span>
-          </button>
-          <div class="mobile-nav-divider" />
-          <button
-            type="button"
-            class="mobile-nav-item mobile-nav-item--danger touch-target"
-            @click="handleMobileNav(() => doLogout())"
-          >
-            <i class="pi pi-sign-out" aria-hidden="true" />
-            <span>Cerrar sesión</span>
-          </button>
-        </div>
-      </nav>
-    </Teleport>
+    <n-drawer v-model:show="mobileNavOpen" :width="280" placement="left">
+      <n-drawer-content :native-scrollbar="false" body-content-style="padding: 0.5rem;">
+        <template #header>
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%">
+            <span class="app-brand-text">Yara</span>
+            <n-button quaternary circle size="small" class="touch-target" aria-label="Cerrar menú" @click="mobileNavOpen = false">
+              <template #icon><n-icon><CloseOutline /></n-icon></template>
+            </n-button>
+          </div>
+        </template>
+        <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => jobsOpen = true)">
+          <template #icon><n-icon :size="20"><BriefcaseOutline /></n-icon></template>
+          <span>Trabajos</span>
+          <span v-if="hasActive" class="mobile-nav-badge">•</span>
+        </n-button>
+        <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(cycleTheme)">
+          <template #icon>
+            <n-icon :size="20">
+              <DesktopOutline v-if="theme === 'system'" />
+              <SunnyOutline v-else-if="theme === 'light'" />
+              <MoonOutline v-else />
+            </n-icon>
+          </template>
+          <span>Tema: {{ themeLabel }}</span>
+        </n-button>
+        <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/settings'))">
+          <template #icon><n-icon :size="20"><SettingsOutline /></n-icon></template>
+          <span>Configuración</span>
+        </n-button>
+        <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/operations'))">
+          <template #icon><n-icon :size="20"><FlashOutline /></n-icon></template>
+          <span>Operaciones</span>
+        </n-button>
+        <n-divider style="margin: 0.5rem 0;" />
+        <n-button text block class="mobile-nav-item mobile-nav-item--danger touch-target" @click="handleMobileNav(() => doLogout())">
+          <template #icon><n-icon :size="20"><LogOutOutline /></n-icon></template>
+          <span>Cerrar sesión</span>
+        </n-button>
+      </n-drawer-content>
+    </n-drawer>
 
     <main id="main-content" class="page-container" tabindex="-1">
       <slot />
@@ -156,10 +151,23 @@
 </template>
 
 <script setup lang="ts">
-import Button from "primevue/button";
-import Menu from "primevue/menu";
-import { computed, ref } from "vue";
+import { computed, ref, h } from "vue";
 import { RouterLink, useRouter } from "vue-router";
+import { NButton, NIcon, NDropdown, NDrawer, NDrawerContent, NDivider } from "naive-ui";
+import {
+  BookOutline,
+  TimeOutline,
+  FlashOutline,
+  DesktopOutline,
+  SunnyOutline,
+  MoonOutline,
+  PersonOutline,
+  MenuOutline,
+  CloseOutline,
+  BriefcaseOutline,
+  SettingsOutline,
+  LogOutOutline,
+} from "@vicons/ionicons5";
 import JobsDrawer from "@/components/JobsDrawer.vue";
 import { applyTheme, getStoredTheme } from "@/app/auth";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
@@ -170,7 +178,6 @@ const { hasActive } = useActiveJobStatus();
 const { auth, logout } = useAppServices();
 const jobsOpen = ref(false);
 const mobileNavOpen = ref(false);
-const userMenu = ref();
 
 const theme = ref<"light" | "dark" | "system">(getStoredTheme());
 
@@ -182,39 +189,25 @@ const themeLabels: Record<"light" | "dark" | "system", string> = {
   dark: "Oscuro",
 };
 
-const themeIcons: Record<"light" | "dark" | "system", string> = {
-  system: "pi pi-desktop",
-  light: "pi pi-sun",
-  dark: "pi pi-moon",
-};
-
 const themeLabel = computed(() => themeLabels[theme.value]);
-const currentThemeIcon = computed(() => themeIcons[theme.value]);
+
+const userMenuDropdownItems = computed(() => [
+  { label: auth.user.value?.email ?? "", key: "email", disabled: true },
+  { type: "divider", key: "d1" },
+  { label: "Configuración", key: "settings" },
+  { label: "Cerrar sesión", key: "logout" },
+]);
+
+function handleUserMenuSelect(key: string) {
+  if (key === "settings") router.push("/settings");
+  else if (key === "logout") doLogout();
+}
 
 function cycleTheme() {
   const nextIndex = (themeCycle.indexOf(theme.value) + 1) % themeCycle.length;
   theme.value = themeCycle[nextIndex];
   applyTheme(theme.value);
 }
-
-const userMenuItems = computed(() => [
-  {
-    label: auth.user.value?.email ?? "",
-    disabled: true,
-    class: "user-menu-email",
-  },
-  { separator: true },
-  {
-    label: "Configuración",
-    icon: "pi pi-cog",
-    command: () => router.push("/settings"),
-  },
-  {
-    label: "Cerrar sesión",
-    icon: "pi pi-sign-out",
-    command: () => doLogout(),
-  },
-]);
 
 async function doLogout() {
   await logout();
@@ -322,85 +315,24 @@ function handleMobileNav(command?: () => void) {
 </style>
 
 <style>
-.mobile-nav-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--surface-overlay);
-  z-index: 1000;
-}
-
-.mobile-nav-drawer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: min(280px, 80vw);
-  background: var(--surface-elevated);
-  border-right: 1px solid var(--divide);
-  z-index: 1001;
-  display: flex;
-  flex-direction: column;
-  animation: slideInLeft 0.2s ease-out;
-}
-
-.mobile-nav-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem;
-  border-bottom: 1px solid var(--divide);
-}
-
-.mobile-nav-items {
-  display: flex;
-  flex-direction: column;
-  padding: 0.5rem;
-  overflow-y: auto;
-  gap: 0.25rem;
-}
-
 .mobile-nav-item {
-  display: flex;
-  align-items: center;
+  justify-content: flex-start;
   gap: 0.875rem;
-  width: 100%;
-  padding: 0.75rem;
-  border: none;
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--foreground);
   font-size: 0.9375rem;
-  cursor: pointer;
   text-align: left;
 }
 
-.mobile-nav-item:hover,
-.mobile-nav-item:focus-visible {
-  background: var(--mock-row-strong);
-}
-
 .mobile-nav-item--danger {
-  color: var(--red-500);
-}
-
-.mobile-nav-divider {
-  height: 1px;
-  background: var(--divide);
-  margin: 0.5rem 0;
+  color: #dc2626;
 }
 
 .mobile-nav-badge {
   margin-left: auto;
-  background: var(--p-primary-500);
+  background: var(--accent-link);
   color: var(--btn-primary-fg);
   font-size: 0.75rem;
   font-weight: 600;
   padding: 0.125rem 0.5rem;
   border-radius: var(--radius-pill);
-}
-
-@keyframes slideInLeft {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(0); }
 }
 </style>

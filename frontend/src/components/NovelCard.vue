@@ -13,7 +13,7 @@
           loading="lazy"
         />
         <div v-else class="library-cover-placeholder">
-          <i class="pi pi-image" aria-hidden="true" />
+          <n-icon :size="40"><ImageOutline /></n-icon>
         </div>
       </div>
     </RouterLink>
@@ -33,29 +33,17 @@
       </div>
     </div>
 
-    <Button
-      icon="pi pi-ellipsis-v"
-      severity="secondary"
-      text
-      rounded
-      class="library-menu-btn touch-target"
-      :aria-label="`Opciones de ${getNovelDisplayTitle(novel)}`"
-      @click="$emit('menu-click', $event)"
-    />
   </article>
 </template>
 
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
-import Button from "primevue/button";
+import { NIcon } from "naive-ui";
+import { ImageOutline } from "@vicons/ionicons5";
 import { getNovelDisplayTitle, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 
 defineProps<{
   novel: Novel;
-}>();
-
-defineEmits<{
-  (e: "menu-click", event: Event): void;
 }>();
 </script>
 
@@ -107,7 +95,6 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.5rem;
   color: var(--text-tertiary);
 }
 
@@ -140,24 +127,6 @@ defineEmits<{
   align-items: center;
 }
 
-.library-menu-btn {
-  position: absolute;
-  top: 0.25rem;
-  right: 0.25rem;
-  z-index: 1;
-  background: color-mix(in oklab, var(--surface-elevated) 88%, transparent);
-  backdrop-filter: blur(6px);
-  color: var(--foreground);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.library-card:hover .library-menu-btn,
-.library-card:focus-within .library-menu-btn,
-.library-menu-btn:focus-visible {
-  opacity: 1;
-}
-
 .novel-series-badge {
   display: inline-block;
   background: var(--surface-elevated);
@@ -174,10 +143,6 @@ defineEmits<{
 }
 
 @media (max-width: 640px) {
-  .library-menu-btn {
-    opacity: 1;
-  }
-
   .library-title {
     font-size: 0.75rem;
   }

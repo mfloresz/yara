@@ -1,25 +1,25 @@
 <template>
-  <Dialog v-model:visible="visible" modal header="Confirmar importación" :style="{ width: 'min(640px, 96vw)' }" @after-hide="reset">
+  <n-modal v-model:show="visible" preset="card" title="Confirmar importación" :style="{ width: 'min(640px, 96vw)' }" @after-leave="reset">
     <div class="stack-md">
       <div v-if="preview" class="preview-card">
         <div class="preview-cover">
           <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
           <div v-else class="cover-placeholder">
-            <i class="pi pi-image" />
+            <n-icon :size="24"><ImageOutline /></n-icon>
           </div>
         </div>
         <div class="preview-info">
           <h3 style="margin: 0">{{ preview.title || "Sin título" }}</h3>
           <div v-if="preview.author" class="muted small">
-            <i class="pi pi-user" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><PersonOutline /></n-icon>
             {{ preview.author }}
           </div>
           <div class="muted small">
-            <i class="pi pi-list" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><ListOutline /></n-icon>
             <strong>{{ preview.totalChapters }}</strong> capítulos disponibles
           </div>
           <div v-if="preview.sourceURL" class="muted small" style="word-break: break-all">
-            <i class="pi pi-link" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><LinkOutline /></n-icon>
             {{ preview.sourceURL }}
           </div>
         </div>
@@ -33,22 +33,22 @@
       <div class="row-wrap">
         <div style="flex: 1; min-width: 140px">
           <label class="small muted">Idioma origen</label>
-          <Select v-model="sourceLanguage" :options="languageOptions" optionLabel="name" optionValue="code" fluid :disabled="loading" />
+          <n-select v-model:value="sourceLanguage" :options="languageOptions" :disabled="loading" />
         </div>
         <div style="flex: 1; min-width: 140px">
           <label class="small muted">Idioma destino</label>
-          <Select v-model="targetLanguage" :options="languageOptionsNoAuto" optionLabel="name" optionValue="code" fluid :disabled="loading" />
+          <n-select v-model:value="targetLanguage" :options="languageOptionsNoAuto" :disabled="loading" />
         </div>
       </div>
 
       <div class="stack-sm">
         <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-          <RadioButton v-model="mode" inputId="all" value="all" />
-          <label for="all">Descargar todos los {{ preview?.totalChapters ?? 0 }} capítulos</label>
+          <n-radio :checked="mode === 'all'" />
+          <label>Descargar todos los {{ preview?.totalChapters ?? 0 }} capítulos</label>
         </div>
         <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-          <RadioButton v-model="mode" inputId="range" value="range" />
-          <label for="range">Descargar un rango específico</label>
+          <n-radio :checked="mode === 'range'" />
+          <label>Descargar un rango específico</label>
         </div>
       </div>
 
@@ -73,31 +73,29 @@
         </div>
       </div>
 
-      <Message v-if="error" severity="error">{{ error }}</Message>
+      <n-alert v-if="error" type="error">{{ error }}</n-alert>
     </div>
-    <template #footer>
-      <Button severity="secondary" outlined label="Atrás" :disabled="loading" @click="handleBack" />
-      <Button
-        :label="loading ? 'Importando...' : 'Importar'"
-        icon="pi pi-download"
+    <template #action>
+      <n-button secondary :disabled="loading" @click="handleBack">Atrás</n-button>
+      <n-button
+        type="primary"
         :loading="loading"
         :disabled="!targetLanguage || (mode === 'range' && (!startChapter || !endChapter || startChapter > endChapter))"
         @click="handleImport"
-      />
+      >
+        <template #icon><n-icon><DownloadOutline /></n-icon></template>
+        {{ loading ? 'Importando...' : 'Importar' }}
+      </n-button>
     </template>
-  </Dialog>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useToast } from "primevue/usetoast";
-import Button from "primevue/button";
-import Dialog from "primevue/dialog";
+import { useMessage, NModal, NSelect, NAlert, NButton, NRadio, NIcon } from "naive-ui";
+import { ImageOutline, PersonOutline, ListOutline, LinkOutline, DownloadOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
-import Message from "primevue/message";
-import RadioButton from "primevue/radiobutton";
-import Select from "primevue/select";
 import { LANGUAGES } from "@/config/languages";
 import { useNovels } from "@/composables/useNovels";
 import type { PreviewUrlResult } from "@/api/types";
@@ -113,7 +111,7 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
-const toast = useToast();
+const message = useMessage();
 const { importNovelFromUrl } = useNovels();
 
 const visible = computed({
@@ -121,8 +119,8 @@ const visible = computed({
   set: (value) => emit("update:open", value),
 });
 
-const languageOptions = LANGUAGES;
-const languageOptionsNoAuto = LANGUAGES.filter((item) => item.code !== "auto");
+const languageOptions = LANGUAGES.map((l) => ({ label: l.name, value: l.code }));
+const languageOptionsNoAuto = LANGUAGES.filter((l) => l.code !== "auto").map((l) => ({ label: l.name, value: l.code }));
 
 const mode = ref<"all" | "range">("all");
 const sourceLanguage = ref("en");
@@ -183,14 +181,12 @@ async function handleImport() {
       input.endChapter = endChapter.value;
     }
     const result = await importNovelFromUrl(input);
-    toast.add({
-      severity: "success",
-      summary: "Novela creada",
-      detail: result.downloadJob
+    message.success(
+      result.downloadJob
         ? `Novela importada. Descargando ${result.downloadJob.totalChapters} capítulos restantes en segundo plano...`
         : `${result.chaptersImported} capítulos importados.`,
-      life: 4000,
-    });
+      { duration: 4000 },
+    );
     emit("imported");
     visible.value = false;
     await router.push(`/novels/${result.novel.id}`);
@@ -207,8 +203,8 @@ async function handleImport() {
   display: flex;
   gap: 1rem;
   padding: 1rem;
-  background: var(--p-content-background);
-  border: 1px solid var(--p-content-border-color);
+  background: var(--surface-muted);
+  border: 1px solid var(--divide);
   border-radius: 8px;
 }
 .preview-cover {
@@ -231,7 +227,6 @@ async function handleImport() {
   align-items: center;
   justify-content: center;
   color: #9ca3af;
-  font-size: 1.5rem;
 }
 .preview-info {
   display: flex;
@@ -244,10 +239,10 @@ async function handleImport() {
   max-height: 140px;
   overflow: auto;
   padding: 0.6rem 0.75rem;
-  background: var(--p-content-background);
-  border: 1px solid var(--p-content-border-color);
+  background: var(--surface-muted);
+  border: 1px solid var(--divide);
   border-radius: 6px;
-  color: var(--p-text-muted-color);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   line-height: 1.4;
 }
@@ -256,13 +251,13 @@ async function handleImport() {
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--p-content-border-color);
+  border: 1px solid var(--divide);
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 .radio-option.active {
-  border-color: var(--p-primary-color);
+  border-color: var(--accent-link);
 }
 .radio-option label {
   cursor: pointer;

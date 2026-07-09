@@ -442,18 +442,28 @@ async function tryBackgroundFetch(url) {
       html = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
     }
 
-    const lowerHtml = html.toLowerCase();
+    // Cloudflare challenge detection is anchored to structural artifacts that
+    // ONLY the challenge page injects — never to prose text, which can
+    // legitimately contain words like "Access denied" or "Just a moment".
+    // This avoids false positives on real chapter content (e.g. Marriage Mate
+    // ch.25, whose prose contains those phrases).
+    const cfHasTitle = /<title[^>]*>\s*Just a moment\.\.\.\s*<\/title>/i.test(html);
+    const cfHasScript = /<script[^>]+src=["'][^"']*\/cdn-cgi\/challenge-platform\//i.test(html);
+    const cfHasDom = /id=["']cf-(?:challenge-running|please-wait)["']|id=["']challenge-form["']/i.test(html);
+    const cfHasTurnstile = /class=["'][^"']*cf-turnstile[^"']*["']/i.test(html);
+    let cfMitigated = false;
+    try { cfMitigated = resp.headers.get('cf-mitigated') === 'challenge'; } catch {}
 
-    const challengeIndicators = [
-      'just a moment', 'checking your browser', 'verifying you are human',
-      'cf-challenge', 'challenge-platform', 'turnstile',
-      'attention required', 'access denied',
-    ];
-    for (const indicator of challengeIndicators) {
-      if (lowerHtml.includes(indicator)) {
-        log(`Background fetch: challenge detected via "${indicator}" for ${url}`);
-        return null;
-      }
+    const isCfChallenge = cfMitigated || cfHasScript || cfHasDom || (cfHasTitle && cfHasTurnstile);
+    if (isCfChallenge) {
+      const sigs = [];
+      if (cfMitigated) sigs.push('header:cf-mitigated');
+      if (cfHasTitle) sigs.push('title');
+      if (cfHasScript) sigs.push('script');
+      if (cfHasDom) sigs.push('dom');
+      if (cfHasTurnstile) sigs.push('turnstile');
+      log(`Background fetch: Cloudflare challenge detected (${sigs.join(',')}) for ${url}`);
+      return null;
     }
 
     log(`Background fetch succeeded for ${url} (${html.length} bytes)`);
@@ -568,20 +578,21 @@ async function checkForChallenge(tabId) {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        const t = (document.title || '').toLowerCase();
-        const b = (document.body?.innerText || '').toLowerCase();
-        const indicators = [
-          'just a moment', 'checking your browser', 'verifying you are human',
-          'cf-challenge', 'ray id',
-          'attention required', 'access denied',
-        ];
-        if (indicators.some(i => t.includes(i) || b.includes(i))) return true;
-        if (document.querySelector('script[src*="challenge"], script[src*="turnstile"]')) return true;
-        if (document.querySelector('form[action*="challenge"]')) return true;
-        return false;
+        const signals = [];
+        if ((document.title || '').trim() === 'Just a moment...') signals.push('title');
+        if (document.querySelector('script[src*="/cdn-cgi/challenge-platform/"]')) signals.push('script');
+        if (document.querySelector('#cf-challenge-running, #cf-please-wait, #challenge-form')) signals.push('dom');
+        if (document.querySelector('.cf-turnstile, [data-sitekey]')) signals.push('turnstile');
+        // A real challenge is still present only when a Cloudflare-exclusive
+        // artifact exists. Plain prose (e.g. a chapter titled "Just a moment")
+        // never injects these, so we never false-positive on it.
+        return {
+          isChallenge: signals.includes('script') || signals.includes('dom') || signals.includes('turnstile'),
+          signals,
+        };
       },
     });
-    return results[0]?.result || false;
+    return results[0]?.result?.isChallenge || false;
   } catch {
     return false;
   }

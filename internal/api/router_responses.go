@@ -27,7 +27,7 @@ func parseJSONFields(n *store.Novel) map[string]any {
 		"chapterCount": n.ChapterCount, "translatedCount": n.TranslatedCount, "completedCount": n.CompletedCount,
 		"originalCharCount": n.OriginalCharCount, "translatedCharCount": n.TranslatedCharCount,
 		"refinedCharCount": n.RefinedCharCount, "totalCharCount": n.TotalCharCount,
-		"maxChapterOrder": n.MaxChapterOrder,
+		"maxChapterOrder": n.MaxChapterOrder, "lastReadAt": n.LastReadAt,
 		"createdAt":       n.CreatedAt, "updatedAt": n.UpdatedAt,
 	}
 	var gl, tags, aio, tro, cr any
@@ -105,6 +105,8 @@ func parseJSONFieldsSubset(n *store.Novel, fields []string) map[string]any {
 			m["totalCharCount"] = n.TotalCharCount
 		case "maxChapterOrder":
 			m["maxChapterOrder"] = n.MaxChapterOrder
+		case "lastReadAt":
+			m["lastReadAt"] = n.LastReadAt
 		case "createdAt":
 			m["createdAt"] = n.CreatedAt
 		case "updatedAt":

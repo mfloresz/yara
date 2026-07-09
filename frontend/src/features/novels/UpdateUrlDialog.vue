@@ -1,8 +1,8 @@
 <template>
-  <Dialog v-model:visible="visible" modal header="Actualizar desde internet" :style="{ width: 'min(640px, 96vw)' }" @after-hide="reset">
+  <n-modal v-model:show="visible" preset="card" title="Actualizar desde internet" :style="{ width: 'min(640px, 96vw)' }" @after-leave="reset">
     <div class="stack-md">
       <div v-if="loading" class="preview-loading">
-        <ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="4" />
+        <n-spin :size="40" />
         <span class="muted small">Buscando capítulos nuevos en la fuente…</span>
       </div>
 
@@ -10,21 +10,21 @@
         <div class="preview-cover">
           <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
           <div v-else class="cover-placeholder">
-            <i class="pi pi-image" />
+            <n-icon :size="24"><ImageOutline /></n-icon>
           </div>
         </div>
         <div class="preview-info">
           <h3 style="margin: 0">{{ preview.title || "Sin título" }}</h3>
           <div v-if="preview.author" class="muted small">
-            <i class="pi pi-user" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><PersonOutline /></n-icon>
             {{ preview.author }}
           </div>
           <div class="muted small">
-            <i class="pi pi-list" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><ListOutline /></n-icon>
             <strong>{{ preview.currentChapters }}</strong> capítulos locales · <strong>{{ preview.totalChapters }}</strong> disponibles en la fuente
           </div>
           <div v-if="preview.sourceURL" class="muted small" style="word-break: break-all">
-            <i class="pi pi-link" style="margin-right: 0.25rem" />
+            <n-icon :size="14" style="margin-right: 0.25rem"><LinkOutline /></n-icon>
             {{ preview.sourceURL }}
           </div>
         </div>
@@ -35,22 +35,22 @@
         <div class="description-box small">{{ preview.description }}</div>
       </div>
 
-      <Message v-if="!loading && preview && preview.newChapters === 0" severity="success" :closable="false">
+      <n-alert v-if="!loading && preview && preview.newChapters === 0" type="success" :closable="false">
         La novela ya está al día. No hay capítulos nuevos para descargar.
-      </Message>
+      </n-alert>
 
       <div v-else-if="!loading && preview" class="stack-sm">
-        <Message severity="info" :closable="false">
+        <n-alert type="info" :closable="false">
           Hay <strong>{{ preview.newChapters }}</strong> capítulos nuevos disponibles (del {{ preview.firstNewChapter }} al {{ preview.lastNewChapter }}).
-        </Message>
+        </n-alert>
 
         <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-          <RadioButton v-model="mode" inputId="all" value="all" />
-          <label for="all">Descargar los {{ preview.newChapters }} capítulos nuevos</label>
+          <n-radio :checked="mode === 'all'" />
+          <label>Descargar los {{ preview.newChapters }} capítulos nuevos</label>
         </div>
         <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-          <RadioButton v-model="mode" inputId="range" value="range" />
-          <label for="range">Descargar un rango específico</label>
+          <n-radio :checked="mode === 'range'" />
+          <label>Descargar un rango específico</label>
         </div>
       </div>
 
@@ -75,31 +75,29 @@
         </div>
       </div>
 
-      <Message v-if="error" severity="error">{{ error }}</Message>
-      <Message v-if="success" severity="success">{{ success }}</Message>
+      <n-alert v-if="error" type="error">{{ error }}</n-alert>
+      <n-alert v-if="success" type="success">{{ success }}</n-alert>
     </div>
-    <template #footer>
-      <Button severity="secondary" outlined label="Cancelar" :disabled="loading" @click="visible = false" />
-      <Button
-        :label="loading ? 'Descargando...' : 'Actualizar'"
-        icon="pi pi-refresh"
+    <template #action>
+      <n-button secondary :disabled="loading" @click="visible = false">Cancelar</n-button>
+      <n-button
+        type="primary"
         :loading="updating"
         :disabled="!canUpdate"
         @click="handleUpdate"
-      />
+      >
+        <template #icon><n-icon><RefreshOutline /></n-icon></template>
+        {{ updating ? 'Descargando...' : 'Actualizar' }}
+      </n-button>
     </template>
-  </Dialog>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useToast } from "primevue/usetoast";
-import Button from "primevue/button";
-import Dialog from "primevue/dialog";
+import { useMessage, NModal, NAlert, NButton, NRadio, NSpin, NIcon } from "naive-ui";
+import { ImageOutline, PersonOutline, ListOutline, LinkOutline, RefreshOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
-import Message from "primevue/message";
-import ProgressSpinner from "primevue/progressspinner";
-import RadioButton from "primevue/radiobutton";
 import { useAppServices } from "@/app/services";
 import type { UpdateUrlPreviewResult } from "@/api/types";
 
@@ -107,7 +105,7 @@ const props = defineProps<{ open: boolean; novelId: string }>();
 const emit = defineEmits<{ "update:open": [value: boolean]; updated: [pending?: number] }>();
 
 const { api } = useAppServices();
-const toast = useToast();
+const message = useMessage();
 
 const visible = computed({
   get: () => props.open,
@@ -183,12 +181,10 @@ async function handleUpdate() {
     const result = await api.novels.updateFromUrl(props.novelId, input);
     const pending = (result as any).pendingChapters ?? result.chaptersAdded;
     if (pending > 0) {
-      toast.add({
-        severity: "success",
-        summary: "Descarga iniciada",
-        detail: `${pending} capítulos nuevos se están descargando en segundo plano.`,
-        life: 4000,
-      });
+      message.success(
+        `${pending} capítulos nuevos se están descargando en segundo plano.`,
+        { duration: 4000 },
+      );
     } else {
       success.value = `${result.chaptersAdded} capítulos nuevos descargados.`;
     }
@@ -215,8 +211,8 @@ async function handleUpdate() {
   display: flex;
   gap: 1rem;
   padding: 1rem;
-  background: var(--p-content-background);
-  border: 1px solid var(--p-content-border-color);
+  background: var(--surface-muted);
+  border: 1px solid var(--divide);
   border-radius: 8px;
 }
 .preview-cover {
@@ -239,7 +235,6 @@ async function handleUpdate() {
   align-items: center;
   justify-content: center;
   color: #9ca3af;
-  font-size: 1.5rem;
 }
 .preview-info {
   display: flex;
@@ -252,10 +247,10 @@ async function handleUpdate() {
   max-height: 120px;
   overflow: auto;
   padding: 0.6rem 0.75rem;
-  background: var(--p-content-background);
-  border: 1px solid var(--p-content-border-color);
+  background: var(--surface-muted);
+  border: 1px solid var(--divide);
   border-radius: 6px;
-  color: var(--p-text-muted-color);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   line-height: 1.4;
 }
@@ -264,13 +259,13 @@ async function handleUpdate() {
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--p-content-border-color);
+  border: 1px solid var(--divide);
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 .radio-option.active {
-  border-color: var(--p-primary-color);
+  border-color: var(--accent-link);
 }
 .radio-option label {
   cursor: pointer;

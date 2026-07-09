@@ -53,6 +53,7 @@ export type Novel = {
   refinedCharCount: number;
   totalCharCount: number;
   maxChapterOrder: number;
+  lastReadAt?: string;
   createdAt: string;
   updatedAt: string;
 };

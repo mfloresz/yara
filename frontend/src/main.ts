@@ -1,14 +1,12 @@
 import { createApp } from "vue";
-import PrimeVue from "primevue/config";
-import ToastService from "primevue/toastservice";
-import ConfirmationService from "primevue/confirmationservice";
-import Pixeo from "./theme/pixeo-preset";
+import { create, NMessageProvider, NDialogProvider } from "naive-ui";
 import App from "./app/App.vue";
 import { router } from "./router";
 import { getStoredTheme, applyTheme } from "./app/auth";
 import { appServicesKey, createAppServices } from "./app/services";
-import "primeicons/primeicons.css";
 import "./app/styles.css";
+
+const naive = create();
 
 async function bootstrap() {
   applyTheme(getStoredTheme());
@@ -19,17 +17,7 @@ async function bootstrap() {
   await services.restoreSession();
 
   app.use(router);
-  app.use(PrimeVue, {
-    theme: {
-      preset: Pixeo,
-      options: {
-        darkModeSelector: ".dark",
-        prefix: "p",
-      },
-    },
-  });
-  app.use(ToastService);
-  app.use(ConfirmationService);
+  app.use(naive);
   app.provide(appServicesKey, services);
   app.mount("#app");
 }

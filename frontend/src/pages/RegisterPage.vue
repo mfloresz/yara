@@ -1,38 +1,32 @@
 <template>
   <div class="auth-page">
-    <Card class="auth-card">
-      <template #title>Crear cuenta</template>
-      <template #content>
-        <div class="stack-md">
-          <div>
-            <label class="small muted">Nombre</label>
-            <InputText v-model="name" fluid />
-          </div>
-          <div>
-            <label class="small muted">Email</label>
-            <InputText v-model="email" type="email" fluid />
-          </div>
-          <div>
-            <label class="small muted">Contraseña</label>
-            <Password v-model="password" fluid toggleMask :feedback="false" />
-          </div>
-          <Message v-if="error" severity="error">{{ error }}</Message>
-          <Button label="Crear cuenta" :loading="loading" @click="submit" />
-          <Button label="Ya tengo cuenta" severity="secondary" outlined @click="router.push('/login')" />
+    <n-card class="auth-card" size="small">
+      <template #header>Crear cuenta</template>
+      <div class="stack-md">
+        <div>
+          <label class="small muted">Nombre</label>
+          <n-input v-model:value="name" placeholder="Nombre" />
         </div>
-      </template>
-    </Card>
+        <div>
+          <label class="small muted">Email</label>
+          <n-input v-model:value="email" type="text" placeholder="Email" />
+        </div>
+        <div>
+          <label class="small muted">Contraseña</label>
+          <n-input v-model:value="password" type="password" show-password-on="click" placeholder="Contraseña" />
+        </div>
+        <n-alert v-if="error" type="error" :title="error" />
+        <n-button type="primary" block :loading="loading" @click="submit">Crear cuenta</n-button>
+        <n-button block secondary @click="router.push('/login')">Ya tengo cuenta</n-button>
+      </div>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import Card from "primevue/card";
-import InputText from "primevue/inputtext";
-import Password from "primevue/password";
-import Button from "primevue/button";
-import Message from "primevue/message";
+import { NCard, NInput, NButton, NAlert } from "naive-ui";
 import { useAppServices } from "@/app/services";
 
 const router = useRouter();
@@ -48,7 +42,7 @@ async function submit() {
   error.value = null;
   try {
     await register({ name: name.value, email: email.value, password: password.value });
-    await router.push('/');
+    await router.push("/");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -68,21 +62,6 @@ async function submit() {
 .auth-card {
   width: 100%;
   max-width: 420px;
-}
-
-:deep(.p-card) {
-  width: 100%;
-  max-width: 100%;
-}
-
-:deep(.p-card-body),
-:deep(.p-card-content),
-:deep(.p-password),
-:deep(.p-password-input),
-:deep(.p-inputtext),
-:deep(.p-button) {
-  width: 100%;
-  max-width: 100%;
 }
 
 @media (max-width: 640px) {

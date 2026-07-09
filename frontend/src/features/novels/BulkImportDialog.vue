@@ -1,5 +1,5 @@
 <template>
-  <Dialog :visible="open" modal header="Importar capítulos" :style="{ width: 'min(900px, 96vw)' }" @update:visible="handleVisibleChange">
+  <n-modal v-model:show="visible" preset="card" title="Importar capítulos" :style="{ width: 'min(900px, 96vw)' }" @after-leave="reset">
     <div class="stack-md">
       <p class="muted small">
         Importa varios archivos EPUB, TXT o Markdown y previsualiza antes de añadirlos a la novela.
@@ -7,30 +7,27 @@
 
       <div v-if="!preview" class="stack-md">
         <input type="file" multiple accept=".epub,.txt,.md" @change="handleFileChange" />
-        <Message v-if="loading" severity="info">Analizando archivos…</Message>
-        <Message v-if="error" severity="error">{{ error }}</Message>
+        <n-alert v-if="loading" type="info">Analizando archivos…</n-alert>
+        <n-alert v-if="error" type="error">{{ error }}</n-alert>
       </div>
 
       <div v-else class="stack-md">
-        <Card>
-          <template #title>Resumen</template>
-          <template #content>
-            <div class="stack-md small">
-              <div v-if="preview.title"><strong>Título detectado:</strong> {{ preview.title }}</div>
-              <div v-if="preview.author"><strong>Autor detectado:</strong> {{ preview.author }}</div>
-              <div><strong>Capítulos encontrados:</strong> {{ preview.chapters.length }}</div>
-            </div>
-          </template>
-        </Card>
+        <n-card title="Resumen">
+          <div class="stack-md small">
+            <div v-if="preview.title"><strong>Título detectado:</strong> {{ preview.title }}</div>
+            <div v-if="preview.author"><strong>Autor detectado:</strong> {{ preview.author }}</div>
+            <div><strong>Capítulos encontrados:</strong> {{ preview.chapters.length }}</div>
+          </div>
+        </n-card>
 
         <div class="row-wrap" style="align-items: end">
           <div style="min-width: 180px; flex: 1">
             <label class="small muted">Número inicial</label>
-            <InputNumber v-model="startOrder" :min="1" fluid />
+            <n-input-number v-model:value="startOrder" :min="1" />
           </div>
           <div style="display: flex; align-items: center; gap: 0.75rem; flex: 2">
-            <ToggleSwitch v-model="asRefined" input-id="as-refined" />
-            <label for="as-refined" class="small muted">
+            <n-switch v-model:value="asRefined" />
+            <label class="small muted">
               Crear capítulos ya en estado <code>refined</code> y omitir traducción.
             </label>
           </div>
@@ -39,18 +36,18 @@
         <div class="row-between">
           <h4 style="margin: 0">Capítulos a importar</h4>
           <div class="row-wrap">
-            <Button size="small" severity="secondary" outlined label="Todos" @click="toggleAll(true)" />
-            <Button size="small" severity="secondary" outlined label="Ninguno" @click="toggleAll(false)" />
+            <n-button size="small" secondary @click="toggleAll(true)">Todos</n-button>
+            <n-button size="small" secondary @click="toggleAll(false)">Ninguno</n-button>
           </div>
         </div>
 
-        <div style="border: 1px solid var(--p-content-border-color); border-radius: 12px; max-height: 320px; overflow: auto">
+        <div style="border: 1px solid var(--divide); border-radius: 12px; max-height: 320px; overflow: auto">
           <div
             v-for="(chapter, index) in preview.chapters"
             :key="`${chapter.title}-${index}`"
-            style="display: flex; gap: 0.75rem; padding: 0.875rem 1rem; border-bottom: 1px solid var(--p-content-border-color)"
+            style="display: flex; gap: 0.75rem; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)"
           >
-            <Checkbox :model-value="chapter.selected" binary @update:model-value="toggleChapter(index, $event)" />
+            <n-checkbox :checked="chapter.selected" @update:checked="toggleChapter(index, $event)" />
             <div style="min-width: 0; flex: 1">
               <div style="font-weight: 600">{{ chapter.title }}</div>
               <div class="small muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">
@@ -60,36 +57,32 @@
           </div>
         </div>
 
-        <Message v-if="asRefined" severity="warn">
+        <n-alert v-if="asRefined" type="warning">
           Los capítulos se crearán con <code>status: refined</code>.
-        </Message>
+        </n-alert>
 
-        <Message v-if="error" severity="error">{{ error }}</Message>
+        <n-alert v-if="error" type="error">{{ error }}</n-alert>
       </div>
     </div>
 
-    <template #footer>
-      <Button severity="secondary" outlined label="Cancelar" :disabled="importing" @click="close" />
-      <Button
+    <template #action>
+      <n-button secondary :disabled="importing" @click="close">Cancelar</n-button>
+      <n-button
         v-if="preview"
-        :label="`Importar ${selectedCount} capítulos`"
+        type="primary"
         :loading="importing"
         :disabled="selectedCount === 0"
         @click="performImport"
-      />
+      >
+        Importar {{ selectedCount }} capítulos
+      </n-button>
     </template>
-  </Dialog>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import Dialog from "primevue/dialog";
-import Card from "primevue/card";
-import Button from "primevue/button";
-import Checkbox from "primevue/checkbox";
-import Message from "primevue/message";
-import InputNumber from "primevue/inputnumber";
-import ToggleSwitch from "primevue/toggleswitch";
+import { NModal, NCard, NButton, NCheckbox, NAlert, NInputNumber, NSwitch, NIcon } from "naive-ui";
 import type { ChapterUpsertInput } from "@/domain";
 import type { EpubPreviewResult } from "@/api/types";
 import { readTxtChapters } from "@/utils/epub-importer";
@@ -112,6 +105,11 @@ type PreviewState = {
   chapters: Array<{ title: string; content: string; order: number; selected: boolean }>;
 };
 
+const visible = computed({
+  get: () => props.open,
+  set: (value) => emit("update:open", value),
+});
+
 const preview = ref<PreviewState | null>(null);
 const loading = ref(false);
 const importing = ref(false);
@@ -133,10 +131,6 @@ function reset() {
 function close() {
   reset();
   emit("update:open", false);
-}
-
-function handleVisibleChange(value: boolean) {
-  if (!value) close();
 }
 
 async function handleFileChange(event: Event) {

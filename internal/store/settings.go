@@ -106,6 +106,7 @@ type Novel struct {
 	RefinedCharCount        int    `json:"refinedCharCount,omitempty"`
 	TotalCharCount          int    `json:"totalCharCount,omitempty"`
 	MaxChapterOrder         int    `json:"maxChapterOrder,omitempty"`
+	LastReadAt              string `json:"lastReadAt,omitempty"`
 	CreatedAt               string `json:"createdAt,omitempty"`
 	UpdatedAt               string `json:"updatedAt,omitempty"`
 }

@@ -1,48 +1,45 @@
 <template>
   <AppLayout>
     <template #back-button>
-      <Button icon="pi pi-arrow-left" severity="secondary" text rounded @click="router.push('/')" aria-label="Volver a novelas" />
+      <n-button secondary circle @click="router.push('/')" aria-label="Volver a novelas">
+        <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+      </n-button>
     </template>
 
     <div v-if="!novel && novelLoading" class="novel-detail-layout">
       <aside class="novel-sidebar">
-        <Skeleton shape="rectangle" width="100%" height="320px" borderRadius="12px" />
+        <n-skeleton width="100%" height="320px" style="border-radius: 12px" />
         <div class="novel-sidebar-actions">
-          <Skeleton width="100%" height="2.5rem" borderRadius="8px" />
-          <Skeleton width="100%" height="2.5rem" borderRadius="8px" />
+          <n-skeleton width="100%" height="2.5rem" style="border-radius: 8px" />
+          <n-skeleton width="100%" height="2.5rem" style="border-radius: 8px" />
         </div>
         <div class="novel-sidebar-tags">
-          <Skeleton width="5rem" height="1.5rem" borderRadius="9999px" />
-          <Skeleton width="6rem" height="1.5rem" borderRadius="9999px" />
-          <Skeleton width="7rem" height="1.5rem" borderRadius="9999px" />
+          <n-skeleton width="5rem" height="1.5rem" round />
+          <n-skeleton width="6rem" height="1.5rem" round />
+          <n-skeleton width="7rem" height="1.5rem" round />
         </div>
       </aside>
 
       <div class="novel-main">
         <header class="novel-main-header">
-          <Skeleton width="60%" height="2rem" style="margin-bottom: 0.5rem" />
-          <Skeleton width="30%" height="1rem" style="margin-bottom: 0.75rem" />
-          <Skeleton width="20%" height="0.875rem" />
-          <Skeleton width="90%" height="0.875rem" style="margin-top: 1rem" />
-          <Skeleton width="75%" height="0.875rem" style="margin-top: 0.5rem" />
+          <n-skeleton width="60%" height="2rem" style="margin-bottom: 0.5rem" />
+          <n-skeleton width="30%" height="1rem" style="margin-bottom: 0.75rem" />
+          <n-skeleton width="20%" height="0.875rem" />
+          <n-skeleton width="90%" height="0.875rem" style="margin-top: 1rem" />
+          <n-skeleton width="75%" height="0.875rem" style="margin-top: 0.5rem" />
         </header>
-        <div class="novel-tabs">
-          <Skeleton width="5rem" height="2rem" borderRadius="8px" />
-          <Skeleton width="5rem" height="2rem" borderRadius="8px" />
-          <Skeleton width="5rem" height="2rem" borderRadius="8px" />
-          <Skeleton width="5rem" height="2rem" borderRadius="8px" />
-        </div>
+        <n-skeleton width="20rem" height="2rem" style="border-radius: 8px" />
         <div class="stack-sm">
-          <div v-for="i in 6" :key="i" class="row-between" style="padding: 0.5rem 0; border-bottom: 1px solid var(--p-content-border-color)">
+          <div v-for="i in 6" :key="i" class="row-between" style="padding: 0.5rem 0; border-bottom: 1px solid var(--divide)">
             <div class="row-wrap" style="flex: 1; min-width: 0">
-              <Skeleton shape="rectangle" width="1.5rem" height="1.5rem" />
-              <Skeleton width="2.5rem" height="1rem" />
-              <Skeleton width="45%" height="1.1rem" />
-              <Skeleton width="6rem" height="1.4rem" />
+              <n-skeleton width="1.5rem" height="1.5rem" />
+              <n-skeleton width="2.5rem" height="1rem" />
+              <n-skeleton width="45%" height="1.1rem" />
+              <n-skeleton width="6rem" height="1.4rem" />
             </div>
             <div class="row-wrap">
-              <Skeleton width="5rem" height="1rem" />
-              <Skeleton shape="rectangle" width="2.25rem" height="2.25rem" />
+              <n-skeleton width="5rem" height="1rem" />
+              <n-skeleton width="2.25rem" height="2.25rem" />
             </div>
           </div>
         </div>
@@ -50,8 +47,8 @@
     </div>
 
     <div v-else-if="!novel" class="stack-md">
-      <Message severity="warn">Novela no encontrada.</Message>
-      <Button label="Volver" severity="secondary" outlined @click="router.push('/')" />
+      <n-alert type="warning">Novela no encontrada.</n-alert>
+      <n-button secondary @click="router.push('/')">Volver</n-button>
     </div>
 
     <div v-else class="novel-detail-layout">
@@ -59,23 +56,38 @@
         <div class="novel-cover-large">
           <img v-if="novel.coverPath" :src="novel.coverPath" :alt="`Portada de ${getNovelDisplayTitle(novel)}`" loading="lazy" />
           <div v-else class="novel-cover-placeholder-large">
-            <i class="pi pi-image" aria-hidden="true" />
+            <n-icon :size="40"><ImageOutline /></n-icon>
           </div>
         </div>
 
         <div class="novel-sidebar-actions">
-          <Button label="Leer" icon="pi pi-book" fluid @click="router.push(`/novels/${novel.id}/read`)" />
-          <Button v-if="isOwner" label="Configuración" icon="pi pi-cog" severity="secondary" outlined fluid @click="settingsOpen = true" />
-          <Button v-else label="Copiar novela" icon="pi pi-copy" severity="secondary" outlined fluid @click="copyCurrentNovel" />
-          <Button v-if="isOwner" :label="novel.isPublic ? 'Despublicar' : 'Publicar'" icon="pi pi-globe" severity="secondary" outlined fluid @click="toggleVisibility" />
-          <Button v-if="isOwner && novel.url" label="Actualizar desde URL" icon="pi pi-refresh" severity="secondary" outlined fluid @click="updateUrlOpen = true" />
+          <n-button type="primary" block @click="router.push(`/novels/${novel.id}/read`)">
+            <template #icon><n-icon><BookOutline /></n-icon></template>
+            Leer
+          </n-button>
+          <n-button v-if="isOwner" secondary block @click="settingsOpen = true">
+            <template #icon><n-icon><SettingsOutline /></n-icon></template>
+            Configuración
+          </n-button>
+          <n-button v-else secondary block @click="copyCurrentNovel">
+            <template #icon><n-icon><CopyOutline /></n-icon></template>
+            Copiar novela
+          </n-button>
+          <n-button v-if="isOwner" secondary block @click="toggleVisibility">
+            <template #icon><n-icon><GlobeOutline /></n-icon></template>
+            {{ novel.isPublic ? 'Despublicar' : 'Publicar' }}
+          </n-button>
+          <n-button v-if="isOwner && novel.url" secondary block @click="updateUrlOpen = true">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            Actualizar desde URL
+          </n-button>
         </div>
 
         <div class="novel-sidebar-tags">
-          <Tag :severity="novelStatusSeverity(novel.status)" :value="novelStatusLabel(novel.status)" />
-          <Tag severity="secondary" :value="`${chapterStats.totalChapters} capítulos`" />
-          <Tag severity="contrast" :value="`${completedChapters} traducidos`" />
-          <Tag severity="success" :value="`${novel.sourceLanguage} → ${novel.targetLanguage}`" />
+          <n-tag :type="novelStatusType(novel.status)" size="small" round>{{ novelStatusLabel(novel.status) }}</n-tag>
+          <n-tag size="small" round>{{ chapterStats.totalChapters }} capítulos</n-tag>
+          <n-tag size="small" round>{{ completedChapters }} traducidos</n-tag>
+          <n-tag type="success" size="small" round>{{ novel.sourceLanguage }} → {{ novel.targetLanguage }}</n-tag>
         </div>
       </aside>
 
@@ -85,7 +97,7 @@
           <div class="novel-meta">
             <span v-if="getNovelDisplayAuthor(novel)" class="muted">{{ getNovelDisplayAuthor(novel) }}</span>
             <span v-if="getNovelDisplaySeries(novel) || getNovelDisplayNumber(novel)" class="novel-series muted small">
-              <i class="pi pi-bookmark" aria-hidden="true" />
+              <n-icon :size="14"><BookmarkOutline /></n-icon>
               <span v-if="getNovelDisplaySeries(novel)">{{ getNovelDisplaySeries(novel) }}</span>
               <span v-if="getNovelDisplaySeries(novel) && getNovelDisplayNumber(novel)">·</span>
               <span v-if="getNovelDisplayNumber(novel)">#{{ getNovelDisplayNumber(novel) }}</span>
@@ -98,35 +110,29 @@
               :class="{ 'novel-description--collapsed': !descriptionExpanded }"
               v-html="markdownToHtml(getNovelDisplayDescription(novel))"
             />
-            <button
+            <n-button
               v-if="descriptionOverflow || descriptionExpanded"
-              type="button"
+              text
+              size="small"
               class="novel-description-toggle"
               @click="descriptionExpanded = !descriptionExpanded"
             >
               {{ descriptionExpanded ? 'Mostrar menos' : 'Mostrar más' }}
-              <i :class="descriptionExpanded ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" />
-            </button>
+              <template #icon>
+                <n-icon :size="12"><ChevronUpOutline v-if="descriptionExpanded" /><ChevronDownOutline v-else /></n-icon>
+              </template>
+            </n-button>
           </div>
           <div v-if="novel.tags.length > 0" class="novel-description-tags">
-            <Tag v-for="tagItem in novel.tags" :key="tagItem" severity="info" :value="tagItem" />
+            <n-tag v-for="tagItem in novel.tags" :key="tagItem" type="info" size="small">{{ tagItem }}</n-tag>
           </div>
         </header>
 
-        <div class="novel-tabs" role="tablist" aria-label="Secciones de la novela">
-          <button
-            v-for="tab in visibleTabs"
-            :key="tab.value"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === tab.value"
-            class="novel-tab"
-            :class="{ 'novel-tab--active': activeTab === tab.value }"
-            @click="activeTab = tab.value"
-          >
+        <n-tabs v-model:value="activeTab" type="segment" animated>
+          <n-tab v-for="tab in visibleTabs" :key="tab.value" :name="tab.value">
             {{ tab.label }}
-          </button>
-        </div>
+          </n-tab>
+        </n-tabs>
 
       <section v-if="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
         <h2 id="tab-chapters" class="sr-only">Capítulos</h2>
@@ -149,166 +155,160 @@
 
       <section v-else-if="activeTab === 'translate'" class="stack-md tab-panel" aria-labelledby="tab-translate">
         <h2 id="tab-translate" class="sr-only">{{ translateOperation === 'translate' ? 'Traducción' : 'Refinamiento' }}</h2>
-        <Card>
-          <template #title>{{ translateOperation === 'translate' ? 'Traducción automática' : 'Refinamiento' }}</template>
-          <template #content>
+        <n-card :title="translateOperation === 'translate' ? 'Traducción automática' : 'Refinamiento'">
             <div v-if="allSummariesLoading" class="stack-md">
-              <Skeleton width="100%" height="8rem" borderRadius="12px" />
-              <Skeleton width="100%" height="14rem" borderRadius="12px" />
+              <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
+              <n-skeleton width="100%" height="14rem" style="border-radius: 12px" />
             </div>
             <div v-else class="stack-md">
               <div class="row-between">
-                <SelectButton v-model="translateOperation" :options="translateOperationOptions" optionLabel="label" optionValue="value" :allowEmpty="false" />
+                <n-radio-group v-model:value="translateOperation" size="small">
+                  <n-radio-button value="translate">Traducir</n-radio-button>
+                  <n-radio-button value="refine">Refinar</n-radio-button>
+                </n-radio-group>
                 <div class="row-wrap">
-                  <Button :label="`Iniciar (${translateSelectedIds.size})`" icon="pi pi-play" :loading="translateSubmitting" :disabled="translateSelectedIds.size === 0 || translateSubmitting" @click="startTranslationJob" />
+                  <n-button type="primary" :loading="translateSubmitting" :disabled="translateSelectedIds.size === 0 || translateSubmitting" @click="startTranslationJob">
+                    <template #icon><n-icon><PlayOutline /></n-icon></template>
+                    Iniciar ({{ translateSelectedIds.size }})
+                  </n-button>
                 </div>
               </div>
 
               <div class="row-wrap small muted">
-                <Button size="small" severity="secondary" text label="Todos" @click="translateSelectedIds = new Set(eligibleChapters.map((chapter) => chapter.id))" />
-                <Button size="small" severity="secondary" text label="Ninguno" @click="translateSelectedIds = new Set()" />
+                <n-button size="small" text @click="translateSelectedIds = new Set(eligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
+                <n-button size="small" text @click="translateSelectedIds = new Set()">Ninguno</n-button>
                 <span>{{ eligibleChapters.length }} capítulos elegibles</span>
               </div>
 
               <div v-if="eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
-              <div v-else style="border: 1px solid var(--p-content-border-color); border-radius: 12px; overflow: auto; max-height: 420px">
-                <div v-for="chapter in eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--p-content-border-color)">
-                  <Checkbox :model-value="translateSelectedIds.has(chapter.id)" binary :disabled="translateSubmitting" @update:model-value="toggleTranslateChapter(chapter.id, $event)" />
+              <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 420px">
+                <div v-for="chapter in eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
+                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
                   <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
                   <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
-                  <Tag :severity="chapterSeverity(resolvedChapterStatus(chapter))" :value="chapterStatusLabel(resolvedChapterStatus(chapter))" />
+                  <n-tag :type="chapterTagType(resolvedChapterStatus(chapter))" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
                 </div>
               </div>
             </div>
-          </template>
-        </Card>
+        </n-card>
       </section>
 
       <section v-else-if="activeTab === 'clean'" class="stack-md tab-panel" aria-labelledby="tab-clean">
         <h2 id="tab-clean" class="sr-only">Limpieza de texto</h2>
-        <Card>
-          <template #title>Limpieza de texto</template>
-          <template #content>
+        <n-card title="Limpieza de texto">
             <div v-if="allSummariesLoading" class="stack-md">
-              <Skeleton width="100%" height="8rem" borderRadius="12px" />
-              <Skeleton width="100%" height="12rem" borderRadius="12px" />
+              <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
+              <n-skeleton width="100%" height="12rem" style="border-radius: 12px" />
             </div>
             <div v-else class="stack-md">
               <div class="row-wrap">
                 <div style="min-width: 240px; flex: 1">
                   <label class="small muted">Modo de limpieza</label>
-                  <Select v-model="cleanMode" :options="cleanModeOptions" optionLabel="label" optionValue="value" fluid />
+                  <n-select v-model:value="cleanMode" :options="cleanModeOptions" />
                   <div class="small muted" style="margin-top: 0.4rem">{{ cleanModeDescription }}</div>
                 </div>
                 <div style="min-width: 220px; flex: 1">
                   <label class="small muted">Aplicar a</label>
-                  <Select v-model="cleanApplyTo" :options="cleanApplyOptions" optionLabel="label" optionValue="value" fluid />
+                  <n-select v-model:value="cleanApplyTo" :options="cleanApplyOptions" />
                 </div>
               </div>
 
               <div class="row-wrap">
                 <div style="min-width: 240px; flex: 1">
                   <label class="small muted">Buscar</label>
-                  <InputText v-model="cleanSearchText" :disabled="cleanMode === 'remove_multiple_blanks'" fluid />
+                  <n-input v-model:value="cleanSearchText" :disabled="cleanMode === 'remove_multiple_blanks'" />
                 </div>
                 <div v-if="cleanMode === 'search_replace'" style="min-width: 240px; flex: 1">
                   <label class="small muted">Reemplazar con</label>
-                  <InputText v-model="cleanReplaceText" fluid />
+                  <n-input v-model:value="cleanReplaceText" />
                 </div>
               </div>
 
               <div class="row-wrap">
                 <div style="display: flex; align-items: center; gap: 0.5rem">
-                  <ToggleSwitch v-model="cleanCaseSensitive" />
+                  <n-switch v-model:value="cleanCaseSensitive" />
                   <span class="small muted">Distinguir mayúsculas</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem">
-                  <ToggleSwitch v-model="cleanUseRegex" />
+                  <n-switch v-model:value="cleanUseRegex" />
                   <span class="small muted">Usar regex</span>
                 </div>
               </div>
             </div>
-          </template>
-        </Card>
+        </n-card>
 
-        <Card>
-          <template #title>Capítulos a limpiar</template>
-          <template #content>
+        <n-card title="Capítulos a limpiar">
             <div class="stack-md">
               <div class="row-between">
                 <div class="row-wrap small muted">
-                  <Button size="small" severity="secondary" text label="Todos" @click="cleanSelectedIds = new Set(cleanEligibleChapters.map((chapter) => chapter.id))" />
-                  <Button size="small" severity="secondary" text label="Ninguno" @click="cleanSelectedIds = new Set()" />
+                  <n-button size="small" text @click="cleanSelectedIds = new Set(cleanEligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
+                  <n-button size="small" text @click="cleanSelectedIds = new Set()">Ninguno</n-button>
                 </div>
-                <Button :label="`Aplicar a ${cleanSelectedIds.size} capítulos`" icon="pi pi-save" :loading="cleanApplying" :disabled="cleanSelectedIds.size === 0" @click="applyCleaningToSelected" />
+                <n-button type="primary" :loading="cleanApplying" :disabled="cleanSelectedIds.size === 0" @click="applyCleaningToSelected">
+                  <template #icon><n-icon><SaveOutline /></n-icon></template>
+                  Aplicar a {{ cleanSelectedIds.size }} capítulos
+                </n-button>
               </div>
 
-              <Message v-if="cleanFeedback" severity="success">{{ cleanFeedback }}</Message>
+              <n-alert v-if="cleanFeedback" type="success">{{ cleanFeedback }}</n-alert>
 
               <div v-if="cleanEligibleChapters.length === 0" class="muted small">Selecciona primero el tipo de limpieza arriba para ver capítulos disponibles.</div>
-              <div v-else style="border: 1px solid var(--p-content-border-color); border-radius: 12px; overflow: auto; max-height: 320px">
-                <div v-for="chapter in cleanEligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--p-content-border-color)">
-                  <Checkbox :model-value="cleanSelectedIds.has(chapter.id)" binary @update:model-value="toggleCleanChapter(chapter.id, $event)" />
+              <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 320px">
+                <div v-for="chapter in cleanEligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
+                  <n-checkbox :checked="cleanSelectedIds.has(chapter.id)" @update:checked="toggleCleanChapter(chapter.id, $event)" />
                   <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
                   <span style="flex: 1">{{ chapter.title }}</span>
-                  <Button size="small" severity="secondary" outlined label="Previsualizar" @click="previewCleaning(chapter)" />
+                  <n-button size="small" secondary @click="previewCleaning(chapter)">Previsualizar</n-button>
                 </div>
               </div>
 
-              <Card v-if="cleanPreview">
-                <template #title>Vista previa · {{ cleanPreview.chapterTitle }}</template>
-                <template #content>
+              <n-card v-if="cleanPreview" :title="`Vista previa · ${cleanPreview.chapterTitle}`">
                   <div class="row-wrap">
                     <div style="flex: 1; min-width: 280px">
                       <label class="small muted">Original</label>
-                      <Textarea :model-value="cleanPreview.result.original" rows="12" readonly fluid class="mono" />
+                      <n-input type="textarea" :value="cleanPreview.result.original" :autosize="{ minRows: 12 }" readonly class="mono" />
                     </div>
                     <div style="flex: 1; min-width: 280px">
                       <label class="small muted">Limpio</label>
-                      <Textarea :model-value="cleanPreview.result.cleaned" rows="12" readonly fluid class="mono" />
+                      <n-input type="textarea" :value="cleanPreview.result.cleaned" :autosize="{ minRows: 12 }" readonly class="mono" />
                     </div>
                   </div>
-                </template>
-              </Card>
+              </n-card>
             </div>
-          </template>
-        </Card>
+        </n-card>
       </section>
 
       <section v-else-if="activeTab === 'export'" class="stack-md tab-panel" aria-labelledby="tab-export">
         <h2 id="tab-export" class="sr-only">Exportar</h2>
-        <Card>
-          <template #title>Exportar a EPUB</template>
-          <template #content>
+        <n-card title="Exportar a EPUB">
             <div class="stack-md">
               <div style="min-width: 220px; max-width: 320px">
                 <label class="small muted">Fuente del contenido</label>
-                <Select v-model="exportSource" :options="exportSourceOptions" optionLabel="label" optionValue="value" fluid />
+                <n-select v-model:value="exportSource" :options="exportSourceOptions" />
               </div>
 
-              <ProgressBar v-if="exportBuilding" :value="exportProgress" />
-              <Message v-if="exportFeedback" :severity="exportFeedback.startsWith('Error:') ? 'error' : 'success'">{{ exportFeedback }}</Message>
-              <Button label="Descargar EPUB" icon="pi pi-download" :loading="exportBuilding" :disabled="exportBuilding" @click="buildAndDownloadEpub" />
+              <n-progress v-if="exportBuilding" :percentage="exportProgress" :show-indicator="true" />
+              <n-alert v-if="exportFeedback" :type="exportFeedback.startsWith('Error:') ? 'error' : 'success'">{{ exportFeedback }}</n-alert>
+              <n-button type="primary" :loading="exportBuilding" :disabled="exportBuilding" @click="buildAndDownloadEpub">
+                <template #icon><n-icon><DownloadOutline /></n-icon></template>
+                Descargar EPUB
+              </n-button>
             </div>
-          </template>
-        </Card>
+        </n-card>
       </section>
 
       <section v-else class="stack-md tab-panel" aria-labelledby="tab-errors">
         <h2 id="tab-errors" class="sr-only">Historial de errores</h2>
-        <Card v-if="failedJobs.length === 0">
-          <template #content>
+        <n-card v-if="failedJobs.length === 0">
             <div class="stack-md" style="align-items: center; text-align: center; padding: 2rem 1rem">
-              <i class="pi pi-clock" style="font-size: 2rem; color: var(--p-text-muted-color)" />
+              <n-icon :size="40" color="var(--text-tertiary)"><TimeOutline /></n-icon>
               <div>
                 <h3 style="margin: 0 0 0.5rem">Aún no hay errores</h3>
                 <p class="muted">Cuando un trabajo falle, verás los detalles aquí.</p>
               </div>
             </div>
-          </template>
-        </Card>
-        <Card v-for="job in failedJobs" :key="job.id">
-          <template #content>
+        </n-card>
+        <n-card v-for="job in failedJobs" :key="job.id">
             <div class="stack-md">
               <div class="row-between">
                 <div>
@@ -316,25 +316,25 @@
                   <div class="small muted">{{ job.provider || 'provider por defecto' }} · {{ job.model || 'model por defecto' }} · {{ formatDate(job.createdAt) }}</div>
                 </div>
                 <div class="row-wrap">
-                  <Tag :severity="jobSeverity(job.status)" :value="jobStatusLabel(job.status)" />
-                  <Button v-if="job.status === 'running' || job.status === 'pending'" size="small" severity="danger" outlined label="Cancelar" @click="cancelFailedHistoryJob(job.id)" />
+                  <n-tag :type="jobTagType(job.status)" size="small" round>{{ jobStatusLabel(job.status) }}</n-tag>
+                  <n-button v-if="job.status === 'running' || job.status === 'pending'" size="small" type="error" secondary @click="cancelFailedHistoryJob(job.id)">Cancelar</n-button>
                 </div>
               </div>
-              <ProgressBar v-if="jobShowsCompletedProgress(job)" :value="jobProgress(job)" />
-              <ProgressBar v-else mode="indeterminate" />
+              <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="true" />
+              <n-progress v-else :show-indicator="false" :status="'info'" :percentage="100" />
               <div v-if="jobCurrentActivityLabel(job)" class="small muted">
                 {{ jobCurrentActivityLabel(job) }}
               </div>
-              <Message v-if="job.errorMessage?.trim()" :severity="job.status === 'failed' ? 'error' : 'warn'" :closable="false">
+              <n-alert v-if="job.errorMessage?.trim()" :type="job.status === 'failed' ? 'error' : 'warning'" :closable="false">
                 <div class="stack-sm" style="gap: 0.25rem">
                   <strong>{{ job.status === 'failed' ? 'Motivo del fallo del trabajo' : 'Aviso del trabajo' }}</strong>
                   <span class="mono small" style="white-space: pre-wrap; word-break: break-word">{{ job.errorMessage }}</span>
                 </div>
-              </Message>
+              </n-alert>
               <div v-if="jobFailedChapters(job).length > 0" class="job-failed-chapters">
                 <div class="row-between" @click="toggleJobFailedChapters(job.id)" style="cursor: pointer; user-select: none">
                   <div class="row-wrap">
-                    <i :class="expandedJobId === job.id ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" style="font-size: 0.85rem" />
+                    <n-icon :size="14"><ChevronDownOutline v-if="expandedJobId === job.id" /><ChevronForwardOutline v-else /></n-icon>
                     <strong>Capítulos fallidos ({{ jobFailedChapters(job).length }})</strong>
                   </div>
                   <span class="small muted">{{ expandedJobId === job.id ? 'Ocultar' : 'Ver' }} detalles</span>
@@ -345,9 +345,9 @@
                       <div style="min-width: 0; flex: 1">
                         <div class="row-wrap">
                           <span class="mono small muted">#{{ chapter.chapterOrder }}</span>
-                          <Button link style="padding: 0; text-align: left" @click="router.push(`/novels/${chapter.novelId}/chapters/${chapter.id}`)">
+                          <n-button text style="padding: 0; text-align: left" @click="router.push(`/novels/${chapter.novelId}/chapters/${chapter.id}`)">
                             {{ chapter.title }}
-                          </Button>
+                          </n-button>
                         </div>
                         <div v-if="chapter.errorMessage?.trim()" class="small job-failed-chapter-error mono">
                           {{ chapter.errorMessage }}
@@ -356,37 +356,38 @@
                           Sin detalles disponibles para este error.
                         </div>
                       </div>
-                      <Tag severity="danger" :value="chapterStatusLabel(resolvedChapterStatus(chapter))" />
+                      <n-tag type="error" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </template>
-        </Card>
+        </n-card>
       </section>
       </div>
     </div>
 
-    <Dialog v-model:visible="chapterDialogOpen" modal :header="editingChapter ? 'Editar capítulo' : 'Nuevo capítulo'" :style="{ width: 'min(720px, 96vw)' }">
+    <n-modal v-model:show="chapterDialogOpen" preset="card" :title="editingChapter ? 'Editar capítulo' : 'Nuevo capítulo'" :style="{ width: 'min(720px, 96vw)' }">
       <div class="stack-md">
         <div class="row-wrap">
           <FieldNumber v-model="chapterDraft.chapterOrder" label="N° capítulo" :min="1" wrapper-style="flex: 1; min-width: 160px" />
           <div style="flex: 2; min-width: 240px">
             <label class="small muted">Título</label>
-            <InputText v-model="chapterDraft.title" fluid />
+            <n-input v-model:value="chapterDraft.title" />
           </div>
         </div>
         <div>
           <label class="small muted">Contenido original (markdown)</label>
-          <Textarea v-model="chapterDraft.originalContent" rows="12" fluid class="mono" />
+          <n-input v-model:value="chapterDraft.originalContent" type="textarea" :autosize="{ minRows: 12 }" class="mono" />
         </div>
       </div>
-      <template #footer>
-        <Button severity="secondary" outlined label="Cancelar" @click="chapterDialogOpen = false" />
-        <Button :label="editingChapter ? 'Guardar cambios' : 'Crear capítulo'" :loading="chapterSaving" :disabled="!chapterDraft.title.trim()" @click="saveChapter" />
+      <template #action>
+        <n-button secondary @click="chapterDialogOpen = false">Cancelar</n-button>
+        <n-button type="primary" :loading="chapterSaving" :disabled="!chapterDraft.title.trim()" @click="saveChapter">
+          {{ editingChapter ? 'Guardar cambios' : 'Crear capítulo' }}
+        </n-button>
       </template>
-    </Dialog>
+    </n-modal>
 
     <BulkImportDialog
       :open="bulkImportOpen"
@@ -413,59 +414,57 @@
       @update:open="updateUrlOpen = $event"
       @updated="onUrlUpdated"
     />
-
-    <Popover ref="confirmDeletePopover">
-      <div class="stack-md" style="max-width: 260px">
-        <div>
-          <div style="font-weight: 600">¿Eliminar este capítulo?</div>
-          <div class="small muted" style="margin-top: 0.25rem">Esta acción no se puede deshacer.</div>
-        </div>
-        <div class="row-wrap" style="justify-content: flex-end">
-          <Button size="small" severity="secondary" outlined label="Cancelar" @click="cancelDeleteChapter" />
-          <Button size="small" severity="danger" label="Eliminar" :loading="deletingChapter" @click="confirmDeleteChapter" />
-        </div>
-      </div>
-    </Popover>
-
-    <Popover ref="bulkDeletePopover">
-      <div class="stack-md" style="max-width: 300px">
-        <div>
-          <div style="font-weight: 600">¿Eliminar {{ selectedChapters.length }} capítulos?</div>
-          <div class="small muted" style="margin-top: 0.25rem">Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.</div>
-        </div>
-        <div class="row-wrap" style="justify-content: flex-end">
-          <Button size="small" severity="secondary" outlined label="Cancelar" @click="cancelBulkDeleteChapters" />
-          <Button size="small" severity="danger" :label="`Eliminar ${selectedChapters.length}`" :loading="bulkDeleting" @click="confirmBulkDeleteChapters" />
-        </div>
-      </div>
-    </Popover>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useToast } from "primevue/usetoast";
+import { useMessage, useDialog } from "naive-ui";
 import AppLayout from "@/components/AppLayout.vue";
 import ChapterList from "@/components/ChapterList.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
 import BulkImportDialog from "@/features/novels/BulkImportDialog.vue";
 import UpdateUrlDialog from "@/features/novels/UpdateUrlDialog.vue";
 import ProjectSettingsDialog from "@/features/projects/ProjectSettingsDialog.vue";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Checkbox from "primevue/checkbox";
-import Dialog from "primevue/dialog";
-import InputText from "primevue/inputtext";
-import Message from "primevue/message";
-import Popover from "primevue/popover";
-import ProgressBar from "primevue/progressbar";
-import Select from "primevue/select";
-import SelectButton from "primevue/selectbutton";
-import Skeleton from "primevue/skeleton";
-import Tag from "primevue/tag";
-import Textarea from "primevue/textarea";
-import ToggleSwitch from "primevue/toggleswitch";
+import {
+  NButton,
+  NCard,
+  NCheckbox,
+  NModal,
+  NInput,
+  NAlert,
+  NProgress,
+  NSelect,
+  NRadioGroup,
+  NSkeleton,
+  NTag,
+  NSwitch,
+  NIcon,
+  NTabs,
+  NTab,
+} from "naive-ui";
+import {
+  ArrowBackOutline,
+  PlayOutline,
+  DocumentTextOutline,
+  CreateOutline,
+  TrashOutline,
+  SaveOutline,
+  GlobeOutline,
+  RefreshOutline,
+  CopyOutline,
+  SettingsOutline,
+  BookOutline,
+  TimeOutline,
+  ChevronDownOutline,
+  ChevronForwardOutline,
+  ChevronUpOutline,
+  DownloadOutline,
+  ImageOutline,
+  BookmarkOutline,
+  CheckmarkCircleOutline,
+} from "@vicons/ionicons5";
 import { markdownToHtml } from "@/utils/markdown";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
@@ -490,7 +489,8 @@ import { CLEAN_MODE_DESCRIPTIONS, CLEAN_MODE_LABELS, type CleanMode } from "@/ut
 
 const router = useRouter();
 const route = useRoute();
-const toast = useToast();
+const message = useMessage();
+const dialog = useDialog();
 const { api, auth } = useAppServices();
 const { getNovel, updateNovel, replaceNovelInList } = useNovels();
 const novelId = computed(() => String(route.params.novelId || ""));
@@ -526,10 +526,8 @@ const selectedChapters = ref<ChapterSummary[]>([]);
 const chapterDialogOpen = ref(false);
 const chapterSaving = ref(false);
 const editingChapter = ref<Chapter | null>(null);
-const confirmDeletePopover = ref<InstanceType<typeof Popover> | null>(null);
 const pendingDeleteChapterId = ref<string | null>(null);
 const deletingChapter = ref(false);
-const bulkDeletePopover = ref<InstanceType<typeof Popover> | null>(null);
 const bulkDeleting = ref(false);
 const chapterDraft = reactive<{ id?: string; chapterOrder: number; title: string; originalContent: string }>({
   chapterOrder: 1,
@@ -595,14 +593,14 @@ function novelStatusLabel(status: NovelStatus) {
   }
 }
 
-function novelStatusSeverity(status: NovelStatus) {
+function novelStatusType(status: NovelStatus) {
   switch (status) {
     case "completed":
       return "info";
     case "hiatus":
-      return "warn";
+      return "warning";
     case "cancelled":
-      return "danger";
+      return "error";
     default:
       return "success";
   }
@@ -955,7 +953,7 @@ async function copyCurrentNovel() {
   if (!novel.value) return;
   const copy = await api.novels.copy(novel.value.id);
   replaceNovelInList(copy);
-  toast.add({ severity: 'success', summary: 'Novela copiada', life: 2500 });
+  message.success('Novela copiada', { duration: 2500 });
   await router.push(`/novels/${copy.id}`);
 }
 
@@ -964,7 +962,7 @@ async function toggleVisibility() {
   await api.novels.updateVisibility(novel.value.id, !novel.value.isPublic);
   novel.value = { ...novel.value, isPublic: !novel.value.isPublic };
   replaceNovelInList(novel.value);
-  toast.add({ severity: 'success', summary: novel.value.isPublic ? 'Novela despublicada' : 'Novela publicada', life: 2500 });
+  message.success(novel.value.isPublic ? 'Novela despublicada' : 'Novela publicada', { duration: 2500 });
 }
 
 async function onUrlUpdated(pending?: number) {
@@ -977,7 +975,7 @@ async function onUrlUpdated(pending?: number) {
     await refreshChapterViews();
   }
   if (!pending || pending <= 0) {
-    toast.add({ severity: 'success', summary: 'Novela actualizada desde internet', life: 2500 });
+    message.success('Novela actualizada desde internet', { duration: 2500 });
   }
 }
 
@@ -992,15 +990,15 @@ function chapterStatusLabel(status: Chapter["status"]) {
   }[status] || status;
 }
 
-function chapterSeverity(status: Chapter["status"]) {
-  return {
-    pending: "secondary",
-    processing: "warn",
+function chapterTagType(status: Chapter["status"]) {
+  return ({
+    pending: "default",
+    processing: "warning",
     translated: "success",
     refined: "info",
     done: "success",
-    failed: "danger",
-  }[status] as "secondary" | "info" | "warn" | "help" | "success" | "danger";
+    failed: "error",
+  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
 }
 
 function charsLabel(value?: string) {
@@ -1018,14 +1016,14 @@ function jobStatusLabel(status: TranslationJob["status"]) {
   }[status] || status;
 }
 
-function jobSeverity(status: TranslationJob["status"]) {
-  return {
-    pending: "secondary",
+function jobTagType(status: TranslationJob["status"]) {
+  return ({
+    pending: "default",
     running: "info",
     done: "success",
-    cancelled: "warn",
-    failed: "danger",
-  }[status] as "secondary" | "info" | "warn" | "help" | "success" | "danger";
+    cancelled: "warning",
+    failed: "error",
+  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
 }
 
 function jobFailedChapters(job: TranslationJob) {
@@ -1071,7 +1069,7 @@ async function saveChapter() {
     chapterDialogOpen.value = false;
     await refreshChapterViews();
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al guardar capítulo", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al guardar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     chapterSaving.value = false;
   }
@@ -1086,47 +1084,73 @@ async function confirmDeleteChapter() {
     markAllSummariesDirty();
     await refreshChapterViews();
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al eliminar capítulo", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al eliminar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     deletingChapter.value = false;
     pendingDeleteChapterId.value = null;
-    confirmDeletePopover.value?.hide();
   }
 }
 
 function onDeleteChapter({ event, chapter }: { event: Event; chapter: ChapterSummary }) {
-  pendingDeleteChapterId.value = chapter.id;
-  confirmDeletePopover.value?.show(event);
+  dialog.warning({
+    title: "¿Eliminar este capítulo?",
+    content: "Esta acción no se puede deshacer.",
+    positiveText: "Eliminar",
+    negativeText: "Cancelar",
+    onPositiveClick: () => {
+      pendingDeleteChapterId.value = chapter.id;
+      void confirmDeleteChapter();
+    },
+  });
 }
 
 function askDeleteChapter(event: Event, id: string) {
-  pendingDeleteChapterId.value = id;
-  confirmDeletePopover.value?.show(event);
+  dialog.warning({
+    title: "¿Eliminar este capítulo?",
+    content: "Esta acción no se puede deshacer.",
+    positiveText: "Eliminar",
+    negativeText: "Cancelar",
+    onPositiveClick: () => {
+      pendingDeleteChapterId.value = id;
+      void confirmDeleteChapter();
+    },
+  });
 }
 
 function cancelDeleteChapter() {
   pendingDeleteChapterId.value = null;
-  confirmDeletePopover.value?.hide();
 }
 
 function onBulkDeleteChapters(event: Event) {
   if (selectedChapters.value.length <= 1) return;
-  bulkDeletePopover.value?.show(event);
+  const count = selectedChapters.value.length;
+  dialog.warning({
+    title: `¿Eliminar ${count} capítulos?`,
+    content: "Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.",
+    positiveText: `Eliminar ${count}`,
+    negativeText: "Cancelar",
+    onPositiveClick: () => void confirmBulkDeleteChapters(),
+  });
 }
 
 function askBulkDeleteChapters(event: Event) {
   if (selectedChapters.value.length <= 1) return;
-  bulkDeletePopover.value?.show(event);
+  const count = selectedChapters.value.length;
+  dialog.warning({
+    title: `¿Eliminar ${count} capítulos?`,
+    content: "Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.",
+    positiveText: `Eliminar ${count}`,
+    negativeText: "Cancelar",
+    onPositiveClick: () => void confirmBulkDeleteChapters(),
+  });
 }
 
 function cancelBulkDeleteChapters() {
-  bulkDeletePopover.value?.hide();
 }
 
 async function confirmBulkDeleteChapters() {
   const ids = selectedChapters.value.map((chapter) => chapter.id);
   if (ids.length === 0) {
-    bulkDeletePopover.value?.hide();
     return;
   }
   bulkDeleting.value = true;
@@ -1135,24 +1159,19 @@ async function confirmBulkDeleteChapters() {
     markAllSummariesDirty();
     await refreshChapterViews();
     selectedChapters.value = [];
-    bulkDeletePopover.value?.hide();
     if (deleted === requested) {
-      toast.add({
-        severity: "success",
-        summary: "Capítulos eliminados",
-        detail: `${deleted} ${deleted === 1 ? "capítulo eliminado" : "capítulos eliminados"}.`,
-        life: 3000,
-      });
+      message.success(
+        `Capítulos eliminados: ${deleted} ${deleted === 1 ? "capítulo eliminado" : "capítulos eliminados"}.`,
+        { duration: 3000 },
+      );
     } else {
-      toast.add({
-        severity: "warn",
-        summary: "Eliminación parcial",
-        detail: `${deleted} de ${requested} capítulos eliminados.`,
-        life: 4500,
-      });
+      message.warning(
+        `Eliminación parcial: ${deleted} de ${requested} capítulos eliminados.`,
+        { duration: 4500 },
+      );
     }
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al eliminar capítulos", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al eliminar capítulos: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     bulkDeleting.value = false;
   }
@@ -1164,7 +1183,7 @@ async function handleBulkImport(inputs: ChapterUpsertInput[]) {
     markAllSummariesDirty();
     await refreshChapterViews();
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error en importación masiva", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error en importación masiva: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
     throw err;
   }
 }
@@ -1191,9 +1210,9 @@ async function saveProjectSettings(patch: Partial<CreateNovelInput>) {
   try {
     const updated = await updateNovel(novel.value.id, patch);
     novel.value = updated;
-    toast.add({ severity: "success", summary: "Proyecto actualizado", life: 2500 });
+    message.success("Proyecto actualizado", { duration: 2500 });
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al guardar configuración", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al guardar configuración: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   }
 }
 
@@ -1228,7 +1247,7 @@ async function startTranslationJob() {
     );
     markFailedJobsDirty();
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al iniciar trabajo", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al iniciar trabajo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     translateSubmitting.value = false;
   }
@@ -1247,7 +1266,7 @@ async function previewCleaning(chapter: ChapterSummary) {
     });
     cleanPreview.value = { chapterTitle: res.chapterTitle, result: res };
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al previsualizar", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al previsualizar: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   }
 }
 
@@ -1279,11 +1298,11 @@ async function applyCleaningToSelected() {
     if (result.notFound) issues.push(`${result.notFound} no encontrados`);
     if (result.failed) issues.push(`${result.failed} fallaron al guardar`);
     if (issues.length > 0) {
-      toast.add({ severity: "warn", summary: issues.join(", ") + ".", life: 5000 });
+      message.warning(issues.join(", ") + ".", { duration: 5000 });
     }
   } catch (err) {
     cleanFeedback.value = null;
-    toast.add({ severity: "error", summary: "Error al aplicar limpieza", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al aplicar limpieza: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     cleanApplying.value = false;
   }
@@ -1327,7 +1346,7 @@ async function cancelFailedHistoryJob(jobId: string) {
     markFailedJobsDirty();
     await ensureFailedJobsLoaded(true);
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al cancelar trabajo", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error(`Error al cancelar trabajo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   }
 }
 
@@ -1381,19 +1400,10 @@ function formatDate(value: string) {
   gap: 0.5rem;
 }
 
-.novel-sidebar-actions :deep(.p-button) {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-}
-
 .novel-sidebar-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-}
-
-.novel-sidebar-tags :deep(.p-tag) {
-  font-size: 0.75rem;
 }
 
 .novel-main {
@@ -1451,26 +1461,7 @@ function formatDate(value: string) {
 }
 
 .novel-description-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0.2rem 0;
-  transition: color 0.15s ease;
-}
-
-.novel-description-toggle:hover {
-  color: var(--foreground);
-}
-
-.novel-description-toggle i {
-  font-size: 0.7rem;
+  align-self: flex-start;
 }
 
 .novel-description-tags {
@@ -1478,47 +1469,6 @@ function formatDate(value: string) {
   flex-wrap: wrap;
   gap: 0.375rem;
   margin-top: 0.375rem;
-}
-
-.novel-description-tags :deep(.p-tag) {
-  font-size: 0.75rem;
-}
-
-.novel-tabs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.125rem;
-  padding: 0.2rem;
-  background: var(--surface-muted);
-  border: 1px solid var(--divide);
-  border-radius: var(--radius-md);
-  width: fit-content;
-  max-width: 100%;
-}
-
-.novel-tab {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  padding: 0.4rem 0.7rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.novel-tab:hover {
-  color: var(--foreground);
-  background: var(--mock-row);
-}
-
-.novel-tab--active {
-  background: var(--surface-elevated);
-  color: var(--foreground);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .tab-panel {
@@ -1588,12 +1538,6 @@ function formatDate(value: string) {
     gap: 0.375rem;
   }
 
-  .novel-sidebar-actions :deep(.p-button) {
-    font-size: 0.8rem;
-    padding: 0.4rem 0.6rem;
-    min-height: 40px;
-  }
-
   .novel-sidebar-tags {
     grid-column: 1 / -1;
   }
@@ -1604,17 +1548,6 @@ function formatDate(value: string) {
 
   .novel-description {
     font-size: 0.8125rem;
-  }
-
-  .novel-tabs {
-    width: 100%;
-  }
-
-  .novel-tab {
-    flex: 1 1 auto;
-    text-align: center;
-    padding: 0.35rem 0.5rem;
-    font-size: 0.8rem;
   }
 }
 </style>

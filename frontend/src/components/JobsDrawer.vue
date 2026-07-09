@@ -1,36 +1,31 @@
 <template>
-  <Drawer
-    v-model:visible="visible"
-    position="right"
-    :pt="{ root: { style: { width: 'min(420px, 96vw)' } } }"
-  >
-    <template #header>
-      <span style="font-weight: 600; font-size: 1.1rem">Trabajos activos</span>
-    </template>
+  <n-drawer :show="visible" :width="420" placement="right" @update:show="$emit('update:visible', $event)">
+    <n-drawer-content>
+      <template #header>
+        <span style="font-weight: 600; font-size: 1.1rem">Trabajos activos</span>
+      </template>
 
-    <div class="stack-md">
-
-
-      <div v-if="jobs.length === 0 && !loading" class="jobs-empty">
-        <i class="pi pi-check-circle" style="font-size: 2rem; color: var(--p-text-muted-color)" />
-        <div>
-          <h3 style="margin: 0 0 0.35rem">Sin trabajos activos</h3>
-          <p class="muted small" style="margin: 0">Inicia una traducción o refinamiento desde una novela para ver el progreso aquí.</p>
+      <div class="stack-md">
+        <div v-if="jobs.length === 0 && !loading" class="jobs-empty">
+          <n-icon :size="40" style="color: var(--text-tertiary)"><CheckmarkCircleOutline /></n-icon>
+          <div>
+            <h3 style="margin: 0 0 0.35rem">Sin trabajos activos</h3>
+            <p class="muted small" style="margin: 0">Inicia una traducción o refinamiento desde una novela para ver el progreso aquí.</p>
+          </div>
         </div>
-      </div>
 
-      <Card v-for="job in jobs" :key="job.id">
-        <template #content>
+        <n-card v-for="job in jobs" :key="job.id" size="small">
           <div class="stack-md">
             <div class="row-between" style="align-items: flex-start">
               <div style="min-width: 0; flex: 1">
-                <Button
-                  link
+                <n-button
+                  text
+                  tag="a"
                   style="padding: 0; font-weight: 600; text-align: left"
                   @click="openNovel(job)"
                 >
                   {{ job.novelTitle || job.novelId }}
-                </Button>
+                </n-button>
                 <div class="small muted" style="margin-top: 0.2rem">
                   {{ job.operation === 'download' ? 'Descarga' : job.operation === 'refine' ? 'Refinamiento' : 'Traducción' }}
                   <span v-if="job.operation !== 'download' && (job.provider || job.model)"> · </span>
@@ -39,7 +34,9 @@
                   <span v-if="job.operation !== 'download' && job.model">{{ job.model }}</span>
                 </div>
               </div>
-              <Tag :severity="jobSeverity(job.status)" :value="jobStatusLabel(job.status)" />
+              <n-tag :type="jobTagType(job.status)" size="small" round>
+                {{ jobStatusLabel(job.status) }}
+              </n-tag>
             </div>
 
             <div class="stack-sm">
@@ -47,11 +44,11 @@
                 <span class="muted">Progreso</span>
                 <span>
                   <strong>{{ job.completedChapters }}</strong>/{{ job.totalChapters }}
-                  <span v-if="job.failedChapters > 0" style="color: var(--p-red-500)"> · {{ job.failedChapters }} fallidos</span>
+                  <span v-if="job.failedChapters > 0" style="color: #dc2626"> · {{ job.failedChapters }} fallidos</span>
                 </span>
               </div>
-              <ProgressBar v-if="jobShowsCompletedProgress(job)" :value="jobProgress(job)" />
-              <ProgressBar v-else mode="indeterminate" />
+              <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="false" />
+              <n-spin v-else :size="16" />
               <div v-if="jobCurrentActivityLabel(job)" class="small muted">
                 {{ jobCurrentActivityLabel(job) }}
               </div>
@@ -66,45 +63,52 @@
                   <span class="muted">Segmentos</span>
                   <span><strong>{{ segmentCompletedLabel(job) }}</strong>/{{ job.autoSegmentCount }}</span>
                 </div>
-                <ProgressBar :value="segmentProgress(job)" style="height: 0.5rem" />
+                <n-progress :percentage="segmentProgress(job)" :show-indicator="false" style="height: 8px" />
               </div>
             </div>
 
             <div class="row-between small">
               <span class="muted mono">#{{ job.id }}</span>
-              <Button
+              <n-button
                 v-if="job.status === 'running' || job.status === 'pending'"
                 size="small"
-                severity="danger"
-                outlined
-                icon="pi pi-stop"
-                label="Cancelar"
+                type="error"
+                secondary
                 :loading="cancellingId === job.id"
                 @click="cancel(job)"
-              />
+              >
+                <template #icon>
+                  <n-icon><StopOutline /></n-icon>
+                </template>
+                Cancelar
+              </n-button>
             </div>
           </div>
-        </template>
-      </Card>
-    </div>
-  </Drawer>
+        </n-card>
+      </div>
+    </n-drawer-content>
+  </n-drawer>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { useToast } from "primevue/usetoast";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Drawer from "primevue/drawer";
-import ProgressBar from "primevue/progressbar";
-import Tag from "primevue/tag";
+import {
+  NDrawer,
+  NDrawerContent,
+  NCard,
+  NTag,
+  NProgress,
+  NSpin,
+  NIcon,
+  NButton,
+} from "naive-ui";
+import { CheckmarkCircleOutline, StopOutline } from "@vicons/ionicons5";
 import { useActiveJobs } from "@/composables/useActiveJobs";
 import type { TranslationJob } from "@/domain";
 
 const router = useRouter();
-const toast = useToast();
-const visible = defineModel<boolean>('visible', { required: true });
+const visible = defineModel<boolean>("visible", { required: true });
 const { jobs, loading, cancelJob } = useActiveJobs({ enabled: visible });
 const cancellingId = ref<string | null>(null);
 
@@ -139,14 +143,14 @@ function jobStatusLabel(status: TranslationJob["status"]) {
   }[status] || status;
 }
 
-function jobSeverity(status: TranslationJob["status"]) {
-  return {
-    pending: "secondary",
+function jobTagType(status: TranslationJob["status"]) {
+  return ({
+    pending: "default",
     running: "info",
     done: "success",
-    cancelled: "warn",
-    failed: "danger",
-  }[status] as "secondary" | "info" | "warn" | "success" | "danger";
+    cancelled: "warning",
+    failed: "error",
+  }[status] || "default") as "default" | "info" | "success" | "warning" | "error";
 }
 
 function showAutoSegmentMeta(job: TranslationJob) {
@@ -211,14 +215,8 @@ async function cancel(job: TranslationJob) {
   cancellingId.value = job.id;
   try {
     await cancelJob(job.id);
-    toast.add({ severity: "success", summary: "Trabajo cancelado", life: 2500 });
   } catch (err) {
-    toast.add({
-      severity: "error",
-      summary: "Error al cancelar trabajo",
-      detail: err instanceof Error ? err.message : String(err),
-      life: 4000,
-    });
+    console.error("Failed to cancel job:", err);
   } finally {
     cancellingId.value = null;
   }
@@ -233,15 +231,7 @@ async function cancel(job: TranslationJob) {
   text-align: center;
   gap: 0.75rem;
   padding: 2rem 1rem;
-  border: 1px dashed var(--p-content-border-color);
+  border: 1px dashed var(--divide);
   border-radius: 12px;
 }
-
-.stack-sm {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-
 </style>

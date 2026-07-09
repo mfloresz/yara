@@ -44,6 +44,31 @@ func (s *Store) ListNovels(userID string, limit int) ([]Novel, error) {
 	for _, record := range records {
 		out = append(out, s.novelFromRecord(record))
 	}
+
+	// Fetch reading progress for all novels to populate LastReadAt
+	if len(out) > 0 {
+		progressRecords, err := s.App.FindRecordsByFilter(
+			ReadingProgressCollection,
+			"user = {:user}",
+			"-updated",
+			0, 0,
+			dbx.Params{"user": userID},
+		)
+		if err == nil {
+			// Build map of novelID -> lastReadAt (most recent first due to -updated sort)
+			lastReadMap := make(map[string]string)
+			for _, pr := range progressRecords {
+				novelID := pr.GetString("novel")
+				if _, exists := lastReadMap[novelID]; !exists {
+					lastReadMap[novelID] = pr.GetString("updated")
+				}
+			}
+			for i := range out {
+				out[i].LastReadAt = lastReadMap[out[i].ID]
+			}
+		}
+	}
+
 	return out, nil
 }
 

@@ -1,13 +1,13 @@
 <template>
   <article v-for="i in count" :key="i" class="library-card" aria-hidden="true">
-    <Skeleton shape="rectangle" width="100%" class="library-cover-skeleton" borderRadius="16px" />
-    <Skeleton width="80%" height="0.875rem" borderRadius="6px" />
-    <Skeleton width="40%" height="0.75rem" borderRadius="6px" />
+    <n-skeleton class="library-cover-skeleton" :border-radius="16" />
+    <n-skeleton text style="width: 80%; height: 0.875rem" :border-radius="6" />
+    <n-skeleton text style="width: 40%; height: 0.75rem" :border-radius="6" />
   </article>
 </template>
 
 <script setup lang="ts">
-import Skeleton from "primevue/skeleton";
+import { NSkeleton } from "naive-ui";
 
 withDefaults(defineProps<{ count?: number }>(), { count: 12 });
 </script>

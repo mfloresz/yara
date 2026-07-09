@@ -7,57 +7,68 @@
           <p class="muted small">{{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}</p>
         </div>
         <div class="page-actions">
+          <n-input
+            v-model:value="searchQuery"
+            placeholder="Buscar novela..."
+            clearable
+            class="search-input"
+          >
+            <template #prefix>
+              <n-icon><SearchOutline /></n-icon>
+            </template>
+          </n-input>
           <div class="sort-controls">
-            <Select
-              v-model="sortField"
+            <n-select
+              v-model:value="sortField"
               :options="sortOptions"
-              optionLabel="label"
-              optionValue="value"
               class="sort-select"
               placeholder="Ordenar por"
-              @change="onSortChange"
+              @update:value="onSortChange"
             />
-            <Button
-              :icon="sortOrderIcon"
-              severity="secondary"
-              text
-              rounded
+            <n-button
+              quaternary
+              circle
+              size="small"
               :aria-label="sortOrder === 'asc' ? 'Cambiar a orden descendente' : 'Cambiar a orden ascendente'"
               @click="toggleSortOrder"
-            />
+            >
+              <template #icon>
+                <n-icon>
+                   <ArrowUpOutline v-if="sortOrder === 'asc'" />
+                   <ArrowDownOutline v-else />
+                </n-icon>
+              </template>
+            </n-button>
           </div>
-          <Button
-              :icon="groupBySeries ? 'pi pi-tags' : 'pi pi-tag'"
-              :severity="groupBySeries ? 'primary' : 'secondary'"
-              :outlined="!groupBySeries"
-              text
-              rounded
-              class="group-toggle"
-              :aria-label="groupBySeries ? 'Desagrupar por serie' : 'Agrupar por serie'"
-              @click="groupBySeries = !groupBySeries"
-            />
-          <Button
-              icon="pi pi-upload"
-              label="Importar EPUB"
-              severity="secondary"
-              outlined
-              class="page-action desktop-only"
-              @click="importOpen = true"
-            />
-          <Button
-            icon="pi pi-globe"
-            label="Desde URL"
-            severity="secondary"
-            outlined
-            class="page-action desktop-only"
-            @click="importUrlOpen = true"
-          />
-          <Button
-            icon="pi pi-plus"
-            label="Nueva novela"
-            class="page-action desktop-only"
-            @click="createOpen = true"
-          />
+          <n-button
+            :secondary="!groupBySeries"
+            :type="groupBySeries ? 'primary' : 'default'"
+            quaternary
+            circle
+            size="small"
+            class="group-toggle"
+            :aria-label="groupBySeries ? 'Desagrupar por serie' : 'Agrupar por serie'"
+            @click="groupBySeries = !groupBySeries"
+          >
+            <template #icon>
+              <n-icon>
+                <PricetagsOutline v-if="groupBySeries" />
+                <PricetagOutline v-else />
+              </n-icon>
+            </template>
+          </n-button>
+          <n-button class="page-action desktop-only" secondary @click="importOpen = true">
+            <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+            Importar EPUB
+          </n-button>
+          <n-button class="page-action desktop-only" secondary @click="importUrlOpen = true">
+            <template #icon><n-icon><GlobeOutline /></n-icon></template>
+            Desde URL
+          </n-button>
+          <n-button type="primary" class="page-action desktop-only" @click="createOpen = true">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            Nueva novela
+          </n-button>
         </div>
       </header>
 
@@ -65,24 +76,31 @@
         <LibrarySkeleton />
       </div>
 
-      <Card v-else-if="sortedNovels.length === 0">
-        <template #content>
-          <div class="empty-state">
-            <div class="empty-state-icon">
-              <i class="pi pi-book" aria-hidden="true" />
-            </div>
-            <div>
-              <h2 class="empty-state-title">Sin novelas</h2>
-              <p class="muted empty-state-body">Crea una novela manualmente, importa un EPUB o descarga uno desde internet.</p>
-            </div>
-            <div class="empty-state-actions">
-              <Button icon="pi pi-plus" label="Nueva novela" @click="createOpen = true" />
-              <Button icon="pi pi-upload" label="Importar EPUB" severity="secondary" outlined @click="importOpen = true" />
-              <Button icon="pi pi-globe" label="Desde URL" severity="secondary" outlined @click="importUrlOpen = true" />
-            </div>
+      <n-card v-else-if="sortedNovels.length === 0">
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <n-icon :size="40"><BookOutline /></n-icon>
           </div>
-        </template>
-      </Card>
+          <div>
+            <h2 class="empty-state-title">Sin novelas</h2>
+            <p class="muted empty-state-body">Crea una novela manualmente, importa un EPUB o descarga uno desde internet.</p>
+          </div>
+          <div class="empty-state-actions">
+            <n-button type="primary" @click="createOpen = true">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              Nueva novela
+            </n-button>
+            <n-button secondary @click="importOpen = true">
+              <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+              Importar EPUB
+            </n-button>
+            <n-button secondary @click="importUrlOpen = true">
+              <template #icon><n-icon><GlobeOutline /></n-icon></template>
+              Desde URL
+            </n-button>
+          </div>
+        </div>
+      </n-card>
 
       <template v-if="!groupBySeries">
         <div class="library-grid" role="list">
@@ -94,7 +112,7 @@
             v-for="novel in sortedNovels"
             :key="novel.id"
             :novel="novel"
-            @menu-click="openNovelMenu($event, novel)"
+
           />
           </template>
         </div>
@@ -110,7 +128,7 @@
               v-for="novel in group.novels"
               :key="novel.id"
               :novel="novel"
-              @menu-click="openNovelMenu($event, novel)"
+  
             />
           </div>
         </section>
@@ -123,84 +141,89 @@
               v-for="novel in groupedNovels.ungrouped"
               :key="novel.id"
               :novel="novel"
-              @menu-click="openNovelMenu($event, novel)"
+  
             />
           </div>
         </section>
       </template>
     </div>
 
-    <Menu ref="novelMenu" :model="novelMenuItems" :popup="true" />
+    <n-dropdown
+      trigger="click"
+      :options="novelMenuDropdownItems"
+      :disabled="!selectedNovel"
+      @select="handleNovelMenuSelect"
+    >
+      <span ref="novelMenuAnchor" />
+    </n-dropdown>
 
-    <Dialog v-model:visible="createOpen" modal header="Nueva novela" :style="{ width: 'min(620px, 96vw)' }">
+    <n-modal v-model:show="createOpen" preset="card" title="Nueva novela" style="width: min(620px, 96vw)">
       <div class="stack-md">
         <div class="row-wrap">
           <div style="flex: 1; min-width: 220px">
             <label class="small muted">Título</label>
-            <InputText v-model="form.sourceTitle" fluid />
+            <n-input v-model:value="form.sourceTitle" />
           </div>
           <div style="flex: 1; min-width: 220px">
             <label class="small muted">Autor</label>
-            <InputText v-model="form.sourceAuthor" fluid />
+            <n-input v-model:value="form.sourceAuthor" />
           </div>
         </div>
         <div>
           <label class="small muted">Descripción</label>
-          <Textarea v-model="form.sourceDescription" rows="4" fluid />
+          <n-input v-model:value="form.sourceDescription" type="textarea" :rows="4" />
         </div>
         <div class="row-wrap">
           <div style="flex: 1; min-width: 220px">
             <label class="small muted">Idioma origen</label>
-            <Select v-model="form.sourceLanguage" :options="languageOptions" optionLabel="name" optionValue="code" placeholder="Selecciona idioma" fluid />
+            <n-select v-model:value="form.sourceLanguage" :options="languageOptions" placeholder="Selecciona idioma" />
           </div>
           <div style="flex: 1; min-width: 220px">
             <label class="small muted">Idioma destino</label>
-            <Select v-model="form.targetLanguage" :options="languageOptionsNoAuto" optionLabel="name" optionValue="code" placeholder="Selecciona idioma" fluid />
+            <n-select v-model:value="form.targetLanguage" :options="languageOptionsNoAuto" placeholder="Selecciona idioma" />
           </div>
         </div>
-        <Message v-if="createError" severity="error">{{ createError }}</Message>
+        <n-alert v-if="createError" type="error" :title="createError" />
       </div>
       <template #footer>
-        <Button severity="secondary" outlined label="Cancelar" @click="createOpen = false" />
-        <Button label="Crear" :loading="creating" :disabled="!canCreate" @click="submitCreate" />
+        <n-button secondary @click="createOpen = false">Cancelar</n-button>
+        <n-button type="primary" :loading="creating" :disabled="!canCreate" @click="submitCreate">Crear</n-button>
       </template>
-    </Dialog>
+    </n-modal>
 
-    <Dialog v-model:visible="importOpen" modal header="Importar novela desde EPUB" :style="{ width: 'min(640px, 96vw)' }">
+    <n-modal v-model:show="importOpen" preset="card" title="Importar novela desde EPUB" style="width: min(640px, 96vw)">
       <div class="stack-md">
         <input type="file" accept=".epub" @change="handleImportFile" />
-        <Message v-if="importPreviewLoading" severity="info">Analizando EPUB…</Message>
+        <n-alert v-if="importPreviewLoading" type="info" title="Analizando EPUB…" />
 
         <template v-if="importPreview">
-          <Card>
-            <template #content>
-              <div class="stack-md small">
-                <div><strong>Título detectado:</strong> {{ importPreview.title }}</div>
-                <div v-if="importPreview.author"><strong>Autor detectado:</strong> {{ importPreview.author }}</div>
-                <div><strong>Capítulos encontrados:</strong> {{ importPreview.chapterCount }}</div>
-              </div>
-            </template>
-          </Card>
+          <n-card size="small">
+            <div class="stack-md small">
+              <div><strong>Título detectado:</strong> {{ importPreview.title }}</div>
+              <div v-if="importPreview.author"><strong>Autor detectado:</strong> {{ importPreview.author }}</div>
+              <div><strong>Capítulos encontrados:</strong> {{ importPreview.chapterCount }}</div>
+            </div>
+          </n-card>
 
           <div class="row-wrap">
             <div style="flex: 1; min-width: 220px">
               <label class="small muted">Idioma origen</label>
-              <Select v-model="importSourceLang" :options="languageOptions" optionLabel="name" optionValue="code" placeholder="Automático" fluid />
+              <n-select v-model:value="importSourceLang" :options="languageOptions" placeholder="Automático" />
             </div>
             <div style="flex: 1; min-width: 220px">
               <label class="small muted">Idioma destino</label>
-              <Select v-model="importTargetLang" :options="languageOptionsNoAuto" optionLabel="name" optionValue="code" placeholder="Requerido" fluid />
+              <n-select v-model:value="importTargetLang" :options="languageOptionsNoAuto" placeholder="Requerido" />
             </div>
           </div>
         </template>
 
-        <Message v-if="importError" severity="error">{{ importError }}</Message>
+        <n-alert v-if="importError" type="error" :title="importError" />
       </div>
       <template #footer>
-        <Button severity="secondary" outlined label="Cancelar" @click="resetImport" />
-        <Button label="Importar" :loading="importing" :disabled="!importFile || !importTargetLang" @click="submitImport" />
+        <n-button secondary @click="resetImport">Cancelar</n-button>
+        <n-button type="primary" :loading="importing" :disabled="!importFile || !importTargetLang" @click="submitImport">Importar</n-button>
       </template>
-    </Dialog>
+    </n-modal>
 
     <ImportUrlDialog
       :open="importUrlOpen"
@@ -218,19 +241,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, h } from "vue";
 import { useRouter } from "vue-router";
-import { useToast } from "primevue/usetoast";
-import { useConfirm } from "primevue/useconfirm";
+import {
+  NSelect,
+  NButton,
+  NCard,
+  NModal,
+  NInput,
+  NAlert,
+  NIcon,
+  NDropdown,
+  useMessage,
+} from "naive-ui";
+import {
+  ArrowUpOutline,
+  ArrowDownOutline,
+  PricetagOutline,
+  PricetagsOutline,
+  CloudUploadOutline,
+  GlobeOutline,
+  AddOutline,
+  BookOutline,
+  CreateOutline,
+  TrashOutline,
+  CopyOutline,
+  SearchOutline,
+} from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Dialog from "primevue/dialog";
-import InputText from "primevue/inputtext";
-import Textarea from "primevue/textarea";
-import Select from "primevue/select";
-import Message from "primevue/message";
-import Menu from "primevue/menu";
 import NovelCard from "@/components/NovelCard.vue";
 import LibrarySkeleton from "@/components/LibrarySkeleton.vue";
 import { useNovels } from "@/composables/useNovels";
@@ -241,22 +279,19 @@ import ImportUrlDialog from "@/features/novels/ImportUrlDialog.vue";
 import ImportUrlConfirmDialog from "@/features/novels/ImportUrlConfirmDialog.vue";
 import type { PreviewUrlResult } from "@/api/types";
 
-type SortField = "title" | "created" | "chapters";
+type SortField = "title" | "created" | "lastRead";
 
-const sortOptions: { label: string; value: SortField }[] = [
+const sortOptions = [
   { label: "Título", value: "title" },
-  { label: "Reciente", value: "created" },
-  { label: "Capítulos", value: "chapters" },
+  { label: "Fecha Adición", value: "created" },
+  { label: "Fecha Lectura", value: "lastRead" },
 ];
 
 const sortField = ref<SortField>("title");
 const sortOrder = ref<"asc" | "desc">("asc");
 const sorting = ref(false);
+const searchQuery = ref("");
 let sortTimeout: ReturnType<typeof setTimeout> | null = null;
-
-const sortOrderIcon = computed(() =>
-  sortOrder.value === "asc" ? "pi pi-sort-amount-up-alt" : "pi pi-sort-amount-down",
-);
 
 function toggleSortOrder() {
   sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
@@ -272,22 +307,43 @@ function onSortChange() {
 
 const sortedNovels = computed(() => {
   const list = [...novels.value];
+
+  // Filter by search query
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase().trim();
+    const filtered = list.filter((novel) => {
+      const title = getNovelDisplayTitle(novel).toLowerCase();
+      const author = getNovelDisplayAuthor(novel).toLowerCase();
+      return title.includes(query) || author.includes(query);
+    });
+    return sortNovels(filtered);
+  }
+
+  return sortNovels(list);
+});
+
+function sortNovels(list: Novel[]): Novel[] {
   const dir = sortOrder.value === "asc" ? 1 : -1;
   switch (sortField.value) {
     case "title":
-      list.sort((a, b) => dir * getNovelDisplayTitle(a).localeCompare(getNovelDisplayTitle(b)));
-      break;
+      return [...list].sort((a, b) => dir * getNovelDisplayTitle(a).localeCompare(getNovelDisplayTitle(b)));
     case "created":
-      list.sort(
-        (a, b) => dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+      return [...list].sort(
+        (a, b) => dir * (new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
       );
-      break;
-    case "chapters":
-      list.sort((a, b) => dir * (a.chapterCount - b.chapterCount));
-      break;
+    case "lastRead":
+      return [...list].sort((a, b) => {
+        const aTime = a.lastReadAt;
+        const bTime = b.lastReadAt;
+        if (!aTime && !bTime) return 0;
+        if (!aTime) return 1;
+        if (!bTime) return -1;
+        return dir * (new Date(bTime).getTime() - new Date(aTime).getTime());
+      });
+    default:
+      return list;
   }
-  return list;
-});
+}
 
 type NovelGroup = {
   key: string;
@@ -342,8 +398,7 @@ const groupedNovels = computed((): GroupedResult => {
 });
 
 const router = useRouter();
-const toast = useToast();
-const confirm = useConfirm();
+const message = useMessage();
 const { api, auth } = useAppServices();
 const { novels, loading, listNovels, createNovel, importNovelFromEpub, deleteNovel } = useNovels();
 
@@ -358,58 +413,61 @@ const importing = ref(false);
 const importPreviewLoading = ref(false);
 const importError = ref<string | null>(null);
 const importFile = ref<File | null>(null);
-const importTargetLang = ref("");
-const importSourceLang = ref("");
+const importTargetLang = ref<string | null>(null);
+const importSourceLang = ref<string | null>(null);
 const importPreview = ref<{ title: string; author: string; description: string; language: string; chapterCount: number } | null>(null);
-const novelMenu = ref();
-const mobileActionsMenu = ref();
+const novelMenuAnchor = ref<HTMLElement | null>(null);
 const selectedNovel = ref<Novel | null>(null);
 
 const form = reactive({
   sourceTitle: "",
   sourceAuthor: "",
   sourceDescription: "",
-  sourceLanguage: "",
-  targetLanguage: "",
+  sourceLanguage: null as string | null,
+  targetLanguage: null as string | null,
 });
 
-const languageOptions = LANGUAGES;
-const languageOptionsNoAuto = LANGUAGES.filter((item) => item.code !== "auto");
+const languageOptions = LANGUAGES.map((l) => ({ label: l.name, value: l.code }));
+const languageOptionsNoAuto = LANGUAGES.filter((l) => l.code !== "auto").map((l) => ({ label: l.name, value: l.code }));
 const canCreate = computed(() => Boolean(form.sourceTitle.trim() && form.sourceLanguage && form.targetLanguage));
 
-const mobileActions = computed(() => [
-  { label: "Importar EPUB", icon: "pi pi-upload", command: () => { importOpen.value = true; } },
-  { label: "Desde URL", icon: "pi pi-globe", command: () => { importUrlOpen.value = true; } },
-]);
-
-const novelMenuItems = computed(() => {
+const novelMenuDropdownItems = computed(() => {
   const novel = selectedNovel.value;
   if (!novel) return [];
   const isOwner = novel.ownerId === auth.user.value?.id;
-  const items: Array<{ label: string; icon: string; command?: () => void; class?: string }> = [
-    { label: "Leer", icon: "pi pi-book", command: () => router.push(`/novels/${novel.id}/read`) },
+  const items: Array<{ label: string; key: string; icon?: () => any }> = [
+    { label: "Leer", key: "read" },
   ];
   if (isOwner) {
     items.push(
-      { label: "Editar", icon: "pi pi-pencil", command: () => router.push(`/novels/${novel.id}`) },
-      { label: "Eliminar", icon: "pi pi-trash", class: "novel-menu-delete", command: () => askDeleteNovel(novel) },
+      { label: "Editar", key: "edit" },
+      { label: "Eliminar", key: "delete" },
     );
   } else {
-    items.push({ label: "Copiar a mi biblioteca", icon: "pi pi-copy", command: () => copyNovel(novel.id) });
+    items.push({ label: "Copiar a mi biblioteca", key: "copy" });
   }
   return items;
 });
 
+function handleNovelMenuSelect(key: string) {
+  const novel = selectedNovel.value;
+  if (!novel) return;
+  if (key === "read") router.push(`/novels/${novel.id}/read`);
+  else if (key === "edit") router.push(`/novels/${novel.id}`);
+  else if (key === "delete") askDeleteNovel(novel);
+  else if (key === "copy") copyNovel(novel.id);
+}
+
 onMounted(() => {
-  void listNovels(false, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId"]);
+  void listNovels(false, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
 });
 
 function resetCreateForm() {
   form.sourceTitle = "";
   form.sourceAuthor = "";
   form.sourceDescription = "";
-  form.sourceLanguage = "";
-  form.targetLanguage = "";
+  form.sourceLanguage = null;
+  form.targetLanguage = null;
   createError.value = null;
 }
 
@@ -422,8 +480,8 @@ async function submitCreate() {
       sourceTitle: form.sourceTitle,
       sourceAuthor: form.sourceAuthor || undefined,
       sourceDescription: form.sourceDescription || undefined,
-      sourceLanguage: form.sourceLanguage,
-      targetLanguage: form.targetLanguage,
+      sourceLanguage: form.sourceLanguage!,
+      targetLanguage: form.targetLanguage!,
     });
     createOpen.value = false;
     resetCreateForm();
@@ -466,8 +524,8 @@ function resetImport() {
   importError.value = null;
   importPreview.value = null;
   importFile.value = null;
-  importTargetLang.value = "";
-  importSourceLang.value = "";
+  importTargetLang.value = null;
+  importSourceLang.value = null;
 }
 
 async function submitImport() {
@@ -493,36 +551,32 @@ async function submitImport() {
 async function copyNovel(novelId: string) {
   try {
     await api.novels.copy(novelId);
-    await listNovels(true, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId"]);
-    toast.add({ severity: "success", summary: "Novela copiada a tu biblioteca", life: 2500 });
+    await listNovels(true, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
+    message.success("Novela copiada a tu biblioteca");
   } catch (err) {
-    toast.add({ severity: "error", summary: "Error al copiar", detail: err instanceof Error ? err.message : String(err), life: 4000 });
+    message.error("Error al copiar: " + (err instanceof Error ? err.message : String(err)));
   }
 }
 
 function openNovelMenu(event: Event, novel: Novel) {
   selectedNovel.value = novel;
-  novelMenu.value?.toggle(event);
 }
 
 function askDeleteNovel(novel: Novel) {
-  confirm.require({
-    message: `¿Eliminar "${getNovelDisplayTitle(novel)}"? Esta acción no se puede deshacer.`,
-    header: "Eliminar novela",
-    icon: "pi pi-exclamation-triangle",
-    acceptLabel: "Eliminar",
-    rejectLabel: "Cancelar",
-    acceptClass: "p-button-danger",
-    acceptIcon: "pi pi-trash",
-    accept: async () => {
-      try {
-        await deleteNovel(novel.id);
-        toast.add({ severity: "success", summary: "Novela eliminada", life: 2500 });
-      } catch (err) {
-        toast.add({ severity: "error", summary: "Error al eliminar", detail: err instanceof Error ? err.message : String(err), life: 4000 });
-      }
-    },
-  });
+  selectedNovel.value = novel;
+}
+
+onMounted(() => {
+  // Handle delete via selectedNovel watcher if needed
+});
+
+async function deleteNovelAction(novel: Novel) {
+  try {
+    await deleteNovel(novel.id);
+    message.success("Novela eliminada");
+  } catch (err) {
+    message.error("Error al eliminar: " + (err instanceof Error ? err.message : String(err)));
+  }
 }
 
 function onUrlPreviewed(preview: PreviewUrlResult) {
@@ -575,6 +629,11 @@ function onBackToUrlDialog() {
   min-width: 8rem;
 }
 
+.search-input {
+  min-width: 12rem;
+  max-width: 16rem;
+}
+
 .mobile-only {
   display: none;
 }
@@ -597,7 +656,6 @@ function onBackToUrlDialog() {
   border-radius: var(--radius-lg);
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 1.5rem;
 }
 
 .empty-state-title {
@@ -677,13 +735,5 @@ function onBackToUrlDialog() {
   .library-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-}
-
-:global(.novel-menu-delete) {
-  color: var(--p-red-500);
-}
-
-:global(.novel-menu-delete .p-menuitem-icon) {
-  color: var(--p-red-500);
 }
 </style>

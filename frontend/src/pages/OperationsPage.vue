@@ -7,115 +7,38 @@
       </div>
 
       <div class="operations-toolbar">
-        <SelectButton
-          v-model="filter"
-          :options="filterOptions"
-          optionLabel="label"
-          optionValue="value"
-        />
-        <Button
-          :label="updatingAll ? 'Verificando...' : 'Actualizar'"
-          :icon="updatingAll ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"
+        <n-radio-group v-model:value="filter" size="small">
+          <n-radio-button value="all">Todas</n-radio-button>
+          <n-radio-button value="actualizable">Actualizable</n-radio-button>
+          <n-radio-button value="completed">Completadas</n-radio-button>
+        </n-radio-group>
+        <n-button
           :loading="updatingAll"
           :disabled="loading"
           @click="handleUpdateAll"
-        />
+        >
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+          {{ updatingAll ? 'Verificando...' : 'Actualizar' }}
+        </n-button>
       </div>
 
-      <Card v-if="loading">
-        <template #content>
-          <div class="stack-sm">
-            <Skeleton v-for="i in 6" :key="i" height="3rem" borderRadius="8px" />
-          </div>
-        </template>
-      </Card>
+      <n-card v-if="loading">
+        <div class="stack-sm">
+          <n-skeleton v-for="i in 6" :key="i" style="height: 3rem" :border-radius="8" />
+        </div>
+      </n-card>
 
-      <Message v-else-if="error" severity="error" :closable="false">{{ error }}</Message>
+      <n-alert v-else-if="error" type="error" :title="error" />
 
       <template v-else>
-        <DataTable
-          v-model:selection="selectedNovels"
-          :value="filteredNovels"
-          dataKey="id"
-          stripedRows
-          :rows="50"
-          :rowsPerPageOptions="[20, 50, 100]"
-          paginator
-          :globalFilterFields="['sourceTitle']"
-          sortMode="multiple"
-          removableSort
-          responsiveLayout="scroll"
-        >
-          <template #empty>No hay novelas que coincidan con el filtro.</template>
-
-          <Column selectionMode="multiple" headerStyle="width: 3rem" />
-
-          <Column field="sourceTitle" header="Nombre" sortable style="min-width: 180px">
-            <template #body="{ data }">
-              <div class="operations-novel-name">
-                <img
-                  v-if="data.coverPath"
-                  :src="data.coverPath"
-                  alt=""
-                  class="operations-novel-cover"
-                  referrerpolicy="no-referrer"
-                />
-                <span class="operations-novel-title">{{ data.sourceTitle }}</span>
-              </div>
-            </template>
-          </Column>
-
-          <Column field="chapterCount" header="Capítulos" sortable style="width: 100px" bodyStyle="text-align: center" />
-
-          <Column field="translatedCount" header="Traducidos" sortable style="width: 110px" bodyStyle="text-align: center" />
-
-          <Column header="Estado" style="width: 140px" bodyStyle="text-align: center">
-            <template #body="{ data }">
-              <Tag
-                v-if="isDownloading(data.id)"
-                severity="warn"
-                value="Descargando..."
-              />
-              <Tag
-                v-else-if="updateResults.has(data.id)"
-                :severity="updateResults.get(data.id)!.error ? 'danger' : 'success'"
-                :value="updateResultsLabel(data)"
-              />
-              <Tag
-                v-else-if="checkResults.has(data.id)"
-                :severity="checkResults.get(data.id)!.error ? 'danger' : 'info'"
-                :value="checkResultsLabel(data)"
-              />
-              <Tag v-else-if="isActualizable(data)" value="Actualizable" severity="warn" />
-              <Tag v-else-if="data.status === 'completed'" value="Completada" severity="success" />
-            </template>
-          </Column>
-
-          <Column header="Acciones" style="width: 180px" bodyStyle="text-align: center">
-            <template #body="{ data }">
-              <div class="operations-row-actions">
-                <Button
-                  label="Traducir"
-                  icon="pi pi-play"
-                  size="small"
-                  :disabled="isDownloading(data.id) || translatingNovelId === data.id"
-                  :loading="translatingNovelId === data.id"
-                  @click="handleTranslateNovel(data)"
-                />
-                <Button
-                  v-if="isActualizable(data)"
-                  label="Actualizar"
-                  icon="pi pi-download"
-                  severity="secondary"
-                  size="small"
-                  :disabled="isDownloading(data.id) || translatingNovelId === data.id"
-                  :loading="isDownloading(data.id)"
-                  @click="handleUpdateNovel(data)"
-                />
-              </div>
-            </template>
-          </Column>
-        </DataTable>
+        <n-data-table
+          :columns="columns"
+          :data="filteredNovels"
+          :row-key="(row: Novel) => row.id"
+          :pagination="{ pageSize: 50 }"
+          :bordered="false"
+          striped
+        />
 
         <div class="operations-summary">
           <span class="small muted">
@@ -124,14 +47,15 @@
             <template v-if="checkResults.size > 0"> · {{ checkedCount }} verificadas</template>
             <template v-if="downloadingNovelIds.size > 0"> · {{ downloadingNovelIds.size }} descargando</template>
           </span>
-          <Button
-            v-if="checkResults.size > 0 && selectedNovels.length > 0"
-            :label="`Descargar seleccionadas (${selectedNovels.length})`"
-            icon="pi pi-download"
+          <n-button
+            v-if="checkResults.size > 0 && selectedRowKeys.length > 0"
             size="small"
             :loading="downloading"
             @click="handleDownloadSelected"
-          />
+          >
+            <template #icon><n-icon><DownloadOutline /></n-icon></template>
+            Descargar seleccionadas ({{ selectedRowKeys.length }})
+          </n-button>
         </div>
       </template>
     </div>
@@ -139,16 +63,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onScopeDispose, ref, watch } from "vue";
-import { useToast } from "primevue/usetoast";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Column from "primevue/column";
-import DataTable from "primevue/datatable";
-import Message from "primevue/message";
-import SelectButton from "primevue/selectbutton";
-import Skeleton from "primevue/skeleton";
-import Tag from "primevue/tag";
+import { computed, h, onMounted, onScopeDispose, ref, watch } from "vue";
+import {
+  NButton,
+  NCard,
+  NRadioGroup,
+  NRadioButton,
+  NAlert,
+  NSkeleton,
+  NTag,
+  NIcon,
+  NDataTable,
+  useMessage,
+  type DataTableColumns,
+} from "naive-ui";
+import {
+  RefreshOutline,
+  DownloadOutline,
+  PlayOutline,
+} from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
 import { useActiveJobs } from "@/composables/useActiveJobs";
@@ -173,7 +106,7 @@ interface UpdateResult {
   error?: string;
 }
 
-const toast = useToast();
+const message = useMessage();
 const { api } = useAppServices();
 const { jobs: activeJobs } = useActiveJobs();
 
@@ -181,7 +114,7 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const novels = ref<Novel[]>([]);
 const filter = ref<FilterValue>("all");
-const selectedNovels = ref<Novel[]>([]);
+const selectedRowKeys = ref<string[]>([]);
 
 const updatingAll = ref(false);
 const translatingNovelId = ref<string | null>(null);
@@ -191,12 +124,6 @@ const checkResults = ref<Map<string, CheckResult>>(new Map());
 const updateResults = ref<Map<string, UpdateResult>>(new Map());
 
 const downloadingNovelIds = ref<Map<string, string>>(new Map());
-
-const filterOptions = [
-  { label: "Todas", value: "all" },
-  { label: "Actualizable", value: "actualizable" },
-  { label: "Completadas", value: "completed" },
-];
 
 function isActualizable(novel: Novel): boolean {
   if (!novel.url) return false;
@@ -254,6 +181,89 @@ function updateResultsLabel(novel: Novel): string {
   return `+${r.added} descargados`;
 }
 
+const columns: DataTableColumns<Novel> = [
+  {
+    title: "Nombre",
+    key: "sourceTitle",
+    sorter: true,
+    render(row) {
+      return h("span", { class: "operations-novel-title" }, row.sourceTitle);
+    },
+  },
+  {
+    title: "Capítulos",
+    key: "chapterCount",
+    width: 100,
+    align: "center",
+    sorter: true,
+  },
+  {
+    title: "Traducidos",
+    key: "translatedCount",
+    width: 110,
+    align: "center",
+    sorter: true,
+  },
+  {
+    title: "Estado",
+    key: "status",
+    width: 140,
+    align: "center",
+    render(row) {
+      if (isDownloading(row.id)) {
+        return h(NTag, { type: "warning", size: "small", round: true }, { default: () => "Descargando..." });
+      }
+      if (updateResults.value.has(row.id)) {
+        const r = updateResults.value.get(row.id)!;
+        return h(NTag, { type: r.error ? "error" : "success", size: "small", round: true }, { default: () => updateResultsLabel(row) });
+      }
+      if (checkResults.value.has(row.id)) {
+        const r = checkResults.value.get(row.id)!;
+        return h(NTag, { type: r.error ? "error" : "info", size: "small", round: true }, { default: () => checkResultsLabel(row) });
+      }
+      if (isActualizable(row) && row.status !== "completed") {
+        return h(NTag, { type: "warning", size: "small", round: true }, { default: () => "Actualizable" });
+      }
+      if (row.status === "completed") {
+        return h(NTag, { type: "success", size: "small", round: true }, { default: () => "Completada" });
+      }
+      return null;
+    },
+  },
+  {
+    title: "Acciones",
+    key: "actions",
+    width: 180,
+    align: "center",
+    render(row) {
+      return h("div", { class: "operations-row-actions" }, [
+        h(NButton, {
+          size: "small",
+          type: "primary",
+          loading: translatingNovelId.value === row.id,
+          disabled: isDownloading(row.id) || translatingNovelId.value === row.id,
+          onClick: () => handleTranslateNovel(row),
+        }, {
+          icon: () => h(NIcon, null, { default: () => h(PlayOutline) }),
+          default: () => "Traducir",
+        }),
+        isActualizable(row) && row.status !== "completed"
+          ? h(NButton, {
+              size: "small",
+              secondary: true,
+              loading: isDownloading(row.id),
+              disabled: isDownloading(row.id) || translatingNovelId.value === row.id,
+              onClick: () => handleUpdateNovel(row),
+            }, {
+              icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
+              default: () => "Actualizar",
+            })
+          : null,
+      ]);
+    },
+  },
+];
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -305,7 +315,7 @@ async function handleUpdateAll() {
   if (updatingAll.value) return;
   const actualizable = novels.value.filter((n) => isActualizable(n) && n.status !== "completed");
   if (actualizable.length === 0) {
-    toast.add({ severity: "info", summary: "Sin novelas", detail: "No hay novelas actualizables.", life: 3000 });
+    message.info("No hay novelas actualizables.");
     return;
   }
   updatingAll.value = true;
@@ -330,12 +340,9 @@ async function handleUpdateAll() {
     }
   }
   updatingAll.value = false;
-  toast.add({
-    severity: "info",
-    summary: "Verificación completa",
-    detail: `${checked} verificadas · ${withUpdates} con actualizaciones${errors > 0 ? ` · ${errors} errores` : ""}`,
-    life: 4000,
-  });
+  message.info(
+    `${checked} verificadas · ${withUpdates} con actualizaciones${errors > 0 ? ` · ${errors} errores` : ""}`,
+  );
 }
 
 async function handleUpdateNovel(novel: Novel) {
@@ -358,58 +365,44 @@ async function handleUpdateNovel(novel: Novel) {
       updateNovelLocal(novel.id, {
         chapterCount: result.totalChapters ?? novel.chapterCount + added,
       });
-      toast.add({
-        severity: added > 0 ? "success" : "info",
-        summary: novel.sourceTitle,
-        detail: added > 0 ? `${added} capítulos descargados` : result.message ?? "Sin nuevos capítulos",
-        life: 3000,
-      });
+      if (added > 0) {
+        message.success(`${novel.sourceTitle}: ${added} capítulos descargados`);
+      } else {
+        message.info(`${novel.sourceTitle}: ${result.message ?? "Sin nuevos capítulos"}`);
+      }
     }
   } catch (err) {
     downloadingNovelIds.value.delete(novel.id);
     const msg = err instanceof Error ? err.message : String(err);
     updateResults.value.set(novel.id, { added: 0, error: msg });
-    toast.add({
-      severity: "error",
-      summary: novel.sourceTitle,
-      detail: msg,
-      life: 4000,
-    });
+    message.error(`${novel.sourceTitle}: ${msg}`);
   }
 }
 
 async function handleTranslateNovel(novel: Novel) {
   if (novel.chapterCount === 0) {
-    toast.add({ severity: "warn", summary: "Sin capítulos", detail: "Esta novela no tiene capítulos.", life: 3000 });
+    message.warning("Esta novela no tiene capítulos.");
     return;
   }
   translatingNovelId.value = novel.id;
   try {
     await api.novels.batchTranslate([{ novelId: novel.id }]);
-    toast.add({
-      severity: "success",
-      summary: novel.sourceTitle,
-      detail: "Trabajo de traducción iniciado",
-      life: 3000,
-    });
+    message.success(`${novel.sourceTitle}: Trabajo de traducción iniciado`);
   } catch (err) {
-    toast.add({
-      severity: "error",
-      summary: novel.sourceTitle,
-      detail: err instanceof Error ? err.message : String(err),
-      life: 4000,
-    });
+    message.error(`${novel.sourceTitle}: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     translatingNovelId.value = null;
   }
 }
 
 async function handleDownloadSelected() {
-  if (selectedNovels.value.length === 0) return;
+  if (selectedRowKeys.value.length === 0) return;
   downloading.value = true;
   let enqueued = 0;
   let errors = 0;
-  for (const novel of selectedNovels.value) {
+  for (const novelId of selectedRowKeys.value) {
+    const novel = novels.value.find((n) => n.id === novelId);
+    if (!novel) continue;
     const cr = checkResults.value.get(novel.id);
     if (!cr || cr.error || cr.newChapters === 0) continue;
     try {
@@ -425,14 +418,11 @@ async function handleDownloadSelected() {
     }
   }
   downloading.value = false;
-  selectedNovels.value = [];
+  selectedRowKeys.value = [];
   checkResults.value = new Map();
-  toast.add({
-    severity: enqueued > 0 ? "success" : "info",
-    summary: "Descargas encoladas",
-    detail: `${enqueued} novelas en proceso${errors > 0 ? ` · ${errors} errores` : ""}`,
-    life: 4000,
-  });
+  message.success(
+    `${enqueued} novelas en proceso${errors > 0 ? ` · ${errors} errores` : ""}`,
+  );
 }
 
 onMounted(loadNovels);
@@ -449,21 +439,6 @@ onScopeDispose(() => {
   justify-content: space-between;
   gap: 0.75rem;
   flex-wrap: wrap;
-}
-
-.operations-novel-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.operations-novel-cover {
-  width: 1.75rem;
-  height: 2.5rem;
-  object-fit: cover;
-  border-radius: 3px;
-  flex-shrink: 0;
 }
 
 .operations-novel-title {

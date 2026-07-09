@@ -6,328 +6,272 @@
           <h1 style="margin: 0 0 0.25rem">Configuración</h1>
           <p class="muted" style="margin: 0">Toda la configuración es por usuario y se persiste en el backend.</p>
         </div>
-        <Button label="Guardar" icon="pi pi-save" :loading="saving" :disabled="!settings" @click="save" />
+        <n-button type="primary" :loading="saving" :disabled="!settings" @click="save">
+          <template #icon><n-icon><SaveOutline /></n-icon></template>
+          Guardar
+        </n-button>
       </div>
 
-      <Message v-if="error" severity="error">{{ error }}</Message>
-      <ProgressSpinner v-if="loading" style="width: 48px; height: 48px" strokeWidth="4" />
+      <n-alert v-if="error" type="error" :title="error" />
+      <n-spin v-if="loading" style="display: flex; justify-content: center; padding: 2rem" :size="48" />
 
       <template v-else-if="settings">
-        <Card>
-          <template #title>Tema</template>
-          <template #content>
-            <Select v-model="settings.theme" :options="themeOptions" optionLabel="label" optionValue="value" fluid />
-          </template>
-        </Card>
+        <n-card title="Tema" size="small">
+          <n-select v-model:value="settings.theme" :options="themeOptions" />
+        </n-card>
 
-        <Card>
-          <template #title>Proveedor de IA</template>
-          <template #content>
-            <div class="stack-md">
-              <div class="row-wrap">
-                <div style="flex: 1; min-width: 220px">
-                  <label class="small muted">Proveedor activo</label>
-                  <Select
-                    v-model="settings.ai.provider"
-                    :options="providerOptions"
-                    optionLabel="name"
-                    optionValue="id"
-                    :loading="providersLoading"
-                    fluid
-                    @change="onProviderChange"
-                  />
-                </div>
-                <div style="flex: 1; min-width: 220px">
-                  <label class="small muted">Modelo</label>
-                  <Select
-                    v-if="modelOptions.length > 1"
-                    v-model="settings.ai.model"
-                    :options="modelOptions"
-                    :disabled="!settings.ai.provider"
-                    fluid
-                  />
-                  <InputText
-                    v-else
-                    v-model="settings.ai.model"
-                    :disabled="!settings.ai.provider"
-                    placeholder="Ej: local-model"
-                    fluid
-                  />
-                </div>
+        <n-card title="Proveedor de IA" size="small">
+          <div class="stack-md">
+            <div class="row-wrap">
+              <div style="flex: 1; min-width: 220px">
+                <label class="small muted">Proveedor activo</label>
+                <n-select
+                  v-model:value="settings.ai.provider"
+                  :options="providerOptions"
+                  :loading="providersLoading"
+                  @update:value="onProviderChange"
+                />
               </div>
-              <div>
-                <label class="small muted">Base URL</label>
-                <InputText v-model="settings.ai.baseUrl" fluid class="mono" />
-              </div>
-              <div>
-                <label class="small muted">API Key</label>
-                <Password v-model="providerApiKey" fluid toggleMask :feedback="false" :placeholder="providerConfigured ? '••••••••••••' : 'Pega una nueva API key'" />
-                <div class="small muted" style="margin-top: 0.35rem">
-                  <span v-if="providerConfigured">API key configurada{{ activeProvider?.apiKeyUpdatedAt ? ` · actualizada ${formatDate(activeProvider.apiKeyUpdatedAt)}` : '' }}</span>
-                  <span v-else>No hay API key configurada para este provider.</span>
-                </div>
-                <div class="row-wrap" style="margin-top: 0.75rem">
-                  <Button label="Reemplazar key" severity="secondary" outlined :disabled="!providerApiKey.trim()" :loading="replacingKey" @click="replaceKey" />
-                  <Button label="Eliminar key" severity="danger" outlined :disabled="!providerConfigured" :loading="deletingKey" @click="deleteKey" />
-                </div>
-              </div>
-              <div class="row-wrap">
-                <FieldNumber v-model.number="timeoutSec" label="Timeout (segundos)" :min="10" wrapper-style="min-width: 180px; flex: 1" />
-              </div>
-            </div>
-          </template>
-        </Card>
-
-        <Card>
-          <template #title>Modelo para títulos</template>
-          <template #content>
-            <div class="stack-md">
-              <div class="row-between">
-                <div>
-                  <strong>Usar modelo diferente para traducir títulos</strong>
-                  <div class="small muted">Permite usar un modelo más pequeño y económico para traducir solo los títulos de los capítulos, ya que al ser una línea no requiere un modelo grande. Si falla, se usará el modelo de traducción de contenido.</div>
-                </div>
-                <ToggleSwitch v-model="titleEnabled" style="flex-shrink: 0" />
-              </div>
-              <div v-if="titleEnabled" class="row-wrap">
-                <div style="flex: 1; min-width: 220px">
-                  <label class="small muted">Proveedor para títulos</label>
-                  <Select
-                    v-model="settings.titleProvider"
-                    :options="providerOptions"
-                    optionLabel="name"
-                    optionValue="id"
-                    :loading="providersLoading"
-                    placeholder="Usar proveedor de contenido"
-                    fluid
-                    showClear
-                    @change="onTitleProviderChange"
-                  />
-                </div>
-                <div style="flex: 1; min-width: 220px">
-                  <label class="small muted">Modelo para títulos</label>
-                  <Select
-                    v-if="titleModelOptions.length > 1"
-                    v-model="settings.titleModel"
-                    :options="titleModelOptions"
-                    :disabled="!settings.titleProvider"
-                    placeholder="Usar modelo de contenido"
-                    fluid
-                    showClear
-                  />
-                  <InputText
-                    v-else
-                    v-model="settings.titleModel"
-                    :disabled="!settings.titleProvider"
-                    placeholder="Ej: local-model"
-                    fluid
-                  />
-                </div>
-              </div>
-            </div>
-          </template>
-        </Card>
-
-        <Card>
-          <template #title>Parámetros globales de traducción</template>
-          <template #content>
-            <div class="stack-md">
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-                <div>
-                  <div style="font-weight: 600">Auto segmentación</div>
-                  <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor AI.</div>
-                </div>
-                <ToggleSwitch v-model="settings.translation.autoSegment" />
-              </div>
-
-              <div class="row-wrap">
-                <FieldNumber v-model="settings.translation.thresholdChars" label="Umbral auto" :min="1000" />
-                <FieldNumber v-model="settings.translation.maxChars" label="Máx. por segmento" :min="500" />
-                <FieldNumber v-model="settings.translation.minChars" label="Mín. por segmento" :min="100" />
-              </div>
-              <div class="row-wrap">
-                <FieldNumber v-model="settings.translation.maxRetries" label="Máx. reintentos" :min="0" />
-                <FieldNumber v-model="settings.translation.concurrency" label="Concurrencia" :min="1" />
-              </div>
-
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-                <div>
-                  <div style="font-weight: 600">Enable check</div>
-                  <div class="small muted">Activa verificación posterior en flujos compatibles.</div>
-                </div>
-                <ToggleSwitch v-model="settings.translation.enableCheck" />
-              </div>
-
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-                <div>
-                  <div style="font-weight: 600">Incluir títulos previos</div>
-                  <div class="small muted">Añade títulos anteriores como contexto adicional.</div>
-                </div>
-                <ToggleSwitch v-model="settings.translation.includePreviousChapterTitles" />
-              </div>
-            </div>
-          </template>
-        </Card>
-
-        <Card>
-          <template #title>Backup</template>
-          <template #content>
-            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-              <div>
-                <div style="font-weight: 600">Descargar backup</div>
-                <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
-              </div>
-              <a href="/api/backup/download" target="_blank" rel="noopener" style="text-decoration: none">
-                <Button label="Descargar" icon="pi pi-download" severity="secondary" outlined />
-              </a>
-            </div>
-          </template>
-        </Card>
-
-        <Card>
-          <template #title>Prompts generales</template>
-          <template #content>
-            <Accordion :value="0">
-              <AccordionPanel v-for="prompt in prompts" :key="prompt.id" :value="prompt.id">
-                <AccordionHeader>
-                  <div style="display: flex; align-items: center; gap: 0.75rem">
-                    <strong>{{ prompt.label || prompt.key }}</strong>
-                    <Tag :severity="prompt.active ? 'success' : 'secondary'" :value="prompt.active ? 'Activo' : 'Inactivo'" />
-                  </div>
-                </AccordionHeader>
-                <AccordionContent>
-                  <div class="stack-md">
-                    <div>
-                      <label class="small muted">System prompt</label>
-                      <Textarea v-model="prompt.prompt.systemPrompt" rows="5" fluid class="mono" />
-                    </div>
-                    <div>
-                      <label class="small muted">User prompt</label>
-                      <Textarea v-model="prompt.prompt.userPrompt" rows="5" fluid class="mono" />
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
-                      <span class="small muted">Activo</span>
-                      <ToggleSwitch v-model="prompt.active" />
-                    </div>
-                  </div>
-                </AccordionContent>
-              </AccordionPanel>
-            </Accordion>
-          </template>
-        </Card>
-
-        <Card>
-          <template #title>Tokens de Browser Worker</template>
-          <template #content>
-            <div class="stack-md">
-              <p class="small muted" style="margin: 0">
-                Tokens de autenticación para la extensión del navegador. Cada token está vinculado a tu cuenta y puede ser revocado en cualquier momento.
-              </p>
-              
-              <div v-if="workerTokensLoading" style="text-align: center; padding: 1rem">
-                <ProgressSpinner style="width: 24px; height: 24px" strokeWidth="4" />
-              </div>
-              
-              <div v-else-if="workerTokens.length === 0" class="empty-tokens">
-                <p>No hay tokens activos. Usa la extensión del navegador para autenticarte.</p>
-              </div>
-              
-              <DataTable v-else :value="workerTokens" size="small">
-                <Column field="label" header="Etiqueta" />
-                <Column field="extensionId" header="Extensión">
-                  <template #body="{ data }">
-                    <span class="mono small">{{ data.extensionId.substring(0, 12) }}...</span>
-                  </template>
-                </Column>
-                <Column field="createdAt" header="Creado">
-                  <template #body="{ data }">
-                    {{ formatDate(data.createdAt) }}
-                  </template>
-                </Column>
-                <Column field="lastUsedAt" header="Último uso">
-                  <template #body="{ data }">
-                    {{ data.lastUsedAt ? formatDate(data.lastUsedAt) : 'Nunca' }}
-                  </template>
-                </Column>
-                <Column field="revoked" header="Estado">
-                  <template #body="{ data }">
-                    <Tag :severity="data.revoked ? 'danger' : 'success'" :value="data.revoked ? 'Revocado' : 'Activo'" />
-                  </template>
-                </Column>
-                <Column header="Acciones" style="width: 120px">
-                  <template #body="{ data }">
-                    <div class="row-gap" v-if="!data.revoked">
-                      <Button 
-                        icon="pi pi-ban" 
-                        severity="warn" 
-                        text 
-                        rounded 
-                        size="small"
-                        v-tooltip.top="'Revocar'"
-                        :loading="revokingTokenId === data.id"
-                        @click="revokeToken(data.id)" 
-                      />
-                      <Button 
-                        icon="pi pi-trash" 
-                        severity="danger" 
-                        text 
-                        rounded 
-                        size="small"
-                        v-tooltip.top="'Eliminar'"
-                        :loading="deletingTokenId === data.id"
-                        @click="deleteToken(data.id)" 
-                      />
-                    </div>
-                  </template>
-                </Column>
-              </DataTable>
-              
-              <div class="row-wrap" style="margin-top: 0.5rem">
-                <Button 
-                  label="Recargar" 
-                  icon="pi pi-refresh" 
-                  severity="secondary" 
-                  outlined 
-                  size="small"
-                  :loading="workerTokensLoading"
-                  @click="loadWorkerTokens" 
+              <div style="flex: 1; min-width: 220px">
+                <label class="small muted">Modelo</label>
+                <n-select
+                  v-if="modelOptions.length > 1"
+                  v-model:value="settings.ai.model"
+                  :options="modelOptions"
+                  :disabled="!settings.ai.provider"
+                />
+                <n-input
+                  v-else
+                  v-model:value="settings.ai.model"
+                  :disabled="!settings.ai.provider"
+                  placeholder="Ej: local-model"
                 />
               </div>
             </div>
-          </template>
-        </Card>
+            <div>
+              <label class="small muted">Base URL</label>
+              <n-input v-model:value="settings.ai.baseUrl" :style="{ fontFamily: 'monospace' }" />
+            </div>
+            <div>
+              <label class="small muted">API Key</label>
+              <n-input
+                v-model:value="providerApiKey"
+                type="password"
+                show-password-on="click"
+                :placeholder="providerConfigured ? '••••••••••••' : 'Pega una nueva API key'"
+              />
+              <div class="small muted" style="margin-top: 0.35rem">
+                <span v-if="providerConfigured">API key configurada{{ activeProvider?.apiKeyUpdatedAt ? ` · actualizada ${formatDate(activeProvider.apiKeyUpdatedAt)}` : '' }}</span>
+                <span v-else>No hay API key configurada para este provider.</span>
+              </div>
+              <div class="row-wrap" style="margin-top: 0.75rem">
+                <n-button secondary :disabled="!providerApiKey.trim()" :loading="replacingKey" @click="replaceKey">Reemplazar key</n-button>
+                <n-button type="error" secondary :disabled="!providerConfigured" :loading="deletingKey" @click="deleteKey">Eliminar key</n-button>
+              </div>
+            </div>
+            <div class="row-wrap">
+              <FieldNumber v-model.number="timeoutSec" label="Timeout (segundos)" :min="10" wrapper-style="min-width: 180px; flex: 1" />
+            </div>
+          </div>
+        </n-card>
+
+        <n-card title="Modelo para títulos" size="small">
+          <div class="stack-md">
+            <div class="row-between">
+              <div>
+                <strong>Usar modelo diferente para traducir títulos</strong>
+                <div class="small muted">Permite usar un modelo más pequeño y económico para traducir solo los títulos de los capítulos, ya que al ser una línea no requiere un modelo grande. Si falla, se usará el modelo de traducción de contenido.</div>
+              </div>
+              <n-switch v-model:value="titleEnabled" style="flex-shrink: 0" />
+            </div>
+            <div v-if="titleEnabled" class="row-wrap">
+              <div style="flex: 1; min-width: 220px">
+                <label class="small muted">Proveedor para títulos</label>
+                <n-select
+                  v-model:value="settings.titleProvider"
+                  :options="providerOptions"
+                  :loading="providersLoading"
+                  clearable
+                  placeholder="Usar proveedor de contenido"
+                  @update:value="onTitleProviderChange"
+                />
+              </div>
+              <div style="flex: 1; min-width: 220px">
+                <label class="small muted">Modelo para títulos</label>
+                <n-select
+                  v-if="titleModelOptions.length > 1"
+                  v-model:value="settings.titleModel"
+                  :options="titleModelOptions"
+                  :disabled="!settings.titleProvider"
+                  clearable
+                  placeholder="Usar modelo de contenido"
+                />
+                <n-input
+                  v-else
+                  v-model:value="settings.titleModel"
+                  :disabled="!settings.titleProvider"
+                  placeholder="Ej: local-model"
+                />
+              </div>
+            </div>
+          </div>
+        </n-card>
+
+        <n-card title="Parámetros globales de traducción" size="small">
+          <div class="stack-md">
+            <div class="row-between">
+              <div>
+                <div style="font-weight: 600">Auto segmentación</div>
+                <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor AI.</div>
+              </div>
+              <n-switch v-model:value="settings.translation.autoSegment" />
+            </div>
+
+            <div class="row-wrap">
+              <FieldNumber v-model="settings.translation.thresholdChars" label="Umbral auto" :min="1000" />
+              <FieldNumber v-model="settings.translation.maxChars" label="Máx. por segmento" :min="500" />
+              <FieldNumber v-model="settings.translation.minChars" label="Mín. por segmento" :min="100" />
+            </div>
+            <div class="row-wrap">
+              <FieldNumber v-model="settings.translation.maxRetries" label="Máx. reintentos" :min="0" />
+              <FieldNumber v-model="settings.translation.concurrency" label="Concurrencia" :min="1" />
+            </div>
+
+            <div class="row-between">
+              <div>
+                <div style="font-weight: 600">Enable check</div>
+                <div class="small muted">Activa verificación posterior en flujos compatibles.</div>
+              </div>
+              <n-switch v-model:value="settings.translation.enableCheck" />
+            </div>
+
+            <div class="row-between">
+              <div>
+                <div style="font-weight: 600">Incluir títulos previos</div>
+                <div class="small-muted">Añade títulos anteriores como contexto adicional.</div>
+              </div>
+              <n-switch v-model:value="settings.translation.includePreviousChapterTitles" />
+            </div>
+          </div>
+        </n-card>
+
+        <n-card title="Backup" size="small">
+          <div class="row-between">
+            <div>
+              <div style="font-weight: 600">Descargar backup</div>
+              <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
+            </div>
+            <a href="/api/backup/download" target="_blank" rel="noopener" style="text-decoration: none">
+              <n-button secondary>
+                <template #icon><n-icon><DownloadOutline /></n-icon></template>
+                Descargar
+              </n-button>
+            </a>
+          </div>
+        </n-card>
+
+        <n-card title="Prompts generales" size="small">
+          <n-collapse :default-expanded-names="prompts.length > 0 ? [prompts[0].id] : []">
+            <n-collapse-item v-for="prompt in prompts" :key="prompt.id" :name="prompt.id">
+              <template #header>
+                <div style="display: flex; align-items: center; gap: 0.75rem">
+                  <strong>{{ prompt.label || prompt.key }}</strong>
+                  <n-tag :type="prompt.active ? 'success' : 'default'" size="small" round>
+                    {{ prompt.active ? 'Activo' : 'Inactivo' }}
+                  </n-tag>
+                </div>
+              </template>
+              <div class="stack-md">
+                <div>
+                  <label class="small muted">System prompt</label>
+                  <n-input v-model:value="prompt.prompt.systemPrompt" type="textarea" :rows="5" :style="{ fontFamily: 'monospace' }" />
+                </div>
+                <div>
+                  <label class="small muted">User prompt</label>
+                  <n-input v-model:value="prompt.prompt.userPrompt" type="textarea" :rows="5" :style="{ fontFamily: 'monospace' }" />
+                </div>
+                <div class="row-between">
+                  <span class="small muted">Activo</span>
+                  <n-switch v-model:value="prompt.active" />
+                </div>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
+        </n-card>
+
+        <n-card title="Tokens de Browser Worker" size="small">
+          <div class="stack-md">
+            <p class="small muted" style="margin: 0">
+              Tokens de autenticación para la extensión del navegador. Cada token está vinculado a tu cuenta y puede ser revocado en cualquier momento.
+            </p>
+
+            <div v-if="workerTokensLoading" style="text-align: center; padding: 1rem">
+              <n-spin :size="24" />
+            </div>
+
+            <div v-else-if="workerTokens.length === 0" class="empty-tokens">
+              <p>No hay tokens activos. Usa la extensión del navegador para autenticarte.</p>
+            </div>
+
+            <n-data-table
+              v-else
+              :columns="workerTokenColumns"
+              :data="workerTokens"
+              size="small"
+              :bordered="false"
+            />
+
+            <div class="row-wrap" style="margin-top: 0.5rem">
+              <n-button
+                size="small"
+                secondary
+                :loading="workerTokensLoading"
+                @click="loadWorkerTokens"
+              >
+                <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                Recargar
+              </n-button>
+            </div>
+          </div>
+        </n-card>
       </template>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useToast } from "primevue/usetoast";
+import { computed, onMounted, ref, h } from "vue";
+import {
+  NButton,
+  NCard,
+  NInput,
+  NSwitch,
+  NSelect,
+  NTag,
+  NAlert,
+  NSpin,
+  NCollapse,
+  NCollapseItem,
+  NIcon,
+  NDataTable,
+  useMessage,
+  type DataTableColumns,
+} from "naive-ui";
+import {
+  SaveOutline,
+  DownloadOutline,
+  RefreshOutline,
+  BanOutline,
+  TrashOutline,
+} from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import InputText from "primevue/inputtext";
-import Password from "primevue/password";
-import ToggleSwitch from "primevue/toggleswitch";
-import Textarea from "primevue/textarea";
-import Tag from "primevue/tag";
-import Message from "primevue/message";
-import ProgressSpinner from "primevue/progressspinner";
-import Accordion from "primevue/accordion";
-import AccordionPanel from "primevue/accordionpanel";
-import AccordionHeader from "primevue/accordionheader";
-import AccordionContent from "primevue/accordioncontent";
-import Select from "primevue/select";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { applyTheme } from "@/app/auth";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
 import type { GeneralPromptRecord, ServerSettings, WorkerToken } from "@/api/types";
 
-const toast = useToast();
+const message = useMessage();
 const { api, loadProviders } = useAppServices();
 const { providers, byId, loading: providersLoading, reload: reloadProviders } = useProviders();
 const loading = ref(true);
@@ -352,6 +296,69 @@ const themeOptions = [
   { label: "Oscuro", value: "dark" },
 ];
 
+const workerTokenColumns: DataTableColumns<WorkerToken> = [
+  { title: "Etiqueta", key: "label" },
+  {
+    title: "Extensión",
+    key: "extensionId",
+    render(row) {
+      return h("span", { class: "mono small" }, row.extensionId.substring(0, 12) + "...");
+    },
+  },
+  {
+    title: "Creado",
+    key: "createdAt",
+    render(row) {
+      return formatDate(row.createdAt);
+    },
+  },
+  {
+    title: "Último uso",
+    key: "lastUsedAt",
+    render(row) {
+      return row.lastUsedAt ? formatDate(row.lastUsedAt) : "Nunca";
+    },
+  },
+  {
+    title: "Estado",
+    key: "revoked",
+    render(row) {
+      return h(NTag, {
+        type: row.revoked ? "error" : "success",
+        size: "small",
+        round: true,
+      }, { default: () => row.revoked ? "Revocado" : "Activo" });
+    },
+  },
+  {
+    title: "Acciones",
+    key: "actions",
+    width: 120,
+    render(row) {
+      if (row.revoked) return null;
+      return h("div", { class: "row-gap" }, [
+        h(NButton, {
+          quaternary: true,
+          circle: true,
+          size: "small",
+          loading: revokingTokenId.value === row.id,
+          onClick: () => revokeToken(row.id),
+          title: "Revocar",
+        }, { icon: () => h(NIcon, null, { default: () => h(BanOutline) }) }),
+        h(NButton, {
+          quaternary: true,
+          circle: true,
+          size: "small",
+          type: "error",
+          loading: deletingTokenId.value === row.id,
+          onClick: () => deleteToken(row.id),
+          title: "Eliminar",
+        }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }) }),
+      ]);
+    },
+  },
+];
+
 onMounted(() => {
   void load();
   void loadWorkerTokens();
@@ -373,7 +380,7 @@ async function revokeToken(tokenId: string) {
   try {
     await api.workerTokens.revoke(tokenId);
     await loadWorkerTokens();
-    toast.add({ severity: "success", summary: "Token revocado", life: 2500 });
+    message.success("Token revocado");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -386,7 +393,7 @@ async function deleteToken(tokenId: string) {
   try {
     await api.workerTokens.delete(tokenId);
     await loadWorkerTokens();
-    toast.add({ severity: "success", summary: "Token eliminado", life: 2500 });
+    message.success("Token eliminado");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -417,21 +424,21 @@ async function load() {
   }
 }
 
-const providerOptions = computed(() => providers.value);
+const providerOptions = computed(() => providers.value.map((p) => ({ label: p.name, value: p.id })));
 const activeProvider = computed(() => {
   if (!settings.value) return null;
   return providers.value.find((provider) => provider.id === settings.value?.ai.provider) ?? null;
 });
 const providerConfigured = computed(() => Boolean(activeProvider.value?.apiKeyConfigured));
 const modelOptions = computed(() => {
-  if (!settings.value) return [] as string[];
+  if (!settings.value) return [];
   const info = byId.value.get(settings.value.ai.provider);
-  return info?.models ?? [];
+  return (info?.models ?? []).map((m) => ({ label: m, value: m }));
 });
 const titleModelOptions = computed(() => {
-  if (!settings.value) return [] as string[];
+  if (!settings.value) return [];
   const info = byId.value.get(settings.value.titleProvider);
-  return info?.models ?? [];
+  return (info?.models ?? []).map((m) => ({ label: m, value: m }));
 });
 
 function onProviderChange() {
@@ -461,7 +468,7 @@ async function replaceKey() {
     await api.providers.replaceKey(settings.value.ai.provider, providerApiKey.value.trim());
     providerApiKey.value = "";
     await loadProviders();
-    toast.add({ severity: "success", summary: "API key actualizada", life: 2500 });
+    message.success("API key actualizada");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -475,7 +482,7 @@ async function deleteKey() {
   try {
     await api.providers.deleteKey(settings.value.ai.provider);
     await loadProviders();
-    toast.add({ severity: "success", summary: "API key eliminada", life: 2500 });
+    message.success("API key eliminada");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -501,16 +508,20 @@ async function save() {
         baseUrl: settings.value.ai.baseUrl,
         timeoutMs: settings.value.ai.timeoutMs,
       }),
-      Promise.all(prompts.value.map((prompt) => api.prompts.upsert({
-        key: prompt.key,
-        label: prompt.label,
-        description: prompt.description,
-        prompt: prompt.prompt,
-        active: prompt.active,
-      }))),
+      Promise.all(
+        prompts.value.map((prompt) =>
+          api.prompts.upsert({
+            key: prompt.key,
+            label: prompt.label,
+            description: prompt.description,
+            prompt: prompt.prompt,
+            active: prompt.active,
+          }),
+        ),
+      ),
     ]);
     await Promise.all([reloadProviders(), load()]);
-    toast.add({ severity: "success", summary: "Configuración guardada", life: 2500 });
+    message.success("Configuración guardada");
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {

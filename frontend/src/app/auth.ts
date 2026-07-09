@@ -1,12 +1,31 @@
-import { computed, ref } from "vue";
+import { computed, ref, readonly } from "vue";
+import { darkTheme } from "naive-ui";
+import type { GlobalThemeOverrides } from "naive-ui";
 import type { AuthResponse, AuthUser } from "@/api/types";
+import {
+  pixeoThemeOverrides,
+  pixeoDarkThemeOverrides,
+} from "@/theme/naive-theme";
 
 const THEME_KEY = "theme";
 
 const user = ref<AuthUser | null>(null);
 const ready = ref(false);
+const _currentTheme = ref<"light" | "dark">("light");
 
 let systemThemeListenerAttached = false;
+
+export const currentTheme = readonly(_currentTheme);
+
+export const currentNaiveTheme = computed(() =>
+  _currentTheme.value === "dark" ? darkTheme : null,
+);
+
+export const currentThemeOverrides = computed<GlobalThemeOverrides>(() =>
+  _currentTheme.value === "dark"
+    ? pixeoDarkThemeOverrides
+    : pixeoThemeOverrides,
+);
 
 export const authState = {
   user,
@@ -29,6 +48,7 @@ export function applyTheme(theme: "light" | "dark" | "system") {
 
   root.classList.toggle("dark", effective === "dark");
   root.style.colorScheme = effective;
+  _currentTheme.value = effective;
   localStorage.setItem(THEME_KEY, theme);
 
   if (!systemThemeListenerAttached) {

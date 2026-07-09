@@ -2,64 +2,73 @@
   <div class="chapter-list">
     <div class="chapter-list-toolbar">
       <div class="chapter-list-selection">
-        <Button size="small" severity="secondary" text label="Todos" @click="selectAll" />
-        <Button size="small" severity="secondary" text label="Ninguno" @click="clearSelection" />
+        <n-button size="small" quaternary @click="selectAll">Todos</n-button>
+        <n-button size="small" quaternary @click="clearSelection">Ninguno</n-button>
         <span v-if="totalMissingChapters > 0" class="chapter-list-gap-badge">
-          <i class="pi pi-exclamation-triangle" aria-hidden="true" />
+          <n-icon :size="14"><WarningOutline /></n-icon>
           {{ totalMissingChapters === 1 ? 'Falta 1 capítulo' : `Faltan ${totalMissingChapters} capítulos` }}
         </span>
         <span v-if="selected.length > 0" class="small muted">{{ selected.length }} seleccionados</span>
       </div>
       <div v-if="isOwner" class="chapter-list-actions">
-        <Button
+        <n-button
           v-if="selected.length > 1"
-          icon="pi pi-trash"
-          :label="`Eliminar ${selected.length}`"
-          severity="danger"
-          outlined
           size="small"
+          type="error"
+          secondary
           @click="emit('bulk-delete', $event)"
-        />
-        <Button icon="pi pi-upload" label="Importar" severity="secondary" outlined size="small" @click="emit('import')" />
-        <Button icon="pi pi-plus" label="Nuevo" size="small" @click="emit('create')" />
+        >
+          <template #icon><n-icon><TrashOutline /></n-icon></template>
+          Eliminar {{ selected.length }}
+        </n-button>
+        <n-button size="small" secondary @click="emit('import')">
+          <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+          Importar
+        </n-button>
+        <n-button size="small" type="primary" @click="emit('create')">
+          <template #icon><n-icon><AddOutline /></n-icon></template>
+          Nuevo
+        </n-button>
       </div>
     </div>
 
-    <Card v-if="loading && chapters.length === 0">
-      <template #content>
-        <div class="chapter-list-skeleton">
-          <div v-for="i in 8" :key="i" class="chapter-list-item chapter-list-item--skeleton">
-            <Skeleton shape="rectangle" width="1.25rem" height="1.25rem" borderRadius="4px" />
-            <Skeleton width="2rem" height="0.875rem" borderRadius="4px" />
-            <Skeleton width="55%" height="1rem" borderRadius="4px" />
-            <Skeleton width="5rem" height="1.25rem" borderRadius="999px" />
-          </div>
+    <n-card v-if="loading && chapters.length === 0" size="small">
+      <div class="chapter-list-skeleton">
+        <div v-for="i in 8" :key="i" class="chapter-list-item chapter-list-item--skeleton">
+          <n-skeleton style="width: 1.25rem; height: 1.25rem" :border-radius="4" />
+          <n-skeleton style="width: 2rem; height: 0.875rem" :border-radius="4" />
+          <n-skeleton style="width: 55%; height: 1rem" :border-radius="4" />
+          <n-skeleton style="width: 5rem; height: 1.25rem; border-radius: 999px" />
         </div>
-      </template>
-    </Card>
+      </div>
+    </n-card>
 
-    <Card v-else-if="chapters.length === 0 && total === 0">
-      <template #content>
-        <div class="empty-state">
-          <div class="empty-state-icon">
-            <i class="pi pi-file" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 class="empty-state-title">Sin capítulos</h2>
-            <p class="muted empty-state-body">Crea un capítulo manualmente o importa desde EPUB/TXT/Markdown.</p>
-          </div>
-          <div v-if="isOwner" class="empty-state-actions">
-            <Button icon="pi pi-plus" label="Nuevo capítulo" @click="emit('create')" />
-            <Button icon="pi pi-upload" label="Importar" severity="secondary" outlined @click="emit('import')" />
-          </div>
+    <n-card v-else-if="chapters.length === 0 && total === 0" size="small">
+      <div class="empty-state">
+        <div class="empty-state-icon">
+          <n-icon :size="20"><DocumentTextOutline /></n-icon>
         </div>
-      </template>
-    </Card>
+        <div>
+          <h2 class="empty-state-title">Sin capítulos</h2>
+          <p class="muted empty-state-body">Crea un capítulo manualmente o importa desde EPUB/TXT/Markdown.</p>
+        </div>
+        <div v-if="isOwner" class="empty-state-actions">
+          <n-button type="primary" @click="emit('create')">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            Nuevo capítulo
+          </n-button>
+          <n-button secondary @click="emit('import')">
+            <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+            Importar
+          </n-button>
+        </div>
+      </div>
+    </n-card>
 
     <div v-else class="chapter-list-items">
       <template v-for="item in mergedItems" :key="item.key">
         <div v-if="item.type === 'gap'" class="chapter-list-gap-row">
-          <i class="pi pi-exclamation-triangle chapter-list-gap-icon" aria-hidden="true" />
+          <n-icon :size="14" class="chapter-list-gap-icon"><WarningOutline /></n-icon>
           <span class="chapter-list-gap-text">
             {{ item.gap.count === 1 ? 'Falta 1 capítulo' : `Faltan ${item.gap.count} capítulos` }}
           </span>
@@ -69,13 +78,12 @@
           class="chapter-list-item"
           :class="{ 'chapter-list-item--selected': isSelected(item.chapter) }"
         >
-          <Checkbox
+          <n-checkbox
             v-if="isOwner"
-            :model-value="isSelected(item.chapter)"
-            binary
+            :checked="isSelected(item.chapter)"
             class="chapter-list-checkbox"
             :aria-label="`Seleccionar capítulo ${item.chapter.chapterOrder}`"
-            @update:model-value="toggleSelected(item.chapter, $event)"
+            @update:checked="toggleSelected(item.chapter, $event)"
           />
 
           <RouterLink
@@ -87,20 +95,26 @@
             <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
           </RouterLink>
 
-          <Tag
-            :severity="chapterSeverity(resolvedStatus(item.chapter))"
-            :value="chapterStatusLabel(resolvedStatus(item.chapter))"
+          <n-tag
+            :type="chapterTagType(resolvedStatus(item.chapter))"
+            size="small"
+            round
             class="chapter-list-status"
-          />
+          >
+            {{ chapterStatusLabel(resolvedStatus(item.chapter)) }}
+          </n-tag>
 
           <div v-if="isOwner" class="chapter-list-item-actions">
-            <Button
-              icon="pi pi-trash"
-              text
+            <n-button
+              quaternary
+              circle
+              size="tiny"
               class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
               aria-label="Eliminar"
               @click="emit('delete', { event: $event, chapter: item.chapter })"
-            />
+            >
+              <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
+            </n-button>
           </div>
         </article>
       </template>
@@ -110,24 +124,14 @@
       <span class="small muted">
         Mostrando {{ total === 0 ? 0 : page * pageSize + 1 }}-{{ Math.min((page + 1) * pageSize, total) }} de {{ total }} capítulos
       </span>
-      <div class="chapter-list-pagination">
-        <Button
-          size="small"
-          severity="secondary"
-          text
-          label="Anterior"
-          :disabled="page === 0 || loading"
-          @click="emit('update:page', page - 1)"
-        />
-        <Button
-          size="small"
-          severity="secondary"
-          text
-          label="Siguiente"
-          :disabled="(page + 1) * pageSize >= total || loading"
-          @click="emit('update:page', page + 1)"
-        />
-      </div>
+      <n-pagination
+        v-if="total > 0"
+        :page="page + 1"
+        :page-count="pageCount"
+        :page-slot="7"
+        size="small"
+        @update:page="emit('update:page', $event - 1)"
+      />
     </div>
   </div>
 </template>
@@ -135,11 +139,14 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import Button from "primevue/button";
-import Card from "primevue/card";
-import Checkbox from "primevue/checkbox";
-import Skeleton from "primevue/skeleton";
-import Tag from "primevue/tag";
+import { NButton, NCard, NCheckbox, NPagination, NSkeleton, NTag, NIcon } from "naive-ui";
+import {
+  TrashOutline,
+  CloudUploadOutline,
+  AddOutline,
+  WarningOutline,
+  DocumentTextOutline,
+} from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import type { Chapter } from "@/domain";
 
@@ -169,6 +176,8 @@ const totalMissingChapters = computed(() => {
   if (!props.gaps || props.gaps.length === 0) return 0;
   return props.gaps.reduce((acc, g) => acc + g.count, 0);
 });
+
+const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
 
 type MergedItem =
   | { type: "chapter"; chapter: ChapterSummary; key: string }
@@ -204,9 +213,7 @@ const mergedItems = computed<MergedItem[]>(() => {
 });
 
 function resolvedStatus(chapter: ChapterSummary): Chapter["status"] {
-  if (chapter.status === "processing") {
-    return "processing";
-  }
+  if (chapter.status === "processing") return "processing";
   return chapter.status;
 }
 
@@ -221,15 +228,15 @@ function chapterStatusLabel(status: Chapter["status"]) {
   }[status] || status;
 }
 
-function chapterSeverity(status: Chapter["status"]) {
-  return {
-    pending: "secondary",
-    processing: "warn",
+function chapterTagType(status: Chapter["status"]) {
+  return ({
+    pending: "default",
+    processing: "warning",
     translated: "success",
     refined: "info",
     done: "success",
-    failed: "danger",
-  }[status] as "secondary" | "info" | "warn" | "help" | "success" | "danger";
+    failed: "error",
+  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
 }
 
 function isSelected(chapter: ChapterSummary) {
@@ -292,15 +299,14 @@ function clearSelection() {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: color-mix(in oklab, var(--p-orange-500) 5%, var(--surface-base));
+  background: color-mix(in oklab, #a16207 5%, var(--surface-base));
   border-bottom: 1px solid var(--divide);
   font-size: 0.8125rem;
-  color: var(--p-orange-700);
+  color: #a16207;
 }
 
 .chapter-list-gap-icon {
-  color: var(--p-orange-500);
-  font-size: 0.875rem;
+  color: #a16207;
 }
 
 .chapter-list-gap-badge {
@@ -309,8 +315,8 @@ function clearSelection() {
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
   border-radius: var(--radius-md);
-  background: color-mix(in oklab, var(--p-orange-500) 10%, transparent);
-  color: var(--p-orange-600);
+  background: color-mix(in oklab, #a16207 10%, transparent);
+  color: #a16207;
   font-size: 0.75rem;
   font-weight: 500;
   white-space: nowrap;
@@ -376,14 +382,6 @@ function clearSelection() {
   font-size: 0.6875rem;
 }
 
-.chapter-list-status :deep(.p-tag) {
-  padding: 0.125rem 0.35rem;
-}
-
-.chapter-list-status :deep(.p-tag-value) {
-  padding: 0;
-}
-
 .chapter-list-item-actions {
   display: flex;
   align-items: center;
@@ -391,34 +389,12 @@ function clearSelection() {
   flex-shrink: 0;
 }
 
-.chapter-list-action-btn :deep(.p-button) {
-  width: 1.625rem;
-  height: 1.625rem;
-  padding: 0;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+.chapter-list-action-btn--delete {
+  color: #dc2626 !important;
 }
 
-.chapter-list-action-btn :deep(.p-button-icon) {
-  font-size: 0.85rem;
-}
-
-.chapter-list-action-btn--delete :deep(.p-button) {
-  color: var(--p-red-500) !important;
-}
-
-.chapter-list-action-btn--delete :deep(.p-button:hover) {
-  background: color-mix(in oklab, var(--p-red-500) 10%, transparent) !important;
-}
-
-.chapter-list-checkbox :deep(.p-checkbox-box) {
-  width: 1.125rem;
-  height: 1.125rem;
-}
-
-.chapter-list-checkbox :deep(.p-checkbox-icon) {
-  font-size: 0.7rem;
+.chapter-list-action-btn--delete:hover {
+  background: color-mix(in oklab, #dc2626 10%, transparent) !important;
 }
 
 .chapter-list-footer {
@@ -428,12 +404,6 @@ function clearSelection() {
   gap: 0.75rem;
   flex-wrap: wrap;
   padding-top: 0.25rem;
-}
-
-.chapter-list-pagination {
-  display: flex;
-  align-items: center;
-  gap: 0;
 }
 
 .empty-state {
@@ -454,7 +424,6 @@ function clearSelection() {
   border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 1rem;
 }
 
 .empty-state-title {
