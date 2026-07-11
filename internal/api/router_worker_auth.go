@@ -39,6 +39,11 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 		if extensionID == "" {
 			return e.BadRequestError("extension_id is required", nil)
 		}
+		// Chrome extension IDs are 32 chars. Reject anything implausibly short
+		// so the label (which slices ExtensionID[:8]) can never panic.
+		if len(extensionID) < 8 {
+			return e.BadRequestError("invalid extension_id", nil)
+		}
 
 		cookie, err := e.Request.Cookie(authCookieName)
 		if err != nil || cookie.Value == "" {
@@ -128,7 +133,11 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 			return e.BadRequestError("authentication required", nil)
 		}
 
-		label := fmt.Sprintf("Chrome Extension (%s)", pending.ExtensionID[:8])
+		shortID := pending.ExtensionID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		label := fmt.Sprintf("Chrome Extension (%s)", shortID)
 		_, plaintext, err := s.Store.CreateWorkerToken(e.Auth.Id, pending.ExtensionID, label)
 		if err != nil {
 			return e.InternalServerError("failed to create token", err)

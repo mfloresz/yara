@@ -13,8 +13,8 @@ import (
 // If the site requires a browser (Cloudflare), it falls back to fetching
 // the page through the Browser Worker proxy and then parsing with Go.
 // The LazyFallbackClient in the DownloaderFactory handles the retry automatically.
-func (s *Server) getNovelInfoWithFallback(ctx context.Context, url string) (*noveldownloader.NovelInfo, error) {
-	dl := s.DownloaderFactory()
+func (s *Server) getNovelInfoWithFallback(ctx context.Context, userID, url string) (*noveldownloader.NovelInfo, error) {
+	dl := s.DownloaderFactory(userID)
 
 	// Try the Go parser - fallback to proxy is handled by LazyFallbackClient
 	parser := dl.FindParser(url)
@@ -29,18 +29,18 @@ func (s *Server) getNovelInfoWithFallback(ctx context.Context, url string) (*nov
 	}
 
 	// No parser known - try via browser proxy directly
-	if !s.HasBrowserWorker() {
+	if !s.HasBrowserWorkerForUser(userID) {
 		return nil, fmt.Errorf("unsupported URL: no parser found and no browser worker connected")
 	}
 
 	slog.Info("no parser found, fetching via browser proxy", "url", url)
-	return s.getNovelInfoViaProxy(ctx, url, nil)
+	return s.getNovelInfoViaProxy(ctx, userID, url, nil)
 }
 
 // getNovelInfoViaProxy fetches the page HTML through the browser worker,
 // then parses it with the same Go parsers used for direct HTTP.
-func (s *Server) getNovelInfoViaProxy(ctx context.Context, url string, parser noveldownloader.Parser) (*noveldownloader.NovelInfo, error) {
-	proxyClient := NewProxyHTTPClient(s)
+func (s *Server) getNovelInfoViaProxy(ctx context.Context, userID, url string, parser noveldownloader.Parser) (*noveldownloader.NovelInfo, error) {
+	proxyClient := NewProxyHTTPClient(s, userID)
 	dl := s.DownloaderFactoryWithClient(proxyClient)
 
 	// If we have a parser, use it

@@ -63,22 +63,25 @@ func (c *LazyFallbackClient) Do(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	// Close original response if we're falling back
+	// Decide whether to fall back to the proxy before touching resp.Body, so
+	// that when we do NOT fall back we hand the caller an untouched response
+	// (with a readable body) instead of one whose body we already closed.
+	shouldFallback := c.checker != nil && c.checker.HasBrowserWorker() &&
+		(err != nil || (resp != nil && isRetryableStatusCode(resp.StatusCode)))
+
+	if !shouldFallback {
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
+	// Falling back: discard the original response and retry via the proxy.
 	if resp != nil {
 		resp.Body.Close()
 	}
-
-	if c.checker != nil && c.checker.HasBrowserWorker() {
-		if err != nil || (resp != nil && isRetryableStatusCode(resp.StatusCode)) {
-			proxy := c.checker.NewProxyHTTPClient()
-			return proxy.Do(req)
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
+	proxy := c.checker.NewProxyHTTPClient()
+	return proxy.Do(req)
 }
 
 // isRetryableError checks if an error should trigger proxy fallback.

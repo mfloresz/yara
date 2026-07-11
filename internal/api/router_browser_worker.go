@@ -419,7 +419,7 @@ func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]inte
 	s.pendingBrowserJobsMu.Lock()
 	if len(s.pendingBrowserJobs) == 0 && len(s.browserQueue) == 0 {
 		s.pendingBrowserJobsMu.Unlock()
-		if !s.HasBrowserWorker() {
+		if !s.HasBrowserWorkerForUser(userID) {
 			return nil, ErrNoBrowserWorker
 		}
 	} else {
@@ -478,7 +478,7 @@ func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]inte
 // (incl. cf_clearance) and resolves to the real bytes. The extension returns
 // the image as a base64 string which we decode back into raw bytes here.
 func (s *Server) FetchImageViaWorker(ctx context.Context, imageURL string, userID string, timeoutSec int) ([]byte, string, error) {
-	if !s.HasBrowserWorker() {
+	if !s.HasBrowserWorkerForUser(userID) {
 		return nil, "", ErrNoBrowserWorker
 	}
 	if timeoutSec <= 0 {
@@ -538,6 +538,25 @@ func (s *Server) HasBrowserWorker() bool {
 	defer browserWorkersMu.RUnlock()
 	for _, w := range browserWorkers {
 		if w.State == "authenticated" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasBrowserWorkerForUser reports whether the given user has an authenticated
+// browser worker connected. Job dispatch is scoped per-user, so a global
+// HasBrowserWorker() check can be true while this user still has no worker —
+// callers on a user-owned path must use this variant. An empty userID keeps
+// the legacy global behavior.
+func (s *Server) HasBrowserWorkerForUser(userID string) bool {
+	if userID == "" {
+		return s.HasBrowserWorker()
+	}
+	browserWorkersMu.RLock()
+	defer browserWorkersMu.RUnlock()
+	for _, w := range browserWorkers {
+		if w.State == "authenticated" && w.UserID == userID {
 			return true
 		}
 	}

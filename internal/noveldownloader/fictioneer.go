@@ -103,19 +103,12 @@ func fictioneerStoryID(doc *goquery.Document) string {
 // and returns its items as chapter URLs.
 func fictioneerFetchChaptersFromRSS(ctx context.Context, client HTTPClient, baseURL, storyID string) ([]ChapterURL, error) {
 	rssURL := baseURL + "/feed/rss-chapters?story_id=" + storyID
-	doc, err := client.FetchDocument(ctx, rssURL)
+	raw, err := client.Fetch(ctx, rssURL)
 	if err != nil {
 		return nil, err
 	}
-
-	var chapters []ChapterURL
-	doc.Find("item").Each(func(_ int, item *goquery.Selection) {
-		title := strings.TrimSpace(item.Find("title").Text())
-		link := strings.TrimSpace(item.Find("link").Text())
-		if link != "" {
-			chapters = append(chapters, ChapterURL{Title: title, URL: link})
-		}
-	})
-
-	return chapters, nil
+	// The RSS feed is XML; parse it with encoding/xml (via parseRSSChapters),
+	// not goquery — an HTML parser treats <link> as a void element and drops
+	// its text content, which silently yields zero chapters.
+	return parseRSSChapters(raw), nil
 }

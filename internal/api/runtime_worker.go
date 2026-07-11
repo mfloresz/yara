@@ -246,7 +246,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		}
 		return fmt.Errorf("parse download options: %w", err)
 	}
-	dl := s.DownloaderFactory()
+	dl := s.DownloaderFactory(job.OwnerID)
 	if len(opts.Chapters) == 0 {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "done"}); ue != nil {
 			slog.Error("update job status on no chapters", "jobId", job.ID, "error", ue)
@@ -268,7 +268,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 
 	parser := dl.FindParser(opts.URL)
 
-	if parser == nil && !s.HasBrowserWorker() {
+	if parser == nil && !s.HasBrowserWorkerForUser(job.OwnerID) {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
 			slog.Error("update job status on unsupported URL", "jobId", job.ID, "error", ue)
 		}
@@ -278,8 +278,8 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	completed := 0
 	failed := 0
 	var proxyDL *noveldownloader.Downloader
-	if parser == nil && s.HasBrowserWorker() {
-		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+	if parser == nil && s.HasBrowserWorkerForUser(job.OwnerID) {
+		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, job.OwnerID))
 	}
 	for idx, chInfo := range opts.Chapters {
 		if err := ctx.Err(); err != nil {
@@ -291,7 +291,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			}
 		}
 
-		ch, downloadErr := s.downloadChapterWithRetry(ctx, dl, proxyDL, parser, chInfo, job.ID)
+		ch, downloadErr := s.downloadChapterWithRetry(ctx, dl, proxyDL, parser, chInfo, job.ID, job.OwnerID)
 
 		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -356,7 +356,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 // failures (Cloudflare challenges, timeouts, empty responses) a few times
 // with a small backoff before giving up. A single transient failure should
 // not permanently drop a chapter from the novel.
-func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *noveldownloader.Downloader, parser noveldownloader.Parser, chInfo store.DownloadChapterInfo, jobID string) (*noveldownloader.Chapter, error) {
+func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *noveldownloader.Downloader, parser noveldownloader.Parser, chInfo store.DownloadChapterInfo, jobID, ownerID string) (*noveldownloader.Chapter, error) {
 	chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
 	var lastErr error
 	for attempt := 0; attempt <= chapterDownloadMaxRetries; attempt++ {
@@ -380,10 +380,10 @@ func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *nove
 		case parser != nil:
 			// Fallback to proxy is handled automatically by LazyFallbackClient
 			downloaded, err = dl.DownloadChapters(ctx, chURLs, 1, 1)
-		case s.HasBrowserWorker():
+		case s.HasBrowserWorkerForUser(ownerID):
 			localProxy := proxyDL
 			if localProxy == nil {
-				localProxy = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+				localProxy = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, ownerID))
 			}
 			downloaded, err = localProxy.DownloadChapters(ctx, chURLs, 1, 1)
 		default:
@@ -428,7 +428,7 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		return fmt.Errorf("set job running: %w", err)
 	}
 
-	dl := s.DownloaderFactory()
+	dl := s.DownloaderFactory(job.OwnerID)
 	if err := dl.SleepBetweenChapters(ctx); err != nil {
 		return err
 	}
