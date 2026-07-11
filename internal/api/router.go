@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -136,90 +135,13 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
-	router.GET("/api/browser-workers", func(e *core.RequestEvent) error {
-		browserWorkersMu.RLock()
-		workers := make([]map[string]any, 0, len(browserWorkers))
-		for _, w := range browserWorkers {
-			w.mu.Lock()
-			workers = append(workers, map[string]any{
-				"id":            w.ID,
-				"browser":       w.Browser,
-				"version":       w.Version,
-				"state":         w.State,
-				"capabilities":  w.Capabilities,
-				"connectedAt":   w.ConnectedAt,
-				"lastHeartbeat": w.LastHeartbeat,
-			})
-			w.mu.Unlock()
-		}
-		browserWorkersMu.RUnlock()
-		return e.JSON(http.StatusOK, map[string]any{
-			"count":   len(workers),
-			"workers": workers,
-		})
-	})
-
-	router.GET("/api/proxy/status", func(e *core.RequestEvent) error {
-		browserWorkersMu.RLock()
-		workers := make([]map[string]any, 0, len(browserWorkers))
-		for _, w := range browserWorkers {
-			w.mu.Lock()
-			workers = append(workers, map[string]any{
-				"id":          w.ID,
-				"browser":     w.Browser,
-				"state":       w.State,
-				"connectedAt": w.ConnectedAt,
-			})
-			w.mu.Unlock()
-		}
-		browserWorkersMu.RUnlock()
-		return e.JSON(http.StatusOK, map[string]any{
-			"connected": len(workers) > 0,
-			"count":     len(workers),
-			"workers":   workers,
-		})
-	})
-
-	router.POST("/api/proxy/fetch", func(e *core.RequestEvent) error {
-		body := struct {
-			URL     string `json:"url"`
-			Timeout int    `json:"timeout"`
-		}{}
-		if err := e.BindBody(&body); err != nil {
-			return e.BadRequestError("invalid body", err)
-		}
-		if strings.TrimSpace(body.URL) == "" {
-			return e.BadRequestError("url is required", nil)
-		}
-		timeout := body.Timeout
-		if timeout <= 0 {
-			timeout = 120
-		}
-		if timeout > 300 {
-			timeout = 300
-		}
-
-		if !s.HasBrowserWorker() {
-			return e.BadRequestError("no browser worker connected", nil)
-		}
-
-		result, err := s.fetchViaBrowserWorker(body.URL, timeout, "")
-		if err != nil {
-			if err == ErrBrowserWorkerTimeout {
-				return e.BadRequestError("timeout waiting for browser worker", nil)
-			}
-			return e.InternalServerError("fetch failed", err)
-		}
-
-		return e.JSON(http.StatusOK, map[string]any{
-			"url":    result.URL,
-			"title":  result.Title,
-			"html":   result.HTML,
-			"text":   result.Text,
-			"status": result.Status,
-		})
-	})
-
+	// The browser-worker WebSocket must be reachable before the worker has a
+	// token (it authenticates in-band via a `register` message validated
+	// against ValidateWorkerToken; unauthenticated workers never get dispatched
+	// a job). The browser-worker status and proxy-fetch endpoints, by contrast,
+	// are registered on the authenticated group in registerProtectedRoutes so
+	// that anonymous callers cannot enumerate connected workers or drive them
+	// to fetch arbitrary URLs (SSRF).
 	router.GET("/ws/browser-worker", func(e *core.RequestEvent) error {
 		s.handleBrowserWorkerWS(e.Response, e.Request)
 		return nil
@@ -237,6 +159,7 @@ func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Ser
 	api.Bind(apis.RequireAuth())
 
 	registerWorkerAuthProtectedRoutes(api, s)
+	registerProxyRoutes(api, s)
 	registerSettingsRoutes(api, s)
 	registerProviderRoutes(api, s)
 	registerPromptRoutes(api, s)
