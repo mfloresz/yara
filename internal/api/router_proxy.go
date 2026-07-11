@@ -31,8 +31,61 @@ func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int, userID string
 	}, nil
 }
 
-// registerProxyRoutes registers the raw HTML proxy endpoint.
+// registerProxyRoutes registers the raw HTML proxy endpoint plus the
+// browser-worker status endpoints. All routes here are mounted on the
+// authenticated /api group: proxy fetches drive a connected browser worker to
+// load arbitrary URLs (carrying the user's live browser session), so they must
+// not be reachable anonymously, and the status endpoints must not leak the set
+// of connected workers to unauthenticated callers.
 func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/browser-workers", func(e *core.RequestEvent) error {
+		browserWorkersMu.RLock()
+		workers := make([]map[string]any, 0, len(browserWorkers))
+		for _, w := range browserWorkers {
+			w.mu.Lock()
+			if w.UserID == e.Auth.Id {
+				workers = append(workers, map[string]any{
+					"id":            w.ID,
+					"browser":       w.Browser,
+					"version":       w.Version,
+					"state":         w.State,
+					"capabilities":  w.Capabilities,
+					"connectedAt":   w.ConnectedAt,
+					"lastHeartbeat": w.LastHeartbeat,
+				})
+			}
+			w.mu.Unlock()
+		}
+		browserWorkersMu.RUnlock()
+		return e.JSON(http.StatusOK, map[string]any{
+			"count":   len(workers),
+			"workers": workers,
+		})
+	})
+
+	api.GET("/proxy/status", func(e *core.RequestEvent) error {
+		browserWorkersMu.RLock()
+		workers := make([]map[string]any, 0, len(browserWorkers))
+		for _, w := range browserWorkers {
+			w.mu.Lock()
+			if w.UserID == e.Auth.Id {
+				workers = append(workers, map[string]any{
+					"id":          w.ID,
+					"browser":     w.Browser,
+					"state":       w.State,
+					"connectedAt": w.ConnectedAt,
+				})
+			}
+			w.mu.Unlock()
+		}
+		browserWorkersMu.RUnlock()
+		return e.JSON(http.StatusOK, map[string]any{
+			"connected": len(workers) > 0,
+			"count":     len(workers),
+			"workers":   workers,
+		})
+	})
+
 	api.POST("/proxy/fetch", func(e *core.RequestEvent) error {
 		body := struct {
 			URL     string `json:"url"`
