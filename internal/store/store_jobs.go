@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -177,7 +178,9 @@ func (s *Store) LoadJobChapters(job *Job) ([]Chapter, *Novel, error) {
 	selected := chapters
 	if strings.TrimSpace(job.ChapterIDs) != "" && job.ChapterIDs != "[]" {
 		var ids []string
-		_ = json.Unmarshal([]byte(job.ChapterIDs), &ids)
+		if err := json.Unmarshal([]byte(job.ChapterIDs), &ids); err != nil {
+			return nil, nil, fmt.Errorf("parse job chapter ids: %w", err)
+		}
 		allowed := map[string]bool{}
 		for _, id := range ids {
 			allowed[id] = true
