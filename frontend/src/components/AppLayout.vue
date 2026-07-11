@@ -322,7 +322,7 @@ function handleMobileNav(command?: () => void) {
 }
 
 .mobile-nav-item--danger {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .mobile-nav-badge {
