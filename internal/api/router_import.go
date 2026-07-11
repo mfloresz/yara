@@ -489,7 +489,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				}
 			}
 		}
-		_ = s.Store.UpdateNovelCheckResult(novelID, time.Now().Format(time.RFC3339), newAvailable)
+		if err := s.Store.UpdateNovelCheckResult(novelID, time.Now().Format(time.RFC3339), newAvailable); err != nil {
+			slog.Warn("update novel check result", "novel", novelID, "error", err)
+		}
 		return e.JSON(http.StatusOK, map[string]any{
 			"title":           info.Title,
 			"author":          info.Author,
@@ -724,7 +726,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				})
 			}
 			checked++
-			_ = s.Store.UpdateNovelCheckResult(novel.ID, time.Now().Format(time.RFC3339), newAvailable)
+			if err := s.Store.UpdateNovelCheckResult(novel.ID, time.Now().Format(time.RFC3339), newAvailable); err != nil {
+				slog.Warn("update novel check result", "novel", novel.ID, "error", err)
+			}
 			if newAvailable > 0 {
 				withUpdates++
 			}
@@ -900,7 +904,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				for _, chapter := range chapters {
 					chIDs = append(chIDs, chapter.ID)
 				}
-				_ = s.Store.UpdateChaptersStatusFast(chIDs, "processing", "")
+				if err := s.Store.UpdateChaptersStatusFast(chIDs, "processing", ""); err != nil {
+					slog.Warn("mark chapters processing for batch translate", "novel", sel.NovelID, "jobId", job.ID, "error", err)
+				}
 			}
 			s.enqueueJob(job.ID)
 			jobs = append(jobs, store.BatchTranslateJobResult{

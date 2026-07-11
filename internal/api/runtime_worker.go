@@ -477,7 +477,9 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 	}
 
 	checkedAt := time.Now().Format(time.RFC3339)
-	_ = s.Store.UpdateNovelCheckResult(job.NovelID, checkedAt, newAvailable)
+	if err := s.Store.UpdateNovelCheckResult(job.NovelID, checkedAt, newAvailable); err != nil {
+		slog.Warn("update novel check result", "jobId", job.ID, "novelId", job.NovelID, "error", err)
+	}
 
 	return s.Store.UpdateJob(job.ID, map[string]interface{}{
 		"status":      "done",

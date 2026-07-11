@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -50,8 +51,12 @@ func registerEpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *
 					fileKey := novelRecord.BaseFilesPath() + "/" + novel.CoverFile
 					if reader, rErr := fsys.GetReader(fileKey); rErr == nil {
 						defer reader.Close()
-						coverBytes, _ = epubexport.ReadCloserToBytes(reader)
-						coverMime = epubexport.DetectImageMime(coverBytes)
+						if data, bErr := epubexport.ReadCloserToBytes(reader); bErr == nil {
+							coverBytes = data
+							coverMime = epubexport.DetectImageMime(coverBytes)
+						} else {
+							slog.Warn("read novel cover for epub export", "novel", novel.ID, "error", bErr)
+						}
 					}
 				}
 			}
