@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -28,12 +29,7 @@ func (p *cherrymistParser) CanHandle(urlStr string) bool {
 }
 
 func (p *cherrymistParser) GetNovelInfo(ctx context.Context, client HTTPClient, url string) (*NovelInfo, error) {
-	raw, err := client.Fetch(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
+	doc, err := client.FetchDocument(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -43,9 +39,7 @@ func (p *cherrymistParser) GetNovelInfo(ctx context.Context, client HTTPClient, 
 	}
 
 	// Title: prefer og:title, fall back to h1.story__identity-title
-	if content, exists := doc.Find("meta[property='og:title']").Attr("content"); exists {
-		info.Title = strings.TrimSpace(content)
-	}
+	info.Title = metaContent(doc, "meta[property='og:title']")
 	if info.Title == "" {
 		if t := doc.Find("h1.story__identity-title").Text(); t != "" {
 			info.Title = strings.TrimSpace(t)
@@ -93,20 +87,14 @@ func (p *cherrymistParser) GetNovelInfo(ctx context.Context, client HTTPClient, 
 		info.Description = strings.Join(descParts, "\n\n")
 	}
 	if info.Description == "" {
-		if content, exists := doc.Find("meta[property='og:description']").Attr("content"); exists {
-			info.Description = strings.TrimSpace(content)
-		}
+		info.Description = metaContent(doc, "meta[property='og:description']")
 	}
 	if info.Description == "" {
-		if content, exists := doc.Find("meta[name='description']").Attr("content"); exists {
-			info.Description = strings.TrimSpace(content)
-		}
+		info.Description = metaContent(doc, "meta[name='description']")
 	}
 
 	// Cover image
-	if content, exists := doc.Find("meta[property='og:image']").Attr("content"); exists && content != "" {
-		info.CoverURL = content
-	}
+	info.CoverURL = metaContent(doc, "meta[property='og:image']")
 	if info.CoverURL == "" {
 		if coverImg := doc.Find("figure.story__thumbnail a[data-lightbox]"); coverImg.Length() > 0 {
 			if href, exists := coverImg.Attr("href"); exists && href != "" {
@@ -116,12 +104,12 @@ func (p *cherrymistParser) GetNovelInfo(ctx context.Context, client HTTPClient, 
 	}
 
 	// Chapters from the story page
-	info.Chapters = p.extractChaptersFromPage(doc)
+	info.Chapters = fictioneerExtractChapters(doc, cherryMistBaseURL, cherryMistChapterRe, true)
 
 	// Fallback: RSS feed if no chapters found on page
 	if len(info.Chapters) == 0 {
-		if storyID := p.extractStoryID(doc); storyID != "" {
-			chapters, err := p.fetchChaptersFromRSS(ctx, client, storyID)
+		if storyID := fictioneerStoryID(doc); storyID != "" {
+			chapters, err := fictioneerFetchChaptersFromRSS(ctx, client, cherryMistBaseURL, storyID)
 			if err == nil && len(chapters) > 0 {
 				info.Chapters = chapters
 			}
@@ -132,23 +120,18 @@ func (p *cherrymistParser) GetNovelInfo(ctx context.Context, client HTTPClient, 
 }
 
 func (p *cherrymistParser) GetChapterURLs(ctx context.Context, client HTTPClient, doc *goquery.Document, url string) ([]ChapterURL, error) {
-	chapters := p.extractChaptersFromPage(doc)
+	chapters := fictioneerExtractChapters(doc, cherryMistBaseURL, cherryMistChapterRe, true)
 	if len(chapters) > 0 {
 		return chapters, nil
 	}
-	if storyID := p.extractStoryID(doc); storyID != "" {
-		return p.fetchChaptersFromRSS(ctx, client, storyID)
+	if storyID := fictioneerStoryID(doc); storyID != "" {
+		return fictioneerFetchChaptersFromRSS(ctx, client, cherryMistBaseURL, storyID)
 	}
 	return nil, nil
 }
 
 func (p *cherrymistParser) ParseChapter(ctx context.Context, client HTTPClient, chapterURL string) (*Chapter, error) {
-	raw, err := client.Fetch(ctx, chapterURL)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
+	doc, err := client.FetchDocument(ctx, chapterURL)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +139,7 @@ func (p *cherrymistParser) ParseChapter(ctx context.Context, client HTTPClient, 
 	// Title
 	title := strings.TrimSpace(doc.Find("h1.chapter__title").Text())
 	if title == "" {
-		if content, exists := doc.Find("meta[property='og:title']").Attr("content"); exists {
-			title = strings.TrimSpace(content)
-		}
+		title = metaContent(doc, "meta[property='og:title']")
 	}
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("h1").First().Text())
@@ -180,14 +161,7 @@ func (p *cherrymistParser) ParseChapter(ctx context.Context, client HTTPClient, 
 		contentSel.Find("script, style, noscript, iframe, nav, header, footer").Remove()
 		contentSel.Find("[style*='display:none'], [style*='display: none']").Remove()
 
-		var contentParts []string
-		contentSel.Find("p").Each(func(_ int, sel *goquery.Selection) {
-			text := strings.TrimSpace(sel.Text())
-			if text != "" {
-				contentParts = append(contentParts, "<p>"+text+"</p>")
-			}
-		})
-		content = strings.Join(contentParts, "\n")
+		content = strings.Join(extractParagraphs(contentSel), "\n")
 	}
 
 	return &Chapter{
@@ -233,7 +207,7 @@ func (p *cherrymistParser) decryptContent(doc *goquery.Document) string {
 	// Concatenate data-{poly}-{i} chunks
 	var concatenated strings.Builder
 	for i := 0; i < total; i++ {
-		chunk, _ := scriptSel.Attr("data-" + poly + "-" + itoa(i))
+		chunk, _ := scriptSel.Attr("data-" + poly + "-" + strconv.Itoa(i))
 		concatenated.WriteString(chunk)
 	}
 	encoded := concatenated.String()
@@ -283,169 +257,3 @@ func rot13Decode(s string) string {
 	}
 	return sb.String()
 }
-
-// itoa converts a non-negative integer to its decimal string representation.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
-
-func (p *cherrymistParser) extractChaptersFromPage(doc *goquery.Document) []ChapterURL {
-	var chapters []ChapterURL
-	seen := make(map[string]bool)
-
-	// Look for chapter links using the Fictioneer theme's structure
-	doc.Find("li.chapter-group__list-item").Each(func(_ int, li *goquery.Selection) {
-		// Skip premium chapters (they require authentication)
-		if lihasClass(li, "_premium") {
-			return
-		}
-
-		link := li.Find("a.chapter-group__list-item-link")
-		if link.Length() == 0 {
-			return
-		}
-
-		href, exists := link.Attr("href")
-		if !exists {
-			return
-		}
-
-		// Normalize URL
-		if !strings.HasPrefix(href, "http") {
-			href = cherryMistBaseURL + href
-		}
-		href = strings.TrimSuffix(href, "/")
-
-		if seen[href] {
-			return
-		}
-		seen[href] = true
-
-		title := strings.TrimSpace(link.Text())
-
-		chapters = append(chapters, ChapterURL{
-			Title: title,
-			URL:   href,
-		})
-	})
-
-	// Fallback: look for any chapter-style links
-	if len(chapters) == 0 {
-		doc.Find("a").Each(func(_ int, a *goquery.Selection) {
-			href, exists := a.Attr("href")
-			if !exists {
-				return
-			}
-			if !cherryMistChapterRe.MatchString(href) {
-				return
-			}
-			if !strings.HasPrefix(href, "http") {
-				href = cherryMistBaseURL + href
-			}
-			href = strings.TrimSuffix(href, "/")
-			if seen[href] {
-				return
-			}
-			seen[href] = true
-
-			title := strings.TrimSpace(a.Text())
-			chapters = append(chapters, ChapterURL{
-				Title: title,
-				URL:   href,
-			})
-		})
-	}
-
-	return chapters
-}
-
-func (p *cherrymistParser) extractStoryID(doc *goquery.Document) string {
-	// Look in body data-story-id attribute
-	if storyID, exists := doc.Find("body").Attr("data-story-id"); exists {
-		return storyID
-	}
-
-	// Look in data attributes
-	var storyID string
-	doc.Find("[data-story-id]").Each(func(_ int, s *goquery.Selection) {
-		if storyID != "" {
-			return
-		}
-		if id, exists := s.Attr("data-story-id"); exists {
-			storyID = id
-		}
-	})
-
-	// Look in RSS feed link
-	if storyID == "" {
-		doc.Find("link[type='application/rss+xml']").Each(func(_ int, s *goquery.Selection) {
-			if storyID != "" {
-				return
-			}
-			href, exists := s.Attr("href")
-			if !exists {
-				return
-			}
-			if idx := strings.Index(href, "story_id="); idx != -1 {
-				storyID = href[idx+9:]
-				if ampIdx := strings.Index(storyID, "&"); ampIdx != -1 {
-					storyID = storyID[:ampIdx]
-				}
-			}
-		})
-	}
-
-	return storyID
-}
-
-func (p *cherrymistParser) fetchChaptersFromRSS(ctx context.Context, client HTTPClient, storyID string) ([]ChapterURL, error) {
-	rssURL := cherryMistBaseURL + "/feed/rss-chapters?story_id=" + storyID
-	raw, err := client.Fetch(ctx, rssURL)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
-	if err != nil {
-		return nil, err
-	}
-
-	var chapters []ChapterURL
-
-	doc.Find("item").Each(func(_ int, item *goquery.Selection) {
-		title := strings.TrimSpace(item.Find("title").Text())
-		link := strings.TrimSpace(item.Find("link").Text())
-
-		if link != "" {
-			chapters = append(chapters, ChapterURL{
-				Title: title,
-				URL:   link,
-			})
-		}
-	})
-
-	return chapters, nil
-}
-
-// lihasClass checks if an li element has a specific CSS class.
-func lihasClass(li *goquery.Selection, class string) bool {
-	classes, _ := li.Attr("class")
-	for _, c := range strings.Fields(classes) {
-		if c == class {
-			return true
-		}
-	}
-	return false
-}
-
-

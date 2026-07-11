@@ -31,12 +31,7 @@ func (p *empirenovelParser) CanHandle(urlStr string) bool {
 }
 
 func (p *empirenovelParser) GetNovelInfo(ctx context.Context, client HTTPClient, url string) (*NovelInfo, error) {
-	raw, err := client.Fetch(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
+	doc, err := client.FetchDocument(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -50,9 +45,7 @@ func (p *empirenovelParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 		info.Title = strings.TrimSpace(t)
 	}
 	if info.Title == "" {
-		if content, exists := doc.Find("meta[property='og:title']").Attr("content"); exists {
-			info.Title = strings.TrimSpace(content)
-		}
+		info.Title = metaContent(doc, "meta[property='og:title']")
 	}
 	if info.Title == "" {
 		info.Title = strings.TrimSpace(doc.Find("h1").First().Text())
@@ -67,13 +60,9 @@ func (p *empirenovelParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 	})
 
 	// Description: meta[name="description"]
-	if content, exists := doc.Find("meta[name='description']").Attr("content"); exists {
-		info.Description = strings.TrimSpace(content)
-	}
+	info.Description = metaContent(doc, "meta[name='description']")
 	if info.Description == "" {
-		if content, exists := doc.Find("meta[property='og:description']").Attr("content"); exists {
-			info.Description = strings.TrimSpace(content)
-		}
+		info.Description = metaContent(doc, "meta[property='og:description']")
 	}
 
 	// Cover: .cover img
@@ -86,9 +75,7 @@ func (p *empirenovelParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 		}
 	}
 	if info.CoverURL == "" {
-		if content, exists := doc.Find("meta[property='og:image']").Attr("content"); exists && content != "" {
-			info.CoverURL = content
-		}
+		info.CoverURL = metaContent(doc, "meta[property='og:image']")
 	}
 
 	// Chapters: paginated list across multiple pages
@@ -102,12 +89,7 @@ func (p *empirenovelParser) GetChapterURLs(ctx context.Context, client HTTPClien
 }
 
 func (p *empirenovelParser) ParseChapter(ctx context.Context, client HTTPClient, chapterURL string) (*Chapter, error) {
-	raw, err := client.Fetch(ctx, chapterURL)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
+	doc, err := client.FetchDocument(ctx, chapterURL)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +112,7 @@ func (p *empirenovelParser) ParseChapter(ctx context.Context, client HTTPClient,
 	// Remove non-content elements
 	contentSel.Find("script, style, noscript, iframe, nav, header, footer, .ads, .ad").Remove()
 
-	var contentParts []string
-	contentSel.Find("p").Each(func(_ int, sel *goquery.Selection) {
-		text := strings.TrimSpace(sel.Text())
-		if text != "" {
-			contentParts = append(contentParts, "<p>"+text+"</p>")
-		}
-	})
+	contentParts := extractParagraphs(contentSel)
 
 	// Fallback: extract all text if no paragraphs found
 	if len(contentParts) == 0 {
@@ -178,12 +154,7 @@ func (p *empirenovelParser) fetchAllChapterURLs(ctx context.Context, client HTTP
 			pageURL = pageURL + "?page=" + strconv.Itoa(page)
 		}
 
-		raw, err := client.Fetch(ctx, pageURL)
-		if err != nil {
-			continue
-		}
-
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(raw)))
+		doc, err := client.FetchDocument(ctx, pageURL)
 		if err != nil {
 			continue
 		}
