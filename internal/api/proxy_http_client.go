@@ -20,14 +20,19 @@ import (
 // handling.
 type ProxyHTTPClient struct {
 	server *Server
+	// userID scopes browser-worker jobs to the requesting user's own
+	// connected worker. Passing an empty userID would let the job be
+	// dispatched to ANY connected user's browser (routing the request through
+	// their IP and site cookies), so callers must supply the owner's ID.
+	userID string
 }
 
-func NewProxyHTTPClient(s *Server) *ProxyHTTPClient {
-	return &ProxyHTTPClient{server: s}
+func NewProxyHTTPClient(s *Server, userID string) *ProxyHTTPClient {
+	return &ProxyHTTPClient{server: s, userID: userID}
 }
 
 func (c *ProxyHTTPClient) Fetch(ctx context.Context, url string) ([]byte, error) {
-	result, err := c.server.EnqueueBrowserJob("fetch_page", url, nil, "")
+	result, err := c.server.EnqueueBrowserJob("fetch_page", url, nil, c.userID)
 	if err != nil {
 		return nil, fmt.Errorf("proxy fetch: %w", err)
 	}
@@ -72,18 +77,19 @@ var _ interface {
 // BrowserWorkerCheckerImpl implements noveldownloader.BrowserWorkerChecker.
 type BrowserWorkerCheckerImpl struct {
 	server *Server
+	userID string
 }
 
-func NewBrowserWorkerChecker(s *Server) *BrowserWorkerCheckerImpl {
-	return &BrowserWorkerCheckerImpl{server: s}
+func NewBrowserWorkerChecker(s *Server, userID string) *BrowserWorkerCheckerImpl {
+	return &BrowserWorkerCheckerImpl{server: s, userID: userID}
 }
 
 func (c *BrowserWorkerCheckerImpl) HasBrowserWorker() bool {
-	return c.server.HasBrowserWorker()
+	return c.server.HasBrowserWorkerForUser(c.userID)
 }
 
 func (c *BrowserWorkerCheckerImpl) NewProxyHTTPClient() noveldownloader.HTTPClient {
-	return NewProxyHTTPClient(c.server)
+	return NewProxyHTTPClient(c.server, c.userID)
 }
 
 // Ensure interface compliance at compile time.

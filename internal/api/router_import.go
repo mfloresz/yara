@@ -232,7 +232,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if strings.TrimSpace(body.URL) == "" {
 			return e.BadRequestError("url is required", nil)
 		}
-		info, err := s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
+		info, err := s.getNovelInfoWithFallback(e.Request.Context(), e.Auth.Id, body.URL)
 		if err != nil {
 			return e.BadRequestError(err.Error(), nil)
 		}
@@ -297,7 +297,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			delete(s.importInfoCache, cacheKey)
 			s.importInfoCacheMu.Unlock()
 		} else {
-			info, err = s.getNovelInfoWithFallback(e.Request.Context(), body.URL)
+			info, err = s.getNovelInfoWithFallback(e.Request.Context(), e.Auth.Id, body.URL)
 			if err != nil {
 				return e.BadRequestError(err.Error(), nil)
 			}
@@ -312,18 +312,18 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		}
 
 		var firstChapter []noveldownloader.Chapter
-		dl := s.DownloaderFactory()
+		dl := s.DownloaderFactory(e.Auth.Id)
 		parser := dl.FindParser(body.URL)
 
 		if parser != nil {
 			firstChapter, err = dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
-			if err != nil && s.HasBrowserWorker() {
+			if err != nil && s.HasBrowserWorkerForUser(e.Auth.Id) {
 				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
-				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, e.Auth.Id))
 				firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
 			}
-		} else if s.HasBrowserWorker() {
-			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s))
+		} else if s.HasBrowserWorkerForUser(e.Auth.Id) {
+			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, e.Auth.Id))
 			firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
 		} else {
 			return e.InternalServerError("failed to download first chapter", fmt.Errorf("no download method available"))
@@ -364,7 +364,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 
 		if info.CoverURL != "" {
 			coverBlob, coverMime, coverErr := dl.DownloadCover(e.Request.Context(), info.CoverURL)
-			if coverErr != nil && s.HasBrowserWorker() {
+			if coverErr != nil && s.HasBrowserWorkerForUser(e.Auth.Id) {
 				slog.Info("direct cover download failed, retrying via browser worker", "novel", result.Novel.ID, "error", coverErr)
 				coverBlob, coverMime, coverErr = s.FetchImageViaWorker(e.Request.Context(), info.CoverURL, e.Auth.Id, 60)
 			}
@@ -439,7 +439,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if strings.TrimSpace(novel.URL) == "" {
 			return e.BadRequestError("novel has no source URL", nil)
 		}
-		dl := s.DownloaderFactory()
+		dl := s.DownloaderFactory(e.Auth.Id)
 		info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
 		if err != nil {
 			return e.InternalServerError("failed to fetch novel info", err)
@@ -533,7 +533,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			delete(s.previewCache, cacheKey)
 			s.previewCacheMu.Unlock()
 		} else {
-			dl := s.DownloaderFactory()
+			dl := s.DownloaderFactory(e.Auth.Id)
 			info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
 			if err != nil {
 				return e.InternalServerError("failed to fetch novel info", err)
@@ -632,7 +632,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				Checked: 0, WithUpdates: 0, Errors: 0,
 			})
 		}
-		dl := s.DownloaderFactory()
+		dl := s.DownloaderFactory(e.Auth.Id)
 		supported := make([]store.Novel, 0, len(novels))
 		for _, n := range novels {
 			if dl.IsSupportedURL(n.URL) {

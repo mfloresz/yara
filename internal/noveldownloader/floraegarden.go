@@ -212,12 +212,22 @@ func (p *floraegardenParser) ParseChapter(ctx context.Context, client HTTPClient
 	}, nil
 }
 
-// titleCase converts a slug like "maskedreplicant8922" to "Maskedreplicant8922"
+// titleCase converts a slug like "masked-replicant" to "Masked Replicant",
+// splitting on hyphens/underscores and capitalizing each word.
 func titleCase(s string) string {
 	if s == "" {
 		return s
 	}
-	runes := []rune(s)
-	runes[0] = unicode.ToUpper(runes[0])
-	return string(runes)
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	for i, w := range fields {
+		if w == "" {
+			continue
+		}
+		runes := []rune(w)
+		runes[0] = unicode.ToUpper(runes[0])
+		fields[i] = string(runes)
+	}
+	return strings.Join(fields, " ")
 }

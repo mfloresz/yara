@@ -47,7 +47,7 @@ type Server struct {
 	queueMu                sync.Mutex
 	cancelMu               sync.Mutex
 	jobCancels             map[string]context.CancelFunc
-	DownloaderFactory      func() *noveldownloader.Downloader
+	DownloaderFactory      func(userID string) *noveldownloader.Downloader
 	previewCacheMu         sync.RWMutex
 	previewCache           map[string]previewCacheEntry
 	importInfoCacheMu      sync.RWMutex
@@ -68,14 +68,16 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
 	}
-	s.DownloaderFactory = func() *noveldownloader.Downloader {
+	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()
 
 		// Always wrap with the lazy fallback client. It checks for an
 		// available browser worker per-request, so it transparently starts
 		// using the proxy the moment a worker connects — even mid-job — and
-		// adds no overhead when none is connected.
-		checker := NewBrowserWorkerChecker(s)
+		// adds no overhead when none is connected. The checker is scoped to
+		// the owning user so proxy fetches only ever run on that user's own
+		// connected browser worker.
+		checker := NewBrowserWorkerChecker(s, userID)
 		client := noveldownloader.NewLazyFallbackClient(directClient, checker)
 
 		dl := noveldownloader.NewDownloaderWithClient(client)

@@ -89,7 +89,7 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -213,7 +213,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -307,7 +307,7 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -388,7 +388,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -459,7 +459,7 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	oldQueue := env.server.downloadQueue
 	env.server.downloadQueue = make(chan string, 1000)
 	close(oldQueue)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -542,7 +542,7 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 	oldQueue := env.server.downloadQueue
 	env.server.downloadQueue = make(chan string, 1000)
 	close(oldQueue)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
@@ -613,7 +613,7 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 	oldQueue := env.server.downloadQueue
 	env.server.downloadQueue = make(chan string, 1000)
 	close(oldQueue)
-	env.server.DownloaderFactory = func() *noveldownloader.Downloader {
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 

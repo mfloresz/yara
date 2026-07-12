@@ -1,11 +1,9 @@
 package api
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
@@ -107,7 +105,7 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 
 		slog.Info("proxy fetch request", "url", body.URL, "timeout", timeout)
 
-		if !s.HasBrowserWorker() {
+		if !s.HasBrowserWorkerForUser(e.Auth.Id) {
 			return e.BadRequestError("no browser worker connected", nil)
 		}
 
@@ -143,7 +141,3 @@ func getStringFromData(data map[string]interface{}, key string) string {
 	}
 	return ""
 }
-
-// Ensure unused imports are referenced.
-var _ = json.Marshal
-var _ = time.Now
