@@ -3,7 +3,6 @@
     <div class="stack-lg">
       <header class="page-header">
         <div>
-          <h1 class="page-title">Biblioteca</h1>
           <p class="muted small">{{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}</p>
         </div>
         <div class="page-actions">
@@ -128,7 +127,7 @@
               v-for="novel in group.novels"
               :key="novel.id"
               :novel="novel"
-  
+
             />
           </div>
         </section>
@@ -141,7 +140,7 @@
               v-for="novel in groupedNovels.ungrouped"
               :key="novel.id"
               :novel="novel"
-  
+
             />
           </div>
         </section>

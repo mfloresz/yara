@@ -476,6 +476,23 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		newAvailable++
 	}
 
+	cacheKey := job.OwnerID + ":" + job.NovelID
+	s.previewCacheMu.Lock()
+	s.previewCache[cacheKey] = previewCacheEntry{
+		chapters:  info.Chapters,
+		createdAt: time.Now(),
+	}
+	s.previewCacheMu.Unlock()
+	time.AfterFunc(previewCacheTTL, func() {
+		s.previewCacheMu.Lock()
+		defer s.previewCacheMu.Unlock()
+		if entry, exists := s.previewCache[cacheKey]; exists {
+			if time.Since(entry.createdAt) >= previewCacheTTL {
+				delete(s.previewCache, cacheKey)
+			}
+		}
+	})
+
 	checkedAt := time.Now().Format(time.RFC3339)
 	if err := s.Store.UpdateNovelCheckResult(job.NovelID, checkedAt, newAvailable); err != nil {
 		slog.Warn("update novel check result", "jobId", job.ID, "novelId", job.NovelID, "error", err)

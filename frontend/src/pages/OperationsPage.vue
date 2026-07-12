@@ -35,9 +35,11 @@
           :columns="columns"
           :data="filteredNovels"
           :row-key="(row: Novel) => row.id"
+          :checked-row-keys="selectedRowKeys"
           :pagination="{ pageSize: 50 }"
           :bordered="false"
           striped
+          @update:checked-row-keys="selectedRowKeys = $event as string[]"
         />
 
         <div class="operations-summary">
@@ -201,6 +203,12 @@ function updateResultsLabel(novel: Novel): string {
 }
 
 const columns: DataTableColumns<Novel> = [
+  {
+    type: "selection",
+    disabled(row) {
+      return !hasNewChapters(row);
+    },
+  },
   {
     title: "Nombre",
     key: "sourceTitle",

@@ -106,10 +106,15 @@
                   </div>
 
                   <div class="row-wrap" style="justify-content: flex-end; padding-top: 0.5rem; border-top: 1px solid var(--divide)">
-                    <n-button size="small" type="error" secondary @click="onDeleteNovel">
-                      <template #icon><n-icon><TrashOutline /></n-icon></template>
-                      Eliminar novela
-                    </n-button>
+                    <n-popconfirm @positive-click="onDeleteNovel">
+                      <template #trigger>
+                        <n-button size="small" type="error" secondary>
+                          <template #icon><n-icon><TrashOutline /></n-icon></template>
+                          Eliminar novela
+                        </n-button>
+                      </template>
+                      ¿Eliminar esta novela? Esta acción no se puede deshacer.
+                    </n-popconfirm>
                   </div>
                 </div>
             </n-card>
@@ -357,7 +362,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags } from "naive-ui";
+import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm } from "naive-ui";
 import { AddOutline, TrashOutline, ImageOutline } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
 import FieldNumber from "@/components/FieldNumber.vue";

@@ -75,11 +75,11 @@
           </n-button>
           <n-button v-if="isOwner" secondary block @click="toggleVisibility">
             <template #icon><n-icon><GlobeOutline /></n-icon></template>
-            {{ novel.isPublic ? 'Despublicar' : 'Publicar' }}
+            {{ novel.isPublic ? 'Compartiendo' : 'Compartir' }}
           </n-button>
           <n-button v-if="isOwner && novel.url" secondary block @click="updateUrlOpen = true">
             <template #icon><n-icon><RefreshOutline /></n-icon></template>
-            Actualizar desde URL
+            Actualizar
           </n-button>
         </div>
 
@@ -128,7 +128,7 @@
           </div>
         </header>
 
-        <n-tabs v-model:value="activeTab" type="segment" animated>
+        <n-tabs v-model:value="activeTab" type="bar" animated>
           <n-tab v-for="tab in visibleTabs" :key="tab.value" :name="tab.value">
             {{ tab.label }}
           </n-tab>
@@ -959,10 +959,11 @@ async function copyCurrentNovel() {
 
 async function toggleVisibility() {
   if (!novel.value || !isOwner.value) return;
+  const wasPublic = novel.value.isPublic;
   await api.novels.updateVisibility(novel.value.id, !novel.value.isPublic);
   novel.value = { ...novel.value, isPublic: !novel.value.isPublic };
   replaceNovelInList(novel.value);
-  message.success(novel.value.isPublic ? 'Novela despublicada' : 'Novela publicada', { duration: 2500 });
+  message.success(wasPublic ? 'Novela despublicada' : 'Novela publicada', { duration: 2500 });
 }
 
 async function onUrlUpdated(pending?: number) {
@@ -1091,17 +1092,9 @@ async function confirmDeleteChapter() {
   }
 }
 
-function onDeleteChapter({ event, chapter }: { event: Event; chapter: ChapterSummary }) {
-  dialog.warning({
-    title: "¿Eliminar este capítulo?",
-    content: "Esta acción no se puede deshacer.",
-    positiveText: "Eliminar",
-    negativeText: "Cancelar",
-    onPositiveClick: () => {
-      pendingDeleteChapterId.value = chapter.id;
-      void confirmDeleteChapter();
-    },
-  });
+function onDeleteChapter({ chapter }: { event: Event; chapter: ChapterSummary }) {
+  pendingDeleteChapterId.value = chapter.id;
+  void confirmDeleteChapter();
 }
 
 function askDeleteChapter(event: Event, id: string) {

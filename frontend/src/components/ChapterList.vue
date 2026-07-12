@@ -105,16 +105,20 @@
           </n-tag>
 
           <div v-if="isOwner" class="chapter-list-item-actions">
-            <n-button
-              quaternary
-              circle
-              size="tiny"
-              class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
-              aria-label="Eliminar"
-              @click="emit('delete', { event: $event, chapter: item.chapter })"
-            >
-              <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
-            </n-button>
+            <n-popconfirm @positive-click="emit('delete', { event: $event, chapter: item.chapter })">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  size="tiny"
+                  class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
+                  aria-label="Eliminar"
+                >
+                  <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
+                </n-button>
+              </template>
+              ¿Eliminar el capítulo "{{ item.chapter.title }}"?
+            </n-popconfirm>
           </div>
         </article>
       </template>
@@ -139,7 +143,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { NButton, NCard, NCheckbox, NPagination, NSkeleton, NTag, NIcon } from "naive-ui";
+import { NButton, NCard, NCheckbox, NPagination, NSkeleton, NTag, NIcon, NPopconfirm } from "naive-ui";
 import {
   TrashOutline,
   CloudUploadOutline,
