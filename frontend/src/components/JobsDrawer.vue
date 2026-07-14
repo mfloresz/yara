@@ -227,6 +227,15 @@ function jobCurrentActivityLabel(job: TranslationJob) {
   const segmentCount = job.autoSegmentCount ?? 0;
   const currentSegment = job.autoSegmentCurrentIndex ?? 0;
 
+  if (job.operation === "download") {
+    if (chapter) return `Descargando capítulo: ${chapter}`;
+    return "Descargando capítulos…";
+  }
+
+  if (job.operation === "check") {
+    return "Verificando capítulos…";
+  }
+
   if (segmentCount > 1 && chapter) {
     if (currentSegment > 0) return `Traduciendo ${chapter} · segmento ${currentSegment} de ${segmentCount}`;
     return `Preparando ${chapter} · ${segmentCount} segmentos`;

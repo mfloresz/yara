@@ -1,91 +1,98 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" title="Confirmar importación" :style="{ width: 'min(640px, 96vw)' }" @after-leave="reset">
-    <div class="stack-md">
-      <div v-if="preview" class="preview-card">
-        <div class="preview-cover">
-          <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
-          <div v-else class="cover-placeholder">
-            <n-icon :size="24"><ImageOutline /></n-icon>
+  <n-modal v-model:show="visible" preset="card" title="Confirmar importación" :style="{ width: 'min(820px, 96vw)' }" @after-leave="reset">
+    <div class="import-columns">
+      <div class="col-metadata">
+        <div v-if="preview" class="preview-card">
+          <div class="preview-cover">
+            <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
+            <div v-else class="cover-placeholder">
+              <n-icon :size="24"><ImageOutline /></n-icon>
+            </div>
+          </div>
+          <div class="preview-info">
+            <h3 style="margin: 0">{{ preview.title || "Sin título" }}</h3>
+            <div v-if="preview.author" class="muted small">
+              <n-icon :size="14" style="margin-right: 0.25rem"><PersonOutline /></n-icon>
+              {{ preview.author }}
+            </div>
+            <div class="muted small">
+              <n-icon :size="14" style="margin-right: 0.25rem"><ListOutline /></n-icon>
+              <strong>{{ preview.totalChapters }}</strong> capítulos disponibles
+            </div>
+            <div v-if="preview.sourceURL" class="muted small" style="word-break: break-all">
+              <n-icon :size="14" style="margin-right: 0.25rem"><LinkOutline /></n-icon>
+              {{ preview.sourceURL }}
+            </div>
           </div>
         </div>
-        <div class="preview-info">
-          <h3 style="margin: 0">{{ preview.title || "Sin título" }}</h3>
-          <div v-if="preview.author" class="muted small">
-            <n-icon :size="14" style="margin-right: 0.25rem"><PersonOutline /></n-icon>
-            {{ preview.author }}
-          </div>
-          <div class="muted small">
-            <n-icon :size="14" style="margin-right: 0.25rem"><ListOutline /></n-icon>
-            <strong>{{ preview.totalChapters }}</strong> capítulos disponibles
-          </div>
-          <div v-if="preview.sourceURL" class="muted small" style="word-break: break-all">
-            <n-icon :size="14" style="margin-right: 0.25rem"><LinkOutline /></n-icon>
-            {{ preview.sourceURL }}
-          </div>
+
+        <div v-if="preview?.description" style="margin-top: 0.75rem">
+          <label class="small muted">Descripción</label>
+          <div class="description-box small">{{ preview.description }}</div>
         </div>
       </div>
 
-      <div v-if="preview?.description">
-        <label class="small muted">Descripción</label>
-        <div class="description-box small">{{ preview.description }}</div>
-      </div>
-
-      <div class="row-wrap">
-        <div style="flex: 1; min-width: 140px">
+      <div class="col-config">
+        <div class="config-section">
           <label class="small muted">Idioma origen</label>
           <n-select v-model:value="sourceLanguage" :options="languageOptions" :disabled="loading" />
         </div>
-        <div style="flex: 1; min-width: 140px">
+
+        <div class="config-section">
           <label class="small muted">Idioma destino</label>
           <n-select v-model:value="targetLanguage" :options="languageOptionsNoAuto" :disabled="loading" />
         </div>
-      </div>
 
-      <div class="stack-sm">
-        <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-          <n-radio :checked="mode === 'all'" />
-          <label>Descargar todos los {{ preview?.totalChapters ?? 0 }} capítulos</label>
-        </div>
-        <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-          <n-radio :checked="mode === 'range'" />
-          <label>Descargar un rango específico</label>
-        </div>
-      </div>
+        <div class="config-divider" />
 
-      <div v-if="mode === 'range'" class="row-wrap">
-        <div style="flex: 1; min-width: 120px">
+        <label class="small muted">Capítulos a descargar</label>
+        <div class="stack-sm" style="margin-top: 0.375rem">
+          <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
+            <n-radio :checked="mode === 'all'" />
+            <label>Todos ({{ preview?.totalChapters ?? 0 }})</label>
+          </div>
+          <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
+            <n-radio :checked="mode === 'range'" />
+            <label>Rango específico</label>
+          </div>
+        </div>
+
+        <div v-if="mode === 'range'" class="range-fields">
           <FieldNumber
             v-model="startChapter"
-            label="Capítulo inicial"
+            label="Desde"
             :min="1"
             :max="preview?.totalChapters ?? 1"
             :disabled="loading"
+            wrapper-style="min-width: 0"
           />
-        </div>
-        <div style="flex: 1; min-width: 120px">
           <FieldNumber
             v-model="endChapter"
-            label="Capítulo final"
+            label="Hasta"
             :min="startChapter"
             :max="preview?.totalChapters ?? 1"
             :disabled="loading"
+            wrapper-style="min-width: 0"
           />
         </div>
       </div>
-
-      <n-alert v-if="error" type="error">{{ error }}</n-alert>
     </div>
+
+    <n-alert v-if="error" type="error" style="margin-top: 0.75rem">{{ error }}</n-alert>
+
     <template #action>
-      <n-button secondary :disabled="loading" @click="handleBack">Atrás</n-button>
-      <n-button
-        type="primary"
-        :loading="loading"
-        :disabled="!targetLanguage || (mode === 'range' && (!startChapter || !endChapter || startChapter > endChapter))"
-        @click="handleImport"
-      >
-        <template #icon><n-icon><DownloadOutline /></n-icon></template>
-        {{ loading ? 'Importando...' : 'Importar' }}
-      </n-button>
+      <div class="action-bar">
+        <n-button secondary :disabled="loading" @click="handleBack">Atrás</n-button>
+        <n-button
+          type="primary"
+          :loading="loading"
+          :disabled="!targetLanguage || (mode === 'range' && (!startChapter || !endChapter || startChapter > endChapter))"
+          @click="handleImport"
+        >
+          <template #icon><n-icon><DownloadOutline /></n-icon></template>
+          {{ loading ? 'Importando...' : 'Importar' }}
+        </n-button>
+      </div>
     </template>
   </n-modal>
 </template>
@@ -199,28 +206,52 @@ async function handleImport() {
 </script>
 
 <style scoped>
+.import-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+.col-metadata {
+  min-width: 0;
+}
+.col-config {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+}
+.config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.config-divider {
+  height: 1px;
+  background: var(--divide);
+  margin: 0.25rem 0;
+}
 .preview-card {
   display: flex;
-  gap: 1rem;
-  padding: 1rem;
+  gap: 0.875rem;
+  padding: 0.875rem;
   background: var(--surface-muted);
   border: 1px solid var(--divide);
   border-radius: 8px;
 }
 .preview-cover {
   flex-shrink: 0;
-  width: 90px;
+  width: 80px;
 }
 .preview-cover img {
-  width: 90px;
-  height: 130px;
+  width: 80px;
+  height: 115px;
   object-fit: cover;
   border-radius: 6px;
   background: #f3f4f6;
 }
 .cover-placeholder {
-  width: 90px;
-  height: 130px;
+  width: 80px;
+  height: 115px;
   border-radius: 6px;
   background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
   display: flex;
@@ -236,7 +267,7 @@ async function handleImport() {
   flex: 1;
 }
 .description-box {
-  max-height: 140px;
+  max-height: 200px;
   overflow: auto;
   padding: 0.6rem 0.75rem;
   background: var(--surface-muted);
@@ -245,12 +276,13 @@ async function handleImport() {
   color: var(--text-secondary);
   white-space: pre-wrap;
   line-height: 1.4;
+  font-size: 0.8125rem;
 }
 .radio-option {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
   border: 1px solid var(--divide);
   border-radius: 8px;
   cursor: pointer;
@@ -261,6 +293,22 @@ async function handleImport() {
 }
 .radio-option label {
   cursor: pointer;
-  flex: 1;
+  font-size: 0.875rem;
+}
+.range-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 0.375rem;
+}
+.action-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+@media (max-width: 640px) {
+  .import-columns {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

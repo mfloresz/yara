@@ -372,7 +372,7 @@ function clearSelection() {
 .chapter-list-order {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  width: 1.75rem;
+  min-width: 4.5ch;
   font-size: 0.8125rem;
 }
 
