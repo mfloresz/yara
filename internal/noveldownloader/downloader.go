@@ -46,6 +46,8 @@ func NewDownloader() *Downloader {
 			NewFloraeGardenParser(),
 			NewCherryMistParser(),
 			NewEmpireNovelParser(),
+			New69ShubaParser(),
+			NewSkyNovelsParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -66,6 +68,8 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewFloraeGardenParser(),
 			NewCherryMistParser(),
 			NewEmpireNovelParser(),
+			New69ShubaParser(),
+			NewSkyNovelsParser(),
 		},
 		client: client,
 	}

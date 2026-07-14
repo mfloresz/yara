@@ -387,3 +387,86 @@ func TestRealDownloaderUnsupported(t *testing.T) {
 		t.Errorf("expected error for unsupported URL")
 	}
 }
+
+func TestReal69Shuba(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://www.69shuba.com/book/59083.htm"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+	t.Logf("parser: %s", parser.Name())
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q", info.Title)
+	t.Logf("author=%q", info.Author)
+	t.Logf("coverURL=%q", info.CoverURL)
+	t.Logf("totalChapters=%d", len(info.Chapters))
+	desc := info.Description
+	if len(desc) > 300 {
+		desc = desc[:300] + "..."
+	}
+	t.Logf("descriptionLen=%d descPreview=%q", len(info.Description), desc)
+	if info.CoverURL == "" {
+		t.Errorf("empty coverURL")
+	}
+	if info.Description == "" {
+		t.Errorf("empty description")
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatalf("no chapters found")
+	}
+	t.Logf("first 3 chapters:")
+	for i, ch := range info.Chapters {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  - %s -> %s", ch.Title, ch.URL)
+	}
+	t.Logf("last 3 chapters:")
+	for i := len(info.Chapters) - 3; i < len(info.Chapters); i++ {
+		t.Logf("  - %s -> %s", info.Chapters[i].Title, info.Chapters[i].URL)
+	}
+}
+
+func TestReal69ShubaChapter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://www.69shuba.com/book/59083.htm"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatal("no chapters to test")
+	}
+	first := info.Chapters[0]
+	t.Logf("downloading first chapter: %s", first.URL)
+	chapter, err := dl.DownloadChapter(ctx, first.URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("title=%q contentLen=%d markdownLen=%d", chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 100 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+		t.Logf("content=%q", chapter.Content)
+		t.Logf("markdown=%q", chapter.Markdown)
+	}
+}
