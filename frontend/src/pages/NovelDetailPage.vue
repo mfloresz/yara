@@ -323,7 +323,7 @@
                   <div class="small muted">{{ job.provider || 'provider por defecto' }} · {{ job.model || 'model por defecto' }} · {{ formatDate(job.createdAt) }}</div>
                 </div>
                 <div class="row-wrap">
-                  <n-tag :type="jobTagType(job.status)" size="small" round>{{ jobStatusLabel(job.status) }}</n-tag>
+                  <n-tag :type="jobTagType(job.status)" size="small" round>{{ jobStatusLabel(job) }}</n-tag>
                   <n-button v-if="job.status === 'running' || job.status === 'pending'" size="small" type="error" secondary @click="cancelFailedHistoryJob(job.id)">Cancelar</n-button>
                 </div>
               </div>
@@ -480,6 +480,15 @@ import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useTranslationJobs } from "@/composables/useTranslationJobs";
 import {
+  jobStatusLabel,
+  jobTagType,
+  jobFinishedChapterCount,
+  jobHasStartedWork,
+  jobShowsCompletedProgress,
+  jobProgress,
+  jobCurrentActivityLabel,
+} from "@/composables/useJobHelpers";
+import {
   getNovelDisplayAuthor,
   getNovelDisplayDescription,
   getNovelDisplayNumber,
@@ -621,51 +630,6 @@ function novelStatusType(status: NovelStatus) {
 function resolvedChapterStatus(chapter: Chapter | ChapterSummary): Chapter["status"] {
   if (chapter.status === "processing") return "processing";
   return chapter.status;
-}
-
-function jobFinishedChapterCount(job: TranslationJob) {
-  return job.completedChapters + job.failedChapters;
-}
-
-function jobHasStartedWork(job: TranslationJob) {
-  return job.status === "running" && (
-    jobFinishedChapterCount(job) > 0 ||
-    Boolean(job.autoSegmentActive) ||
-    Boolean((job.autoSegmentChapterTitle || job.autoSegmentChapterId || "").trim())
-  );
-}
-
-function jobShowsCompletedProgress(job: TranslationJob) {
-  return !jobHasStartedWork(job) || jobFinishedChapterCount(job) > 0;
-}
-
-function jobProgress(job: TranslationJob) {
-  if (job.totalChapters <= 0) return 0;
-  return Math.round((jobFinishedChapterCount(job) / job.totalChapters) * 100);
-}
-
-function jobCurrentActivityLabel(job: TranslationJob) {
-  if (job.status === "pending") return "En cola…";
-  if (job.status !== "running") return "";
-
-  const chapter = (job.autoSegmentChapterTitle || job.autoSegmentChapterId || "").trim();
-  const segmentCount = job.autoSegmentCount ?? 0;
-  const currentSegment = job.autoSegmentCurrentIndex ?? 0;
-
-  if (segmentCount > 1 && chapter) {
-    if (currentSegment > 0) return `Traduciendo ${chapter} · segmento ${currentSegment} de ${segmentCount}`;
-    return `Preparando ${chapter} · ${segmentCount} segmentos`;
-  }
-
-  if (segmentCount > 1) {
-    if (currentSegment > 0) return `Traduciendo segmento ${currentSegment} de ${segmentCount}`;
-    return `Preparando ${segmentCount} segmentos`;
-  }
-
-  if (job.totalChapters === 1 && chapter) return `Traduciendo capítulo actual: ${chapter}`;
-  if (job.totalChapters === 1) return "Traduciendo capítulo actual…";
-  if (chapter) return `Traduciendo capítulo actual: ${chapter}`;
-  return "Traduciendo capítulos…";
 }
 
 const translateOperationOptions = [
@@ -1053,26 +1017,6 @@ function chapterTagType(status: Chapter["status"]) {
 function charsLabel(value?: string) {
   if (!value) return "-";
   return `${value.length.toLocaleString()} chars`;
-}
-
-function jobStatusLabel(status: TranslationJob["status"]) {
-  return {
-    pending: "Pendiente",
-    running: "En progreso",
-    done: "Completado",
-    cancelled: "Cancelado",
-    failed: "Fallido",
-  }[status] || status;
-}
-
-function jobTagType(status: TranslationJob["status"]) {
-  return ({
-    pending: "default",
-    running: "info",
-    done: "success",
-    cancelled: "warning",
-    failed: "error",
-  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
 }
 
 function jobFailedChapters(job: TranslationJob) {

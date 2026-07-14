@@ -105,6 +105,7 @@ import { ImageOutline, PersonOutline, ListOutline, LinkOutline, DownloadOutline 
 import FieldNumber from "@/components/FieldNumber.vue";
 import { LANGUAGES } from "@/config/languages";
 import { useNovels } from "@/composables/useNovels";
+import { emitJobChanged } from "@/utils/job-events";
 import type { PreviewUrlResult } from "@/api/types";
 
 const props = defineProps<{
@@ -195,6 +196,7 @@ async function handleImport() {
       { duration: 4000 },
     );
     emit("imported");
+    emitJobChanged();
     visible.value = false;
     await router.push(`/novels/${result.novel.id}`);
   } catch (err) {

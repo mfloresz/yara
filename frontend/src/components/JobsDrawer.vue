@@ -32,7 +32,9 @@
                   class="job-title"
                   @click="openNovel(job)"
                 >
-                  {{ job.novelTitle || job.novelId }}
+                  <n-ellipsis :line-clamp="1">
+                    {{ job.novelTitle || job.novelId }}
+                  </n-ellipsis>
                 </n-button>
                 <div class="small muted" style="margin-top: 0.2rem">
                   {{ operationLabel(job) }}
@@ -42,7 +44,7 @@
                 </div>
               </div>
               <n-tag :type="jobTagType(job.status)" size="small" round>
-                {{ jobStatusLabel(job.status) }}
+                {{ jobStatusLabel(job) }}
               </n-tag>
             </div>
 
@@ -113,9 +115,26 @@ import {
   NSpin,
   NIcon,
   NButton,
+  NEllipsis,
 } from "naive-ui";
 import { AlertCircleOutline, CheckmarkCircleOutline, StopOutline } from "@vicons/ionicons5";
 import { useActiveJobs } from "@/composables/useActiveJobs";
+import {
+  jobStatusLabel,
+  jobTagType,
+  operationLabel,
+  showsProviderMeta,
+  showAutoSegmentMeta,
+  showAutoSegmentProgress,
+  autoSegmentLabel,
+  jobFinishedChapterCount,
+  jobHasStartedWork,
+  jobShowsCompletedProgress,
+  jobProgress,
+  jobCurrentActivityLabel,
+  segmentCompletedLabel,
+  segmentProgress,
+} from "@/composables/useJobHelpers";
 import type { TranslationJob } from "@/domain";
 
 const router = useRouter();
@@ -131,126 +150,6 @@ onMounted(() => window.addEventListener("resize", handleResize));
 onBeforeUnmount(() => window.removeEventListener("resize", handleResize));
 
 const drawerWidth = computed(() => (windowWidth.value <= 480 ? "100%" : 420));
-
-function jobFinishedChapterCount(job: TranslationJob) {
-  return job.completedChapters + job.failedChapters;
-}
-
-function jobHasStartedWork(job: TranslationJob) {
-  return job.status === "running" && (
-    jobFinishedChapterCount(job) > 0 ||
-    Boolean(job.autoSegmentActive) ||
-    Boolean((job.autoSegmentChapterTitle || job.autoSegmentChapterId || "").trim())
-  );
-}
-
-function jobShowsCompletedProgress(job: TranslationJob) {
-  return !jobHasStartedWork(job) || jobFinishedChapterCount(job) > 0;
-}
-
-function jobProgress(job: TranslationJob) {
-  if (job.totalChapters <= 0) return 0;
-  return Math.round((jobFinishedChapterCount(job) / job.totalChapters) * 100);
-}
-
-function jobStatusLabel(status: TranslationJob["status"]) {
-  return {
-    pending: "Pendiente",
-    running: "En progreso",
-    done: "Completado",
-    cancelled: "Cancelado",
-    failed: "Fallido",
-  }[status] || status;
-}
-
-function operationLabel(job: TranslationJob) {
-  switch (job.operation) {
-    case "download":
-      return "Descarga";
-    case "check":
-      return "Verificación";
-    case "refine":
-      return "Refinamiento";
-    default:
-      return "Traducción";
-  }
-}
-
-function showsProviderMeta(job: TranslationJob) {
-  return job.operation !== "download" && job.operation !== "check" && Boolean(job.provider || job.model);
-}
-
-function jobTagType(status: TranslationJob["status"]) {
-  return ({
-    pending: "default",
-    running: "info",
-    done: "success",
-    cancelled: "warning",
-    failed: "error",
-  }[status] || "default") as "default" | "info" | "success" | "warning" | "error";
-}
-
-function showAutoSegmentMeta(job: TranslationJob) {
-  return job.operation !== "refine" && job.operation !== "download" && job.operation !== "check" && Boolean(job.autoSegmentChapterTitle || (job.autoSegmentCount ?? 0) > 1);
-}
-
-function showAutoSegmentProgress(job: TranslationJob) {
-  return (job.autoSegmentCount ?? 0) > 1;
-}
-
-function segmentCompletedLabel(job: TranslationJob) {
-  const completed = job.autoSegmentCompletedCount ?? 0;
-  const current = job.autoSegmentCurrentIndex ?? 0;
-  return Math.max(completed, current > 0 ? current - 1 : 0);
-}
-
-function segmentProgress(job: TranslationJob) {
-  const total = job.autoSegmentCount ?? 0;
-  if (total <= 0) return 0;
-  return Math.round((segmentCompletedLabel(job) / total) * 100);
-}
-
-function autoSegmentLabel(job: TranslationJob) {
-  const count = job.autoSegmentCount ?? 0;
-  const current = job.autoSegmentCurrentIndex ?? 0;
-  const chapter = (job.autoSegmentChapterTitle || job.autoSegmentChapterId || "").trim();
-  if (count > 1 && current > 0) return `${chapter} · segmento ${current} de ${count}`;
-  if (count > 1) return `${chapter} · ${count} segmentos`;
-  return chapter || "";
-}
-
-function jobCurrentActivityLabel(job: TranslationJob) {
-  if (job.status === "pending") return "En cola…";
-  if (job.status !== "running") return "";
-
-  const chapter = (job.autoSegmentChapterTitle || job.autoSegmentChapterId || "").trim();
-  const segmentCount = job.autoSegmentCount ?? 0;
-  const currentSegment = job.autoSegmentCurrentIndex ?? 0;
-
-  if (job.operation === "download") {
-    if (chapter) return `Descargando capítulo: ${chapter}`;
-    return "Descargando capítulos…";
-  }
-
-  if (job.operation === "check") {
-    return "Verificando capítulos…";
-  }
-
-  if (segmentCount > 1 && chapter) {
-    if (currentSegment > 0) return `Traduciendo ${chapter} · segmento ${currentSegment} de ${segmentCount}`;
-    return `Preparando ${chapter} · ${segmentCount} segmentos`;
-  }
-
-  if (segmentCount > 1) {
-    if (currentSegment > 0) return `Traduciendo segmento ${currentSegment} de ${segmentCount}`;
-    return `Preparando ${segmentCount} segmentos`;
-  }
-
-  if (job.totalChapters === 1 && chapter) return `Traduciendo capítulo actual: ${chapter}`;
-  if (job.totalChapters === 1) return "Traduciendo capítulo actual…";
-  if (chapter) return `Traduciendo capítulo actual: ${chapter}`;
-  return "Traduciendo capítulos…";
-}
 
 function openNovel(job: TranslationJob) {
   visible.value = false;

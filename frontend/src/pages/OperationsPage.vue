@@ -87,6 +87,7 @@ import {
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
 import { useActiveJobs } from "@/composables/useActiveJobs";
+import { jobStatusLabel } from "@/composables/useJobHelpers";
 import { emitJobChanged } from "@/utils/job-events";
 import type { Novel, TranslationJob } from "@/domain";
 
@@ -136,14 +137,6 @@ const activeCheckJobs = computed(() =>
 const activeDownloadCount = computed(() =>
   activeJobs.value.filter((j) => j.operation === "download").length,
 );
-
-function jobStatusLabel(job: TranslationJob): string {
-  if (job.status === "pending") return "En cola";
-  if (job.operation === "check") return "Verificando...";
-  if (job.operation === "download") return "Descargando...";
-  if (job.operation === "refine") return "Refinando...";
-  return "Traduciendo...";
-}
 
 function isActualizable(novel: Novel): boolean {
   if (!novel.url) return false;

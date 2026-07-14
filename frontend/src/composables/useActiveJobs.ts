@@ -2,6 +2,7 @@ import { computed, onScopeDispose, ref, unref, watch, type Ref } from "vue";
 import type { TranslationJob } from "@/domain";
 import { useAppServices } from "@/app/services";
 import { emitJobChanged, onJobChanged } from "@/utils/job-events";
+import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 
 export function useActiveJobs(
   options: { enabled?: boolean | Ref<boolean> } = {},
@@ -11,6 +12,7 @@ export function useActiveJobs(
   const loading = ref(false);
   const activeCount = computed(() => jobs.value.length);
   const isEnabled = computed(() => unref(options.enabled) ?? true);
+  const { refreshStatus } = useActiveJobStatus();
 
   let intervalId: number | null = null;
   let inflight = false;

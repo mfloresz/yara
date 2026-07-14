@@ -1,94 +1,68 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" title="Actualizar desde internet" :style="{ width: 'min(640px, 96vw)' }" @after-leave="reset">
-    <div class="stack-md">
-      <div v-if="loading" class="preview-loading">
-        <n-spin :size="40" />
-        <span class="muted small">Buscando capítulos nuevos en la fuente…</span>
-      </div>
+  <n-modal v-model:show="visible" preset="card" title="Actualizar desde internet" :style="{ width: 'min(480px, 96vw)' }" @after-leave="reset">
+    <div v-if="loading" class="preview-loading">
+      <n-spin :size="40" />
+      <span class="muted small">Buscando capítulos nuevos en la fuente…</span>
+    </div>
 
-      <div v-else-if="preview" class="preview-card">
-        <div class="preview-cover">
-          <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
-          <div v-else class="cover-placeholder">
-            <n-icon :size="24"><ImageOutline /></n-icon>
-          </div>
-        </div>
-        <div class="preview-info">
-          <h3 style="margin: 0">{{ preview.title || "Sin título" }}</h3>
-          <div v-if="preview.author" class="muted small">
-            <n-icon :size="14" style="margin-right: 0.25rem"><PersonOutline /></n-icon>
-            {{ preview.author }}
-          </div>
-          <div class="muted small">
-            <n-icon :size="14" style="margin-right: 0.25rem"><ListOutline /></n-icon>
-            <strong>{{ preview.currentChapters }}</strong> capítulos locales · <strong>{{ preview.totalChapters }}</strong> disponibles en la fuente
-          </div>
-          <div v-if="preview.sourceURL" class="muted small" style="word-break: break-all">
-            <n-icon :size="14" style="margin-right: 0.25rem"><LinkOutline /></n-icon>
-            {{ preview.sourceURL }}
-          </div>
-        </div>
-      </div>
-
-      <div v-if="preview?.description">
-        <label class="small muted">Descripción</label>
-        <div class="description-box small">{{ preview.description }}</div>
-      </div>
-
-      <n-alert v-if="!loading && preview && preview.newChapters === 0" type="success" :closable="false">
+    <template v-else-if="preview">
+      <n-alert v-if="preview.newChapters === 0" type="success" :closable="false">
         La novela ya está al día. No hay capítulos nuevos para descargar.
       </n-alert>
 
-      <div v-else-if="!loading && preview" class="stack-sm">
-        <n-alert type="info" :closable="false">
-          Hay <strong>{{ preview.newChapters }}</strong> capítulos nuevos disponibles (del {{ preview.firstNewChapter }} al {{ preview.lastNewChapter }}).
-        </n-alert>
+      <template v-else>
+        <div class="stack-sm">
+          <n-alert type="info" :closable="false">
+            Hay <strong>{{ preview.newChapters }}</strong> capítulos nuevos disponibles (del {{ preview.firstNewChapter }} al {{ preview.lastNewChapter }}).
+          </n-alert>
 
-        <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-          <n-radio :checked="mode === 'all'" />
-          <label>Descargar los {{ preview.newChapters }} capítulos nuevos</label>
+          <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
+            <n-radio :checked="mode === 'all'" />
+            <label>Descargar los {{ preview.newChapters }} capítulos nuevos</label>
+          </div>
+          <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
+            <n-radio :checked="mode === 'range'" />
+            <label>Descargar un rango específico</label>
+          </div>
         </div>
-        <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-          <n-radio :checked="mode === 'range'" />
-          <label>Descargar un rango específico</label>
-        </div>
-      </div>
 
-      <div v-if="mode === 'range' && preview" class="row-wrap">
-        <div style="flex: 1; min-width: 120px">
+        <div v-if="mode === 'range'" class="range-fields">
           <FieldNumber
             v-model="startChapter"
             label="Capítulo inicial"
             :min="preview.firstNewChapter"
             :max="preview.lastNewChapter"
             :disabled="loading"
+            wrapper-style="min-width: 0"
           />
-        </div>
-        <div style="flex: 1; min-width: 120px">
           <FieldNumber
             v-model="endChapter"
             label="Capítulo final"
             :min="startChapter"
             :max="preview.lastNewChapter"
             :disabled="loading"
+            wrapper-style="min-width: 0"
           />
         </div>
-      </div>
+      </template>
+    </template>
 
-      <n-alert v-if="error" type="error">{{ error }}</n-alert>
-      <n-alert v-if="success" type="success">{{ success }}</n-alert>
-    </div>
+    <n-alert v-if="error" type="error" style="margin-top: 0.75rem">{{ error }}</n-alert>
+    <n-alert v-if="success" type="success" style="margin-top: 0.75rem">{{ success }}</n-alert>
+
     <template #action>
-      <n-button secondary :disabled="loading" @click="visible = false">Cancelar</n-button>
-      <n-button
-        type="primary"
-        :loading="updating"
-        :disabled="!canUpdate"
-        @click="handleUpdate"
-      >
-        <template #icon><n-icon><RefreshOutline /></n-icon></template>
-        {{ updating ? 'Descargando...' : 'Actualizar' }}
-      </n-button>
+      <div class="action-bar">
+        <n-button secondary :disabled="loading" @click="visible = false">Cancelar</n-button>
+        <n-button
+          type="primary"
+          :loading="updating"
+          :disabled="!canUpdate"
+          @click="handleUpdate"
+        >
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+          {{ updating ? 'Descargando...' : 'Actualizar' }}
+        </n-button>
+      </div>
     </template>
   </n-modal>
 </template>
@@ -96,9 +70,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useMessage, NModal, NAlert, NButton, NRadio, NSpin, NIcon } from "naive-ui";
-import { ImageOutline, PersonOutline, ListOutline, LinkOutline, RefreshOutline } from "@vicons/ionicons5";
+import { RefreshOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { useAppServices } from "@/app/services";
+import { emitJobChanged } from "@/utils/job-events";
 import type { UpdateUrlPreviewResult } from "@/api/types";
 
 const props = defineProps<{ open: boolean; novelId: string }>();
@@ -189,6 +164,7 @@ async function handleUpdate() {
       success.value = `${result.chaptersAdded} capítulos nuevos descargados.`;
     }
     emit("updated", pending);
+    emitJobChanged();
     visible.value = false;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -206,59 +182,11 @@ async function handleUpdate() {
   gap: 0.75rem;
   padding: 1.5rem 0;
 }
-
-.preview-card {
-  display: flex;
-  gap: 1rem;
-  padding: 1rem;
-  background: var(--surface-muted);
-  border: 1px solid var(--divide);
-  border-radius: 8px;
-}
-.preview-cover {
-  flex-shrink: 0;
-  width: 90px;
-}
-.preview-cover img {
-  width: 90px;
-  height: 130px;
-  object-fit: cover;
-  border-radius: 6px;
-  background: #f3f4f6;
-}
-.cover-placeholder {
-  width: 90px;
-  height: 130px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #9ca3af;
-}
-.preview-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
-  flex: 1;
-}
-.description-box {
-  max-height: 120px;
-  overflow: auto;
-  padding: 0.6rem 0.75rem;
-  background: var(--surface-muted);
-  border: 1px solid var(--divide);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  line-height: 1.4;
-}
 .radio-option {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
   border: 1px solid var(--divide);
   border-radius: 8px;
   cursor: pointer;
@@ -269,6 +197,17 @@ async function handleUpdate() {
 }
 .radio-option label {
   cursor: pointer;
-  flex: 1;
+  font-size: 0.875rem;
+}
+.range-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 0.375rem;
+}
+.action-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 </style>
