@@ -38,6 +38,29 @@ func (s *Store) ListAllChapterSummariesAccessible(userID, novelID string) ([]Cha
 	return out, nil
 }
 
+func (s *Store) ListEligibleChapterSummariesAccessible(userID, novelID, operation string) ([]ChapterSummary, error) {
+	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+		return nil, err
+	}
+	var filter string
+	switch operation {
+	case "refine":
+		filter = "novel = {:novel} && (status = 'translated' || status = 'failed') && translated_content != ''"
+	default:
+		operation = "translate"
+		filter = "novel = {:novel} && (status = 'pending' || status = 'failed') && original_content != ''"
+	}
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, filter, "chapter_order", 5000, 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChapterSummary, 0, len(records))
+	for _, record := range records {
+		out = append(out, chapterSummaryFromRecord(record))
+	}
+	return out, nil
+}
+
 func (s *Store) ListChapterSummariesAccessible(userID, novelID string, limit, offset int) ([]ChapterSummary, int, error) {
 	novel, err := s.GetNovelAccessible(userID, novelID)
 	if err != nil {

@@ -283,7 +283,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}
 	for idx, chInfo := range opts.Chapters {
 		if err := ctx.Err(); err != nil {
-			return nil
+			break
 		}
 		if idx > 0 {
 			if err := dl.SleepBetweenChapters(ctx); err != nil {
@@ -295,7 +295,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 
 		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil
+				break
 			}
 			failed++
 			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", downloadErr)
@@ -336,14 +336,23 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	if err := s.Store.RecalculateNovelStats(job.NovelID); err != nil {
 		slog.Error("failed to recalculate novel stats after download", "jobId", job.ID, "error", err)
 	}
-	status := "done"
-	if failed > 0 {
-		status = "failed"
-	}
 	if ctx.Err() == nil {
 		if err := dl.SleepBetweenChapters(ctx); err != nil {
 			return err
 		}
+	}
+	if ctx.Err() != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"completedChapters": completed,
+			"failedChapters":    failed,
+		}); ue != nil {
+			slog.Warn("update job final counts on cancel", "jobId", job.ID, "error", ue)
+		}
+		return nil
+	}
+	status := "done"
+	if failed > 0 {
+		status = "failed"
 	}
 	return s.Store.UpdateJob(job.ID, map[string]interface{}{
 		"status":            status,

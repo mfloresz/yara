@@ -156,16 +156,22 @@
       <section v-else-if="activeTab === 'translate'" class="stack-md tab-panel" aria-labelledby="tab-translate">
         <h2 id="tab-translate" class="sr-only">{{ translateOperation === 'translate' ? 'Traducción' : 'Refinamiento' }}</h2>
         <n-card :title="translateOperation === 'translate' ? 'Traducción automática' : 'Refinamiento'">
-            <div v-if="allSummariesLoading" class="stack-md">
+            <div v-if="allSummariesLoading || (translateShowAll && translateAllLoading)" class="stack-md">
               <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
               <n-skeleton width="100%" height="14rem" style="border-radius: 12px" />
             </div>
             <div v-else class="stack-md">
               <div class="row-between">
-                <n-radio-group v-model:value="translateOperation" size="small">
-                  <n-radio-button value="translate">Traducir</n-radio-button>
-                  <n-radio-button value="refine">Refinar</n-radio-button>
-                </n-radio-group>
+                <div class="row-wrap" style="gap: 0.5rem">
+                  <n-radio-group v-model:value="translateOperation" size="small">
+                    <n-radio-button value="translate">Traducir</n-radio-button>
+                    <n-radio-button value="refine">Refinar</n-radio-button>
+                  </n-radio-group>
+                  <n-radio-group v-model:value="translateShowAll" size="small">
+                    <n-radio-button :value="false">Solo elegibles</n-radio-button>
+                    <n-radio-button :value="true">Listar Todos</n-radio-button>
+                  </n-radio-group>
+                </div>
                 <div class="row-wrap">
                   <n-button type="primary" :loading="translateSubmitting" :disabled="translateSelectedIds.size === 0 || translateSubmitting" @click="startTranslationJob">
                     <template #icon><n-icon><PlayOutline /></n-icon></template>
@@ -178,6 +184,7 @@
                 <n-button size="small" text @click="translateSelectedIds = new Set(eligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
                 <n-button size="small" text @click="translateSelectedIds = new Set()">Ninguno</n-button>
                 <span>{{ eligibleChapters.length }} capítulos elegibles</span>
+                <span v-if="translateShowAll"> · {{ translateAllSummaries.length }} totales</span>
               </div>
 
               <div v-if="eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
@@ -536,6 +543,10 @@ const chapterDraft = reactive<{ id?: string; chapterOrder: number; title: string
 });
 
 const translateOperation = ref<"translate" | "refine">("translate");
+const translateShowAll = ref(false);
+const translateAllSummaries = ref<ChapterSummary[]>([]);
+const translateAllLoaded = ref(false);
+const translateAllLoading = ref(false);
 const translateSelectedIds = ref<Set<string>>(new Set());
 const translateSubmitting = ref(false);
 let userTouchedTranslateSelection = false;
@@ -577,7 +588,8 @@ const completedChapters = computed(() => chapterStats.value.translatedChapters);
 const nextChapterOrder = computed(() => chapterStats.value.maxChapterOrder + 1);
 const hasProcessingChapters = computed(() =>
   chapterSummaries.value.some((chapter) => chapter.status === "processing") ||
-  allSummaries.value.some((chapter) => chapter.status === "processing"),
+  allSummaries.value.some((chapter) => chapter.status === "processing") ||
+  translateAllSummaries.value.some((chapter) => chapter.status === "processing"),
 );
 
 function novelStatusLabel(status: NovelStatus) {
@@ -660,13 +672,17 @@ const translateOperationOptions = [
   { label: "Traducir", value: "translate" },
   { label: "Refinar", value: "refine" },
 ];
-const eligibleChapters = computed(() => allSummaries.value.filter((chapter) => {
-  const status = resolvedChapterStatus(chapter);
-  if (translateOperation.value === "translate") {
-    return chapter.hasOriginalContent && (status === "pending" || status === "failed");
-  }
-  return chapter.hasTranslatedContent && (status === "translated" || status === "failed");
-}));
+const eligibleChapters = computed(() => {
+  const source = translateShowAll.value ? translateAllSummaries.value : allSummaries.value;
+  return source.filter((chapter) => {
+    const status = resolvedChapterStatus(chapter);
+    if (translateOperation.value === "translate") {
+      return chapter.hasOriginalContent && (status === "pending" || status === "failed");
+    }
+    return chapter.hasTranslatedContent && (status === "translated" || status === "failed");
+  });
+});
+const translateSourceSummaries = computed(() => translateShowAll.value ? translateAllSummaries.value : allSummaries.value);
 const cleanModeOptions = Object.entries(CLEAN_MODE_LABELS).map(([value, label]) => ({ value, label }));
 const cleanModeDescription = computed(() => CLEAN_MODE_DESCRIPTIONS[cleanMode.value]);
 const cleanApplyOptions = [
@@ -865,11 +881,23 @@ async function loadAllSummaries(force = false) {
   }
   allSummariesLoading.value = true;
   try {
-    allSummaries.value = await api.chapters.list(novelId.value);
+    allSummaries.value = await api.chapters.listEligible(novelId.value, translateOperation.value);
     allSummariesLoaded.value = true;
     allSummariesDirty.value = false;
   } finally {
     allSummariesLoading.value = false;
+  }
+}
+
+async function loadTranslateAll(force = false) {
+  if (!novelId.value) return;
+  if (!force && translateAllLoaded.value) return;
+  translateAllLoading.value = true;
+  try {
+    translateAllSummaries.value = await api.chapters.list(novelId.value);
+    translateAllLoaded.value = true;
+  } finally {
+    translateAllLoading.value = false;
   }
 }
 
@@ -912,6 +940,9 @@ watch(novelId, () => {
   fullChaptersLoaded.value = false;
   selectedChapters.value = [];
   translateSubmitting.value = false;
+  translateShowAll.value = false;
+  translateAllSummaries.value = [];
+  translateAllLoaded.value = false;
   allSummaries.value = [];
   allSummariesLoaded.value = false;
   allSummariesDirty.value = false;
@@ -931,7 +962,24 @@ watch(eligibleChapters, (items) => {
 
 watch(translateOperation, () => {
   userTouchedTranslateSelection = false;
+  translateShowAll.value = false;
+  translateAllSummaries.value = [];
+  translateAllLoaded.value = false;
+  void loadAllSummaries(true);
   translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
+});
+
+watch(translateShowAll, (showAll) => {
+  userTouchedTranslateSelection = false;
+  if (showAll) {
+    void loadTranslateAll(true).then(() => {
+      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
+    });
+  } else {
+    void loadAllSummaries(true).then(() => {
+      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
+    });
+  }
 });
 
 watch(hasActive, (active, previous) => {
@@ -1223,7 +1271,7 @@ function toggleTranslateChapter(id: string, checked: boolean) {
 
 async function startTranslationJob() {
   if (!novel.value) return;
-  const target = allSummaries.value.filter((chapter) => translateSelectedIds.value.has(chapter.id));
+  const target = translateSourceSummaries.value.filter((chapter) => translateSelectedIds.value.has(chapter.id));
   if (target.length === 0) return;
   translateSubmitting.value = true;
   try {
@@ -1234,6 +1282,9 @@ async function startTranslationJob() {
       model: novel.value.aiOptions.model || undefined,
     });
     allSummaries.value = patchSummaryStatus(allSummaries.value, targetIds, "processing");
+    if (translateShowAll.value) {
+      translateAllSummaries.value = patchSummaryStatus(translateAllSummaries.value, targetIds, "processing");
+    }
     chapterSummaries.value = patchSummaryStatus(chapterSummaries.value, targetIds, "processing");
     translateSelectedIds.value = new Set(
       Array.from(translateSelectedIds.value).filter((id) => !targetIds.includes(id)),

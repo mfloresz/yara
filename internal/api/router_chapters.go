@@ -182,6 +182,21 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 		return e.JSON(http.StatusOK, out)
 	})
+	api.GET("/db/novels/{novelId}/chapters/eligible", func(e *core.RequestEvent) error {
+		operation := e.Request.URL.Query().Get("operation")
+		if operation != "translate" && operation != "refine" {
+			operation = "translate"
+		}
+		chapters, err := s.Store.ListEligibleChapterSummariesAccessible(e.Auth.Id, e.Request.PathValue("novelId"), operation)
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		out := make([]map[string]any, 0, len(chapters))
+		for _, ch := range chapters {
+			out = append(out, chapterSummaryRecord(ch))
+		}
+		return e.JSON(http.StatusOK, out)
+	})
 	api.GET("/db/novels/{novelId}/chapters/full", func(e *core.RequestEvent) error {
 		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
 		if err != nil {

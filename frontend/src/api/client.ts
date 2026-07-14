@@ -371,6 +371,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       list(novelId: string) {
         return http.get<ChapterSummary[]>(`/api/db/novels/${novelId}/chapters`);
       },
+      listEligible(novelId: string, operation: "translate" | "refine") {
+        return http.get<ChapterSummary[]>(
+          `/api/db/novels/${novelId}/chapters/eligible?operation=${operation}`,
+        );
+      },
       listFull(novelId: string) {
         return http.get<Chapter[]>(`/api/db/novels/${novelId}/chapters/full`);
       },
