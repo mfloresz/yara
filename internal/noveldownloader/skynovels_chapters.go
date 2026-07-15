@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 type skynovelsVolume struct {
@@ -41,7 +40,7 @@ func (p *skynovelsParser) fetchAllChapters(ctx context.Context, client HTTPClien
 		return nil, err
 	}
 
-	var allChapters []ChapterURL
+	var allChapters []skynovelsChapterLink
 	for _, vol := range volumes {
 		chapters, err := p.fetchVolumeChapters(ctx, client, novelID, vol.ID, vol.ChaptersCount)
 		if err != nil {
@@ -51,10 +50,23 @@ func (p *skynovelsParser) fetchAllChapters(ctx context.Context, client HTTPClien
 	}
 
 	sort.SliceStable(allChapters, func(i, j int) bool {
-		return chapterNumberFromURL(allChapters[i].URL) < chapterNumberFromURL(allChapters[j].URL)
+		if allChapters[i].Number != allChapters[j].Number {
+			return allChapters[i].Number < allChapters[j].Number
+		}
+		return allChapters[i].URL < allChapters[j].URL
 	})
 
-	return allChapters, nil
+	result := make([]ChapterURL, 0, len(allChapters))
+	for _, ch := range allChapters {
+		result = append(result, ChapterURL{Title: ch.Title, URL: ch.URL})
+	}
+	return result, nil
+}
+
+type skynovelsChapterLink struct {
+	Title  string
+	URL    string
+	Number int
 }
 
 func (p *skynovelsParser) fetchVolumes(ctx context.Context, client HTTPClient, novelID int) ([]skynovelsVolume, error) {
@@ -73,9 +85,9 @@ func (p *skynovelsParser) fetchVolumes(ctx context.Context, client HTTPClient, n
 	return resp.Volumes, nil
 }
 
-func (p *skynovelsParser) fetchVolumeChapters(ctx context.Context, client HTTPClient, novelID, volumeID, total int) ([]ChapterURL, error) {
+func (p *skynovelsParser) fetchVolumeChapters(ctx context.Context, client HTTPClient, novelID, volumeID, total int) ([]skynovelsChapterLink, error) {
 	const pageSize = 100
-	var all []ChapterURL
+	var all []skynovelsChapterLink
 
 	for page := 1; ; page++ {
 		u := fmt.Sprintf("%s/volumes/%d/%d/chapters?page=%d&limit=%d",
@@ -93,9 +105,10 @@ func (p *skynovelsParser) fetchVolumeChapters(ctx context.Context, client HTTPCl
 
 		for _, ch := range resp.Items {
 			chURL := fmt.Sprintf("https://www.skynovels.net/novelas/%d/chapter/%d", novelID, ch.ID)
-			all = append(all, ChapterURL{
-				Title: ch.Title,
-				URL:   chURL,
+			all = append(all, skynovelsChapterLink{
+				Title:  ch.Title,
+				URL:    chURL,
+				Number: ch.Number,
 			})
 		}
 
@@ -105,16 +118,4 @@ func (p *skynovelsParser) fetchVolumeChapters(ctx context.Context, client HTTPCl
 	}
 
 	return all, nil
-}
-
-func chapterNumberFromURL(u string) int {
-	idx := strings.LastIndex(u, "/")
-	if idx == -1 {
-		return 0
-	}
-	n, err := strconv.Atoi(u[idx+1:])
-	if err != nil {
-		return 0
-	}
-	return n
 }
