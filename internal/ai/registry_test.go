@@ -1,6 +1,15 @@
 package ai
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/provider/openai"
+)
 
 func TestProvidersContainKnownEntries(t *testing.T) {
 	ids := map[string]bool{}
@@ -64,6 +73,33 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		if !wantModels[m] {
 			t.Fatalf("unexpected model %q in opencode-go", m)
 		}
+	}
+}
+
+func TestModelNameSuffixPassthrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		model, _ := body["model"].(string)
+		if model != "e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true" {
+			t.Fatalf("model name suffix was stripped or modified:\n  want: e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true\n  got:  %q", model)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer srv.Close()
+
+	model := openai.Chat("e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true",
+		openai.WithBaseURL(srv.URL),
+		openai.WithAPIKey("test-key"),
+	)
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText failed: %v", err)
 	}
 }
 
