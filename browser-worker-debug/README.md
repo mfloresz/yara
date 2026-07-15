@@ -1,54 +1,54 @@
 # Yara Browser Worker (Debug)
 
-Extensión de depuración del browser worker que **no requiere autenticación**. Diseñada para desarrollo y testing con sitios protegidos por Cloudflare.
+Debug version of the browser worker extension. **No authentication required**. Designed for development and testing with Cloudflare-protected sites.
 
-## Diferencias con la extensión principal
+## Differences from the main extension
 
-| Característica | Principal | Debug |
-|---------------|-----------|-------|
-| Autenticación | Requiere token de usuario | No requiere token |
-| Endpoint WebSocket | `/ws/browser-worker` | `/ws/browser-worker-debug` |
-| Almacenamiento | `yara_browser_worker` | `yara_browser_worker_debug` |
-| Uso | Producción | Desarrollo/Testing |
+| Feature | Main | Debug |
+|---------|------|-------|
+| Authentication | Requires user token | No token required |
+| WebSocket endpoint | `/ws/browser-worker` | `/ws/browser-worker-debug` |
+| Storage | `yara_browser_worker` | `yara_browser_worker_debug` |
+| Usage | Production | Development/Testing |
 
-## Funcionalidad maintainida
+## Maintained functionality
 
-- Proxy HTTP completo con manejo de cookies
-- Detección automática de Cloudflare challenges
-- Manejo de pestañas para resolver challenges
-- Extracción de HTML con soporte charset (GBK, UTF-8)
-- Reconexión automática
-- Mismo protocolo WebSocket que la extensión principal
+- Full HTTP proxy with cookie handling
+- Automatic Cloudflare challenge detection
+- Tab management for challenge resolution
+- HTML extraction with charset support (GBK, UTF-8)
+- Automatic reconnection
+- Same WebSocket protocol as main extension
 
-## Instalación
+## Installation
 
-1. Abrir Chrome y navegar a `chrome://extensions/`
-2. Activar "Developer mode" (esquina superior derecha)
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable "Developer mode" (top right corner)
 3. Click "Load unpacked"
-4. Seleccionar la carpeta `browser-worker-debug/`
-5. La extensión aparecerá con badge "DEBUG"
+4. Select the `browser-worker-debug/` folder
+5. The extension will appear with a "DEBUG" badge
 
-## Uso
+## Usage
 
-1. Iniciar el servidor: `./bin/translator-server`
-2. Click en el ícono de la extensión debug
-3. Click "Connect" (no pedirá credenciales)
-4. El servidor acceptará la conexión automáticamente
+1. Start the server: `./bin/translator-server`
+2. Click on the debug extension icon
+3. Click "Connect" (won't ask for credentials)
+4. The server will automatically accept the connection
 
-## Flujo de trabajo para sitios Cloudflare-protected
+## Workflow for Cloudflare-protected sites
 
-Cuando necesites scrape un sitio protegido por Cloudflare:
+When you need to scrape a Cloudflare-protected site:
 
-1. La extensión debug debe estar conectada
-2. El servidor enviará la petición de fetch
-3. Si Cloudflare detecta la petición, la extensión abrirá una pestaña
-4. Resuelve el challenge manualmente en la pestaña
-5. La extensión extraerá el HTML y lo devolverá al servidor
-6. La pestaña se cerrará automáticamente
+1. The debug extension must be connected
+2. The server will send the fetch request
+3. If Cloudflare detects the request, the extension will open a tab
+4. Resolve the challenge manually in the tab
+5. The extension will extract the HTML and return it to the server
+6. The tab will be closed automatically
 
-## Notas
+## Notes
 
-- Esta extensión es solo para desarrollo
-- No usar en producción
-- El storage está separado de la extensión principal (no hay conflicto)
-- Pueden estar instaladas ambas extensiones simultáneamente
+- This extension is for development only
+- Don't use in production
+- Storage is separate from main extension (no conflict)
+- Both extensions can be installed simultaneously

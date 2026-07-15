@@ -1,293 +1,189 @@
 # translator-server
 
-Backend autónomo en Go para traducción literaria con PocketBase embebido, auth multiusuario, frontend embebido y workers en proceso.
+The all-in-one literary translation platform powering book translation projects.
 
-## Arquitectura
+Build a library of AI-translated novels with full multi-user support, flexible import from multiple sources, EPUB generation, and a powerful dashboard to manage the entire translation pipeline.
+
+## Features
+
+- **AI literary translation** — Translate complete novels using AI providers (Venice, OpenCode Go, Groq, LM Studio, Google Gemma) with customizable prompts
+- **Multi-user management** — Each user has their own private collection of novels, chapters, jobs, and EPUBs with fine-grained access control
+- **Flexible import** — Import novels from URLs (69shuba, CherryMist, EmpireNovel, FenrirRealm, Fictioneer, FloraeGarden, NovelBin, NovelFire, SkyNovels), EPUB files, or ZIP archives with metadata
+- **EPUB generation** — Create original, translated, and refined EPUBs ready for publication
+- **Progress tracking** — Monitor in-progress translations, automated jobs, and reading progress
+- **In-process workers** — Concurrent download and translation workers that run automatically in the background
+- **Android support** — Runs on Termux and Android devices for on-the-go translation
+- **Cloudflare bypass** — Chrome extension proxies requests through a real browser for protected sites
+
+## Typical workflows
+
+### 1. Import and translate a novel
 
 ```
-cmd/server/main.go          ← entrypoint
-  ├── internal/config/      ← Flags + env vars
-  ├── internal/secure/      ← AES-GCM cifrado de API keys
-  ├── internal/store/       ← PocketBase: esquemas, migraciones, CRUD
-  │   ├── store.go          ← 10 colecciones, EnsureSchema()
-  │   ├── store_schema.go   ← Definiciones de colecciones
-  │   ├── settings.go       ← Tipos de dominio (Novel, Chapter, Job…)
-  │   ├── store_*.go        ← CRUD por recurso
-  │   └── prompt_defaults.go / prompt_overrides.go
-  ├── internal/api/         ← HTTP handlers + workers (31 files)
-  │   ├── router.go         ← Montaje de rutas, gestión de workers
-  │   ├── router_auth.go   ← Registro, login handlers
-  │   ├── router_backup.go ← Backup/restore functionality
-  │   ├── router_chapters.go       ← CRUD capítulos, reorder, segment, clean
-  │   ├── router_epubs.go      ← Generar y descargar EPUBs
-  │   ├── router_import.go      ← Import ZIP/EPUB/URL, update from URL
-  │   ├── router_jobs.go    ← Crear jobs, listar, cancelar
-  │   ├── router_novels.go  ← CRUD novelas, batch operations
-  │   ├── router_prompts.go      ← CRUD prompts personalizados
-  │   ├── router_providers.go    ← Listar providers, guardar API key
-  │   ├── router_reading_progress.go ← Progreso de lectura
-  │   ├── router_responses.go    ← Endpoint para respuestas raw de AI translate
-  │   ├── router_settings.go    ← Config global del usuario
-  │   ├── router_helpers.go  ← `notFoundOrForbidden()`, record helpers
-  │   ├── static.go       ← Sirve frontend embebido o static dir
-  │   ├── runtime_worker.go ← 2 colas: download + translate workers
-  │   ├── runtime_translate.go / runtime_refine.go / runtime_config.go / runtime_prompts.go
-  │   ├── runtime_types.go / runtime.go / segmentation.go / cleaner.go
-  │   └── *test.go          ← Tests de integración
-  ├── internal/ai/          ← Proveedores de IA (8 files)
-  │   ├── provider.go       ← Interfaz (Translate, Refine, Check)
-  │   ├── openai.go         ← OpenAI-compatible (goai)
-  │   └── registry.go       ← Proveedores conocidos (venice, opencode-go)
-  ├── internal/epubimport/  ← Parser EPUB → capítulos (10 files)
-  ├── internal/noveldownloader/ ← Descarga desde NovelBin / NovelFire (19 files)
-  └── frontend_embed.go     ← Embed del frontend compilado
-
-frontend/                   ← Vue 3 + PrimeVue + TypeScript (frontend/src/pages/ → 8 páginas)
-  ├── src/pages/            ← 8 páginas (Dashboard, NovelDetail, Reader…)
-  │   ├── ChapterPage.vue
-  │   ├── DashboardPage.vue
-  │   ├── LoginPage.vue
-  │   ├── NovelDetailPage.vue
-  │   ├── OperationsPage.vue
-  │   ├── ReaderPage.vue
-  │   ├── RegisterPage.vue
-  │   └── SettingsPage.vue
-  ├── src/components/       ← 6 componentes reutilizables
-  │   ├── AppLayout.vue
-  │   ├── ChapterList.vue
-  │   ├── FieldNumber.vue
-  │   ├── JobsDrawer.vue
-  │   ├── MetadataEditor.vue
-  │   └── PromptRoleEditor.vue
-  ├── src/composables/      ← 8 composables (useNovels, useChapters…)
-  │   ├── useActiveJobStatus.ts
-  │   ├── useActiveJobs.ts
-  │   ├── useChapters.ts
-  │   ├── useNovels.ts
-  │   ├── useProjectSettings.ts
-  │   ├── useProviders.ts
-  │   ├── useReadingProgress.ts
-  │   └── useTranslationJobs.ts
-  ├── src/api/              ← Cliente HTTP + tipos
-  │   ├── client.ts
-  │   ├── http.ts
-  │   └── types.ts (291 lines)
-  ├── src/router/           ← vue-router (8 rutas)
-  │   └── index.ts
-  ├── src/theme/           ← Preset PrimeVue personalizado
-  │   └── pixeo-preset.ts
-  └── src/utils/            ← Utilidades
-      ├── api-base-url.ts
-      ├── cleaner.ts
-      ├── epub-generator.ts
-      ├── epub-importer.ts
-      ├── job-events.ts
-      ├── markdown.ts
-      └── project-settings.ts
+In the frontend:
+1. Click "Import from URL"
+2. Paste the novel site URL
+3. Select source and target language
+4. Click "Preview"
+5. Review chapters
+6. Click "Translate" or "Import"
 ```
 
-## Colecciones PocketBase
+The system downloads chapters, segments long ones, translates them using AI, and saves everything with tracked progress.
 
-| Colección | Propósito |
-|-----------|-----------|
-| `users` | Auth multiusuario |
-| `providers` | Catálogo de proveedores AI |
-| `user_provider_settings` | Config por usuario (API key cifrada, modelo) |
-| `user_prompt_settings` | Prompts personalizados (translation, refine, check) |
-| `user_translation_settings` | Valores por defecto de traducción |
-| `novels` | Novelas con metadatos, opciones, glosario |
-| `chapters` | Capítulos con contenido original/traducido/refinado |
-| `translation_jobs` | Jobs de traducción/descarga con progreso |
-| `epubs` | EPUBs generados (original/traducido/refinado) |
-| `reading_progress` | Progreso de lectura por usuario/novela |
+### 2. Manage a translation team
 
-## API endpoints
+```
+In the frontend:
+1. Go to Dashboard
+2. Click any novel
+3. Click "Jobs"
+4. Create a batch translation job
+5. Assign an AI provider and model
+6. Monitor progress in real time
+```
 
-Todas las rutas protegidas requieren `Authorization: Bearer <token>`.
+Multiple jobs can run simultaneously — the system downloads chapters in parallel while translation proceeds in the background.
 
-### Auth (públicas)
-- `POST /api/auth/register` — Registro email/password
-- `POST /api/auth/login` — Login, devuelve token
-- `GET /healthz` — Health check
+### 3. Export for publication
 
-### Settings
-- `GET /api/user/settings` — Config global del usuario
-- `PUT /api/user/settings` — Actualizar configuración
-- `GET /api/user/defaults` — Valores por defecto
+```
+In the frontend:
+1. Go to any novel
+2. Click "EPUBs"
+3. Click "Generate translated EPUB"
+4. Download the file
+```
 
-### Providers
-- `GET /api/user/providers` — Lista providers con `apiKeyConfigured`
-- `PUT /api/user/providers/{key}/key` — Guardar API key (write-only)
+Generate professional EPUBs in three variants: original, translated, and refined.
 
-### Prompts
-- `GET /api/user/prompts` — Listar prompts (translation/refine/check)
-- `PUT /api/user/prompts` — Actualizar prompt
+## Quick reference
 
-### Novels
-- `GET /api/db/novels` — Listar novelas del usuario
-- `POST /api/db/novels` — Crear novela
-- `GET /api/db/novels/{id}` — Detalle de novela
-- `PUT /api/db/novels/{id}` — Actualizar novela
-- `DELETE /api/db/novels/{id}` — Eliminar novela
-- `PUT /api/db/novels/{id}/cover` — Subir portada
+- **Dashboard** — View all novels, quick stats
+- **Settings** — AI providers, prompts, language
+- **Novels** — Manage collections, chapters, metadata
+- **Operations** — Batch jobs, import, refresh
+- **Reader** — Read translations with saved progress
+- **Login/Register** — Secure multi-user access
 
-### Chapters
-- `GET /api/db/novels/{novelId}/chapters` — Listar capítulos
-- `GET /api/db/novels/{novelId}/chapters/{id}` — Detalle capítulo
-- `PUT /api/db/novels/{novelId}/chapters/{id}` — Actualizar contenido
-- `POST /api/db/novels/{novelId}/chapters` — Crear capítulo
-- `PUT /api/db/chapters/{id}/title` — Traducir título
-- `DELETE /api/db/chapters/{id}` — Eliminar capítulo
-- `PUT /api/db/chapters/reorder` — Reordenar capítulos
+## Tech stack
 
-### Jobs
-- `GET /api/db/novels/{novelId}/jobs` — Jobs de una novela
-- `POST /api/db/novels/{novelId}/jobs` — Crear job (translate/refine/download)
-- `GET /api/db/jobs/{id}` — Estado del job
-- `POST /api/db/jobs/{id}/cancel` — Cancelar job
-- `GET /api/db/jobs/active` — Jobs activos del usuario
+- **Backend** — Go with embedded PocketBase, in-process workers
+- **Frontend** — Vue 3 + Naive UI + TypeScript, SPA with router
+- **AI** — OpenAI-compatible providers (Venice, OpenCode Go, Groq, LM Studio) + Google Gemma, with encrypted API keys
+- **Storage** — SQLite with multi-user isolation, AES-GCM encryption for API keys
+- **Mobile** — Built for Android with Termux support
 
-### EPUBs
-- `GET /api/db/novels/{novelId}/epubs` — EPUBs generados
-- `POST /api/db/novels/{novelId}/epubs` — Generar EPUB
-- `GET /api/db/epubs/{id}/download` — Descargar EPUB
+## Setup and run
 
-### Importación
-- `POST /api/db/novels/import-from-zip` — Importar ZIP con metadata.json + capítulos
-- `POST /api/db/novels/import-from-epub` — Importar EPUB
-- `POST /api/db/novels/import-from-url` — Importar desde URL (NovelBin/NovelFire)
-- `GET /api/db/novels/{id}/update-preview` — Vista previa de capítulos nuevos
-- `POST /api/db/novels/{id}/update-from-url` — Descargar capítulos nuevos
-- `POST /api/db/novels/batch/check-urls` — Batch check de URLs
-- `POST /api/db/novels/batch/update-from-urls` — Batch update desde URLs
-- `POST /api/db/novels/batch/translate` — Batch translate de novelas
-### Batch / Utilidades
+### Development (local mode)
 
-- `POST /api/db/novels/batch/check-translate` — Batch check de novelas traducibles
-- `POST /api/chapters/segment` — Segmentar capítulo
-- `POST /api/chapters/clean` — Limpiar contenido con reglas
+```bash
+# Terminal 1: Frontend (Vite)
+cd frontend && npm run dev
 
-### Operaciones (aún no implementadas)
+# Terminal 2: Backend (Go)
+go run ./cmd/server --addr :5176 --data-dir ./data
+```
 
-- **Refinamiento** — Refactor de traducciones mejoradas con IA aún no está implementado (está pendiente)
-
-### Reading Progress
-- `GET /api/db/novels/{novelId}/progress` — Progreso de lectura
-- `PUT /api/db/novels/{novelId}/progress` — Actualizar progreso
-
-## Workers en proceso
-
-Dos goroutines con colas bufferizadas (cap 128 c/u):
-- **downloadQueue** — Descarga capítulos desde NovelBin/NovelFire
-- **translateQueue** — Traducción, refinamiento y verificación vía AI
-
-Los jobs se recuperan al arrancar si quedaron en estado `running` o `pending`.
-
-## Proveedores AI
-
-Registrados en `internal/ai/registry.go`:
-- **venice** — `api.venice.ai/api/v1` (default, deepseek-v4-flash)
-- **opencode-go** — `opencode.ai/zen/go/v1`
-
-Implementación vía `github.com/zendev-sh/goai` con `useResponsesAPI: false` y `strictJsonSchema: true`.
-
-### Codificación de Trabajadores
-
-Los jobs se recuperan al arrancar si quedaron en estado `running` o `pending`. Los workers están en proceso con dos goroutines con colas bufferizadas (cap 128 c/u):
-- **downloadQueue** — Descarga capítulos desde NovelBin/NovelFire
-- **translateQueue** — Traducción, refinamiento y verificación vía AI
-
-### Concurrencia
-
-El `Concurrency` setting en `AISettings` está persistido pero **no está conectado** — todos los jobs corren secuencialmente por cola. Cada cola tiene una sola goroutine; nuevos jobs esperan hasta que el anterior termine. Dos colas independientes permiten descarga + traducción simultánea.
-
-## Build
+### Build for production
 
 ```bash
 make build
 ```
 
-Compila frontend (`npm install && npm run build`) y luego genera `bin/translator-server` con `CGO_ENABLED=0`.
+The resulting binary (`./bin/translator-server-linux-amd64-<version>`) runs standalone without dependencies.
 
-```bash
-make android    # GOOS=android GOARCH=arm64 → bin/translator-server-android-arm64
-make compress   # UPX --best --lzma
-```
-
-## Run
-
-```bash
-./bin/translator-server
-./bin/translator-server --addr 127.0.0.1:9000
-./bin/translator-server --port 9000
-./bin/translator-server --data-dir ./data
-```
-
-## Dev
-
-Terminal 1:
-```bash
-cd frontend && npm run dev    # http://localhost:5175
-```
-
-Terminal 2:
-```bash
-go run ./cmd/server --addr :5176 --data-dir ./data
-```
-
-El frontend de Vite corre en `:5175` y proxya `/api` y `/ai` al backend en `:5176`.
-
-## Android / Termux
+### Build for Android
 
 ```bash
 make android
 ```
 
-Copia el binario al teléfono y ejecuta:
+Copy the binary to your phone and run:
 ```bash
-chmod +x translator-server-android-arm64
-./translator-server-android-arm64 --addr 127.0.0.1:5176 --data-dir ./data
+chmod +x translator-server-android-arm64-<version>
+./translator-server-android-arm64-<version> --addr 127.0.0.1:5176 --data-dir ./data
 ```
 
-Requiere Android 7.0+ (API 24). No necesita root para puertos altos.
-
-## Persistencia
-
-- `data/` junto al binario contiene SQLite de PocketBase, archivos subidos y `app.key`.
-- `APP_ENCRYPTION_KEY` (base64/hex, 32 bytes) para cifrar API keys. Si no existe, se genera `app.key`.
-
-## Auth y multiusuario
-
-- Registro y login por email/password (`/api/auth/*`).
-- Aislamiento total: cada usuario ve solo sus novelas, capítulos, jobs, EPUBs.
-- Novelas públicas: leyables por otros usuarios pero no editables.
-- API keys write-only: el backend expone solo `apiKeyConfigured`.
-
-## Env
-
-| Variable | Default | Descripción |
-|----------|---------|-------------|
-| `ADDR` | `:5176` | Dirección de escucha |
-| `PORT` | — | Puerto (si no se usa `ADDR`) |
-| `DATA_DIR` | `./data` junto al binario | Directorio de datos |
-| `STATIC_DIR` | — | Directorio local de assets (dev) |
-| `APP_ENCRYPTION_KEY` | — | Clave AES-GCM (base64/hex, 32 bytes) |
-| `DOWNLOAD_MIN_DELAY_MS` | — | Espera mínima entre descargas (ms) |
-| `DOWNLOAD_MAX_DELAY_MS` | — | Espera máxima entre descargas (ms) |
-
-## Tests
+### Cross-compile all platforms
 
 ```bash
-go test ./...              # Todos los tests
-go test -short ./...       # Sin tests de red (scrapers)
+make all     # linux-amd64, linux-arm64, linux-armv7, android-arm64, android-armv7
+make compress  # Compress all binaries with UPX
 ```
 
-Tests de integración en `internal/api/router_integration_test.go` bootean PocketBase real en `t.TempDir()`.
+### Configuration
 
-## Importación desde ZIP
+All options via binary flags:
+- `--addr` / `--port` — Listen address
+- `--data-dir` — Data storage directory
+- `--static-dir` — Serve frontend from disk (development)
+- `--migrate-db` — Run legacy schema migration (one-time)
+- `--migrate-thumbnails` — Generate thumbnails for existing covers
+- `--version` — Print version and exit
 
-Ver `template/import/README.md` para el formato esperado:
-- `metadata.json` obligatorio (title, sourceLanguage, targetLanguage)
-- `originals/` capítulos en .txt o .md
-- `translated/` traducciones opcionales (mismo nombre que en originals/)
-- `cover.jpg` opcional
+Or environment variables:
+- `APP_ENCRYPTION_KEY` — Key for API key encryption (32 bytes, base64 or hex)
+- `DOWNLOAD_MIN_DELAY_MS` / `DOWNLOAD_MAX_DELAY_MS` — Delay between downloads
+- `ADDR`, `PORT`, `DATA_DIR` — Override flag defaults
+- `STATIC_DIR` — Override embedded frontend (development)
+- `VITE_API_URL` — Frontend API base URL override
+
+## Data flow
+
+```
+User → Browser → API Backend → SQLite Database + Workers
+                     ↓                    ↓
+             Auth (PocketBase)     Download: noveldownloader
+                                       ↓
+                                   Translate: ai.Provider
+```
+
+- **Download** — Fetches chapters from web novels using Go parsers (8 sites supported)
+- **Translation** — Sends to AI providers, auto-segments long chapters
+- **Refinement** — Reviews and improves translations automatically
+- **Storage** — Saves everything with encryption, stats, and tracked progress
+
+## Project structure
+
+- **`cmd/server/`** — Entry point
+- **`cmd/debug-proxy/`** — Standalone debug proxy for Cloudflare bypass
+- **`internal/api/`** — HTTP endpoints, in-process workers (30+ files)
+- **`internal/store/`** — Persistence layer with 11 PocketBase collections
+- **`internal/ai/`** — AI providers (5 registered: venice, opencode-go, groq, lmstudio, google)
+- **`internal/secure/`** — AES-GCM encryption for API keys
+- **`internal/noveldownloader/`** — Web parsers for 8+ sites
+- **`internal/epubimport/`** — EPUB file parser
+- **`internal/epubexport/`** — EPUB generator
+- **`frontend/`** — Vue 3 SPA with 8 pages, 7 components, 8 composables
+- **`frontend_embed.go`** — Embeds `frontend/dist/` into the Go binary
+- **`browser-worker/`** — Chrome extension (production)
+- **`browser-worker-debug/`** — Chrome extension (debug, no auth required)
+
+## Key concepts
+
+- **Collections** — 11 PocketBase collections: users, providers, user settings, novels, chapters, jobs, EPUBs, reading progress, worker tokens
+- **Jobs** — Automated tasks (download, translate, refine, check) running in the background
+- **Workers** — Two goroutines with buffered queues (download + translate)
+- **AI providers** — Venice (default), OpenCode Go, Groq, LM Studio, Google Gemma
+- **Browser proxy** — Chrome extension for Cloudflare-protected sites
+- **Debug proxy** — Standalone micro-server (port 5177) for parser development with Cloudflare bypass
+
+## Architecture documentation
+
+See [docs/CODEMAPS/INDEX.md](docs/CODEMAPS/INDEX.md) for detailed architecture:
+
+- [Backend codemap](docs/CODEMAPS/backend.md) — Detailed API architecture
+- [Frontend codemap](docs/CODEMAPS/frontend.md) — Vue 3 SPA in depth
+- [Database codemap](docs/CODEMAPS/database.md) — 11-collection schema
+- [Workers codemap](docs/CODEMAPS/workers.md) — In-process job processing
+- [Integrations codemap](docs/CODEMAPS/integrations.md) — AI providers, scrapers, EPUB
+
+## Testing
+
+```bash
+go test ./...              # All tests (unit + integration)
+go test -short ./...       # Skip live-URL scraper tests
+npm run build              # Frontend typecheck (vue-tsc + vite build)
+```
