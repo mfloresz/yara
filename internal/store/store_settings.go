@@ -68,12 +68,10 @@ func (s *Store) SaveAppSettings(userID string, cfg AppSettings) (AppSettings, er
 			return AppSettings{}, err
 		}
 	}
-	if strings.TrimSpace(cfg.TitleProvider) != "" || strings.TrimSpace(cfg.TitleModel) != "" {
-		user.Set("title_provider", strings.TrimSpace(cfg.TitleProvider))
-		user.Set("title_model", strings.TrimSpace(cfg.TitleModel))
-		if err := s.App.Save(user); err != nil {
-			return AppSettings{}, err
-		}
+	user.Set("title_provider", strings.TrimSpace(cfg.TitleProvider))
+	user.Set("title_model", strings.TrimSpace(cfg.TitleModel))
+	if err := s.App.Save(user); err != nil {
+		return AppSettings{}, err
 	}
 	return s.GetAppSettings(userID)
 }
