@@ -170,6 +170,7 @@ func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Ser
 	registerChapterRoutes(api, s)
 	registerJobRoutes(api, s)
 	registerEpubRoutes(api, s)
+	registerGlossaryRoutes(api, s)
 	registerEpubExportRoutes(api, s)
 	registerReadingProgressRoutes(api, s)
 	registerBackupRoutes(api, s)

@@ -96,6 +96,7 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		{Key: "title", Label: "Traducción de Título", Description: "Prompt global para traducción de títulos de capítulo.", SystemPrompt: DefaultTitleTranslationSystemPrompt, UserPrompt: DefaultTitleTranslationUserPrompt, Active: 1},
 		{Key: "refine", Label: "Refinamiento", Description: "Prompt global para mejorar traducciones generadas.", SystemPrompt: DefaultRefineSystemPrompt, UserPrompt: DefaultRefineUserPrompt, Active: 1},
 		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt, Active: 1},
+		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: "", Active: 1},
 	}
 	records, err := s.App.FindRecordsByFilter(UserPromptSettingsCollection, "owner = {:owner}", "", 20, 0, dbx.Params{"owner": userID})
 	if err != nil {

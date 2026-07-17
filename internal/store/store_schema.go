@@ -398,7 +398,7 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 		}
 		if opField := c.Fields.GetByName("operation"); opField != nil {
 			if sel, ok := opField.(*core.SelectField); ok {
-				needed := []string{"download", "check"}
+				needed := []string{"download", "check", "generate-glossary"}
 				changed := false
 				for _, v := range needed {
 					found := false
@@ -448,7 +448,7 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
 	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"pending", "running", "done", "cancelled", "failed"}, MaxSelect: 1})
-	c.Fields.Add(&core.SelectField{Name: "operation", Values: []string{"translate", "refine", "download", "check"}, MaxSelect: 1})
+	c.Fields.Add(&core.SelectField{Name: "operation", Values: []string{"translate", "refine", "download", "check", "generate-glossary"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "model", Max: 200})
 	c.Fields.Add(&core.TextField{Name: "chapter_ids", Max: 10000000})

@@ -176,6 +176,75 @@
 
       <n-scrollbar v-else-if="activeTab === 'glossary'" :style="{ flex: 1, minHeight: 0 }">
         <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
+          <n-card title="Generar glosario con IA" size="small">
+            <div class="stack-md">
+              <div class="row-wrap">
+                <div style="min-width: 120px; flex: 1">
+                  <label class="small muted">Capítulo desde</label>
+                  <n-input-number v-model:value="glossaryGenOptions.chapterFrom" :min="1" size="small" />
+                </div>
+                <div style="min-width: 120px; flex: 1">
+                  <label class="small muted">Capítulo hasta</label>
+                  <n-input-number v-model:value="glossaryGenOptions.chapterTo" :min="1" size="small" />
+                </div>
+              </div>
+              <div class="row-wrap">
+                <div style="flex: 1">
+                  <label class="small muted">Modo de envío</label>
+                  <n-radio-group v-model:value="glossaryGenOptions.mode" size="small">
+                    <n-radio value="together">Todo junto</n-radio>
+                    <n-radio value="batch">Por lotes</n-radio>
+                  </n-radio-group>
+                </div>
+                <div v-if="glossaryGenOptions.mode === 'batch'" style="min-width: 140px">
+                  <label class="small muted">Max tokens/lote</label>
+                  <n-input-number v-model:value="glossaryGenOptions.maxTokensPerBatch" :min="10000" :step="10000" size="small" />
+                </div>
+              </div>
+              <div class="row-wrap">
+                <div style="flex: 1; min-width: 180px">
+                  <label class="small muted">Proveedor</label>
+                  <n-select
+                    v-model:value="glossaryGenOptions.provider"
+                    :options="providerOptions"
+                    :loading="providersLoading"
+                    placeholder="Proveedor activo"
+                    clearable
+                    size="small"
+                  />
+                </div>
+                <div style="flex: 1; min-width: 180px">
+                  <label class="small muted">Modelo</label>
+                  <n-select
+                    v-if="glossaryModelOptions.length > 1"
+                    v-model:value="glossaryGenOptions.model"
+                    :options="glossaryModelOptions"
+                    placeholder="Modelo del proveedor"
+                    clearable
+                    size="small"
+                  />
+                  <n-input
+                    v-else
+                    v-model:value="glossaryGenOptions.model"
+                    placeholder="Modelo del proveedor"
+                    size="small"
+                  />
+                </div>
+              </div>
+              <div style="display: flex; justify-content: flex-end">
+                <n-button
+                  type="primary"
+                  size="small"
+                  :loading="glossaryGenerating"
+                  :disabled="glossaryGenerating"
+                  @click="generateGlossary"
+                >
+                  Generar glosario
+                </n-button>
+              </div>
+            </div>
+          </n-card>
+
           <div class="row-between">
             <h4 style="margin: 0">Glosario</h4>
             <n-button size="small" @click="addGlossaryEntry">
@@ -362,7 +431,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm } from "naive-ui";
+import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm, NInputNumber, NRadioGroup, NRadio } from "naive-ui";
 import { AddOutline, TrashOutline, ImageOutline } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
@@ -370,7 +439,7 @@ import { useProjectSettings } from "@/composables/useProjectSettings";
 import { useProviders } from "@/composables/useProviders";
 import { useNovels } from "@/composables/useNovels";
 import { type Novel, type NovelStatus, type UpdateNovelInput } from "@/domain";
-import { normalizeTranslationOptions } from "@/domain/project-settings";
+import { normalizeTranslationOptions, type GlossaryGenerationOptions } from "@/domain/project-settings";
 import { useAppServices } from "@/app/services";
 import { LANGUAGES } from "@/config/languages";
 
@@ -403,6 +472,23 @@ const timeoutSec = ref<number | null>(null);
 let pendingCoverFile: File | undefined;
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const localCoverUrl = ref<string | undefined>();
+
+const glossaryGenOptions = ref<GlossaryGenerationOptions>({
+  chapterFrom: 1,
+  chapterTo: 0,
+  mode: "together",
+  maxTokensPerBatch: 90000,
+  provider: "",
+  model: "",
+});
+const glossaryGenerating = ref(false);
+
+const glossaryModelOptions = computed(() => {
+  if (!glossaryGenOptions.value.provider) return [];
+  const p = byId.value.get(glossaryGenOptions.value.provider);
+  if (!p || !p.models || p.models.length === 0) return [];
+  return p.models.map((m: string) => ({ label: m, value: m }));
+});
 
 const displayCoverUrl = computed(() => localCoverUrl.value || props.novel.coverPath);
 
@@ -625,6 +711,28 @@ function addGlossaryEntry() {
 
 function removeGlossaryEntry(id: string) {
   novelDraft.value.glossary = novelDraft.value.glossary.filter((entry) => entry.id !== id);
+}
+
+async function generateGlossary() {
+  if (glossaryGenerating.value) return;
+  glossaryGenerating.value = true;
+  try {
+    const opts: GlossaryGenerationOptions = {
+      chapterFrom: glossaryGenOptions.value.chapterFrom || 1,
+      chapterTo: glossaryGenOptions.value.chapterTo || 0,
+      mode: glossaryGenOptions.value.mode,
+      maxTokensPerBatch: glossaryGenOptions.value.maxTokensPerBatch || 90000,
+      provider: glossaryGenOptions.value.provider || "",
+      model: glossaryGenOptions.value.model || "",
+    };
+    await api.novels.generateGlossary(props.novel.id, opts);
+    message.success("Glosario en generación. Se actualizará al completar.");
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Error desconocido";
+    message.error(`Error al generar glosario: ${msg}`);
+  } finally {
+    glossaryGenerating.value = false;
+  }
 }
 
 function reset() {

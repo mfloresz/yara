@@ -32,7 +32,7 @@ export type ImportEpubResult = {
   chaptersImported: number;
 };
 
-export type GeneralPromptKey = "translation" | "refine" | "check";
+export type GeneralPromptKey = "translation" | "refine" | "check" | "glossary";
 
 export type GeneralPromptRecord = {
   id: string;
