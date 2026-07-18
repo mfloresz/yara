@@ -42,6 +42,7 @@ import {
   type GlossaryGenerationOptions,
 } from "@/domain/project-settings";
 import { getApiBaseUrl } from "@/utils/api-base-url";
+import { safeUuid } from "@/utils/safe-uuid";
 
 /** Ensure every glossary entry has a unique id (backend entries may lack one). */
 function ensureGlossaryIds(
@@ -51,7 +52,7 @@ function ensureGlossaryIds(
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
     return {
-      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      id: (typeof e.id === "string" && e.id) || safeUuid(),
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,

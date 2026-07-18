@@ -449,6 +449,7 @@ import { type Novel, type NovelStatus, type UpdateNovelInput } from "@/domain";
 import { normalizeTranslationOptions, type GlossaryGenerationOptions } from "@/domain/project-settings";
 import { useAppServices } from "@/app/services";
 import { emitJobChanged } from "@/utils/job-events";
+import { safeUuid } from "@/utils/safe-uuid";
 import { LANGUAGES } from "@/config/languages";
 
 const props = defineProps<{
@@ -721,7 +722,7 @@ function ensureGlossaryIds(
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
     return {
-      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      id: (typeof e.id === "string" && e.id) || safeUuid(),
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,
@@ -783,7 +784,7 @@ watch(
 function addGlossaryEntry() {
   novelDraft.value.glossary = [
     ...novelDraft.value.glossary,
-    { id: crypto.randomUUID(), source: "", target: "", context: "" },
+    { id: safeUuid(), source: "", target: "", context: "" },
   ];
 }
 

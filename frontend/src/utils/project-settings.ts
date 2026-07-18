@@ -1,5 +1,6 @@
 import type { GeneralPromptRecord } from "@/api/types";
 import type { Novel } from "@/domain";
+import { safeUuid } from "@/utils/safe-uuid";
 import {
   normalizePromptSettings,
   normalizeTranslationOptions,
@@ -28,7 +29,7 @@ function ensureGlossaryIds(
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
     return {
-      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      id: (typeof e.id === "string" && e.id) || safeUuid(),
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,
