@@ -6,7 +6,7 @@ Build a library of AI-translated novels with full multi-user support, flexible i
 
 ## Features
 
-- **AI literary translation** — Translate complete novels using AI providers (Venice, OpenCode Go, Groq, LM Studio, Google Gemma) with customizable prompts
+- **AI literary translation** — Translate complete novels using AI providers (Venice, OpenCode Go, LM Studio, Google Gemma) with customizable prompts
 - **Multi-user management** — Each user has their own private collection of novels, chapters, jobs, and EPUBs with fine-grained access control
 - **Flexible import** — Import novels from URLs (69shuba, CherryMist, EmpireNovel, FenrirRealm, Fictioneer, FloraeGarden, NovelBin, NovelFire, SkyNovels), EPUB files, or ZIP archives with metadata
 - **EPUB generation** — Create original, translated, and refined EPUBs ready for publication
@@ -70,7 +70,7 @@ Generate professional EPUBs in three variants: original, translated, and refined
 
 - **Backend** — Go with embedded PocketBase, in-process workers
 - **Frontend** — Vue 3 + Naive UI + TypeScript, SPA with router
-- **AI** — OpenAI-compatible providers (Venice, OpenCode Go, Groq, LM Studio) + Google Gemma, with encrypted API keys
+- **AI** — OpenAI-compatible providers (Venice, OpenCode Go, LM Studio) + Google Gemma, with encrypted API keys
 - **Storage** — SQLite with multi-user isolation, AES-GCM encryption for API keys
 - **Mobile** — Built for Android with Termux support
 
@@ -151,7 +151,7 @@ User → Browser → API Backend → SQLite Database + Workers
 - **`cmd/debug-proxy/`** — Standalone debug proxy for Cloudflare bypass
 - **`internal/api/`** — HTTP endpoints, in-process workers (30+ files)
 - **`internal/store/`** — Persistence layer with 11 PocketBase collections
-- **`internal/ai/`** — AI providers (5 registered: venice, opencode-go, groq, lmstudio, google)
+- **`internal/ai/`** — AI providers (4 registered: venice, opencode-go, lmstudio, google)
 - **`internal/secure/`** — AES-GCM encryption for API keys
 - **`internal/noveldownloader/`** — Web parsers for 8+ sites
 - **`internal/epubimport/`** — EPUB file parser
@@ -166,7 +166,7 @@ User → Browser → API Backend → SQLite Database + Workers
 - **Collections** — 11 PocketBase collections: users, providers, user settings, novels, chapters, jobs, EPUBs, reading progress, worker tokens
 - **Jobs** — Automated tasks (download, translate, refine, check) running in the background
 - **Workers** — Two goroutines with buffered queues (download + translate)
-- **AI providers** — Venice (default), OpenCode Go, Groq, LM Studio, Google Gemma
+- **AI providers** — Venice (default), OpenCode Go, LM Studio, Google Gemma
 - **Browser proxy** — Chrome extension for Cloudflare-protected sites
 - **Debug proxy** — Standalone micro-server (port 5177) for parser development with Cloudflare bypass
 

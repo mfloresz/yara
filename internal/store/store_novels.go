@@ -238,10 +238,13 @@ func (s *Store) UpdateNovelCheckResult(novelID, checkedAt string, newChapters in
 	return s.App.Save(record)
 }
 
-func (s *Store) UpdateNovelGlossary(novelID, glossaryJSON string) error {
+func (s *Store) UpdateNovelGlossary(userID, novelID, glossaryJSON string) error {
 	record, err := s.App.FindRecordById(NovelsCollection, novelID)
 	if err != nil {
 		return ErrNotFound
+	}
+	if record.GetString("owner") != userID {
+		return ErrForbidden
 	}
 	record.Set("glossary", glossaryJSON)
 	return s.App.Save(record)

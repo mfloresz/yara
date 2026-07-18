@@ -15,6 +15,7 @@ type promptSettings struct {
 }
 
 type glossaryEntry struct {
+	ID      string `json:"id,omitempty"`
 	Source  string `json:"source"`
 	Target  string `json:"target"`
 	Context string `json:"context,omitempty"`

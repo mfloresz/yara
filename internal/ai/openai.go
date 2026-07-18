@@ -130,26 +130,12 @@ func (p *OpenAIProvider) GenerateGlossary(ctx context.Context, in GenerateGlossa
 	if err != nil {
 		return GenerateGlossaryOutput{}, err
 	}
-	system := in.SystemPrompt
-	if trimmed := strings.TrimSpace(system); trimmed == "" {
-		system = "Extract translation glossary entries from the provided content."
-	}
-
-	var combinedTexts string
-	for i, text := range in.Texts {
-		if in.BatchInfo != "" {
-			combinedTexts += fmt.Sprintf("--- Batch %s, Chapter %d ---\n%s\n\n", in.BatchInfo, i+1, text)
-		} else {
-			combinedTexts += text + "\n\n"
-		}
-	}
-	if in.BatchInfo != "" {
-		combinedTexts = fmt.Sprintf("[%s]\n\n%s", in.BatchInfo, combinedTexts)
-	}
+	system := resolveGlossarySystemPrompt(in)
+	prompt := buildGlossaryPrompt(in)
 
 	opts := append(p.opts(),
 		goai.WithSystem(system),
-		goai.WithPrompt(strings.TrimSpace(combinedTexts)),
+		goai.WithPrompt(prompt),
 		goai.WithTimeout(p.resolveTimeout()),
 	)
 	result, err := goai.GenerateObject[GenerateGlossaryOutput](ctx, model, opts...)

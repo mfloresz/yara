@@ -595,11 +595,6 @@ const chapterStats = computed(() => ({
 }));
 const completedChapters = computed(() => chapterStats.value.translatedChapters);
 const nextChapterOrder = computed(() => chapterStats.value.maxChapterOrder + 1);
-const hasProcessingChapters = computed(() =>
-  chapterSummaries.value.some((chapter) => chapter.status === "processing") ||
-  allSummaries.value.some((chapter) => chapter.status === "processing") ||
-  translateAllSummaries.value.some((chapter) => chapter.status === "processing"),
-);
 
 function novelStatusLabel(status: NovelStatus) {
   switch (status) {
@@ -947,7 +942,7 @@ watch(translateShowAll, (showAll) => {
 });
 
 watch(hasActive, (active, previous) => {
-  if (!previous || active || !hasProcessingChapters.value) return;
+  if (!previous || active) return;
   markFailedJobsDirty();
   if (activeTab.value === "jobs") {
     void Promise.all([refreshChapterViews(), ensureFailedJobsLoaded(true)]);

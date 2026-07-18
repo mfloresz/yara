@@ -21,6 +21,21 @@ function promptRecordsToSettings(
   return normalizePromptSettings(next);
 }
 
+function ensureGlossaryIds(
+  glossary: unknown,
+): Array<{ id: string; source: string; target: string; context?: string }> {
+  if (!Array.isArray(glossary)) return [];
+  return glossary.map((entry) => {
+    const e = entry as Record<string, unknown>;
+    return {
+      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      source: typeof e.source === "string" ? e.source : "",
+      target: typeof e.target === "string" ? e.target : "",
+      context: typeof e.context === "string" ? e.context : undefined,
+    };
+  });
+}
+
 export function buildProjectSettings(
   novel?: Novel | null,
   globalPrompts?: GeneralPromptRecord[],
@@ -32,7 +47,7 @@ export function buildProjectSettings(
 
   return {
     notes: novel?.notes ?? "",
-    glossary: Array.isArray(novel?.glossary) ? novel.glossary : [],
+    glossary: ensureGlossaryIds(novel?.glossary),
     prompts: normalizePromptSettings({
       ...(promptFallbacks ?? {}),
       ...(novel?.prompts ?? {}),

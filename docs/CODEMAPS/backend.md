@@ -97,7 +97,7 @@ cmd/server/main.go
 |------|---------|
 | `provider.go` | `Provider` interface (Translate, Refine, Check) |
 | `openai.go` | `OpenAIProvider` implementation |
-| `registry.go` | `knownProviders` (venice, opencode-go, groq, lmstudio, google) |
+| `registry.go` | `knownProviders` (venice, opencode-go, lmstudio, google) |
 | `translation_schema.go` | JSON schemas for AI responses |
 | `*_test.go` | Tests |
 

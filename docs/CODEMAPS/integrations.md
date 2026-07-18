@@ -13,7 +13,6 @@ Provider catalog in `internal/ai/registry.go` with `ProviderInfo` struct. All Op
 |----|------|----------|--------|---------|---------------|--------------|
 | `venice` | Venice | `https://api.venice.ai/api/v1` | deepseek-v4-flash, mistral-small-3-2-24b-instruct, google-gemma-4-31b-it, e2ee-gpt-oss-20b-p, aion-labs-aion-3-0-mini, e2ee-gemma-4-26b-a4b-uncensored-p, google-gemma-4-26b-a4b-it | deepseek-v4-flash | true | `useResponsesAPI: false`, `strictJsonSchema: true` |
 | `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | mimo-v2.5, deepseek-v4-flash | mimo-v2.5 | true | `useResponsesAPI: false`, `strictJsonSchema: true` |
-| `groq` | Groq | `https://api.groq.com/openai/v1` | openai/gpt-oss-120b, openai/gpt-oss-20b | openai/gpt-oss-20b | true | `useResponsesAPI: false`, `strictJsonSchema: true` |
 | `lmstudio` | LM Studio | `http://localhost:1234/v1` | local-model | local-model | true | `useResponsesAPI: false`, `strictJsonSchema: false` |
 | `google` | Google Gemma | `https://generativelanguage.googleapis.com` | gemma-4-26b-a4b-it, gemma-4-31b-it | gemma-4-31b-it | false | — |
 

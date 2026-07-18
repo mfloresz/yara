@@ -5,15 +5,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
+	"unicode/utf8"
 
-	tokenizer "github.com/pandodao/tokenizer-go"
+	"github.com/google/uuid"
 	"translator-server/internal/ai"
 	"translator-server/internal/store"
 )
 
 const defaultMaxTokensPerBatch = 90000
+
+// maxAllowedTokensPerBatch is a safety cap so a client cannot request an
+// arbitrarily large batch that concatenates the whole novel into a single
+// prompt (cost / model-context / DoS protection).
+const maxAllowedTokensPerBatch = 500000
+
+// errStructuredOutputNotSupported is the user-facing message when the selected
+// model does not support response_format / structured outputs.
+const errStructuredOutputNotSupported = "this model does not support structured output (response_format). Use a model that supports it (e.g. gpt-4o, gpt-4o-mini, gpt-4.1) or switch provider"
+
+// isStructuredOutputNotSupported reports whether err is caused by the model
+// not supporting structured output (response_format). The error message
+// varies across providers but always contains "response_format".
+func isStructuredOutputNotSupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "response_format is not supported") ||
+		strings.Contains(msg, "response_format") && strings.Contains(msg, "not supported")
+}
 
 type glossaryJobOptions struct {
 	ChapterFrom       int    `json:"chapterFrom"`
@@ -24,13 +45,28 @@ type glossaryJobOptions struct {
 	Model             string `json:"model"`
 }
 
-func estimateTokens(text string) int {
-	count, err := tokenizer.CalToken(text)
-	if err != nil {
-		// Fallback: rough estimate based on character count
-		return len(text) / 4
+// chapterInRangeWithContent reports whether a chapter falls within the requested
+// range and has non-whitespace original content. Shared by the request handler
+// and the job processor so acceptance and processing use identical criteria.
+func chapterInRangeWithContent(ch store.Chapter, from, to int) bool {
+	if ch.ChapterOrder < from {
+		return false
 	}
-	return count
+	if to > 0 && ch.ChapterOrder > to {
+		return false
+	}
+	return strings.TrimSpace(ch.OriginalContent) != ""
+}
+
+// estimateTokens returns a fast, dependency-free token estimate.
+// For English text: 1 token ≈ 4 characters. This gives ~90-98% accuracy
+// which is more than sufficient for batch-sizing glossary jobs.
+func estimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	chars := utf8.RuneCountInString(text)
+	return chars / 4
 }
 
 func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job) error {
@@ -47,6 +83,15 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 	}
 	if opts.MaxTokensPerBatch <= 0 {
 		opts.MaxTokensPerBatch = defaultMaxTokensPerBatch
+	}
+	// Mirror the request handler's contract: an over-limit batch size is rejected
+	// rather than silently clamped, so acceptance and processing stay in lockstep.
+	if opts.MaxTokensPerBatch > maxAllowedTokensPerBatch {
+		msg := fmt.Sprintf("maxTokensPerBatch %d exceeds the allowed maximum %d", opts.MaxTokensPerBatch, maxAllowedTokensPerBatch)
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": msg}); ue != nil {
+			slog.Error("update job status on invalid options", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	if opts.ChapterFrom <= 0 {
 		opts.ChapterFrom = 1
@@ -77,10 +122,8 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 
 	var selectedChapters []store.Chapter
 	for _, ch := range chapters {
-		if ch.ChapterOrder >= opts.ChapterFrom && (opts.ChapterTo <= 0 || ch.ChapterOrder <= opts.ChapterTo) {
-			if strings.TrimSpace(ch.OriginalContent) != "" {
-				selectedChapters = append(selectedChapters, ch)
-			}
+		if chapterInRangeWithContent(ch, opts.ChapterFrom, opts.ChapterTo) {
+			selectedChapters = append(selectedChapters, ch)
 		}
 	}
 
@@ -100,7 +143,8 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		slog.Warn("update job total chapters", "jobId", job.ID, "error", ue)
 	}
 
-	existingTerms := extractExistingTerms(novel.Glossary)
+	existingEntries := extractExistingGlossary(novel.Glossary)
+	existingTerms := extractExistingTerms(existingEntries)
 
 	provider, err := s.resolveGlossaryProvider(job, novel)
 	if err != nil {
@@ -118,7 +162,7 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		return fmt.Errorf("get prompts: %w", err)
 	}
 
-	systemPrompt := resolveGlossaryPrompt(prompts, novel)
+	systemPrompt := resolveGlossaryPrompt(prompts)
 
 	var allEntries []ai.GlossaryEntry
 
@@ -128,13 +172,17 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		allEntries, err = s.processGlossaryTogether(ctx, provider, systemPrompt, selectedChapters, novel, existingTerms, job.ID)
 	}
 	if err != nil {
-		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": err.Error()}); ue != nil {
+		userMsg := err.Error()
+		if isStructuredOutputNotSupported(err) {
+			userMsg = errStructuredOutputNotSupported
+		}
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": userMsg}); ue != nil {
 			slog.Error("update job status on generation error", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("generate glossary: %w", err)
 	}
 
-	merged := mergeGlossary(existingTerms, allEntries)
+	merged := mergeGlossary(existingEntries, allEntries)
 
 	mergedJSON, err := json.Marshal(merged)
 	if err != nil {
@@ -144,16 +192,20 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		return fmt.Errorf("marshal glossary: %w", err)
 	}
 
-	if err := s.Store.UpdateNovelGlossary(job.NovelID, string(mergedJSON)); err != nil {
+	if err := s.Store.UpdateNovelGlossary(job.OwnerID, job.NovelID, string(mergedJSON)); err != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": err.Error()}); ue != nil {
 			slog.Error("update job status on save error", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("save glossary: %w", err)
 	}
 
-	return s.Store.UpdateJob(job.ID, map[string]interface{}{
+	if err := s.Store.UpdateJob(job.ID, map[string]interface{}{
 		"status": "done",
-	})
+	}); err != nil {
+		return fmt.Errorf("set job done: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Server) resolveGlossaryProvider(job *store.Job, novel *store.Novel) (ai.Provider, error) {
@@ -196,7 +248,7 @@ func (s *Server) resolveGlossaryProvider(job *store.Job, novel *store.Novel) (ai
 	return s.newAIProvider(aiSettings)
 }
 
-func resolveGlossaryPrompt(prompts []store.Prompt, novel *store.Novel) string {
+func resolveGlossaryPrompt(prompts []store.Prompt) string {
 	for _, p := range prompts {
 		if p.Key == "glossary" && strings.TrimSpace(p.SystemPrompt) != "" {
 			return p.SystemPrompt
@@ -205,7 +257,7 @@ func resolveGlossaryPrompt(prompts []store.Prompt, novel *store.Novel) string {
 	return store.DefaultGlossaryPrompt
 }
 
-func extractExistingTerms(glossaryJSON string) []string {
+func extractExistingGlossary(glossaryJSON string) []glossaryEntry {
 	if strings.TrimSpace(glossaryJSON) == "" || glossaryJSON == "[]" {
 		return nil
 	}
@@ -213,10 +265,20 @@ func extractExistingTerms(glossaryJSON string) []string {
 	if err := json.Unmarshal([]byte(glossaryJSON), &entries); err != nil {
 		return nil
 	}
+	// Backfill missing IDs for entries stored before the id field existed.
+	for i := range entries {
+		if entries[i].ID == "" {
+			entries[i].ID = uuid.New().String()
+		}
+	}
+	return entries
+}
+
+func extractExistingTerms(entries []glossaryEntry) []string {
 	terms := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if strings.TrimSpace(e.Source) != "" {
-			terms = append(terms, e.Source)
+			terms = append(terms, strings.TrimSpace(e.Source))
 		}
 	}
 	return terms
@@ -275,6 +337,8 @@ func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider,
 
 	totalBatches := len(batches)
 	var allEntries []ai.GlossaryEntry
+	failedBatches := 0
+	var lastErr error
 
 	for i, batch := range batches {
 		if ctx.Err() != nil {
@@ -293,7 +357,15 @@ func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider,
 
 		result, err := provider.GenerateGlossary(ctx, input)
 		if err != nil {
+			// Structured-output errors are deterministic: every subsequent batch
+			// will fail with the same error. Fail immediately instead of burning
+			// tokens on doomed retries.
+			if isStructuredOutputNotSupported(err) {
+				return nil, fmt.Errorf("generate glossary (batch %s): %w", batchInfo, err)
+			}
 			slog.Warn("glossary batch failed", "jobId", jobID, "batch", i+1, "total", totalBatches, "error", err)
+			failedBatches++
+			lastErr = err
 			continue
 		}
 
@@ -307,6 +379,15 @@ func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider,
 		}
 	}
 
+	// If every batch failed, treat the whole job as failed rather than silently
+	// overwriting the existing glossary with no new entries.
+	if totalBatches > 0 && failedBatches == totalBatches {
+		return nil, fmt.Errorf("all %d glossary batches failed: %w", totalBatches, lastErr)
+	}
+	if failedBatches > 0 {
+		slog.Warn("glossary generation completed with partial failures", "jobId", jobID, "failedBatches", failedBatches, "totalBatches", totalBatches)
+	}
+
 	return allEntries, nil
 }
 
@@ -317,13 +398,33 @@ func flattenGlossaryOutput(out ai.GenerateGlossaryOutput) []ai.GlossaryEntry {
 	return entries
 }
 
-func mergeGlossary(existingTerms []string, newEntries []ai.GlossaryEntry) []glossaryEntry {
-	existingSet := make(map[string]struct{}, len(existingTerms))
-	for _, t := range existingTerms {
-		existingSet[strings.TrimSpace(t)] = struct{}{}
-	}
+func mergeGlossary(existing []glossaryEntry, newEntries []ai.GlossaryEntry) []glossaryEntry {
+	// Preserve existing entries (including manually-added ones with their
+	// target/context); new entries add missing terms and update existing ones
+	// by source. Order is kept stable: existing terms first, new terms appended.
+	indexBySource := make(map[string]int, len(existing)+len(newEntries))
+	result := make([]glossaryEntry, 0, len(existing)+len(newEntries))
 
-	result := make([]glossaryEntry, 0, len(existingTerms)+len(newEntries))
+	for _, e := range existing {
+		source := strings.TrimSpace(e.Source)
+		if source == "" {
+			continue
+		}
+		if _, ok := indexBySource[source]; ok {
+			continue
+		}
+		indexBySource[source] = len(result)
+		id := e.ID
+		if id == "" {
+			id = uuid.New().String()
+		}
+		result = append(result, glossaryEntry{
+			ID:      id,
+			Source:  source,
+			Target:  strings.TrimSpace(e.Target),
+			Context: strings.TrimSpace(e.Context),
+		})
+	}
 
 	for _, e := range newEntries {
 		source := strings.TrimSpace(e.Source)
@@ -331,14 +432,25 @@ func mergeGlossary(existingTerms []string, newEntries []ai.GlossaryEntry) []glos
 		if source == "" || target == "" {
 			continue
 		}
-		result = append(result, glossaryEntry{
+		entry := glossaryEntry{
+			ID:      uuid.New().String(),
 			Source:  source,
 			Target:  target,
 			Context: strings.TrimSpace(e.Context),
-		})
-		existingSet[source] = struct{}{}
+		}
+		if idx, ok := indexBySource[source]; ok {
+			// Preserve existing approved translations (see DefaultGlossaryPrompt:
+			// "Always preserve existing approved translations"). Do not overwrite
+			// the target of a term that already exists; only backfill an empty
+			// context from the new entry.
+			if result[idx].Context == "" && entry.Context != "" {
+				result[idx].Context = entry.Context
+			}
+			continue
+		}
+		indexBySource[source] = len(result)
+		result = append(result, entry)
 	}
 
-	_ = math.MaxInt32
 	return result
 }

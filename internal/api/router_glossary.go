@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
@@ -14,8 +15,9 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		novelID := e.Request.PathValue("novelId")
 		userID := e.Auth.Id
 
-		novel, err := s.Store.GetOwnedNovel(userID, novelID)
-		if err != nil {
+		// Ownership check: GetOwnedNovel returns an error unless the novel
+		// belongs to the authenticated user.
+		if _, err := s.Store.GetOwnedNovel(userID, novelID); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
 
@@ -43,8 +45,12 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		if body.Mode == "" {
 			body.Mode = "together"
 		}
-
-		_ = novel
+		if body.MaxTokensPerBatch < 0 {
+			return e.BadRequestError("maxTokensPerBatch must not be negative", nil)
+		}
+		if body.MaxTokensPerBatch > maxAllowedTokensPerBatch {
+			return e.BadRequestError("maxTokensPerBatch exceeds the allowed maximum", nil)
+		}
 
 		chapters, err := s.Store.ListChaptersAccessible(userID, novelID)
 		if err != nil {
@@ -53,10 +59,8 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 
 		chapterCount := 0
 		for _, ch := range chapters {
-			if ch.ChapterOrder >= body.ChapterFrom && (body.ChapterTo <= 0 || ch.ChapterOrder <= body.ChapterTo) {
-				if ch.OriginalContent != "" {
-					chapterCount++
-				}
+			if chapterInRangeWithContent(ch, body.ChapterFrom, body.ChapterTo) {
+				chapterCount++
 			}
 		}
 		if chapterCount == 0 {
@@ -95,6 +99,57 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			"jobId": job.ID,
 			"status": job.Status,
 			"operation": job.Operation,
+		})
+	})
+
+	// GET /db/novels/{novelId}/estimate-glossary-tokens?from=N&to=M
+	// Returns estimated token count for a chapter range so the frontend can
+	// show the user an estimate before generating the glossary.
+	api.GET("/db/novels/{novelId}/estimate-glossary-tokens", func(e *core.RequestEvent) error {
+		novelID := e.Request.PathValue("novelId")
+		userID := e.Auth.Id
+
+		if _, err := s.Store.GetOwnedNovel(userID, novelID); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+
+		fromStr := e.Request.URL.Query().Get("from")
+		if fromStr == "" {
+			return e.BadRequestError("from is required", nil)
+		}
+		from, err := strconv.Atoi(fromStr)
+		if err != nil || from <= 0 {
+			return e.BadRequestError("from must be a positive integer", nil)
+		}
+
+		to := 0
+		if toStr := e.Request.URL.Query().Get("to"); toStr != "" {
+			to, err = strconv.Atoi(toStr)
+			if err != nil || to < 0 {
+				return e.BadRequestError("to must be a non-negative integer", nil)
+			}
+			if to > 0 && to < from {
+				return e.BadRequestError("to must be >= from", nil)
+			}
+		}
+
+		chapters, err := s.Store.ListChaptersAccessible(userID, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to load chapters", err)
+		}
+
+		totalTokens := 0
+		chapterCount := 0
+		for _, ch := range chapters {
+			if chapterInRangeWithContent(ch, from, to) {
+				totalTokens += estimateTokens(ch.OriginalContent)
+				chapterCount++
+			}
+		}
+
+		return e.JSON(http.StatusOK, map[string]any{
+			"totalTokens": totalTokens,
+			"chapterCount": chapterCount,
 		})
 	})
 }

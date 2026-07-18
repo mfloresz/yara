@@ -15,7 +15,7 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"e2ee-deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true"},
+		Models:       []string{"e2ee-deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
 		DefaultModel: "e2ee-deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
@@ -33,19 +33,6 @@ var knownProviders = []ProviderInfo{
 		BaseURL:      "https://opencode.ai/zen/go/v1",
 		Models:       []string{"mimo-v2.5", "deepseek-v4-flash"},
 		DefaultModel: "mimo-v2.5",
-		OpenAICompat: true,
-		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
-			"strictJsonSchema": true,
-		},
-	},
-
-	{
-		ID:           "groq",
-		Name:         "Groq",
-		BaseURL:      "https://api.groq.com/openai/v1",
-		Models:       []string{"openai/gpt-oss-120b", "openai/gpt-oss-20b"},
-		DefaultModel: "openai/gpt-oss-20b",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"useResponsesAPI":  false,

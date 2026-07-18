@@ -31,27 +31,55 @@ func TestMergeGlossaryNewEntriesOnly(t *testing.T) {
 }
 
 func TestMergeGlossaryDeduplication(t *testing.T) {
-	existingTerms := []string{"dragon", "knight"}
+	existing := []glossaryEntry{
+		{Source: "dragon", Target: "dragón viejo", Context: "criatura mítica"},
+		{Source: "knight", Target: "caballero"},
+	}
 	newEntries := []ai.GlossaryEntry{
 		{Source: "dragon", Target: "dragón actualizado"},
 		{Source: "sword", Target: "espada"},
 	}
-	result := mergeGlossary(existingTerms, newEntries)
-	if len(result) != 2 {
-		t.Errorf("expected 2 entries (dedup dragon), got %d", len(result))
+	result := mergeGlossary(existing, newEntries)
+	// dragon (preserved), knight (preserved), sword (new) => 3 entries
+	if len(result) != 3 {
+		t.Errorf("expected 3 entries (dragon preserved, knight preserved, sword new), got %d", len(result))
 	}
-	// dragon should appear once with new translation
+	// dragon should appear once, keeping its existing approved translation and context
 	found := false
 	for _, e := range result {
 		if e.Source == "dragon" {
-			if e.Target != "dragón actualizado" {
-				t.Errorf("expected updated target for dragon, got %s", e.Target)
+			if e.Target != "dragón viejo" {
+				t.Errorf("expected preserved target for dragon, got %s", e.Target)
+			}
+			if e.Context != "criatura mítica" {
+				t.Errorf("expected preserved context for dragon, got %s", e.Context)
 			}
 			found = true
 		}
 	}
 	if !found {
 		t.Error("dragon entry not found in result")
+	}
+}
+
+func TestMergeGlossaryPreservesExistingEntries(t *testing.T) {
+	// Regression test: generating a glossary must NOT wipe out existing
+	// (including manually-added) entries.
+	existing := []glossaryEntry{
+		{Source: "manual-term", Target: "término manual", Context: "added by hand"},
+	}
+	newEntries := []ai.GlossaryEntry{
+		{Source: "sword", Target: "espada"},
+	}
+	result := mergeGlossary(existing, newEntries)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries (existing preserved + new), got %d", len(result))
+	}
+	if result[0].Source != "manual-term" || result[0].Target != "término manual" || result[0].Context != "added by hand" {
+		t.Errorf("existing manual entry not preserved: %+v", result[0])
+	}
+	if result[1].Source != "sword" || result[1].Target != "espada" {
+		t.Errorf("new entry not appended correctly: %+v", result[1])
 	}
 }
 

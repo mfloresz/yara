@@ -1,17 +1,12 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" :style="{ width: 'min(1100px, 96vw)', height: 'min(720px, 85vh)' }" :content-style="{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: 0 }" :segmented="{ content: true, action: true }" @after-leave="emit('update:open', false)">
-    <div :style="{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', padding: '0 1.25rem', paddingTop: '0.75rem', flexShrink: 0 }">
-      <n-button
-        v-for="tab in tabs"
-        :key="tab.value"
-        size="small"
-        :type="activeTab === tab.value ? 'primary' : 'default'"
-        :secondary="activeTab !== tab.value"
-        @click="activeTab = tab.value"
-      >
-        {{ tab.label }}
-      </n-button>
-    </div>
+  <n-modal v-model:show="visible" preset="card" :style="{ width: 'min(1100px, 96vw)', height: 'min(720px, 85vh)', '--n-padding-top': '5px', '--n-padding-bottom': '5px' }" :content-style="{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: 0 }" :segmented="{ content: true, action: true }" @after-leave="emit('update:open', false)">
+    <template #header>
+      <n-tabs v-model:value="activeTab" type="bar" animated style="flex: 1">
+        <n-tab v-for="tab in tabs" :key="tab.value" :name="tab.value">
+          {{ tab.label }}
+        </n-tab>
+      </n-tabs>
+    </template>
 
     <div :style="{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }">
 
@@ -188,6 +183,12 @@
                   <n-input-number v-model:value="glossaryGenOptions.chapterTo" :min="1" size="small" />
                 </div>
               </div>
+              <div v-if="estimatedTokensLoading || estimatedTokens !== null" class="small muted" style="margin-top: -0.25rem">
+                <n-spin v-if="estimatedTokensLoading" :size="12" style="margin-right: 0.35rem" />
+                <template v-else-if="estimatedTokens !== null">
+                  ~{{ formatTokenCount(estimatedTokens) }} tokens estimados
+                </template>
+              </div>
               <div class="row-wrap">
                 <div style="flex: 1">
                   <label class="small muted">Modo de envío</label>
@@ -253,16 +254,22 @@
             </n-button>
           </div>
           <div v-if="novelDraft.glossary.length === 0" class="muted small">Sin entradas de glosario.</div>
-          <n-card v-for="entry in novelDraft.glossary" :key="entry.id">
-              <div :style="{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }">
-                <n-input v-model:value="entry.source" placeholder="Origen" style="flex: 1; min-width: 140px" />
-                <n-input v-model:value="entry.target" placeholder="Destino" style="flex: 1; min-width: 140px" />
-                <n-input v-model:value="entry.context" placeholder="Contexto" style="flex: 1; min-width: 140px" />
-                <n-button type="error" secondary @click="removeGlossaryEntry(entry.id)">
-                  <template #icon><n-icon><TrashOutline /></n-icon></template>
-                </n-button>
-              </div>
-          </n-card>
+          <div v-else class="glossary-list">
+            <div class="glossary-list-header">
+              <span class="glossary-col-source">Origen</span>
+              <span class="glossary-col-target">Destino</span>
+              <span class="glossary-col-context">Contexto</span>
+              <span class="glossary-col-actions" />
+            </div>
+            <div v-for="entry in novelDraft.glossary" :key="entry.id" class="glossary-list-row">
+              <n-input v-model:value="entry.source" placeholder="Origen" size="small" class="glossary-col-source" />
+              <n-input v-model:value="entry.target" placeholder="Destino" size="small" class="glossary-col-target" />
+              <n-input v-model:value="entry.context" placeholder="Contexto" size="small" class="glossary-col-context" />
+              <n-button type="error" quaternary circle size="tiny" class="glossary-col-actions glossary-delete-btn" @click="removeGlossaryEntry(entry.id)">
+                <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
+              </n-button>
+            </div>
+          </div>
         </div>
       </n-scrollbar>
 
@@ -429,9 +436,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
-import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm, NInputNumber, NRadioGroup, NRadio } from "naive-ui";
+import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm, NInputNumber, NRadioGroup, NRadio, NSpin, NTabs, NTab } from "naive-ui";
 import { AddOutline, TrashOutline, ImageOutline } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
@@ -441,6 +448,7 @@ import { useNovels } from "@/composables/useNovels";
 import { type Novel, type NovelStatus, type UpdateNovelInput } from "@/domain";
 import { normalizeTranslationOptions, type GlossaryGenerationOptions } from "@/domain/project-settings";
 import { useAppServices } from "@/app/services";
+import { emitJobChanged } from "@/utils/job-events";
 import { LANGUAGES } from "@/config/languages";
 
 const props = defineProps<{
@@ -482,12 +490,52 @@ const glossaryGenOptions = ref<GlossaryGenerationOptions>({
   model: "",
 });
 const glossaryGenerating = ref(false);
+const estimatedTokens = ref<number | null>(null);
+const estimatedTokensLoading = ref(false);
+let estimateTimer: ReturnType<typeof setTimeout> | null = null;
 
 const glossaryModelOptions = computed(() => {
   if (!glossaryGenOptions.value.provider) return [];
   const p = byId.value.get(glossaryGenOptions.value.provider);
   if (!p || !p.models || p.models.length === 0) return [];
   return p.models.map((m: string) => ({ label: m, value: m }));
+});
+
+function formatTokenCount(n: number): string {
+  return n.toLocaleString("es-ES");
+}
+
+function fetchEstimatedTokens() {
+  if (estimateTimer) clearTimeout(estimateTimer);
+  const from = glossaryGenOptions.value.chapterFrom;
+  if (!from || from <= 0) {
+    estimatedTokens.value = null;
+    return;
+  }
+  estimateTimer = setTimeout(async () => {
+    estimatedTokensLoading.value = true;
+    try {
+      const result = await api.novels.estimateGlossaryTokens(
+        props.novel.id,
+        from,
+        glossaryGenOptions.value.chapterTo || 0,
+      );
+      estimatedTokens.value = result.totalTokens;
+    } catch {
+      estimatedTokens.value = null;
+    } finally {
+      estimatedTokensLoading.value = false;
+    }
+  }, 2000);
+}
+
+watch(
+  [() => glossaryGenOptions.value.chapterFrom, () => glossaryGenOptions.value.chapterTo],
+  () => { fetchEstimatedTokens(); },
+);
+
+onBeforeUnmount(() => {
+  if (estimateTimer) clearTimeout(estimateTimer);
 });
 
 const displayCoverUrl = computed(() => localCoverUrl.value || props.novel.coverPath);
@@ -665,8 +713,25 @@ const tabs = [
 
 const draftInitialized = ref(false);
 
+/** Defense-in-depth: ensure glossary entries always have an id. */
+function ensureGlossaryIds(
+  glossary: unknown,
+): Array<{ id: string; source: string; target: string; context?: string }> {
+  if (!Array.isArray(glossary)) return [];
+  return glossary.map((entry) => {
+    const e = entry as Record<string, unknown>;
+    return {
+      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      source: typeof e.source === "string" ? e.source : "",
+      target: typeof e.target === "string" ? e.target : "",
+      context: typeof e.context === "string" ? e.context : undefined,
+    };
+  });
+}
+
 async function resetDraft() {
   const base = JSON.parse(JSON.stringify(props.novel)) as Novel;
+  base.glossary = ensureGlossaryIds(base.glossary);
   novelDraft.value = {
     ...base,
   };
@@ -702,6 +767,19 @@ watch(
   { immediate: true },
 );
 
+// When the parent novel glossary changes (e.g. after a generate-glossary job
+// completes), sync it into the draft so the user sees the updated glossary
+// without having to close and reopen the dialog.
+watch(
+  () => props.novel.glossary,
+  (newGlossary) => {
+    if (!props.open || !draftInitialized.value) return;
+    // Only update if the reference actually changed (parent re-fetched novel).
+    if (novelDraft.value.glossary === newGlossary) return;
+    novelDraft.value.glossary = ensureGlossaryIds(JSON.parse(JSON.stringify(newGlossary)));
+  },
+);
+
 function addGlossaryEntry() {
   novelDraft.value.glossary = [
     ...novelDraft.value.glossary,
@@ -726,6 +804,7 @@ async function generateGlossary() {
       model: glossaryGenOptions.value.model || "",
     };
     await api.novels.generateGlossary(props.novel.id, opts);
+    emitJobChanged();
     message.success("Glosario en generación. Se actualizará al completar.");
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Error desconocido";
@@ -830,5 +909,67 @@ async function save() {
 
 .cover-placeholder {
   color: var(--text-color-3);
+}
+
+/* Glossary compact list */
+.glossary-list {
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+.glossary-list-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.5fr auto;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--divide);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.glossary-list-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.5fr auto;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  align-items: center;
+  border-bottom: 1px solid var(--divide);
+  transition: background 0.12s ease;
+}
+
+.glossary-list-row:last-child {
+  border-bottom: none;
+}
+
+.glossary-list-row:hover {
+  background: var(--mock-row);
+}
+
+.glossary-delete-btn {
+  color: #dc2626 !important;
+}
+
+.glossary-delete-btn:hover {
+  background: color-mix(in oklab, #dc2626 10%, transparent) !important;
+}
+
+@media (max-width: 640px) {
+  .glossary-list-header {
+    display: none;
+  }
+
+  .glossary-list-row {
+    grid-template-columns: 1fr auto;
+    gap: 0.25rem;
+    padding: 0.375rem 0.625rem;
+  }
+
+  .glossary-col-context {
+    grid-column: 1 / -1;
+  }
 }
 </style>

@@ -43,6 +43,22 @@ import {
 } from "@/domain/project-settings";
 import { getApiBaseUrl } from "@/utils/api-base-url";
 
+/** Ensure every glossary entry has a unique id (backend entries may lack one). */
+function ensureGlossaryIds(
+  glossary: unknown[],
+): Array<{ id: string; source: string; target: string; context?: string }> {
+  if (!Array.isArray(glossary)) return [];
+  return glossary.map((entry) => {
+    const e = entry as Record<string, unknown>;
+    return {
+      id: (typeof e.id === "string" && e.id) || crypto.randomUUID(),
+      source: typeof e.source === "string" ? e.source : "",
+      target: typeof e.target === "string" ? e.target : "",
+      context: typeof e.context === "string" ? e.context : undefined,
+    };
+  });
+}
+
 function normalizeNovel(
   novel: Novel,
   translationDefaults?: ServerTranslationDefaults,
@@ -71,7 +87,7 @@ function normalizeNovel(
       typeof novel.targetSeries === "string" ? novel.targetSeries : "",
     targetNumber:
       typeof novel.targetNumber === "string" ? novel.targetNumber : "",
-    glossary: Array.isArray(novel.glossary) ? novel.glossary : [],
+    glossary: ensureGlossaryIds(novel.glossary),
     prompts: normalizePromptSettings(novel.prompts),
     notes: typeof novel.notes === "string" ? novel.notes : "",
     aiOptions: {
@@ -372,6 +388,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         options: GlossaryGenerationOptions,
       ): Promise<{ jobId: string; status: string; operation: string }> {
         return http.post(`/api/db/novels/${novelId}/generate-glossary`, options);
+      },
+      async estimateGlossaryTokens(
+        novelId: string,
+        from: number,
+        to: number,
+      ): Promise<{ totalTokens: number; chapterCount: number }> {
+        const params = new URLSearchParams({ from: String(from) });
+        if (to > 0) params.set("to", String(to));
+        return http.get(`/api/db/novels/${novelId}/estimate-glossary-tokens?${params}`);
       },
     },
     chapters: {

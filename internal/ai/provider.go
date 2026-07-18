@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"fmt"
+	"strings"
 )
 
 type Provider interface {
@@ -91,12 +93,12 @@ type CheckOutput struct {
 }
 
 type GenerateGlossaryInput struct {
-	SystemPrompt   string   `json:"systemPrompt"`
-	Texts          []string `json:"texts"`
-	SourceLang     string   `json:"sourceLanguage"`
-	TargetLang     string   `json:"targetLanguage"`
-	ExistingTerms  []string `json:"existingTerms"`
-	BatchInfo      string   `json:"batchInfo"`
+	SystemPrompt  string   `json:"systemPrompt"`
+	Texts         []string `json:"texts"`
+	SourceLang    string   `json:"sourceLanguage"`
+	TargetLang    string   `json:"targetLanguage"`
+	ExistingTerms []string `json:"existingTerms"`
+	BatchInfo     string   `json:"batchInfo"`
 }
 
 type GlossaryEntry struct {
@@ -108,4 +110,60 @@ type GlossaryEntry struct {
 type GenerateGlossaryOutput struct {
 	Terms             []GlossaryEntry `json:"terms"`
 	CultivationSystem []GlossaryEntry `json:"cultivation_system"`
+}
+
+// resolveGlossarySystemPrompt substitutes the language and existing-terms
+// placeholders in the configured glossary system prompt so the model actually
+// receives the source/target languages and the list of terms already present.
+func resolveGlossarySystemPrompt(in GenerateGlossaryInput) string {
+	system := strings.TrimSpace(in.SystemPrompt)
+	if system == "" {
+		system = "Extract translation glossary entries from the provided content."
+	}
+
+	sourceLang := strings.TrimSpace(in.SourceLang)
+	if sourceLang == "" {
+		sourceLang = "the source language"
+	}
+	targetLang := strings.TrimSpace(in.TargetLang)
+	if targetLang == "" {
+		targetLang = "the target language"
+	}
+
+	var existingInstruction string
+	if len(in.ExistingTerms) > 0 {
+		existingInstruction = fmt.Sprintf(
+			"An existing glossary already contains the following source terms. Do not re-extract or re-translate them; only extract new terms not in this list:\n%s",
+			strings.Join(in.ExistingTerms, ", "),
+		)
+	} else {
+		existingInstruction = "No existing glossary is provided. Extract all relevant terms."
+	}
+
+	replacer := strings.NewReplacer(
+		"{SOURCE_LANGUAGE}", sourceLang,
+		"{TARGET_LANGUAGE}", targetLang,
+		"{EXISTING_TERMS_INSTRUCTION}", existingInstruction,
+	)
+	return replacer.Replace(system)
+}
+
+// buildGlossaryPrompt assembles the user prompt from the provided chapter texts,
+// prefixing batch metadata when present. Shared by all providers to keep the
+// prompt/batch wire format consistent.
+func buildGlossaryPrompt(in GenerateGlossaryInput) string {
+	var b strings.Builder
+	for i, text := range in.Texts {
+		if in.BatchInfo != "" {
+			fmt.Fprintf(&b, "--- Batch %s, Chapter %d ---\n%s\n\n", in.BatchInfo, i+1, text)
+		} else {
+			b.WriteString(text)
+			b.WriteString("\n\n")
+		}
+	}
+	combined := b.String()
+	if in.BatchInfo != "" {
+		combined = fmt.Sprintf("[%s]\n\n%s", in.BatchInfo, combined)
+	}
+	return strings.TrimSpace(combined)
 }

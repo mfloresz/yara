@@ -41,7 +41,7 @@ func TestProvidersContainKnownEntries(t *testing.T) {
 		}
 		ids[p.ID] = true
 	}
-	for _, want := range []string{"venice", "opencode-go", "groq"} {
+	for _, want := range []string{"venice", "opencode-go"} {
 		if !ids[want] {
 			t.Fatalf("missing known provider %q", want)
 		}

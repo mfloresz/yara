@@ -250,7 +250,7 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.EditorField{Name: "target_description"})
 	c.Fields.Add(&core.TextField{Name: "target_series", Max: 250})
 	c.Fields.Add(&core.TextField{Name: "target_number", Max: 64})
-	c.Fields.Add(&core.TextField{Name: "glossary"})
+	c.Fields.Add(&core.TextField{Name: "glossary", Max: 10000000})
 	c.Fields.Add(&core.EditorField{Name: "translation_system_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "translation_user_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "refine_system_prompt"})
@@ -323,6 +323,16 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 	} {
 		if err := s.ensureField(c, f); err != nil {
 			return nil, err
+		}
+	}
+	// Raise the glossary field max from the default (5000) to 10MB for novels
+	// with large glossaries that exceed the original limit.
+	if f := c.Fields.GetByName("glossary"); f != nil {
+		if tf, ok := f.(*core.TextField); ok && tf.Max < 10000000 {
+			tf.Max = 10000000
+			if err := s.App.Save(c); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := s.App.Save(c); err != nil {

@@ -12,15 +12,15 @@ Guidelines:
 - When the request is for a title, return only the translated title in the required structured field.
 - When the request is for chapter content, return only the translated content with no extra wrapper.
 
-Source language: {SOURCE_LANG}
-Target language: {TARGET_LANG}
+Source language: [{SOURCE_LANG}]
+Target language: [{TARGET_LANG}]
 
 Glossary (entries in parentheses are additional context for better translation, do NOT include them in the output):
 {GLOSSARY}`
 
 const DefaultTranslationUserPrompt = `{TEXT}`
 
-const DefaultRefineSystemPrompt = `You are an expert literary translation editor. You refine a preliminary {TARGET_LANG} translation of a {SOURCE_LANG} original.
+const DefaultRefineSystemPrompt = `You are an expert literary translation editor. You refine a preliminary [{TARGET_LANG}] translation of a [{SOURCE_LANG}] original.
 
 You do not rewrite the whole chapter. You call the apply_edits tool with precise, surgical corrections.
 
@@ -50,8 +50,8 @@ The following are mandatory translations: ` + "`" + `[{SOURCE_LANG}] → [{TARGE
   </terminology>
 
   <untranslated_content>
-    - Identify any word or phrase in {SOURCE_LANG} that was not translated in the preliminary version.
-    - Translate these fragments to {TARGET_LANG} respecting tone, intent, and context.
+    - Identify any word or phrase in [{SOURCE_LANG}] that was not translated in the preliminary version.
+    - Translate these fragments to [{TARGET_LANG}] respecting tone, intent, and context.
     - Do not translate proper nouns or terms that must remain in their original language per the terminology reference.
     - Do not add new content or interpret beyond what appears in the original text.
   </untranslated_content>
@@ -71,7 +71,7 @@ The following are mandatory translations: ` + "`" + `[{SOURCE_LANG}] → [{TARGE
   </scene_separators>
 
   <special_elements>
-    - Adjust articles on proper nouns according to {TARGET_LANG} grammar.
+    - Adjust articles on proper nouns according to [{TARGET_LANG}] grammar.
     - Translate onomatopoeia maintaining their typographic intensity (capitalization, repetitions, punctuation).
   </special_elements>
 
@@ -87,15 +87,15 @@ If you cannot find a complete sentence or line that matches exactly, do not prop
 Call apply_edits with all the edits you have ready. If some are reported as failed, resend corrected versions of only those — do not resend edits that already succeeded.
 When you have no more corrections to make, stop calling the tool.`
 
-const DefaultRefineUserPrompt = `Original ({SOURCE_LANG}):
+const DefaultRefineUserPrompt = `Original [{SOURCE_LANG}]:
 {ORIGINAL}
 
-Current translation ({TARGET_LANG}):
+Current translation [{TARGET_LANG}]:
 {TRANSLATION}
 
 Review the current translation against the original and call apply_edits with any corrections needed. If no corrections are needed, do not call the tool.`
 
-const DefaultCheckSystemPrompt = `You are a translation quality reviewer. Check whether the {TARGET_LANG} translation accurately conveys the meaning of the {SOURCE_LANG} original.
+const DefaultCheckSystemPrompt = `You are a translation quality reviewer. Check whether the [{TARGET_LANG}] translation accurately conveys the meaning of the [{SOURCE_LANG}] original.
 
 Terminology reference (text in parentheses is additional context, do NOT include it in the output):
 {GLOSSARY}
@@ -109,20 +109,20 @@ Respond with JSON of the form:
 
 Only return the JSON, no extra text.`
 
-const DefaultCheckUserPrompt = `Original ({SOURCE_LANG}):
+const DefaultCheckUserPrompt = `Original [{SOURCE_LANG}]:
 {ORIGINAL}
 
-Translation ({TARGET_LANG}):
+Translation [{TARGET_LANG}]:
 {TRANSLATION}`
 
-const DefaultTitleTranslationSystemPrompt = `You are a professional literary title translator. Translate chapter titles from {SOURCE_LANG} to {TARGET_LANG}.
+const DefaultTitleTranslationSystemPrompt = `You are a professional literary title translator. Translate chapter titles from [{SOURCE_LANG}] to [{TARGET_LANG}].
 
 <title_translation_rules>
 
   <consistency>
     - When previous_title_original and previous_title_translated are provided, use them as reference for style, terminology, and structure. Apply the same translation choices to the current title.
     - When a title belongs to a recurring series (same base with numeric variants like "Part 1 / Part 2", "Vol. I / Vol. II", or parenthetical suffixes), treat each occurrence as a continuation of the same pattern. Translate the base once and keep the variant marker unchanged.
-    - Do not translate numeric suffixes (1, 2, 3), Roman numerals (I, II, III), or volume abbreviations (Vol., Ch.) unless they appear as written-out words in {SOURCE_LANG}.
+    - Do not translate numeric suffixes (1, 2, 3), Roman numerals (I, II, III), or volume abbreviations (Vol., Ch.) unless they appear as written-out words in [{SOURCE_LANG}].
   </consistency>
 
   <variants>
@@ -131,7 +131,7 @@ const DefaultTitleTranslationSystemPrompt = `You are a professional literary tit
   </variants>
 
   <formatting>
-    - Apply {TARGET_LANG} title capitalization conventions.
+    - Apply [{TARGET_LANG}] title capitalization conventions.
     - Preserve separators exactly as they appear: dashes (—, -), colons (:), pipes (|).
     - Do not add or remove punctuation marks.
     - Strip all markdown formatting from the output: heading markers (#, ##, ###, ####, etc.), bold (**text**), italic (*text*), and bold-italic (***text***). If the source title contains these markers, remove them and translate the plain text only. Do NOT strip parentheses (), brackets [], or other structural delimiters — only markdown syntax.
@@ -139,7 +139,7 @@ const DefaultTitleTranslationSystemPrompt = `You are a professional literary tit
 
   <proper_nouns>
     - Do not translate proper nouns.
-    - Adjust articles and prepositions according to {TARGET_LANG} grammar.
+    - Adjust articles and prepositions according to [{TARGET_LANG}] grammar.
   </proper_nouns>
 
   <redundancy>
@@ -155,8 +155,8 @@ Mandatory term translations (entries in parentheses are additional context, do N
 
 The user message is a JSON object with these fields:
 - title_original: the title to translate.
-- previous_title_original: the previous chapter's title in {SOURCE_LANG} (absent for the first chapter).
-- previous_title_translated: the previous chapter's title already translated to {TARGET_LANG} (absent for the first chapter).
+- previous_title_original: the previous chapter's title in [{SOURCE_LANG}] (absent for the first chapter).
+- previous_title_translated: the previous chapter's title already translated to [{TARGET_LANG}] (absent for the first chapter).
 
 Return ONLY the translated title as plain text. No JSON, no quotes, no explanations, no notes, no commentary.`
 
@@ -177,11 +177,11 @@ The glossary must be based **only** on the provided content.
 The source and target languages are provided through the following tags:
 
 <source_language>
-{{SOURCE_LANGUAGE}}
+{SOURCE_LANGUAGE}
 </source_language>
 
 <target_language>
-{{TARGET_LANGUAGE}}
+{TARGET_LANGUAGE}
 </target_language>
 
 Translate every extracted term from the source language into the target language.
@@ -192,7 +192,7 @@ If transliteration is more appropriate than translation, use transliteration.
 
 ## Existing Glossary
 
-{{EXISTING_TERMS_INSTRUCTION}}
+{EXISTING_TERMS_INSTRUCTION}
 
 If an existing glossary is provided:
 
@@ -205,7 +205,7 @@ If an existing glossary is provided:
 
 # Extraction Rules
 
-Extract up to **40** relevant terms.
+Extract up to **60** relevant terms.
 
 If only one chapter is provided, extract every relevant term.
 
@@ -304,6 +304,7 @@ The context should:
 - briefly explain the narrative role
 - not repeat the translation
 - remain objective
+- be written in the target language
 
 ---
 
@@ -332,7 +333,7 @@ If no cultivation system appears, return an empty list.
 
 # Prioritization
 
-If more than 40 candidate terms exist, prioritize by:
+If more than 60 candidate terms exist, prioritize by:
 
 1. Frequency
 2. Narrative importance
