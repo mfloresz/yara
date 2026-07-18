@@ -19,6 +19,7 @@ var Version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	migrateThumbnails := flag.Bool("migrate-thumbnails", false, "generate thumbnails for all existing covers and exit")
+	migrateChapterStats := flag.Bool("migrate-chapter-stats", false, "recalculate chapter stats for every novel and exit")
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
@@ -57,6 +58,16 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("thumbnail migration finished, exiting")
+		os.Exit(0)
+	}
+
+	if *migrateChapterStats {
+		slog.Info("running chapter stats migration")
+		if err := st.RunChapterStatsMigration(); err != nil {
+			slog.Error("chapter stats migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("chapter stats migration finished, exiting")
 		os.Exit(0)
 	}
 

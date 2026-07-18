@@ -205,10 +205,8 @@ func (s *Server) processJob(jobID string) error {
 		jc.flushProgress(s)
 	}
 
-	if jc.statsDirty {
-		if err := s.Store.RecalculateNovelStats(jc.novel.ID); err != nil {
-			slog.Error("recalculate novel stats at job end", "jobId", jobID, "error", err)
-		}
+	if err := s.Store.RecalculateNovelStats(jc.novel.ID); err != nil {
+		slog.Error("recalculate novel stats at job end", "jobId", jobID, "error", err)
 	}
 
 	finalStatus := "done"

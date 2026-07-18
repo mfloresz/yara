@@ -37,3 +37,26 @@ func (s *Store) RunThumbnailMigration() error {
 	slog.Info("thumbnail migration completed")
 	return nil
 }
+
+// RunChapterStatsMigration recalculates chapter stats for every novel in the
+// database. It is intended to be run once via the --migrate-chapter-stats flag
+// to repair stats that were left stale after a cancelled download/translation job.
+func (s *Store) RunChapterStatsMigration() error {
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, "", "", 5000, 0)
+	if err != nil {
+		return fmt.Errorf("list novels: %w", err)
+	}
+
+	slog.Info("starting chapter stats migration", "total", len(records))
+	repaired := 0
+	for _, record := range records {
+		novelID := record.Id
+		if err := s.RecalculateNovelStats(novelID); err != nil {
+			slog.Warn("failed to recalculate novel stats", "novelId", novelID, "error", err)
+			continue
+		}
+		repaired++
+	}
+	slog.Info("chapter stats migration completed", "repaired", repaired)
+	return nil
+}

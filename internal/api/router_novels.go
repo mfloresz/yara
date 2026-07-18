@@ -125,6 +125,20 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		}
 		return e.JSON(http.StatusOK, parseJSONFields(novel))
 	})
+	api.POST("/db/novels/{id}/recalculate-stats", func(e *core.RequestEvent) error {
+		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("id"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		if err := s.Store.RecalculateNovelStats(novel.ID); err != nil {
+			return e.InternalServerError("failed to recalculate stats", err)
+		}
+		reloaded, err := s.Store.GetOwnedNovel(e.Auth.Id, novel.ID)
+		if err != nil {
+			return e.InternalServerError("failed to reload novel", err)
+		}
+		return e.JSON(http.StatusOK, parseJSONFields(reloaded))
+	})
 	api.PATCH("/db/novels/{id}", func(e *core.RequestEvent) error {
 		patch := map[string]any{}
 		if err := e.BindBody(&patch); err != nil {
