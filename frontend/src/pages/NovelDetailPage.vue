@@ -187,10 +187,10 @@
                 <span v-if="translateShowAll"> · {{ translateAllSummaries.length }} totales</span>
               </div>
 
-              <div v-if="eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
+              <div v-if="!translateShowAll && eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
               <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 420px">
-                <div v-for="chapter in eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
-                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
+                <div v-for="chapter in translateShowAll ? translateSourceSummaries : eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
+                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting || !eligibleChapterIds.has(chapter.id)" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
                   <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
                   <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
                   <n-tag :type="chapterTagType(resolvedChapterStatus(chapter))" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
@@ -444,6 +444,7 @@ import {
   NProgress,
   NSelect,
   NRadioGroup,
+  NRadioButton,
   NSkeleton,
   NTag,
   NSwitch,
@@ -641,6 +642,7 @@ const eligibleChapters = computed(() => {
     return chapter.hasTranslatedContent && (status === "translated" || status === "failed");
   });
 });
+const eligibleChapterIds = computed(() => new Set(eligibleChapters.value.map((c) => c.id)));
 const translateSourceSummaries = computed(() => translateShowAll.value ? translateAllSummaries.value : allSummaries.value);
 const cleanModeOptions = Object.entries(CLEAN_MODE_LABELS).map(([value, label]) => ({ value, label }));
 const cleanModeDescription = computed(() => CLEAN_MODE_DESCRIPTIONS[cleanMode.value]);
