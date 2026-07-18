@@ -128,6 +128,9 @@ func (s *Server) processJob(jobID string) error {
 	if job.Operation == "check" {
 		return s.processCheckJob(runCtx, job)
 	}
+	if job.Operation == "generate-glossary" {
+		return s.processGenerateGlossaryJob(runCtx, job)
+	}
 
 	jc, err := s.buildJobContext(runCtx, job)
 	if err != nil {

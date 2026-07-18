@@ -9,6 +9,7 @@ type Provider interface {
 	TranslateText(ctx context.Context, input TranslateTextInput) (string, error)
 	Refine(ctx context.Context, input RefineInput) (RefineOutput, error)
 	Check(ctx context.Context, input CheckInput) (CheckOutput, error)
+	GenerateGlossary(ctx context.Context, input GenerateGlossaryInput) (GenerateGlossaryOutput, error)
 }
 
 type TranslateTitleInput struct {
@@ -87,4 +88,24 @@ type CheckOutput struct {
 	OK       bool     `json:"ok"`
 	Issues   []string `json:"issues"`
 	Severity string   `json:"severity"`
+}
+
+type GenerateGlossaryInput struct {
+	SystemPrompt   string   `json:"systemPrompt"`
+	Texts          []string `json:"texts"`
+	SourceLang     string   `json:"sourceLanguage"`
+	TargetLang     string   `json:"targetLanguage"`
+	ExistingTerms  []string `json:"existingTerms"`
+	BatchInfo      string   `json:"batchInfo"`
+}
+
+type GlossaryEntry struct {
+	Source  string `json:"source"`
+	Target  string `json:"target"`
+	Context string `json:"context,omitempty"`
+}
+
+type GenerateGlossaryOutput struct {
+	Terms             []GlossaryEntry `json:"terms"`
+	CultivationSystem []GlossaryEntry `json:"cultivation_system"`
 }

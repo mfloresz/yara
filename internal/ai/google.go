@@ -158,6 +158,45 @@ func (p *GoogleProvider) resolveTimeout() time.Duration {
 	return 60 * time.Second
 }
 
+func (p *GoogleProvider) GenerateGlossary(ctx context.Context, in GenerateGlossaryInput) (GenerateGlossaryOutput, error) {
+	model, err := p.model()
+	if err != nil {
+		return GenerateGlossaryOutput{}, err
+	}
+	system := in.SystemPrompt
+	if trimmed := strings.TrimSpace(system); trimmed == "" {
+		system = "Extract translation glossary entries from the provided content."
+	}
+
+	var combinedTexts string
+	for i, text := range in.Texts {
+		if in.BatchInfo != "" {
+			combinedTexts += fmt.Sprintf("--- Batch %s, Chapter %d ---\n%s\n\n", in.BatchInfo, i+1, text)
+		} else {
+			combinedTexts += text + "\n\n"
+		}
+	}
+	if in.BatchInfo != "" {
+		combinedTexts = fmt.Sprintf("[%s]\n\n%s", in.BatchInfo, combinedTexts)
+	}
+
+	opts := []goai.Option{
+		goai.WithSystem(system),
+		goai.WithPrompt(strings.TrimSpace(combinedTexts)),
+		goai.WithTimeout(p.resolveTimeout()),
+	}
+	result, err := goai.GenerateText(ctx, model, opts...)
+	if err != nil {
+		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: %w", err)
+	}
+	text := stripJSONFences(strings.TrimSpace(result.Text))
+	var out GenerateGlossaryOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: parsing response: %w (raw: %s)", err, truncateString(text, 200))
+	}
+	return out, nil
+}
+
 // stripJSONFences removes markdown code fences wrapping a JSON response.
 func stripJSONFences(s string) string {
 	s = strings.TrimSpace(s)

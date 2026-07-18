@@ -28,6 +28,7 @@ export type PromptSettings = {
   translation?: PromptRoleTemplate;
   refine?: PromptRoleTemplate;
   check?: PromptRoleTemplate;
+  glossary?: PromptRoleTemplate;
 };
 
 export type LegacyPromptSettings = {
@@ -137,3 +138,12 @@ export function normalizePromptSettings(
 
   return next;
 }
+
+export type GlossaryGenerationOptions = {
+  chapterFrom: number;
+  chapterTo: number;
+  mode: "together" | "batch";
+  maxTokensPerBatch: number;
+  provider: string;
+  model: string;
+};

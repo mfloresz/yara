@@ -160,14 +160,16 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 			if strings.TrimSpace(dst.Refine.UserPrompt) == "" {
 				dst.Refine.UserPrompt = tpl.UserPrompt
 			}
-		case "check":
-			if strings.TrimSpace(dst.Check.SystemPrompt) == "" {
-				dst.Check.SystemPrompt = tpl.SystemPrompt
-			}
-			if strings.TrimSpace(dst.Check.UserPrompt) == "" {
-				dst.Check.UserPrompt = tpl.UserPrompt
-			}
+	case "check":
+		if strings.TrimSpace(dst.Check.SystemPrompt) == "" {
+			dst.Check.SystemPrompt = tpl.SystemPrompt
 		}
+		if strings.TrimSpace(dst.Check.UserPrompt) == "" {
+			dst.Check.UserPrompt = tpl.UserPrompt
+		}
+	case "glossary":
+		// Glossary prompt is resolved separately via resolveGlossaryPrompt
+	}
 	}
 	if strings.TrimSpace(dst.Translation.SystemPrompt) == "" {
 		dst.Translation.SystemPrompt = store.DefaultTranslationSystemPrompt

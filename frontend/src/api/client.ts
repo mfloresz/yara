@@ -39,6 +39,7 @@ import {
   normalizePromptSettings,
   type ServerDefaults,
   type ServerTranslationDefaults,
+  type GlossaryGenerationOptions,
 } from "@/domain/project-settings";
 import { getApiBaseUrl } from "@/utils/api-base-url";
 
@@ -365,6 +366,12 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           "/api/db/novels/batch-translate",
           { selections },
         );
+      },
+      async generateGlossary(
+        novelId: string,
+        options: GlossaryGenerationOptions,
+      ): Promise<{ jobId: string; status: string; operation: string }> {
+        return http.post(`/api/db/novels/${novelId}/generate-glossary`, options);
       },
     },
     chapters: {
