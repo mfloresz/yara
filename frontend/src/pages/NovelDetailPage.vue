@@ -163,14 +163,14 @@
             <div v-else class="stack-md">
               <div class="row-between">
                 <div class="row-wrap" style="gap: 0.5rem">
-                  <n-radio-group v-model:value="translateOperation" size="small">
-                    <n-radio-button value="translate">Traducir</n-radio-button>
-                    <n-radio-button value="refine">Refinar</n-radio-button>
-                  </n-radio-group>
-                  <n-radio-group v-model:value="translateShowAll" size="small">
-                    <n-radio-button :value="false">Solo elegibles</n-radio-button>
-                    <n-radio-button :value="true">Listar Todos</n-radio-button>
-                  </n-radio-group>
+                  <n-button-group size="small">
+                    <n-button :type="translateOperation === 'translate' ? 'primary' : 'default'" @click="translateOperation = 'translate'">Traducir</n-button>
+                    <n-button :type="translateOperation === 'refine' ? 'primary' : 'default'" @click="translateOperation = 'refine'">Refinar</n-button>
+                  </n-button-group>
+                  <n-button-group size="small">
+                    <n-button :type="!translateShowAll ? 'primary' : 'default'" @click="translateShowAll = false">Solo elegibles</n-button>
+                    <n-button :type="translateShowAll ? 'primary' : 'default'" @click="translateShowAll = true">Listar Todos</n-button>
+                  </n-button-group>
                 </div>
                 <div class="row-wrap">
                   <n-button type="primary" :loading="translateSubmitting" :disabled="translateSelectedIds.size === 0 || translateSubmitting" @click="startTranslationJob">
@@ -436,6 +436,7 @@ import UpdateUrlDialog from "@/features/novels/UpdateUrlDialog.vue";
 import ProjectSettingsDialog from "@/features/projects/ProjectSettingsDialog.vue";
 import {
   NButton,
+  NButtonGroup,
   NCard,
   NCheckbox,
   NModal,
@@ -443,8 +444,6 @@ import {
   NAlert,
   NProgress,
   NSelect,
-  NRadioGroup,
-  NRadioButton,
   NSkeleton,
   NTag,
   NSwitch,

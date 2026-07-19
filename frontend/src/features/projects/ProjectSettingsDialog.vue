@@ -1,435 +1,713 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" :style="{ width: 'min(1100px, 96vw)', height: 'min(720px, 85vh)', '--n-padding-top': '5px', '--n-padding-bottom': '5px' }" :content-style="{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: 0 }" :segmented="{ content: true, action: true }" @after-leave="emit('update:open', false)">
+  <n-modal
+    v-model:show="visible"
+    preset="card"
+    :style="modalStyle"
+    :content-style="contentStyle"
+    :segmented="{ content: true, action: true }"
+    @after-leave="emit('update:open', false)"
+  >
     <template #header>
-      <n-tabs v-model:value="activeTab" type="bar" animated style="flex: 1">
-        <n-tab v-for="tab in tabs" :key="tab.value" :name="tab.value">
-          {{ tab.label }}
-        </n-tab>
-      </n-tabs>
+      <div class="modal-header">
+        <div class="modal-title-block">
+          <span class="modal-title">{{ novelDraft.sourceTitle || 'Configurar novela' }}</span>
+          <span v-if="isDirty" class="dirty-dot" title="Cambios sin guardar" />
+        </div>
+        <n-tabs
+          v-model:value="activeTab"
+          type="bar"
+          animated
+          size="small"
+          class="header-tabs mobile-only"
+        >
+          <n-tab v-for="tab in tabs" :key="tab.value" :name="tab.value">
+            {{ tab.label }}
+          </n-tab>
+        </n-tabs>
+      </div>
     </template>
 
-    <div :style="{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }">
+    <div class="modal-body">
+      <nav class="side-nav desktop-only" aria-label="Secciones">
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          type="button"
+          class="side-nav-item"
+          :class="{ active: activeTab === tab.value }"
+          @click="activeTab = tab.value"
+        >
+          <n-icon :size="16"><component :is="tab.icon" /></n-icon>
+          <span>{{ tab.label }}</span>
+        </button>
+      </nav>
 
-      <n-scrollbar v-if="activeTab === 'novel'" :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <div class="row-wrap">
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Idioma origen</label>
-              <n-select v-model:value="novelDraft.sourceLanguage" :options="languageOptions" />
-            </div>
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Idioma destino</label>
-              <n-select v-model:value="novelDraft.targetLanguage" :options="languageOptionsNoAuto" />
-            </div>
-          </div>
-
-          <div class="row-wrap">
-            <n-card style="flex: 1; min-width: 280px" title="Metadatos idioma origen">
-                <div class="stack-md">
-                  <div v-if="coverEditable" class="cover-editor">
-                    <label class="small muted">Portada</label>
-                    <div class="cover-preview">
-                      <img v-if="displayCoverUrl" :src="displayCoverUrl" alt="Portada actual" />
-                      <div v-else class="cover-placeholder">
-                        <n-icon :size="32"><ImageOutline /></n-icon>
-                      </div>
-                    </div>
-                    <div class="row-wrap" style="margin-top: 0.5rem">
-                      <n-button size="small" secondary @click="triggerFileInput">
-                        {{ displayCoverUrl ? 'Cambiar portada' : 'Subir portada' }}
-                      </n-button>
-                      <n-button v-if="displayCoverUrl" size="small" type="error" secondary @click="removeCover">
-                        Eliminar
-                      </n-button>
-                    </div>
-                    <input ref="fileInputRef" type="file" accept="image/*" hidden @change="onFileSelected" />
+      <div class="main-pane">
+        <!-- ========== NOVELA ========== -->
+        <n-scrollbar v-if="activeTab === 'novel'" class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <div class="identity-row">
+              <div v-if="coverEditable" class="cover-editor compact">
+                <div class="cover-preview-tiny" @click="triggerFileInput">
+                  <img
+                    v-if="displayCoverUrl"
+                    :src="displayCoverUrl"
+                    alt="Portada"
+                    loading="lazy"
+                    @error="onCoverImageError"
+                  />
+                  <div v-else class="cover-placeholder">
+                    <n-icon :size="20"><ImageOutline /></n-icon>
                   </div>
-
-                  <div class="row-wrap">
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Título</label>
-                      <n-input :value="novelDraft.sourceTitle" @update:value="(v) => (novelDraft.sourceTitle = v)" />
-                    </div>
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Autor</label>
-                      <n-input :value="novelDraft.sourceAuthor" @update:value="(v) => (novelDraft.sourceAuthor = v)" />
-                    </div>
+                  <div class="cover-overlay">
+                    {{ displayCoverUrl ? 'Cambiar' : 'Subir' }}
                   </div>
+                </div>
+                <n-button
+                  v-if="displayCoverUrl"
+                  size="tiny"
+                  type="error"
+                  quaternary
+                  @click="removeCover"
+                >
+                  Quitar
+                </n-button>
+                <input
+                  ref="fileInputRef"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  aria-hidden="true"
+                  @change="onFileSelected"
+                />
+              </div>
 
-                  <div class="row-wrap">
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Serie</label>
-                      <n-auto-complete
-                        :value="novelDraft.sourceSeries"
-                        :options="sourceSeriesOptions"
-                        placeholder="Nombre de la serie"
-                        @update:value="(v) => (novelDraft.sourceSeries = v ?? '')"
-                      />
-                    </div>
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Número</label>
-                      <n-input :value="novelDraft.sourceNumber" @update:value="(v) => (novelDraft.sourceNumber = v)" />
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <label class="small muted">Descripción</label>
+              <div class="identity-fields">
+                <div class="field-grid-3">
+                  <div class="form-group span-2">
+                    <label for="novel-source-url" class="lbl">URL fuente</label>
                     <n-input
-                      :value="novelDraft.sourceDescription"
-                      type="textarea"
-                      :rows="4"
-                      @update:value="(v) => (novelDraft.sourceDescription = v)"
+                      id="novel-source-url"
+                      v-model:value="novelDraft.url"
+                      size="small"
+                      placeholder="https://..."
+                      inputmode="url"
                     />
                   </div>
-
-                  <div class="form-group" style="max-width: 220px">
-                    <label class="small muted">Estatus</label>
+                  <div class="form-group">
+                    <label for="novel-status" class="lbl">Estatus</label>
                     <n-select
+                      id="novel-status"
+                      size="small"
                       :value="novelDraft.status"
                       :options="statusOptions"
                       @update:value="(v) => (novelDraft.status = v ?? 'ongoing')"
                     />
                   </div>
-
                   <div class="form-group">
-                    <label class="small muted">Etiquetas</label>
+                    <label for="novel-source-lang" class="lbl">Idioma origen</label>
+                    <n-select
+                      id="novel-source-lang"
+                      v-model:value="novelDraft.sourceLanguage"
+                      size="small"
+                      :options="languageOptions"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label for="novel-target-lang" class="lbl">Idioma destino</label>
+                    <n-select
+                      id="novel-target-lang"
+                      v-model:value="novelDraft.targetLanguage"
+                      size="small"
+                      :options="languageOptionsNoAuto"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label class="lbl">Etiquetas</label>
                     <n-dynamic-tags
+                      size="small"
                       :value="novelDraft.tags"
-                      placeholder="Escribe una etiqueta y presiona Enter"
+                      placeholder="Enter para añadir"
+                      :max="20"
                       @update:value="(v: string[]) => (novelDraft.tags = v)"
                     />
                   </div>
+                </div>
+              </div>
+            </div>
 
-                  <div class="row-wrap" style="justify-content: flex-end; padding-top: 0.5rem; border-top: 1px solid var(--divide)">
-                    <n-popconfirm @positive-click="onDeleteNovel">
-                      <template #trigger>
-                        <n-button size="small" type="error" secondary>
-                          <template #icon><n-icon><TrashOutline /></n-icon></template>
-                          Eliminar novela
-                        </n-button>
-                      </template>
-                      ¿Eliminar esta novela? Esta acción no se puede deshacer.
-                    </n-popconfirm>
+            <div class="meta-split">
+              <section class="meta-col">
+                <header class="meta-col-head">
+                  <span>Origen</span>
+                </header>
+                <div class="stack-xs">
+                  <div class="form-group">
+                    <label class="lbl" for="novel-source-title">Título</label>
+                    <n-input
+                      id="novel-source-title"
+                      size="small"
+                      :value="novelDraft.sourceTitle"
+                      maxlength="500"
+                      placeholder="Título original"
+                      @update:value="(v) => (novelDraft.sourceTitle = v)"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label class="lbl" for="novel-source-author">Autor</label>
+                    <n-input
+                      id="novel-source-author"
+                      size="small"
+                      :value="novelDraft.sourceAuthor"
+                      maxlength="300"
+                      placeholder="Autor"
+                      @update:value="(v) => (novelDraft.sourceAuthor = v)"
+                    />
+                  </div>
+                  <div class="field-grid-2">
+                    <div class="form-group">
+                      <label class="lbl" for="novel-source-series">Serie</label>
+                      <n-auto-complete
+                        id="novel-source-series"
+                        size="small"
+                        :value="novelDraft.sourceSeries"
+                        :options="sourceSeriesOptions"
+                        placeholder="Serie"
+                        maxlength="300"
+                        @update:value="(v) => (novelDraft.sourceSeries = v ?? '')"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl" for="novel-source-number">N.º</label>
+                      <n-input
+                        id="novel-source-number"
+                        size="small"
+                        :value="novelDraft.sourceNumber"
+                        placeholder="1, 2.5…"
+                        maxlength="50"
+                        @update:value="(v) => (novelDraft.sourceNumber = v)"
+                      />
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="lbl" for="novel-source-desc">Descripción</label>
+                    <n-input
+                      id="novel-source-desc"
+                      size="small"
+                      type="textarea"
+                      :rows="3"
+                      maxlength="5000"
+                      show-count
+                      :value="novelDraft.sourceDescription"
+                      placeholder="Sinopsis"
+                      @update:value="(v) => (novelDraft.sourceDescription = v)"
+                    />
                   </div>
                 </div>
-            </n-card>
+              </section>
 
-            <n-card style="flex: 1; min-width: 280px" title="Metadatos idioma destino">
-                <div class="stack-md">
-                  <div class="row-wrap">
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Título</label>
-                      <n-input :value="novelDraft.targetTitle" @update:value="(v) => (novelDraft.targetTitle = v)" />
-                    </div>
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Autor</label>
-                      <n-input :value="novelDraft.targetAuthor" @update:value="(v) => (novelDraft.targetAuthor = v)" />
-                    </div>
+              <div class="meta-transfer">
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button size="tiny" quaternary circle @click="copySourceToTarget">
+                      <template #icon><n-icon><ArrowForwardOutline /></n-icon></template>
+                    </n-button>
+                  </template>
+                  Copiar origen → destino
+                </n-tooltip>
+              </div>
+
+              <section class="meta-col">
+                <header class="meta-col-head">
+                  <span>Destino</span>
+                </header>
+                <div class="stack-xs">
+                  <div class="form-group">
+                    <label class="lbl" for="novel-target-title">Título</label>
+                    <n-input
+                      id="novel-target-title"
+                      size="small"
+                      :value="novelDraft.targetTitle"
+                      maxlength="500"
+                      placeholder="Título traducido"
+                      @update:value="(v) => (novelDraft.targetTitle = v)"
+                    />
                   </div>
-
-                  <div class="row-wrap">
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Serie</label>
+                  <div class="form-group">
+                    <label class="lbl" for="novel-target-author">Autor</label>
+                    <n-input
+                      id="novel-target-author"
+                      size="small"
+                      :value="novelDraft.targetAuthor"
+                      maxlength="300"
+                      placeholder="Autor (traducido)"
+                      @update:value="(v) => (novelDraft.targetAuthor = v)"
+                    />
+                  </div>
+                  <div class="field-grid-2">
+                    <div class="form-group">
+                      <label class="lbl" for="novel-target-series">Serie</label>
                       <n-auto-complete
+                        id="novel-target-series"
+                        size="small"
                         :value="novelDraft.targetSeries"
                         :options="targetSeriesOptions"
-                        placeholder="Nombre de la serie"
+                        placeholder="Serie"
+                        maxlength="300"
                         @update:value="(v) => (novelDraft.targetSeries = v ?? '')"
                       />
                     </div>
-                    <div class="form-group" style="flex: 1; min-width: 180px">
-                      <label class="small muted">Número</label>
-                      <n-input :value="novelDraft.targetNumber" @update:value="(v) => (novelDraft.targetNumber = v)" />
+                    <div class="form-group">
+                      <label class="lbl" for="novel-target-number">N.º</label>
+                      <n-input
+                        id="novel-target-number"
+                        size="small"
+                        :value="novelDraft.targetNumber"
+                        placeholder="1, 2.5…"
+                        maxlength="50"
+                        @update:value="(v) => (novelDraft.targetNumber = v)"
+                      />
                     </div>
                   </div>
-
                   <div class="form-group">
-                    <label class="small muted">Descripción</label>
+                    <label class="lbl" for="novel-target-desc">Descripción</label>
                     <n-input
-                      :value="novelDraft.targetDescription"
+                      id="novel-target-desc"
+                      size="small"
                       type="textarea"
-                      :rows="4"
+                      :rows="3"
+                      maxlength="5000"
+                      show-count
+                      :value="novelDraft.targetDescription"
+                      placeholder="Descripción traducida"
                       @update:value="(v) => (novelDraft.targetDescription = v)"
                     />
                   </div>
                 </div>
-            </n-card>
-          </div>
-
-          <div class="row-wrap">
-            <div style="min-width: 280px; flex: 1">
-              <label class="small muted">URL fuente</label>
-              <n-input v-model:value="novelDraft.url" />
+              </section>
             </div>
-            <div style="min-width: 280px; flex: 1">
-              <label class="small muted">Custom commands</label>
-              <n-input v-model:value="novelDraft.customCommands" type="textarea" :autosize="{ minRows: 5 }" class="mono" />
+
+          </div>
+        </n-scrollbar>
+
+        <!-- ========== GLOSARIO ========== -->
+        <n-scrollbar v-else-if="activeTab === 'glossary'" class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <n-collapse :default-expanded-names="[]">
+              <n-collapse-item title="Generar glosario con IA" name="gen">
+                <div class="stack-sm">
+                  <div class="field-grid-4">
+                    <div class="form-group">
+                      <label class="lbl">Cap. desde</label>
+                      <n-input-number
+                        v-model:value="glossaryGenOptions.chapterFrom"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl">Cap. hasta</label>
+                      <n-input-number
+                        v-model:value="glossaryGenOptions.chapterTo"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl">Modo</label>
+                      <n-button-group size="small">
+                        <n-button :type="glossaryGenOptions.mode === 'together' ? 'primary' : 'default'" @click="glossaryGenOptions.mode = 'together'">Junto</n-button>
+                        <n-button :type="glossaryGenOptions.mode === 'batch' ? 'primary' : 'default'" @click="glossaryGenOptions.mode = 'batch'">Lotes</n-button>
+                      </n-button-group>
+                    </div>
+                    <div v-if="glossaryGenOptions.mode === 'batch'" class="form-group">
+                      <label class="lbl">Max tokens/lote</label>
+                      <n-input-number
+                        v-model:value="glossaryGenOptions.maxTokensPerBatch"
+                        :min="10000"
+                        :step="10000"
+                        size="small"
+                        class="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    v-if="estimatedTokensLoading || estimatedTokens !== null"
+                    class="small muted token-est"
+                  >
+                    <n-spin v-if="estimatedTokensLoading" :size="12" />
+                    <template v-else-if="estimatedTokens !== null">
+                      ~{{ formatTokenCount(estimatedTokens) }} tokens estimados
+                    </template>
+                  </div>
+
+                  <div class="field-grid-2">
+                    <div class="form-group">
+                      <label class="lbl">Proveedor</label>
+                      <n-select
+                        v-model:value="glossaryGenOptions.provider"
+                        :options="providerOptions"
+                        :loading="providersLoading"
+                        placeholder="Proveedor activo"
+                        clearable
+                        size="small"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl">Modelo</label>
+                      <n-select
+                        v-if="glossaryModelOptions.length > 1"
+                        v-model:value="glossaryGenOptions.model"
+                        :options="glossaryModelOptions"
+                        placeholder="Modelo"
+                        clearable
+                        size="small"
+                      />
+                      <n-input
+                        v-else
+                        v-model:value="glossaryGenOptions.model"
+                        placeholder="Modelo"
+                        size="small"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="row-end">
+                    <n-button
+                      type="primary"
+                      size="small"
+                      :loading="glossaryGenerating"
+                      :disabled="glossaryGenerating"
+                      @click="generateGlossary"
+                    >
+                      Generar glosario
+                    </n-button>
+                  </div>
+                </div>
+              </n-collapse-item>
+            </n-collapse>
+
+            <div class="row-between">
+              <div class="glossary-toolbar">
+                <h4 class="section-title">Glosario</h4>
+                <n-input
+                  v-if="novelDraft.glossary.length > 5"
+                  v-model:value="glossaryFilter"
+                  size="tiny"
+                  clearable
+                  placeholder="Filtrar…"
+                  style="max-width: 180px"
+                />
+                <span class="small muted">{{ filteredGlossary.length }} entradas</span>
+              </div>
+              <n-button size="small" @click="addGlossaryEntry">
+                <template #icon><n-icon><AddOutline /></n-icon></template>
+                Añadir
+              </n-button>
+            </div>
+
+            <div v-if="filteredGlossary.length === 0" class="muted small empty-state">
+              {{ novelDraft.glossary.length === 0 ? 'Sin entradas de glosario.' : 'Sin coincidencias.' }}
+            </div>
+            <div v-else class="glossary-list">
+              <div class="glossary-list-header">
+                <span class="glossary-col-source">Origen</span>
+                <span class="glossary-col-target">Destino</span>
+                <span class="glossary-col-context">Contexto</span>
+                <span class="glossary-col-actions" />
+              </div>
+              <div
+                v-for="entry in filteredGlossary"
+                :key="entry.id"
+                class="glossary-list-row"
+              >
+                <n-input
+                  v-model:value="entry.source"
+                  placeholder="Origen"
+                  size="tiny"
+                  class="glossary-col-source"
+                />
+                <n-input
+                  v-model:value="entry.target"
+                  placeholder="Destino"
+                  size="tiny"
+                  class="glossary-col-target"
+                />
+                <n-input
+                  v-model:value="entry.context"
+                  placeholder="Contexto"
+                  size="tiny"
+                  class="glossary-col-context"
+                />
+                <n-button
+                  type="error"
+                  quaternary
+                  circle
+                  size="tiny"
+                  class="glossary-col-actions glossary-delete-btn"
+                  @click="removeGlossaryEntry(entry.id)"
+                >
+                  <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
+                </n-button>
+              </div>
             </div>
           </div>
-        </div>
-      </n-scrollbar>
+        </n-scrollbar>
 
-      <n-scrollbar v-else-if="activeTab === 'glossary'" :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <n-card title="Generar glosario con IA" size="small">
-            <div class="stack-md">
-              <div class="row-wrap">
-                <div style="min-width: 120px; flex: 1">
-                  <label class="small muted">Capítulo desde</label>
-                  <n-input-number v-model:value="glossaryGenOptions.chapterFrom" :min="1" size="small" />
-                </div>
-                <div style="min-width: 120px; flex: 1">
-                  <label class="small muted">Capítulo hasta</label>
-                  <n-input-number v-model:value="glossaryGenOptions.chapterTo" :min="1" size="small" />
-                </div>
+        <!-- ========== PROMPTS ========== -->
+        <n-scrollbar v-else-if="activeTab === 'prompts'" class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <n-alert type="info" :bordered="false" class="compact-alert">
+              Edita un system prompt para crear un override. Vacío o restaurado = prompt global.
+              El user prompt se genera automáticamente.
+            </n-alert>
+            <PromptRoleEditor
+              title="Traducción"
+              :model-value="effectiveSystemPrompt('translation')"
+              :global-value="globalSystemPrompt('translation')"
+              :overridden="isOverridden('translation')"
+              @update:model-value="setSystemPrompt('translation', $event)"
+            />
+            <PromptRoleEditor
+              title="Refinamiento"
+              :model-value="effectiveSystemPrompt('refine')"
+              :global-value="globalSystemPrompt('refine')"
+              :overridden="isOverridden('refine')"
+              @update:model-value="setSystemPrompt('refine', $event)"
+            />
+            <PromptRoleEditor
+              title="Verificación"
+              :model-value="effectiveSystemPrompt('check')"
+              :global-value="globalSystemPrompt('check')"
+              :overridden="isOverridden('check')"
+              @update:model-value="setSystemPrompt('check', $event)"
+            />
+          </div>
+        </n-scrollbar>
+
+        <!-- ========== IA ========== -->
+        <n-scrollbar v-else-if="activeTab === 'ai'" class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <div class="field-grid-3">
+              <div class="form-group">
+                <label class="lbl">Proveedor</label>
+                <n-select
+                  v-model:value="settingsDraft.ai.provider"
+                  :options="providerOptions"
+                  :loading="providersLoading"
+                  :disabled="providersLoading"
+                  placeholder="Usar global"
+                  clearable
+                  size="small"
+                  @update:value="onProviderChange"
+                />
               </div>
-              <div v-if="estimatedTokensLoading || estimatedTokens !== null" class="small muted" style="margin-top: -0.25rem">
-                <n-spin v-if="estimatedTokensLoading" :size="12" style="margin-right: 0.35rem" />
-                <template v-else-if="estimatedTokens !== null">
-                  ~{{ formatTokenCount(estimatedTokens) }} tokens estimados
-                </template>
+              <div class="form-group">
+                <label class="lbl">Modelo</label>
+                <n-select
+                  v-if="modelOptions.length > 1"
+                  v-model:value="settingsDraft.ai.model"
+                  :options="modelOptions"
+                  :disabled="!settingsDraft.ai.provider || providersLoading"
+                  placeholder="Usar global"
+                  clearable
+                  size="small"
+                />
+                <n-input
+                  v-else
+                  v-model:value="settingsDraft.ai.model"
+                  :disabled="!settingsDraft.ai.provider || providersLoading"
+                  placeholder="Ej: local-model"
+                  size="small"
+                />
               </div>
-              <div class="row-wrap">
-                <div style="flex: 1">
-                  <label class="small muted">Modo de envío</label>
-                  <n-radio-group v-model:value="glossaryGenOptions.mode" size="small">
-                    <n-radio value="together">Todo junto</n-radio>
-                    <n-radio value="batch">Por lotes</n-radio>
-                  </n-radio-group>
+              <FieldNumber
+                v-model="timeoutSec"
+                label="Timeout (s)"
+                :min="10"
+                allow-clear
+                placeholder="Global"
+                wrapper-style="min-width: 0"
+              />
+            </div>
+
+            <n-alert type="info" :bordered="false" class="compact-alert">
+              Campos vacíos → configuración global. El timeout solo aplica si hay valor.
+            </n-alert>
+
+            <div class="subpanel">
+              <div class="switch-row">
+                <div>
+                  <div class="switch-title">Modelo distinto para títulos</div>
+                  <div class="small muted">
+                    Modelo más pequeño para títulos. Si falla, usa el de contenido.
+                  </div>
                 </div>
-                <div v-if="glossaryGenOptions.mode === 'batch'" style="min-width: 140px">
-                  <label class="small muted">Max tokens/lote</label>
-                  <n-input-number v-model:value="glossaryGenOptions.maxTokensPerBatch" :min="10000" :step="10000" size="small" />
-                </div>
+                <n-switch v-model:value="settingsDraft.ai.titleEnabled" />
               </div>
-              <div class="row-wrap">
-                <div style="flex: 1; min-width: 180px">
-                  <label class="small muted">Proveedor</label>
+              <div v-if="settingsDraft.ai.titleEnabled" class="field-grid-2" style="margin-top: 0.75rem">
+                <div class="form-group">
+                  <label class="lbl">Proveedor títulos</label>
                   <n-select
-                    v-model:value="glossaryGenOptions.provider"
+                    v-model:value="settingsDraft.ai.titleProvider"
                     :options="providerOptions"
                     :loading="providersLoading"
-                    placeholder="Proveedor activo"
+                    :disabled="providersLoading"
+                    placeholder="Proveedor de contenido"
                     clearable
                     size="small"
+                    @update:value="onTitleProviderChange"
                   />
                 </div>
-                <div style="flex: 1; min-width: 180px">
-                  <label class="small muted">Modelo</label>
+                <div class="form-group">
+                  <label class="lbl">Modelo títulos</label>
                   <n-select
-                    v-if="glossaryModelOptions.length > 1"
-                    v-model:value="glossaryGenOptions.model"
-                    :options="glossaryModelOptions"
-                    placeholder="Modelo del proveedor"
+                    v-if="titleModelOptions.length > 1"
+                    v-model:value="settingsDraft.ai.titleModel"
+                    :options="titleModelOptions"
+                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                    placeholder="Modelo de contenido"
                     clearable
                     size="small"
                   />
                   <n-input
                     v-else
-                    v-model:value="glossaryGenOptions.model"
-                    placeholder="Modelo del proveedor"
+                    v-model:value="settingsDraft.ai.titleModel"
+                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                    placeholder="Ej: local-model"
                     size="small"
                   />
                 </div>
               </div>
-              <div style="display: flex; justify-content: flex-end">
-                <n-button
-                  type="primary"
-                  size="small"
-                  :loading="glossaryGenerating"
-                  :disabled="glossaryGenerating"
-                  @click="generateGlossary"
-                >
-                  Generar glosario
-                </n-button>
-              </div>
-            </div>
-          </n-card>
-
-          <div class="row-between">
-            <h4 style="margin: 0">Glosario</h4>
-            <n-button size="small" @click="addGlossaryEntry">
-              <template #icon><n-icon><AddOutline /></n-icon></template>
-              Añadir entrada
-            </n-button>
-          </div>
-          <div v-if="novelDraft.glossary.length === 0" class="muted small">Sin entradas de glosario.</div>
-          <div v-else class="glossary-list">
-            <div class="glossary-list-header">
-              <span class="glossary-col-source">Origen</span>
-              <span class="glossary-col-target">Destino</span>
-              <span class="glossary-col-context">Contexto</span>
-              <span class="glossary-col-actions" />
-            </div>
-            <div v-for="entry in novelDraft.glossary" :key="entry.id" class="glossary-list-row">
-              <n-input v-model:value="entry.source" placeholder="Origen" size="small" class="glossary-col-source" />
-              <n-input v-model:value="entry.target" placeholder="Destino" size="small" class="glossary-col-target" />
-              <n-input v-model:value="entry.context" placeholder="Contexto" size="small" class="glossary-col-context" />
-              <n-button type="error" quaternary circle size="tiny" class="glossary-col-actions glossary-delete-btn" @click="removeGlossaryEntry(entry.id)">
-                <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
-              </n-button>
             </div>
           </div>
-        </div>
-      </n-scrollbar>
+        </n-scrollbar>
 
-      <n-scrollbar v-else-if="activeTab === 'prompts'" :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <n-alert type="info">
-            Edita un system prompt para crear un override en la novela. Déjalo vacío (o restáuralo al global) para usar el prompt configurado en Configuración general. El user prompt se genera automáticamente con los datos del capítulo y no se expone aquí.
-          </n-alert>
-          <PromptRoleEditor
-            title="Traducción"
-            :model-value="effectiveSystemPrompt('translation')"
-            :global-value="globalSystemPrompt('translation')"
-            :overridden="isOverridden('translation')"
-            @update:model-value="setSystemPrompt('translation', $event)"
-          />
-          <PromptRoleEditor
-            title="Refinamiento"
-            :model-value="effectiveSystemPrompt('refine')"
-            :global-value="globalSystemPrompt('refine')"
-            :overridden="isOverridden('refine')"
-            @update:model-value="setSystemPrompt('refine', $event)"
-          />
-          <PromptRoleEditor
-            title="Verificación"
-            :model-value="effectiveSystemPrompt('check')"
-            :global-value="globalSystemPrompt('check')"
-            :overridden="isOverridden('check')"
-            @update:model-value="setSystemPrompt('check', $event)"
-          />
-        </div>
-      </n-scrollbar>
-
-      <n-scrollbar v-else-if="activeTab === 'ai'" :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <div class="row-wrap">
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Proveedor</label>
-              <n-select
-                v-model:value="settingsDraft.ai.provider"
-                :options="providerOptions"
-                :loading="providersLoading"
-                :disabled="providersLoading"
-                placeholder="Usar proveedor global"
-                clearable
-                @update:value="onProviderChange"
-              />
-            </div>
-            <div style="min-width: 220px; flex: 1">
-              <label class="small muted">Modelo</label>
-              <n-select
-                v-if="modelOptions.length > 1"
-                v-model:value="settingsDraft.ai.model"
-                :options="modelOptions"
-                :disabled="!settingsDraft.ai.provider || providersLoading"
-                placeholder="Usar modelo global"
-                clearable
-              />
-              <n-input
-                v-else
-                v-model:value="settingsDraft.ai.model"
-                :disabled="!settingsDraft.ai.provider || providersLoading"
-                placeholder="Ej: local-model"
-              />
-            </div>
-            <FieldNumber v-model="timeoutSec" label="Timeout (segundos)" :min="10" allow-clear placeholder="Usar global" wrapper-style="min-width: 180px; flex: 1" />
-          </div>
-          <n-alert type="info">Si dejas estos campos vacíos, el backend usará la configuración global. El timeout aplica solo si se configura un valor.</n-alert>
-
-          <div style="border-top: 1px solid var(--divide); padding-top: 1rem; margin-top: 0.5rem">
-            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+        <!-- ========== TRADUCCIÓN ========== -->
+        <n-scrollbar v-else-if="activeTab === 'translation'" class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <div class="switch-row">
               <div>
-                <div style="font-weight: 600">Usar modelo diferente para traducir títulos</div>
-                <div class="small muted">Usa un modelo más pequeño para títulos de capítulos. Si falla, se usa el modelo de contenido.</div>
+                <div class="switch-title">Auto segmentación</div>
+                <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor.</div>
               </div>
-              <n-switch v-model:value="settingsDraft.ai.titleEnabled" style="flex-shrink: 0" />
+              <n-switch v-model:value="settingsDraft.translation.autoSegment" />
             </div>
-            <div v-if="settingsDraft.ai.titleEnabled" class="row-wrap" style="margin-top: 0.75rem">
-              <div style="min-width: 220px; flex: 1">
-                <label class="small muted">Proveedor para títulos</label>
-                <n-select
-                  v-model:value="settingsDraft.ai.titleProvider"
-                  :options="providerOptions"
-                  :loading="providersLoading"
-                  :disabled="providersLoading"
-                  placeholder="Usar proveedor de contenido"
-                  clearable
-                  @update:value="onTitleProviderChange"
-                />
+
+            <div class="field-grid-4">
+              <FieldNumber
+                v-model="settingsDraft.translation.thresholdChars"
+                label="Umbral auto"
+                :min="1000"
+              />
+              <FieldNumber
+                v-model="settingsDraft.translation.maxChars"
+                label="Máx. segmento"
+                :min="500"
+              />
+              <FieldNumber
+                v-model="settingsDraft.translation.minChars"
+                label="Mín. segmento"
+                :min="100"
+              />
+              <FieldNumber
+                v-model="settingsDraft.translation.maxRetries"
+                label="Reintentos"
+                :min="0"
+              />
+            </div>
+
+            <div class="switch-row">
+              <div>
+                <div class="switch-title">Enable check</div>
+                <div class="small muted">Verificación adicional en el backend.</div>
               </div>
-              <div style="min-width: 220px; flex: 1">
-                <label class="small muted">Modelo para títulos</label>
-                <n-select
-                  v-if="titleModelOptions.length > 1"
-                  v-model:value="settingsDraft.ai.titleModel"
-                  :options="titleModelOptions"
-                  :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                  placeholder="Usar modelo de contenido"
-                  clearable
-                />
+              <n-switch v-model:value="settingsDraft.translation.enableCheck" />
+            </div>
+
+            <div class="switch-row">
+              <div>
+                <div class="switch-title">Incluir títulos anteriores</div>
+                <div class="small muted">Contexto de títulos previos al traducir.</div>
+              </div>
+              <n-switch v-model:value="settingsDraft.translation.includePreviousChapterTitles" />
+            </div>
+          </div>
+        </n-scrollbar>
+
+        <!-- ========== NOTAS ========== -->
+        <n-scrollbar v-else-if="activeTab === 'notes'" class="pane-scroll">
+          <div class="pane-pad">
+            <label class="lbl">Notas del proyecto</label>
+            <n-input
+              v-model:value="settingsDraft.notes"
+              type="textarea"
+              size="small"
+              :autosize="{ minRows: 12, maxRows: 24 }"
+              placeholder="Notas libres sobre esta novela…"
+            />
+          </div>
+        </n-scrollbar>
+
+        <!-- ========== AVANZADO ========== -->
+        <n-scrollbar v-else class="pane-scroll">
+          <div class="pane-pad stack-sm">
+            <n-collapse :default-expanded-names="['commands']">
+              <n-collapse-item title="Comandos personalizados" name="commands">
                 <n-input
-                  v-else
-                  v-model:value="settingsDraft.ai.titleModel"
-                  :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                  placeholder="Ej: local-model"
+                  id="novel-custom-commands"
+                  v-model:value="novelDraft.customCommands"
+                  type="textarea"
+                  size="small"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
+                  class="mono"
+                  placeholder="Comandos especiales de procesamiento"
                 />
-              </div>
-            </div>
+              </n-collapse-item>
+              <n-collapse-item name="danger">
+                <template #header>
+                  <span class="danger-label">Zona de peligro</span>
+                </template>
+                <div class="danger-zone compact">
+                  <p class="small muted" style="margin: 0">
+                    Elimina la novela y todos los capítulos, traducciones y datos asociados.
+                  </p>
+                  <n-popconfirm @positive-click="onDeleteNovel">
+                    <template #trigger>
+                      <n-button type="error" secondary size="small">
+                        <template #icon><n-icon><TrashOutline /></n-icon></template>
+                        Eliminar novela
+                      </n-button>
+                    </template>
+                    <div style="max-width: 280px">
+                      ¿Eliminar
+                      <strong class="no-wrap">{{ novelDraft.sourceTitle || 'esta novela' }}</strong>?
+                      Esta acción no se puede deshacer.
+                    </div>
+                  </n-popconfirm>
+                </div>
+              </n-collapse-item>
+            </n-collapse>
           </div>
-        </div>
-      </n-scrollbar>
-
-      <n-scrollbar v-else-if="activeTab === 'translation'" :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-            <div>
-              <div style="font-weight: 600">Auto segmentación</div>
-              <div class="small muted">Divide capítulos largos antes de enviarlos al proveedor AI.</div>
-            </div>
-            <n-switch v-model:value="settingsDraft.translation.autoSegment" />
-          </div>
-
-          <div class="row-wrap">
-            <FieldNumber v-model="settingsDraft.translation.thresholdChars" label="Umbral auto" :min="1000" wrapper-style="min-width: 180px; flex: 1" />
-            <FieldNumber v-model="settingsDraft.translation.maxChars" label="Máx. por segmento" :min="500" wrapper-style="min-width: 180px; flex: 1" />
-            <FieldNumber v-model="settingsDraft.translation.minChars" label="Mín. por segmento" :min="100" wrapper-style="min-width: 180px; flex: 1" />
-            <FieldNumber v-model="settingsDraft.translation.maxRetries" label="Reintentos" :min="0" wrapper-style="min-width: 180px; flex: 1" />
-          </div>
-
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-            <div>
-              <div style="font-weight: 600">Enable check</div>
-              <div class="small muted">Permite verificación adicional en el backend.</div>
-            </div>
-            <n-switch v-model:value="settingsDraft.translation.enableCheck" />
-          </div>
-
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
-            <div>
-              <div style="font-weight: 600">Incluir títulos anteriores</div>
-              <div class="small-muted">Añade contexto de títulos previos al traducir.</div>
-            </div>
-            <n-switch v-model:value="settingsDraft.translation.includePreviousChapterTitles" />
-          </div>
-        </div>
-      </n-scrollbar>
-
-      <n-scrollbar v-else :style="{ flex: 1, minHeight: 0 }">
-        <div :style="{ padding: '0.75rem 1.25rem 1.25rem' }" class="stack-md">
-          <label class="small muted">Notas del proyecto</label>
-          <n-input v-model:value="settingsDraft.notes" type="textarea" :autosize="{ minRows: 10 }" />
-        </div>
-      </n-scrollbar>
-
+        </n-scrollbar>
+      </div>
     </div>
 
     <template #action>
-      <div :style="{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }">
-        <n-button secondary @click="emit('update:open', false)">Cerrar</n-button>
-        <n-button type="warning" secondary @click="reset">Reset</n-button>
-        <n-button type="primary" :loading="saving" @click="save">Guardar</n-button>
+      <div class="footer-actions">
+        <span v-if="isDirty" class="small muted footer-hint">Cambios sin guardar</span>
+        <div class="footer-btns">
+          <n-button secondary size="small" @click="emit('update:open', false)">Cerrar</n-button>
+          <n-button type="warning" secondary size="small" :disabled="!isDirty" @click="reset">
+            Reset
+          </n-button>
+          <n-button type="primary" size="small" :loading="saving" :disabled="!isDirty" @click="save">
+            Guardar
+          </n-button>
+        </div>
       </div>
     </template>
   </n-modal>
@@ -438,8 +716,41 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
-import { useMessage, NModal, NButton, NCard, NInput, NAlert, NSwitch, NSelect, NIcon, NScrollbar, NAutoComplete, NDynamicTags, NPopconfirm, NInputNumber, NRadioGroup, NRadio, NSpin, NTabs, NTab } from "naive-ui";
-import { AddOutline, TrashOutline, ImageOutline } from "@vicons/ionicons5";
+import {
+  useMessage,
+  NModal,
+  NButton,
+  NButtonGroup,
+  NInput,
+  NAlert,
+  NSwitch,
+  NSelect,
+  NIcon,
+  NScrollbar,
+  NAutoComplete,
+  NDynamicTags,
+  NPopconfirm,
+  NInputNumber,
+  NSpin,
+  NTabs,
+  NTab,
+  NCollapse,
+  NCollapseItem,
+  NTooltip,
+} from "naive-ui";
+import {
+  AddOutline,
+  TrashOutline,
+  ImageOutline,
+  ArrowForwardOutline,
+  BookOutline,
+  ListOutline,
+  CodeSlashOutline,
+  HardwareChipOutline,
+  LanguageOutline,
+  DocumentTextOutline,
+  SettingsOutline,
+} from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { useProjectSettings } from "@/composables/useProjectSettings";
@@ -590,6 +901,10 @@ function removeCover() {
   onRemoveCover();
 }
 
+function onCoverImageError() {
+  localCoverUrl.value = undefined;
+}
+
 function buildSeriesOptions(query: string, available: string[]) {
   let filtered: string[];
   if (!query) {
@@ -704,17 +1019,44 @@ function setSystemPrompt(role: PromptRole, value: string): void {
 }
 
 const tabs = [
-  { value: "novel", label: "Novela" },
-  { value: "glossary", label: "Glosario" },
-  { value: "prompts", label: "Prompts" },
-  { value: "ai", label: "IA" },
-  { value: "translation", label: "Traducción" },
-  { value: "notes", label: "Notas" },
+  { value: "novel", label: "Novela", icon: BookOutline },
+  { value: "glossary", label: "Glosario", icon: ListOutline },
+  { value: "prompts", label: "Prompts", icon: CodeSlashOutline },
+  { value: "ai", label: "IA", icon: HardwareChipOutline },
+  { value: "translation", label: "Traducción", icon: LanguageOutline },
+  { value: "notes", label: "Notas", icon: DocumentTextOutline },
+  { value: "advanced", label: "Avanzado", icon: SettingsOutline },
 ];
+
+const modalStyle = {
+  width: "min(1080px, 96vw)",
+  height: "min(680px, 88vh)",
+  "--n-padding-top": "8px",
+  "--n-padding-bottom": "8px",
+};
+
+const contentStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  flex: "1",
+  minHeight: "0",
+  padding: "0",
+  overflow: "hidden",
+};
+
+const glossaryFilter = ref("");
+
+const filteredGlossary = computed(() => {
+  const q = glossaryFilter.value.trim().toLowerCase();
+  if (!q) return novelDraft.value.glossary;
+  return novelDraft.value.glossary.filter(
+    (e) =>
+      e.source.toLowerCase().includes(q) || e.target.toLowerCase().includes(q) || (e.context?.toLowerCase().includes(q) ?? false),
+  );
+});
 
 const draftInitialized = ref(false);
 
-/** Defense-in-depth: ensure glossary entries always have an id. */
 function ensureGlossaryIds(
   glossary: unknown,
 ): Array<{ id: string; source: string; target: string; context?: string }> {
@@ -730,6 +1072,75 @@ function ensureGlossaryIds(
   });
 }
 
+const savedSnapshot = ref("");
+
+function takeSnapshot() {
+  savedSnapshot.value = JSON.stringify({
+    novel: {
+      url: novelDraft.value.url,
+      status: novelDraft.value.status,
+      sourceLanguage: novelDraft.value.sourceLanguage,
+      targetLanguage: novelDraft.value.targetLanguage,
+      tags: novelDraft.value.tags,
+      sourceTitle: novelDraft.value.sourceTitle,
+      sourceAuthor: novelDraft.value.sourceAuthor,
+      sourceSeries: novelDraft.value.sourceSeries,
+      sourceNumber: novelDraft.value.sourceNumber,
+      sourceDescription: novelDraft.value.sourceDescription,
+      targetTitle: novelDraft.value.targetTitle,
+      targetAuthor: novelDraft.value.targetAuthor,
+      targetSeries: novelDraft.value.targetSeries,
+      targetNumber: novelDraft.value.targetNumber,
+      targetDescription: novelDraft.value.targetDescription,
+      customCommands: novelDraft.value.customCommands,
+      glossary: novelDraft.value.glossary,
+      prompts: novelDraft.value.prompts,
+    },
+    settings: settingsDraft.value,
+    timeoutSec: timeoutSec.value,
+    cover: !!pendingCoverFile,
+  });
+}
+
+const isDirty = computed(() => {
+  if (!draftInitialized.value || !savedSnapshot.value) return false;
+  const current = JSON.stringify({
+    novel: {
+      url: novelDraft.value.url,
+      status: novelDraft.value.status,
+      sourceLanguage: novelDraft.value.sourceLanguage,
+      targetLanguage: novelDraft.value.targetLanguage,
+      tags: novelDraft.value.tags,
+      sourceTitle: novelDraft.value.sourceTitle,
+      sourceAuthor: novelDraft.value.sourceAuthor,
+      sourceSeries: novelDraft.value.sourceSeries,
+      sourceNumber: novelDraft.value.sourceNumber,
+      sourceDescription: novelDraft.value.sourceDescription,
+      targetTitle: novelDraft.value.targetTitle,
+      targetAuthor: novelDraft.value.targetAuthor,
+      targetSeries: novelDraft.value.targetSeries,
+      targetNumber: novelDraft.value.targetNumber,
+      targetDescription: novelDraft.value.targetDescription,
+      customCommands: novelDraft.value.customCommands,
+      glossary: novelDraft.value.glossary,
+      prompts: novelDraft.value.prompts,
+    },
+    settings: settingsDraft.value,
+    timeoutSec: timeoutSec.value,
+    cover: !!pendingCoverFile,
+  });
+  return current !== savedSnapshot.value;
+});
+
+function copySourceToTarget() {
+  novelDraft.value.targetTitle = novelDraft.value.sourceTitle;
+  novelDraft.value.targetAuthor = novelDraft.value.sourceAuthor;
+  novelDraft.value.targetSeries = novelDraft.value.sourceSeries;
+  novelDraft.value.targetNumber = novelDraft.value.sourceNumber;
+  novelDraft.value.targetDescription = novelDraft.value.sourceDescription;
+  message.success("Metadatos copiados a destino", { duration: 1800 });
+}
+
 async function resetDraft() {
   const base = JSON.parse(JSON.stringify(props.novel)) as Novel;
   base.glossary = ensureGlossaryIds(base.glossary);
@@ -741,6 +1152,7 @@ async function resetDraft() {
   const ms = settingsDraft.value.ai.timeoutMs;
   timeoutSec.value = ms ? Math.round(ms / 1000) : null;
   draftInitialized.value = true;
+  takeSnapshot();
   try {
     tagSuggestions.value = await api.novels.listTagSuggestions();
   } catch {
@@ -768,14 +1180,10 @@ watch(
   { immediate: true },
 );
 
-// When the parent novel glossary changes (e.g. after a generate-glossary job
-// completes), sync it into the draft so the user sees the updated glossary
-// without having to close and reopen the dialog.
 watch(
   () => props.novel.glossary,
   (newGlossary) => {
     if (!props.open || !draftInitialized.value) return;
-    // Only update if the reference actually changed (parent re-fetched novel).
     if (novelDraft.value.glossary === newGlossary) return;
     novelDraft.value.glossary = ensureGlossaryIds(JSON.parse(JSON.stringify(newGlossary)));
   },
@@ -876,6 +1284,7 @@ async function save() {
       pendingCoverFile = undefined;
       emit("cover-updated", updated);
     }
+    takeSnapshot();
     emit("update:open", false);
   } finally {
     saving.value = false;
@@ -885,92 +1294,410 @@ async function save() {
 </script>
 
 <style scoped>
-.cover-editor {
-  margin-bottom: 0.5rem;
+/* Shell */
+.modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+  min-width: 0;
 }
 
-.cover-preview {
-  width: 100%;
-  max-width: 280px;
-  aspect-ratio: 2 / 3;
-  border-radius: 4px;
+.modal-title-block {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.modal-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
   overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--n-color-embedded);
+  text-overflow: ellipsis;
+}
+
+.dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning, #f59e0b);
+  flex-shrink: 0;
+}
+
+.modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.side-nav {
+  width: 148px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--divide);
+  padding: 0.5rem 0.375rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface-muted);
+  overflow-y: auto;
+}
+
+.side-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.side-nav-item:hover {
+  background: var(--mock-row, rgba(0, 0, 0, 0.04));
+  color: var(--text-primary);
+}
+
+.side-nav-item.active {
+  background: color-mix(in oklab, var(--primary, #3b82f6) 14%, transparent);
+  color: var(--primary, #3b82f6);
+  font-weight: 600;
+}
+
+.main-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.pane-pad {
+  padding: 0.65rem 1rem 1rem;
+}
+
+/* Density */
+.stack-sm { display: flex; flex-direction: column; gap: 0.75rem; }
+.stack-xs { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.lbl {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 0.15rem;
+  letter-spacing: 0.01em;
+}
+
+.form-group { min-width: 0; }
+
+.field-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 0.75rem;
+}
+
+.field-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem 0.75rem;
+}
+
+.field-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem 0.75rem;
+}
+
+.span-2 { grid-column: span 2; }
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.row-end {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.w-full { width: 100%; }
+
+/* Identity / cover */
+.identity-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.cover-editor.compact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.cover-preview-tiny {
+  position: relative;
+  width: 72px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+  border: 1px solid var(--divide);
+  background: var(--surface-muted);
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
-.cover-preview img {
+.cover-preview-tiny img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.cover-placeholder {
-  color: var(--text-color-3);
+.cover-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 0.15rem;
+  font-size: 0.65rem;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 
-/* Glossary compact list */
+.cover-preview-tiny:hover .cover-overlay { opacity: 1; }
+
+.cover-placeholder { color: var(--text-tertiary); }
+
+.identity-fields { flex: 1; min-width: 0; }
+
+/* Bilingual metadata */
+.meta-split {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.meta-col {
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-md, 6px);
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: var(--surface-base);
+  min-width: 0;
+}
+
+.meta-col-head {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meta-transfer {
+  display: flex;
+  align-items: center;
+  padding-top: 2.5rem;
+}
+
+/* Switches / subpanels */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+
+.switch-title { font-weight: 600; font-size: 0.875rem; }
+
+.subpanel {
+  border-top: 1px solid var(--divide);
+  padding-top: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.compact-alert :deep(.n-alert) {
+  display: flex;
+  align-items: flex-start;
+}
+
+.compact-alert :deep(.n-alert-icon) {
+  flex-shrink: 0;
+}
+
+.compact-alert :deep(.n-alert-body) {
+  padding-top: 0.5rem;
+  padding-right: 0.75rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+
+/* Danger */
+.danger-label { color: var(--danger); font-weight: 600; }
+
+.danger-zone.compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Glossary */
+.glossary-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.empty-state { padding: 0.5rem 0; }
+
 .glossary-list {
   border: 1px solid var(--divide);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-md, 6px);
   background: var(--surface-base);
   overflow: hidden;
 }
 
 .glossary-list-header {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.5fr auto;
-  gap: 0.375rem;
-  padding: 0.375rem 0.625rem;
+  grid-template-columns: 1fr 1fr 1.4fr auto;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
   background: var(--surface-muted);
   border-bottom: 1px solid var(--divide);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 500;
   color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .glossary-list-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.5fr auto;
-  gap: 0.375rem;
-  padding: 0.25rem 0.625rem;
+  grid-template-columns: 1fr 1fr 1.4fr auto;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
   align-items: center;
   border-bottom: 1px solid var(--divide);
-  transition: background 0.12s ease;
 }
 
-.glossary-list-row:last-child {
-  border-bottom: none;
-}
+.glossary-list-row:last-child { border-bottom: none; }
+.glossary-list-row:hover { background: var(--mock-row, rgba(0, 0, 0, 0.03)); }
 
-.glossary-list-row:hover {
-  background: var(--mock-row);
-}
-
-.glossary-delete-btn {
-  color: #dc2626 !important;
-}
-
+.glossary-delete-btn { color: #dc2626 !important; }
 .glossary-delete-btn:hover {
   background: color-mix(in oklab, #dc2626 10%, transparent) !important;
 }
 
-@media (max-width: 640px) {
-  .glossary-list-header {
-    display: none;
+.token-est {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: -0.25rem;
+}
+
+/* Footer */
+.footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.footer-btns {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.footer-hint { margin-right: auto; }
+
+/* Responsive */
+.mobile-only { display: none; }
+.desktop-only { display: flex; }
+
+@media (max-width: 800px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: block !important; }
+
+  .meta-split {
+    grid-template-columns: 1fr;
   }
+
+  .meta-transfer {
+    padding-top: 0;
+    justify-content: center;
+    transform: rotate(90deg);
+  }
+
+  .field-grid-3,
+  .field-grid-4 {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .span-2 { grid-column: span 2; }
+
+  .identity-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cover-preview-tiny {
+    width: 56px;
+  }
+}
+
+@media (max-width: 520px) {
+  .field-grid-2,
+  .field-grid-3,
+  .field-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 { grid-column: span 1; }
+
+  .glossary-list-header { display: none; }
 
   .glossary-list-row {
     grid-template-columns: 1fr auto;
     gap: 0.25rem;
-    padding: 0.375rem 0.625rem;
+    padding: 0.4rem 0.5rem;
   }
 
-  .glossary-col-context {
-    grid-column: 1 / -1;
-  }
+  .glossary-col-context { grid-column: 1 / -1; }
 }
 </style>
