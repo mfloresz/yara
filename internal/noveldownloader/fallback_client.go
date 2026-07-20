@@ -3,6 +3,7 @@ package noveldownloader
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -34,14 +35,24 @@ func NewLazyFallbackClient(direct HTTPClient, checker BrowserWorkerChecker) *Laz
 func (c *LazyFallbackClient) Fetch(ctx context.Context, url string) ([]byte, error) {
 	body, err := c.direct.Fetch(ctx, url)
 	if err == nil {
+		slog.Debug("lazyFallback: direct fetch succeeded", "url", url, "bodyLen", len(body))
 		return body, nil
 	}
 
+	slog.Info("lazyFallback: direct fetch failed", "url", url, "error", err)
 	if c.checker != nil && c.checker.HasBrowserWorker() && isRetryableError(err) {
+		slog.Info("lazyFallback: falling back to proxy", "url", url)
 		proxy := c.checker.NewProxyHTTPClient()
-		return proxy.Fetch(ctx, url)
+		result, proxyErr := proxy.Fetch(ctx, url)
+		if proxyErr != nil {
+			slog.Error("lazyFallback: proxy fetch failed", "url", url, "error", proxyErr)
+			return nil, proxyErr
+		}
+		slog.Info("lazyFallback: proxy fetch succeeded", "url", url, "bodyLen", len(result))
+		return result, nil
 	}
 
+	slog.Warn("lazyFallback: no fallback available", "url", url, "hasWorker", c.checker != nil && c.checker.HasBrowserWorker(), "retryable", isRetryableError(err))
 	return nil, err
 }
 

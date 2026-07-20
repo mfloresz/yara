@@ -52,7 +52,6 @@ Module: `internal/noveldownloader/` (30+ files)
 
 | Site | Parser | Features |
 |------|--------|----------|
-| NovelBin | `novelbin.go`, `novelbin_metadata.go`, `novelbin_chapters.go`, `novelbin_content.go` | Metadata, chapter list, content |
 | NovelFire | `novelfire.go`, `novelfire_metadata.go`, `novelfire_chapters.go`, `novelfire_content.go` | Metadata, chapter list, content |
 | Fenrir Realm | `fenrirealm.go`, `fenrirealm_metadata.go`, `fenrirealm_content.go` | Metadata, chapter list, content |
 | Florae Garden | `floraegarden.go` | Metadata, chapter list, content |

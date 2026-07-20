@@ -35,7 +35,7 @@ func NewHTTPClient() HTTPClient {
 
 // NewHTTPClientWithTransport returns an HTTPClient backed by an http.Client
 // using the given transport. Intended primarily for tests that need to
-// rewrite hosts (e.g. map novelbin.com to a local httptest server).
+// rewrite hosts (e.g. map novelfire.net to a local httptest server).
 func NewHTTPClientWithTransport(transport http.RoundTripper) HTTPClient {
 	return &httpClient{
 		client: &http.Client{

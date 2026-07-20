@@ -51,7 +51,7 @@ const visible = computed({
   set: (value) => emit("update:open", value),
 });
 
-const supportedSites = ["novelfire.net", "novelphoenix.com", "novelbin.com"];
+const supportedSites = ["novelfire.net", "novelphoenix.com"];
 
 const url = ref("");
 const loading = ref(false);

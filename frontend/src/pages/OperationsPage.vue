@@ -94,7 +94,6 @@ import type { Novel, TranslationJob } from "@/domain";
 const SUPPORTED_DOMAINS = [
   "novelfire.net",
   "novelphoenix.com",
-  "novelbin.com",
   "fenrirealm.com",
 ];
 

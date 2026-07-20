@@ -17,7 +17,7 @@ import (
 const (
 	// DefaultMinChapterDelay is the default minimum wait between two
 	// consecutive chapter fetches. Used to stay below the rate limits of
-	// upstream sites like novelfire.net and novelbin.com.
+	// upstream sites like novelfire.net.
 	DefaultMinChapterDelay = 5 * time.Second
 	// DefaultMaxChapterDelay is the default maximum wait between two
 	// consecutive chapter fetches. A new random value in
@@ -41,13 +41,13 @@ func NewDownloader() *Downloader {
 	return &Downloader{
 		parsers: []Parser{
 			NewNovelfireParser(),
-			NewNovelbinParser(),
 			NewFenrirRealmParser(),
 			NewFloraeGardenParser(),
 			NewCherryMistParser(),
 			NewEmpireNovelParser(),
 			New69ShubaParser(),
 			NewSkyNovelsParser(),
+			NewSkyDemonOrderParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -63,13 +63,13 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 	return &Downloader{
 		parsers: []Parser{
 			NewNovelfireParser(),
-			NewNovelbinParser(),
 			NewFenrirRealmParser(),
 			NewFloraeGardenParser(),
 			NewCherryMistParser(),
 			NewEmpireNovelParser(),
 			New69ShubaParser(),
 			NewSkyNovelsParser(),
+			NewSkyDemonOrderParser(),
 		},
 		client: client,
 	}
@@ -193,8 +193,8 @@ func (d *Downloader) SleepBetweenChapters(ctx context.Context) error {
 
 // stripLeadingTitle removes a markdown heading from the first line of
 // content when it looks like a duplicate of the chapter title.
-// Some sites (novelfire, novelbin) inject the chapter title as a heading
-// inside the content body, causing a duplicate title in the stored content.
+// Some sites (novelfire) inject the chapter title as a heading inside the
+// content body, causing a duplicate title in the stored content.
 // It also removes the first line if it matches the chapter title (with or
 // without numeric prefixes like "1." or "01.").
 func stripLeadingTitle(content, chapterTitle string) string {

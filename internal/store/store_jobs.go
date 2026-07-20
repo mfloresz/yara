@@ -130,8 +130,21 @@ func (s *Store) UpdateJob(jobID string, patch map[string]any) error {
 		return ErrNotFound
 	}
 	if record.GetString("status") == "cancelled" {
-		if nextStatus, ok := patch["status"].(string); !ok || nextStatus != "cancelled" {
-			return nil
+		allowList := map[string]bool{"completedChapters": true, "failedChapters": true}
+		allAllowed := true
+		for key := range patch {
+			if key == "status" {
+				continue
+			}
+			if !allowList[key] {
+				allAllowed = false
+				break
+			}
+		}
+		if !allAllowed {
+			if nextStatus, ok := patch["status"].(string); !ok || nextStatus != "cancelled" {
+				return nil
+			}
 		}
 	}
 	for key, value := range patch {

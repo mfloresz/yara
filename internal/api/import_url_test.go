@@ -11,23 +11,21 @@ import (
 	"translator-server/internal/noveldownloader"
 )
 
-const testNovelbinHTML = `<!doctype html><html><head>
-<meta property="og:image" content="https://novelbin.com/cover.jpg">
-<meta property="og:description" content="A short test novel used to exercise the URL import endpoint end-to-end.">
+const testNovelfireHTML = `<!doctype html><html><head>
+<meta property="og:image" content="https://novelfire.net/cover.jpg">
+<meta itemprop="description" content="A short test novel used to exercise the URL import endpoint end-to-end.">
 </head><body>
-<h3 class="title">Mock Test Novel</h3>
-<div class="books">
-  <div class="book"><img class="lazy" data-src="https://novelbin.com/cover.jpg" alt="cover"></div>
-</div>
-<div id="novel-description-content" class="desc-text">A short test novel used to exercise the URL import endpoint end-to-end.</div>
-<ul class="info info-meta">
-  <li><h3>Author:</h3><a href="/a/Tester">Tester</a></li>
+<div class="main-head"><h1>Mock Test Novel</h1></div>
+<span itemprop="author">Tester</span>
+<ul class="chapter-list">
+  <li><a href="chapter-1"><span class="chapter-title">Chapter 1: First Steps</span></a></li>
+  <li><a href="chapter-2"><span class="chapter-title">Chapter 2: The Journey</span></a></li>
 </ul>
 </body></html>`
 
-const testNovelbinChapterHTML = `<!doctype html><html><head></head><body>
-<h2>Chapter 1: First Steps</h2>
-<div id="chr-content"><p>It was a dark and stormy night.</p><p>The end.</p></div>
+const testNovelfireChapterHTML = `<!doctype html><html><head></head><body>
+<span class="chapter-title">Chapter 1: First Steps</span>
+<div class="chapter-content"><p>It was a dark and stormy night.</p><p>The end.</p></div>
 </body></html>`
 
 type hostRewritingTransport struct {
@@ -67,23 +65,22 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("\xff\xd8\xff\xe0fake-jpeg-bytes"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li></ul>`, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			chapterHits++
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinChapterHTML)
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinHTML)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
 	rewrites := map[string]string{
-		"novelbin.com": mock.URL,
+		"novelfire.net": mock.URL,
 	}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
@@ -95,7 +92,7 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 
 	alice := registerUser(t, env.handler, "alice-import-url@example.com", "secret123", "Alice")
 
-	novelURL := "https://novelbin.com/b/test-novel"
+	novelURL := "https://novelfire.net/book/test-novel"
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/import-from-url", alice.Token, map[string]any{
 		"url":            novelURL,
 		"sourceLanguage": "en",
@@ -192,22 +189,21 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li><li><a href="%s">Chapter 2: The Journey</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinChapterHTML)
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinHTML)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
 	rewrites := map[string]string{
-		"novelbin.com": mock.URL,
+		"novelfire.net": mock.URL,
 	}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
@@ -219,7 +215,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 
 	alice := registerUser(t, env.handler, "alice-preview-url@example.com", "secret123", "Alice")
 
-	novelURL := "https://novelbin.com/b/test-novel"
+	novelURL := "https://novelfire.net/book/test-novel"
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/preview-from-url", alice.Token, map[string]any{
 		"url": novelURL,
 	})
@@ -288,21 +284,20 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li><li><a href="%s">Chapter 2: The Journey</a></li><li><a href="%s">Chapter 3: The End</a></li></ul>`, chapterURL, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinChapterHTML))
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
@@ -315,11 +310,12 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
-		"url": "https://novelbin.com/b/test-novel",
+		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 
 	createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "Chapter 2: The Journey")
 
 	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
 	if resp.Code != http.StatusOK {
@@ -346,20 +342,20 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 	if preview.CoverURL == "" {
 		t.Errorf("coverURL should be set")
 	}
-	if preview.CurrentChapters != 1 {
-		t.Errorf("currentChapters: got %d, want 1", preview.CurrentChapters)
+	if preview.CurrentChapters != 2 {
+		t.Errorf("currentChapters: got %d, want 2", preview.CurrentChapters)
 	}
-	if preview.TotalChapters != 3 {
-		t.Errorf("totalChapters: got %d, want 3", preview.TotalChapters)
+	if preview.TotalChapters != 2 {
+		t.Errorf("totalChapters: got %d, want 2", preview.TotalChapters)
 	}
-	if preview.NewChapters != 2 {
-		t.Errorf("newChapters: got %d, want 2", preview.NewChapters)
+	if preview.NewChapters != 0 {
+		t.Errorf("newChapters: got %d, want 0", preview.NewChapters)
 	}
-	if preview.FirstNewChapter != 2 {
-		t.Errorf("firstNewChapter: got %d, want 2", preview.FirstNewChapter)
+	if preview.FirstNewChapter != 0 {
+		t.Errorf("firstNewChapter: got %d, want 0", preview.FirstNewChapter)
 	}
-	if preview.LastNewChapter != 3 {
-		t.Errorf("lastNewChapter: got %d, want 3", preview.LastNewChapter)
+	if preview.LastNewChapter != 0 {
+		t.Errorf("lastNewChapter: got %d, want 0", preview.LastNewChapter)
 	}
 }
 
@@ -369,21 +365,20 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li><li><a href="%s">Chapter 2: The Journey</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinChapterHTML))
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
@@ -396,7 +391,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
-		"url": "https://novelbin.com/b/test-novel",
+		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 
@@ -427,31 +422,38 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 }
 
 func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
-	var archiveItems []string
+	var chapterItems []string
 	for n := 1; n <= 13; n++ {
-		archiveItems = append(archiveItems, fmt.Sprintf(`<li><a href="https://novelbin.com/b/test-novel/chapter-%d">Chapter %d</a></li>`, n, n))
+		chapterItems = append(chapterItems, fmt.Sprintf(`<li><a href="chapter-%d"><span class="chapter-title">Chapter %d</span></a></li>`, n, n))
 	}
-	archiveHTML := `<ul class="list-chapter">` + strings.Join(archiveItems, "") + `</ul>`
+	chapterHTML := `<!doctype html><html><head>
+<meta property="og:image" content="https://novelfire.net/cover.jpg">
+<meta itemprop="description" content="A short test novel used to exercise the URL import endpoint end-to-end.">
+</head><body>
+<div class="main-head"><h1>Mock Test Novel</h1></div>
+<span itemprop="author">Tester</span>
+<ul class="chapter-list">` + strings.Join(chapterItems, "") + `</ul>
+</body></html>`
 
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, archiveHTML)
+			_, _ = fmt.Fprint(w, chapterHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinChapterHTML)
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprint(w, testNovelbinHTML)
+			_, _ = fmt.Fprint(w, chapterHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
@@ -467,7 +469,7 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
-		"url": "https://novelbin.com/b/test-novel",
+		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 
@@ -519,22 +521,21 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li><li><a href="%s">Chapter 2: The Journey</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinChapterHTML))
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			novelInfoRequests++
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
@@ -550,7 +551,7 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
-		"url": "https://novelbin.com/b/test-novel",
+		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 
@@ -590,22 +591,21 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
 			w.Header().Set("Content-Type", "image/jpeg")
 			_, _ = w.Write([]byte("fake-jpeg"))
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1: First Steps</a></li><li><a href="%s">Chapter 2: The Journey</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinChapterHTML))
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
 		default:
 			novelInfoRequests++
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &hostRewritingTransport{rewrites: rewrites}
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
@@ -621,7 +621,7 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
-		"url": "https://novelbin.com/b/test-novel",
+		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 

@@ -8,7 +8,7 @@ Build a library of AI-translated novels with full multi-user support, flexible i
 
 - **AI literary translation** — Translate complete novels using AI providers (Venice, OpenCode Go, LM Studio, Google Gemma) with customizable prompts
 - **Multi-user management** — Each user has their own private collection of novels, chapters, jobs, and EPUBs with fine-grained access control
-- **Flexible import** — Import novels from URLs (69shuba, CherryMist, EmpireNovel, FenrirRealm, Fictioneer, FloraeGarden, NovelBin, NovelFire, SkyNovels), EPUB files, or ZIP archives with metadata
+- **Flexible import** — Import novels from URLs (69shuba, CherryMist, EmpireNovel, FenrirRealm, Fictioneer, FloraeGarden, NovelFire, SkyNovels), EPUB files, or ZIP archives with metadata
 - **EPUB generation** — Create original, translated, and refined EPUBs ready for publication
 - **Progress tracking** — Monitor in-progress translations, automated jobs, and reading progress
 - **In-process workers** — Concurrent download and translation workers that run automatically in the background

@@ -12,6 +12,8 @@ var BrowserRequiredSites = map[string]bool{
 	"floraegarden.com": true,
 	// empirenovel.com — Cloudflare-protected site
 	"empirenovel.com": true,
+	// skydemonorder.com — Cloudflare-protected site
+	"skydemonorder.com": true,
 }
 
 func IsBrowserRequiredSite(rawURL string) bool {

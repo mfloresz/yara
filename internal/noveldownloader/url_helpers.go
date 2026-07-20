@@ -3,7 +3,6 @@ package noveldownloader
 import (
 	"fmt"
 	"net/url"
-	"path"
 	"strings"
 )
 
@@ -22,7 +21,13 @@ func resolveURL(base, href string) string {
 	if strings.HasPrefix(href, "/") {
 		return extractBaseURL(base) + href
 	}
-	baseURL := strings.TrimRight(base, "/")
-	dir := path.Dir(baseURL)
-	return dir + "/" + strings.TrimLeft(href, "/")
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return base + "/" + href
+	}
+	ref, err := url.Parse(href)
+	if err != nil {
+		return base + "/" + href
+	}
+	return baseURL.ResolveReference(ref).String()
 }

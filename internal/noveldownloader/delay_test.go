@@ -12,8 +12,8 @@ import (
 )
 
 const delayChapterHTML = `<!doctype html><html><head></head><body>
-<h2>Chapter Title</h2>
-<div id="chr-content"><p>Body.</p></div>
+<span class="chapter-title">Chapter Title</span>
+<div class="chapter-content"><p>Body.</p></div>
 </body></html>`
 
 type delayTestTransport struct {
@@ -50,22 +50,21 @@ func TestDownloadChaptersAppliesDelayBetweenFetches(t *testing.T) {
 	var hits []time.Time
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1</a></li><li><a href="%s">Chapter 2</a></li><li><a href="%s">Chapter 3</a></li></ul>`, chapterURL, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			hits = append(hits, time.Now())
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(delayChapterHTML))
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &delayTestTransport{rewrites: rewrites}
 	client := NewHTTPClientWithTransport(transport)
 
@@ -94,21 +93,20 @@ func TestDownloadChaptersAppliesDelayBetweenFetches(t *testing.T) {
 func TestDownloadChaptersRespectsContextCancellation(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1</a></li><li><a href="%s">Chapter 2</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(delayChapterHTML))
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &delayTestTransport{rewrites: rewrites}
 	client := NewHTTPClientWithTransport(transport)
 
@@ -139,22 +137,21 @@ func TestDownloadChaptersSkipsDelayWhenZero(t *testing.T) {
 	var hits []time.Time
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/ajax/chapter-archive"):
-			chapterURL := "https://novelbin.com/b/test-novel/chapter-1"
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, `<ul class="list-chapter"><li><a href="%s">Chapter 1</a></li><li><a href="%s">Chapter 2</a></li></ul>`, chapterURL, chapterURL)
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		case strings.Contains(r.URL.Path, "/chapter-"):
 			hits = append(hits, time.Now())
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(delayChapterHTML))
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(testNovelbinHTML))
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
 		}
 	}))
 	defer mock.Close()
 
-	rewrites := map[string]string{"novelbin.com": mock.URL}
+	rewrites := map[string]string{"novelfire.net": mock.URL}
 	transport := &delayTestTransport{rewrites: rewrites}
 	client := NewHTTPClientWithTransport(transport)
 
@@ -174,23 +171,22 @@ func TestDownloadChaptersSkipsDelayWhenZero(t *testing.T) {
 
 func mustGetChapters(t *testing.T, dl *Downloader) []ChapterURL {
 	t.Helper()
-	info, err := dl.GetNovelInfo(context.Background(), "https://novelbin.com/b/test-novel")
+	info, err := dl.GetNovelInfo(context.Background(), "https://novelfire.net/book/test-novel")
 	if err != nil {
 		t.Fatalf("get novel info: %v", err)
 	}
 	return info.Chapters
 }
 
-const testNovelbinHTML = `<!doctype html><html><head>
-<meta property="og:image" content="https://novelbin.com/cover.jpg">
-<meta property="og:description" content="Test description.">
+const testNovelfireHTML = `<!doctype html><html><head>
+<meta property="og:image" content="https://novelfire.net/cover.jpg">
+<meta itemprop="description" content="Test description.">
 </head><body>
-<h3 class="title">Mock Test Novel</h3>
-<div class="books">
-  <div class="book"><img class="lazy" data-src="https://novelbin.com/cover.jpg" alt="cover"></div>
-</div>
-<div id="novel-description-content" class="desc-text">Test description.</div>
-<ul class="info info-meta">
-  <li><h3>Author:</h3><a href="/a/Tester">Tester</a></li>
+<div class="main-head"><h1>Mock Test Novel</h1></div>
+<span itemprop="author">Tester</span>
+<ul class="chapter-list">
+  <li><a href="chapter-1"><span class="chapter-title">Chapter 1: First Steps</span></a></li>
+  <li><a href="chapter-2"><span class="chapter-title">Chapter 2: The Journey</span></a></li>
+  <li><a href="chapter-3"><span class="chapter-title">Chapter 3: The End</span></a></li>
 </ul>
 </body></html>`

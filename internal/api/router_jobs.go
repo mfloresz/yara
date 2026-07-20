@@ -88,6 +88,11 @@ func registerJobRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server)
 			if err := s.Store.ReconcileProcessingChaptersForJob(jobId); err != nil {
 				slog.Error("reconcile cancelled job chapters", "jobId", jobId, "error", err)
 			}
+			if job, jErr := s.Store.GetOwnedJob(e.Auth.Id, jobId); jErr == nil {
+				if err := s.Store.RecalculateNovelStats(job.NovelID); err != nil {
+					slog.Error("recalculate novel stats on cancel", "jobId", jobId, "error", err)
+				}
+			}
 		}
 		job, err := s.Store.GetOwnedJob(e.Auth.Id, e.Request.PathValue("jobId"))
 		if err != nil {

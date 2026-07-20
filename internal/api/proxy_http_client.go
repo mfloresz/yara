@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -32,15 +33,42 @@ func NewProxyHTTPClient(s *Server, userID string) *ProxyHTTPClient {
 }
 
 func (c *ProxyHTTPClient) Fetch(ctx context.Context, url string) ([]byte, error) {
-	result, err := c.server.EnqueueBrowserJob("fetch_page", url, nil, c.userID)
+	operation := "fetch_page"
+	if isLivewireSite(url) {
+		operation = "fetch_livewire"
+	}
+	slog.Info("proxyHTTP: fetching", "url", url, "operation", operation, "userID", c.userID)
+	result, err := c.server.EnqueueBrowserJob(operation, url, nil, c.userID)
 	if err != nil {
+		slog.Error("proxyHTTP: browser job failed", "url", url, "error", err)
 		return nil, fmt.Errorf("proxy fetch: %w", err)
 	}
 	html := getStringFromData(result.Data, "html")
 	if html == "" {
+		slog.Error("proxyHTTP: empty HTML returned", "url", url, "dataKeys", fmt.Sprintf("%v", result.Data))
 		return nil, fmt.Errorf("proxy returned empty HTML for %s", url)
 	}
+	slog.Info("proxyHTTP: success", "url", url, "htmlLen", len(html), "hasFreeChapters", strings.Contains(html, "freeChapters"))
 	return []byte(html), nil
+}
+
+// isLivewireSite returns true for novel info pages that load chapter lists
+// via Livewire x-intersect lazy loading, requiring scroll+wait before
+// extraction. Individual chapter pages do NOT need this — their content
+// is server-rendered in the initial HTML.
+func isLivewireSite(urlStr string) bool {
+	if !strings.Contains(urlStr, "skydemonorder.com") {
+		return false
+	}
+	// Match novel info pages: /projects/<id>-<slug>
+	// Exclude chapter pages:   /projects/<id>-<slug>/<chapter>
+	idx := strings.Index(urlStr, "/projects/")
+	if idx == -1 {
+		return false
+	}
+	rest := urlStr[idx+len("/projects/"):]
+	// If there's no '/' after the project slug, it's the novel info page.
+	return !strings.Contains(rest, "/")
 }
 
 func (c *ProxyHTTPClient) FetchDocument(ctx context.Context, url string) (*goquery.Document, error) {

@@ -12,6 +12,7 @@ type NovelInfo struct {
 type ChapterURL struct {
 	URL   string `json:"url"`
 	Title string `json:"title"`
+	Order int    `json:"order,omitempty"`
 }
 
 type Chapter struct {
