@@ -208,6 +208,20 @@ async function handleJobRequest(payload) {
     }
     return;
   }
+  if (operation === 'fetch_livewire') {
+    log(`Job ${jobId}: fetch_livewire ${url}`);
+    setState(WorkerState.DOWNLOADING);
+    try {
+      const result = await fetchLivewirePage(url, params);
+      sendJobResult(jobId, JobStatus.OK, result);
+    } catch (e) {
+      err(`Job ${jobId} fetch_livewire failed:`, e);
+      sendJobResult(jobId, JobStatus.ERROR, { error: e.message });
+    } finally {
+      setState(WorkerState.CONNECTED);
+    }
+    return;
+  }
   log(`Job ${jobId}: fetch_page ${url}`);
   setState(WorkerState.DOWNLOADING);
 
@@ -398,6 +412,128 @@ async function fetchRawPage(url, params = {}) {
 
   log('Background fetch hit Cloudflare challenge, using tab...');
   return fetchViaChallengeTab(url, maxWait);
+}
+
+async function fetchLivewirePage(url, params = {}) {
+  const maxWait = (params.timeout || 120) * 1000;
+  const parsedUrl = new URL(url);
+  const origin = parsedUrl.origin;
+  const startTime = Date.now();
+
+  let tab;
+  if (challengeTabId !== null && challengeOrigin === origin) {
+    try {
+      tab = await chrome.tabs.get(challengeTabId);
+      await chrome.tabs.update(tab.id, { url, active: false });
+    } catch {
+      challengeTabId = null;
+      challengeOrigin = null;
+      tab = await chrome.tabs.create({ url, active: false });
+      challengeTabId = tab.id;
+      challengeOrigin = origin;
+    }
+  } else {
+    if (challengeTabId !== null) {
+      try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
+    }
+    tab = await chrome.tabs.create({ url, active: false });
+    challengeTabId = tab.id;
+    challengeOrigin = origin;
+  }
+
+  log('Livewire: waiting for page load (max', maxWait / 1000, 's)...');
+
+  while (Date.now() - startTime < maxWait) {
+    try {
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.status === 'complete') {
+        const isChallenge = await checkForChallenge(tab.id);
+        if (isChallenge) {
+          log('Livewire: Cloudflare challenge detected, bringing tab to front for user...');
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+          chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
+          await sleep(3000);
+          continue;
+        }
+        log('Livewire: page loaded, waiting for redirects to settle...');
+        await sleep(4000);
+
+        const verifyChallenge = await checkForChallenge(tab.id);
+        if (verifyChallenge) {
+          log('Livewire: page still shows challenge after wait, continuing to poll...');
+          await sleep(3000);
+          continue;
+        }
+
+        log('Livewire: scrolling to trigger lazy-load components...');
+
+        // Scroll in steps to trigger x-intersect directives for Livewire lazy loading
+        for (let scrollStep = 0; scrollStep < 10; scrollStep++) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => { window.scrollBy(0, 800); },
+            });
+            await sleep(500);
+          } catch (e) {
+            log('Livewire: scroll step failed:', e.message);
+            break;
+          }
+        }
+
+        // Wait for Livewire to process the intersection and fetch data
+        log('Livewire: waiting for components to load...');
+        await sleep(6000);
+
+        // Scroll back to top for clean extraction
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => { window.scrollTo(0, 0); },
+          });
+          await sleep(1000);
+        } catch {}
+
+        log('Livewire: extracting HTML...');
+
+        let data = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => ({
+                html: document.documentElement.outerHTML,
+                text: document.body.innerText,
+                title: document.title,
+                url: window.location.href,
+              }),
+            });
+            data = results[0]?.result;
+            if (data && data.html && data.html.length > 100) {
+              log(`Livewire: extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes)`);
+              break;
+            }
+            log(`Livewire: extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, retrying...`);
+            await sleep(2000);
+          } catch (e) {
+            err(`Livewire: extraction attempt ${attempt + 1} failed:`, e);
+            await sleep(2000);
+          }
+        }
+
+        try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+        challengeTabId = null;
+        challengeOrigin = null;
+
+        return data || { html: '', text: '', title: '', url };
+      }
+      await sleep(500);
+    } catch (e) {
+      err('Livewire: error checking tab:', e);
+      await sleep(1000);
+    }
+  }
+  throw new Error('Timeout waiting for Livewire page to load.');
 }
 
 async function tryBackgroundFetch(url) {
