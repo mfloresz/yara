@@ -185,6 +185,14 @@ func chapterRecord(c store.Chapter) map[string]any {
 	}
 }
 
+func chapterRecords(chapters []store.Chapter) []map[string]any {
+	result := make([]map[string]any, len(chapters))
+	for i, c := range chapters {
+		result[i] = chapterRecord(c)
+	}
+	return result
+}
+
 func chapterSummaryRecord(c store.ChapterSummary) map[string]any {
 	return map[string]any{
 		"id":                   c.ID,

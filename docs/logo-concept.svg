@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&display=swap');
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="600" fill="#121110"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.04" stroke="#f5f4f2">
+    <line x1="0" y1="100" x2="800" y2="100" stroke-width="0.5"/>
+    <line x1="0" y1="200" x2="800" y2="200" stroke-width="0.5"/>
+    <line x1="0" y1="300" x2="800" y2="300" stroke-width="0.5"/>
+    <line x1="0" y1="400" x2="800" y2="400" stroke-width="0.5"/>
+    <line x1="0" y1="500" x2="800" y2="500" stroke-width="0.5"/>
+    <line x1="200" y1="0" x2="200" y2="600" stroke-width="0.5"/>
+    <line x1="400" y1="0" x2="400" y2="600" stroke-width="0.5"/>
+    <line x1="600" y1="0" x2="600" y2="600" stroke-width="0.5"/>
+  </g>
+
+  <!-- Panel: Logo Mark (center-left) -->
+  <g transform="translate(180, 160)">
+    <!-- The Y mark: open book / converging currents -->
+    <!-- Left page / current -->
+    <path d="M 0,140 L 40,28 L 80,140" fill="none" stroke="#c4b5a5" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Right page / current -->
+    <path d="M 120,140 L 80,28 L 40,140" fill="none" stroke="#c4b5a5" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Spine line / convergence -->
+    <path d="M 80,28 L 80,0" fill="none" stroke="#6b8f8a" stroke-width="5" stroke-linecap="round"/>
+    <!-- Subtle book page hint -->
+    <path d="M 20,140 Q 60,120 80,140 Q 100,120 100,140" fill="none" stroke="#6b8f8a" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  </g>
+
+  <!-- Panel: Wordmark (right) -->
+  <g transform="translate(340, 185)">
+    <text x="0" y="0" font-family="Geist, Inter, sans-serif" font-size="76" font-weight="300" fill="#fafaf9" letter-spacing="6">yara</text>
+    <text x="2" y="18" font-family="Geist, Inter, sans-serif" font-size="14" font-weight="400" fill="#6b8f8a" letter-spacing="8" opacity="0.6">READING LEADS</text>
+  </g>
+
+  <!-- Panel: Construction geometry (bottom-left) -->
+  <g transform="translate(60, 380)">
+    <text x="0" y="0" font-family="Geist, Inter, sans-serif" font-size="11" font-weight="400" fill="#6b8f8a" letter-spacing="3" opacity="0.5">CONSTRUCTION</text>
+
+    <!-- Grid circles -->
+    <circle cx="100" cy="70" r="2" fill="#c4b5a5" opacity="0.3"/>
+    <circle cx="40" cy="140" r="2" fill="#c4b5a5" opacity="0.3"/>
+    <circle cx="160" cy="140" r="2" fill="#c4b5a5" opacity="0.3"/>
+
+    <!-- Construction lines -->
+    <line x1="100" y1="20" x2="40" y2="140" stroke="#c4b5a5" stroke-width="0.8" stroke-dasharray="3,4" opacity="0.25"/>
+    <line x1="100" y1="20" x2="160" y2="140" stroke="#c4b5a5" stroke-width="0.8" stroke-dasharray="3,4" opacity="0.25"/>
+    <line x1="40" y1="140" x2="160" y2="140" stroke="#c4b5a5" stroke-width="0.8" stroke-dasharray="3,4" opacity="0.25"/>
+    <line x1="100" y1="20" x2="100" y2="140" stroke="#6b8f8a" stroke-width="0.8" stroke-dasharray="3,4" opacity="0.35"/>
+
+    <!-- Reduced mark -->
+    <path d="M 70,140 L 100,60 L 130,140" fill="none" stroke="#c4b5a5" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+    <path d="M 100,60 L 100,50" fill="none" stroke="#6b8f8a" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  </g>
+
+  <!-- Panel: Application - browser bar (bottom center) -->
+  <g transform="translate(280, 380)">
+    <text x="0" y="0" font-family="Geist, Inter, sans-serif" font-size="11" font-weight="400" fill="#6b8f8a" letter-spacing="3" opacity="0.5">APPLICATION</text>
+
+    <!-- Browser chrome -->
+    <rect x="0" y="20" width="260" height="36" rx="8" fill="#1c1917" stroke="#3d3b35" stroke-width="1"/>
+    <circle cx="18" cy="38" r="4" fill="#dc2626" opacity="0.6"/>
+    <circle cx="32" cy="38" r="4" fill="#a16207" opacity="0.6"/>
+    <circle cx="46" cy="38" r="4" fill="#16a34a" opacity="0.6"/>
+
+    <!-- URL bar -->
+    <rect x="65" y="30" width="180" height="16" rx="8" fill="#f5f4f2" opacity="0.08"/>
+    <text x="80" y="42" font-family="Geist, Inter, sans-serif" font-size="10" fill="#c4b5a5" opacity="0.5" letter-spacing="0.5">app.yara.read</text>
+
+    <!-- Nav item with Y mark -->
+    <rect x="0" y="65" width="60" height="60" rx="12" fill="#1c1917" stroke="#3d3b35" stroke-width="1"/>
+    <path d="M 22,100 L 30,78 L 38,100" fill="none" stroke="#c4b5a5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 30,78 L 30,70" fill="none" stroke="#6b8f8a" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Panel: Icon / badge detail (bottom-right) -->
+  <g transform="translate(590, 380)">
+    <text x="0" y="0" font-family="Geist, Inter, sans-serif" font-size="11" font-weight="400" fill="#6b8f8a" letter-spacing="3" opacity="0.5">SYSTEM</text>
+
+    <!-- App icon -->
+    <rect x="30" y="20" width="80" height="80" rx="20" fill="#1c1917" stroke="#3d3b35" stroke-width="1"/>
+    <path d="M 52,80 L 70,40 L 88,80" fill="none" stroke="#c4b5a5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 70,40 L 70,30" fill="none" stroke="#6b8f8a" stroke-width="3.5" stroke-linecap="round"/>
+
+    <!-- Chip row -->
+    <rect x="20" y="115" width="36" height="18" rx="9" fill="#1c1917" stroke="#3d3b35" stroke-width="0.8"/>
+    <circle cx="30" cy="124" r="3" fill="#16a34a" opacity="0.5"/>
+    <text x="38" y="127" font-family="Geist, Inter, sans-serif" font-size="8" fill="#fafaf9" opacity="0.5">idle</text>
+  </g>
+
+  <!-- Footer label -->
+  <text x="400" y="580" font-family="Geist, Inter, sans-serif" font-size="10" font-weight="400" fill="#6b8f8a" letter-spacing="4" text-anchor="middle" opacity="0.3">YARA — IDENTITY CONCEPT 01</text>
+</svg>

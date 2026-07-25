@@ -65,12 +65,22 @@ export function createAppServices(): AppServices {
   }
 
   async function restoreSession() {
+    // Verificar si hay conexión antes de intentar restaurar
+    const online = navigator.onLine;
+    
     try {
-      const result = await api.auth.refresh();
-      setAuth(result);
-      await Promise.all([loadDefaults(), loadProviders()]);
+      if (online) {
+        const result = await api.auth.refresh();
+        setAuth(result);
+        await Promise.all([loadDefaults(), loadProviders()]);
+      }
+      // Si no hay conexión, mantenemos el estado actual de autenticación
     } catch {
-      clearAuth();
+      // Solo limpiar autenticación si estamos online
+      // Si estamos offline, mantenemos el usuario actual (si lo hay)
+      if (online) {
+        clearAuth();
+      }
     } finally {
       setAuthReady();
     }

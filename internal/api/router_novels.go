@@ -199,4 +199,20 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		}
 		return e.JSON(http.StatusOK, parseJSONFields(novel))
 	})
+
+	// Endpoint para obtener novela completa con todos sus capítulos (para offline)
+	api.GET("/db/novels/{id}/full", func(e *core.RequestEvent) error {
+		novel, err := s.Store.GetNovelAccessible(e.Auth.Id, e.Request.PathValue("id"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("id"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		return e.JSON(http.StatusOK, map[string]any{
+			"novel":    parseJSONFields(novel),
+			"chapters": chapterRecords(chapters),
+		})
+	})
 }

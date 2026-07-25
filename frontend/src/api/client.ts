@@ -290,6 +290,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         const novel = await http.get<Novel | null>(`/api/db/novels/${novelId}`);
         return novel ? withDefaults(novel) : null;
       },
+      async getFull(novelId: string): Promise<{ novel: Novel; chapters: Chapter[] } | null> {
+        const result = await http.get<{ novel: Novel; chapters: Chapter[] } | null>(`/api/db/novels/${novelId}/full`);
+        if (!result) return null;
+        return { novel: withDefaults(result.novel), chapters: result.chapters };
+      },
       async listTagSuggestions(query = "", limit = 100): Promise<string[]> {
         const search = new URLSearchParams();
         if (query.trim()) search.set("q", query.trim());
