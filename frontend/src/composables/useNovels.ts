@@ -144,6 +144,15 @@ export function useNovels() {
     fullNovelIds.add(updated.id);
   }
 
+  function hydrateCachedNovels(items: Novel[]) {
+    const cachedById = new Map(items.map((item) => [item.id, item]));
+    novels.value = [
+      ...items,
+      ...novels.value.filter((item) => !cachedById.has(item.id)),
+    ];
+    markNovelsFull(items);
+  }
+
   const items = computed(() => novels.value);
 
   return {
@@ -158,5 +167,6 @@ export function useNovels() {
     updateNovel,
     deleteNovel,
     replaceNovelInList,
+    hydrateCachedNovels,
   };
 }

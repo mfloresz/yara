@@ -7,9 +7,16 @@ import {
   type Ref,
 } from "vue";
 import { createApiClient, type ApiClient } from "@/api/client";
+import { ApiError } from "@/api/http";
 import type { AuthResponse, ProviderInfo } from "@/api/types";
 import type { ServerDefaults } from "@/domain/project-settings";
-import { authState, clearAuth, setAuth, setAuthReady } from "@/app/auth";
+import {
+  authState,
+  clearAuth,
+  restoreStoredUser,
+  setAuth,
+  setAuthReady,
+} from "@/app/auth";
 
 export type AppServices = {
   api: ApiClient;
@@ -65,20 +72,21 @@ export function createAppServices(): AppServices {
   }
 
   async function restoreSession() {
-    // Verificar si hay conexión antes de intentar restaurar
-    const online = navigator.onLine;
-    
+    const storedUser = restoreStoredUser();
+    if (storedUser) {
+      authState.user.value = storedUser;
+    }
+
     try {
-      if (online) {
-        const result = await api.auth.refresh();
-        setAuth(result);
-        await Promise.all([loadDefaults(), loadProviders()]);
-      }
-      // Si no hay conexión, mantenemos el estado actual de autenticación
-    } catch {
-      // Solo limpiar autenticación si estamos online
-      // Si estamos offline, mantenemos el usuario actual (si lo hay)
-      if (online) {
+      // La disponibilidad del navegador no garantiza que el backend esté activo.
+      // El refresh valida la cookie cuando el servidor sí está disponible.
+      const result = await api.auth.refresh();
+      setAuth(result);
+      await Promise.all([loadDefaults(), loadProviders()]);
+    } catch (error) {
+      // Solo un 401 confirma que la sesión ya no es válida. Un fallo de red
+      // debe dejar disponible el contenido cacheado para lectura offline.
+      if (error instanceof ApiError && error.status === 401) {
         clearAuth();
       }
     } finally {

@@ -141,7 +141,10 @@ export function useOfflineCache(novelId: Ref<string>) {
         request.onsuccess = () => {
           const progress: Record<string, CachedReadingProgress> = {};
           request.result.forEach((p: CachedReadingProgress) => {
-            progress[p.novelId] = p;
+            const current = progress[p.novelId];
+            if (!current || p.updatedAt > current.updatedAt) {
+              progress[p.novelId] = p;
+            }
           });
           resolve(progress);
         };
@@ -239,6 +242,17 @@ export function useOfflineCache(novelId: Ref<string>) {
         synced,
       };
 
+      // Mantener solo el último progreso de cada novela. La base existente
+      // usa el id del capítulo como clave, por lo que eliminamos versiones
+      // anteriores antes de guardar el nuevo valor.
+      const existing = await new Promise<CachedReadingProgress[]>((resolve, reject) => {
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      existing
+        .filter((item) => item.novelId === novelId)
+        .forEach((item) => store.delete(item.id));
       store.put(progress);
 
       await new Promise<void>((resolve, reject) => {
@@ -249,10 +263,9 @@ export function useOfflineCache(novelId: Ref<string>) {
       // Actualizar el estado local
       cachedReadingProgress.value = { ...cachedReadingProgress.value, [novelId]: progress };
 
-      // Marcar como pendiente de sincronización si no está sincronizado
-      if (!synced && isOnline.value) {
-        pendingSyncCount.value++;
-      }
+      pendingSyncCount.value = Object.values(cachedReadingProgress.value).filter(
+        (item) => !item.synced,
+      ).length;
     } catch (err) {
       error.value = `Error al guardar progreso: ${err}`;
       throw err;
@@ -304,8 +317,15 @@ export function useOfflineCache(novelId: Ref<string>) {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-
+      const latestByNovel = new Map<string, CachedReadingProgress>();
       for (const progress of unsynced) {
+        const current = latestByNovel.get(progress.novelId);
+        if (!current || progress.updatedAt > current.updatedAt) {
+          latestByNovel.set(progress.novelId, progress);
+        }
+      }
+
+      for (const progress of latestByNovel.values()) {
         try {
           await api.readingProgress.update(progress.novelId, {
             chapterId: progress.chapterId,
@@ -316,18 +336,24 @@ export function useOfflineCache(novelId: Ref<string>) {
           const updateTx = db.transaction(READING_PROGRESS_STORE, "readwrite");
           const updateStore = updateTx.objectStore(READING_PROGRESS_STORE);
           updateStore.put({ ...progress, synced: true });
-          await new Promise<void>((resolve) => {
+          await new Promise<void>((resolve, reject) => {
             updateTx.oncomplete = () => resolve();
+            updateTx.onerror = () => reject(updateTx.error);
           });
 
           // Actualizar el estado local
-          cachedReadingProgress.value = { ...cachedReadingProgress.value, [progress.novelId]: { ...progress, synced: true } };
+          cachedReadingProgress.value = {
+            ...cachedReadingProgress.value,
+            [progress.novelId]: { ...progress, synced: true },
+          };
         } catch {
-          // Continuar con el siguiente
+          // Mantener el progreso pendiente para el siguiente intento.
         }
       }
 
-      pendingSyncCount.value = 0;
+      pendingSyncCount.value = Object.values(cachedReadingProgress.value).filter(
+        (item) => !item.synced,
+      ).length;
     } catch {
       // Error silencioso
     }
@@ -361,6 +387,9 @@ export function useOfflineCache(novelId: Ref<string>) {
       // Contar pendientes de sincronización
       const unsynced = Object.values(cachedReadingProgress.value).filter((p) => !p.synced);
       pendingSyncCount.value = unsynced.length;
+      if (pendingSyncCount.value > 0 && isOnline.value) {
+        void syncPendingChanges();
+      }
     } catch (err) {
       error.value = `Error al cargar caché: ${err}`;
     } finally {

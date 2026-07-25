@@ -271,6 +271,7 @@ import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
 import LibrarySkeleton from "@/components/LibrarySkeleton.vue";
 import { useNovels } from "@/composables/useNovels";
+import { useOfflineCache } from "@/composables/useOfflineCache";
 import { LANGUAGES } from "@/config/languages";
 import { getNovelDisplayTitle, getNovelDisplayAuthor, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 import { useAppServices } from "@/app/services";
@@ -399,7 +400,16 @@ const groupedNovels = computed((): GroupedResult => {
 const router = useRouter();
 const message = useMessage();
 const { api, auth } = useAppServices();
-const { novels, loading, listNovels, createNovel, importNovelFromEpub, deleteNovel } = useNovels();
+const {
+  novels,
+  loading,
+  listNovels,
+  createNovel,
+  importNovelFromEpub,
+  deleteNovel,
+  hydrateCachedNovels,
+} = useNovels();
+const offlineCache = useOfflineCache(ref(""));
 
 const createOpen = ref(false);
 const creating = ref(false);
@@ -458,8 +468,17 @@ function handleNovelMenuSelect(key: string) {
 }
 
 onMounted(() => {
-  void listNovels(false, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
+  void loadLibrary();
 });
+
+async function loadLibrary() {
+  try {
+    await listNovels(false, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
+  } catch {
+    const cached = await offlineCache.loadCachedNovels();
+    hydrateCachedNovels(Object.values(cached).map((item) => item.novel));
+  }
+}
 
 function resetCreateForm() {
   form.sourceTitle = "";
