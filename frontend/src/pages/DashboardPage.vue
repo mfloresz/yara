@@ -3,7 +3,11 @@
     <div class="stack-lg">
       <header class="page-header">
         <div>
-          <p class="muted small">{{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}</p>
+          <p class="muted small">
+            {{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}
+            <span v-if="searchQuery.trim() && loadingMore" class="search-hint">&nbsp;· buscando…</span>
+            <span v-else-if="searchQuery.trim()" class="search-hint">&nbsp;· filtrado</span>
+          </p>
         </div>
         <div class="page-actions">
           <n-input
@@ -145,6 +149,16 @@
           </div>
         </section>
       </template>
+
+      <div v-if="hasMore && !searchQuery.trim()" class="load-more-container">
+        <n-button
+          :loading="loadingMore"
+          secondary
+          @click="loadMoreNovels"
+        >
+          Cargar más novelas
+        </n-button>
+      </div>
     </div>
 
     <n-dropdown
@@ -240,7 +254,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, h } from "vue";
+import { computed, onMounted, reactive, ref, h, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   NSelect,
@@ -292,6 +306,17 @@ const sortOrder = ref<"asc" | "desc">("asc");
 const sorting = ref(false);
 const searchQuery = ref("");
 let sortTimeout: ReturnType<typeof setTimeout> | null = null;
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Watch searchQuery and debounce backend search
+watch(searchQuery, (newQuery) => {
+  if (searchTimeout) clearTimeout(searchTimeout);
+  if (newQuery.trim()) {
+    searchTimeout = setTimeout(() => {
+      void searchNovels(newQuery.trim());
+    }, 300);
+  }
+});
 
 function toggleSortOrder() {
   sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
@@ -403,7 +428,11 @@ const { api, auth } = useAppServices();
 const {
   novels,
   loading,
+  hasMore,
+  loadingMore,
   listNovels,
+  loadMoreNovels,
+  searchNovels,
   createNovel,
   importNovelFromEpub,
   deleteNovel,
@@ -652,8 +681,19 @@ function onBackToUrlDialog() {
   max-width: 16rem;
 }
 
+.search-hint {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
 .mobile-only {
   display: none;
+}
+
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding-top: 1.5rem;
 }
 
 .empty-state {

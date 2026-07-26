@@ -14,8 +14,19 @@ import (
 func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/db/novels", func(e *core.RequestEvent) error {
 		limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
+		offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
 		selectParam := e.Request.URL.Query().Get("select")
-		list, err := s.Store.ListNovels(e.Auth.Id, limit)
+		searchQuery := e.Request.URL.Query().Get("q")
+
+		var list []store.Novel
+		var hasMore bool
+		var err error
+
+		if searchQuery != "" {
+			list, hasMore, err = s.Store.SearchNovels(e.Auth.Id, searchQuery, limit, offset)
+		} else {
+			list, hasMore, err = s.Store.ListNovels(e.Auth.Id, limit, offset)
+		}
 		if err != nil {
 			return e.InternalServerError("failed to list novels", err)
 		}
@@ -30,7 +41,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 				items = append(items, parseJSONFields(&list[i]))
 			}
 		}
-		return e.JSON(http.StatusOK, map[string]any{"items": items, "nextCursor": ""})
+		return e.JSON(http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
 	})
 	api.POST("/db/novels", func(e *core.RequestEvent) error {
 		var in struct {

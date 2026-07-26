@@ -32,44 +32,99 @@ func (s *Store) CreateNovel(ownerID string, novel *Novel) error {
 	return nil
 }
 
-func (s *Store) ListNovels(userID string, limit int) ([]Novel, error) {
-	if limit <= 0 || limit > 200 {
+// maxListLimit is the maximum number of novels that can be requested in a single list/search call.
+// API clients can pass limit up to this value; the default when unset is 100.
+const maxListLimit = 1000
+
+func (s *Store) ListNovels(userID string, limit int, offset int) ([]Novel, bool, error) {
+	if limit <= 0 {
 		limit = 100
+	} else if limit > maxListLimit {
+		limit = maxListLimit
 	}
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner} || is_public = true", "-created", limit, 0, dbx.Params{"owner": userID})
+	if offset < 0 {
+		offset = 0
+	}
+	// Request limit+1 to detect whether more results exist
+	fetchLimit := limit + 1
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner} || is_public = true", "-created", fetchLimit, offset, dbx.Params{"owner": userID})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+	out := s.novelsFromRecords(records)
+	s.populateLastReadAt(out, userID)
+	return out, hasMore, nil
+}
+
+// SearchNovels searches novels by title, author, or series matching the given query.
+// Supports pagination via limit/offset, scoped to novels the user owns or are public.
+func (s *Store) SearchNovels(userID, query string, limit int, offset int) ([]Novel, bool, error) {
+	if limit <= 0 {
+		limit = 100
+	} else if limit > maxListLimit {
+		limit = maxListLimit
+	}
+	if offset < 0 || query == "" {
+		offset = 0
+	}
+
+	// Search across title, author, and series fields (both source and target)
+	filter := "(owner = {:owner} || is_public = true) && " +
+		"(sourceTitle ~ {:q} || sourceAuthor ~ {:q} || sourceSeries ~ {:q} || " +
+		"targetTitle ~ {:q} || targetAuthor ~ {:q} || targetSeries ~ {:q})"
+
+	fetchLimit := limit + 1
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", fetchLimit, offset, dbx.Params{"owner": userID, "q": query})
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+	out := s.novelsFromRecords(records)
+	s.populateLastReadAt(out, userID)
+	return out, hasMore, nil
+}
+
+// novelsFromRecords converts PocketBase records to Novel structs.
+func (s *Store) novelsFromRecords(records []*core.Record) []Novel {
 	out := make([]Novel, 0, len(records))
 	for _, record := range records {
 		out = append(out, s.novelFromRecord(record))
 	}
+	return out
+}
 
-	// Fetch reading progress for all novels to populate LastReadAt
-	if len(out) > 0 {
-		progressRecords, err := s.App.FindRecordsByFilter(
-			ReadingProgressCollection,
-			"user = {:user}",
-			"-updated",
-			0, 0,
-			dbx.Params{"user": userID},
-		)
-		if err == nil {
-			// Build map of novelID -> lastReadAt (most recent first due to -updated sort)
-			lastReadMap := make(map[string]string)
-			for _, pr := range progressRecords {
-				novelID := pr.GetString("novel")
-				if _, exists := lastReadMap[novelID]; !exists {
-					lastReadMap[novelID] = pr.GetString("updated")
-				}
-			}
-			for i := range out {
-				out[i].LastReadAt = lastReadMap[out[i].ID]
-			}
+// populateLastReadAt fetches reading progress for all novels and fills LastReadAt.
+func (s *Store) populateLastReadAt(novels []Novel, userID string) {
+	if len(novels) == 0 {
+		return
+	}
+	progressRecords, err := s.App.FindRecordsByFilter(
+		ReadingProgressCollection,
+		"user = {:user}",
+		"-updated",
+		0, 0,
+		dbx.Params{"user": userID},
+	)
+	if err != nil {
+		return
+	}
+	lastReadMap := make(map[string]string)
+	for _, pr := range progressRecords {
+		novelID := pr.GetString("novel")
+		if _, exists := lastReadMap[novelID]; !exists {
+			lastReadMap[novelID] = pr.GetString("updated")
 		}
 	}
-
-	return out, nil
+	for i := range novels {
+		novels[i].LastReadAt = lastReadMap[novels[i].ID]
+	}
 }
 
 func (s *Store) ListOwnedNovelsWithURL(ownerID string) ([]Novel, error) {
