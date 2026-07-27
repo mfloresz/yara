@@ -73,9 +73,10 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int) ([]Nov
 	}
 
 	// Search across title, author, and series fields (both source and target)
+	// Note: field names must match the schema exactly (snake_case, not camelCase)
 	filter := "(owner = {:owner} || is_public = true) && " +
-		"(sourceTitle ~ {:q} || sourceAuthor ~ {:q} || sourceSeries ~ {:q} || " +
-		"targetTitle ~ {:q} || targetAuthor ~ {:q} || targetSeries ~ {:q})"
+		"(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
+		"target_title ~ {:q} || target_author ~ {:q} || target_series ~ {:q})"
 
 	fetchLimit := limit + 1
 	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", fetchLimit, offset, dbx.Params{"owner": userID, "q": query})
