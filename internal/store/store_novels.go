@@ -3,6 +3,9 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"path"
 	"sort"
 	"strings"
 
@@ -414,12 +417,33 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Read cover and thumbnail blobs from the source novel's record
+	// so we can replicate the files to the clone.
+	var coverBlob []byte
+	var coverMime string
+	var thumbBlob []byte
+	if novel.CoverFile != "" {
+		coverBlob, coverMime, err = s.readNovelFileBlob(novelID, novel.CoverFile)
+		if err != nil {
+			return nil, fmt.Errorf("read cover blob: %w", err)
+		}
+	}
+	if novel.ThumbnailFile != "" && thumbBlob == nil {
+		thumbBlob, _, err = s.readNovelFileBlob(novelID, novel.ThumbnailFile)
+		if err != nil {
+			return nil, fmt.Errorf("read thumbnail blob: %w", err)
+		}
+	}
+
 	clone := *novel
 	clone.ID = ""
 	clone.OwnerID = userID
 	clone.IsPublic = false
 	clone.CoverPath = ""
 	clone.CoverFile = ""
+	clone.ThumbnailPath = ""
+	clone.ThumbnailFile = ""
 	clone.ChapterCount = 0
 	clone.TranslatedCount = 0
 	clone.CompletedCount = 0
@@ -431,6 +455,17 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 	if err := s.CreateNovel(userID, &clone); err != nil {
 		return nil, err
 	}
+
+	// Replicate cover and thumbnail files to the clone record.
+	if coverBlob != nil {
+		if err := s.attachNovelCover(clone.ID, coverBlob, coverMime); err != nil {
+			return nil, fmt.Errorf("copy cover: %w", err)
+		}
+	}
+	if thumbBlob != nil {
+		s.attachCoverThumbnail(clone.ID, thumbBlob)
+	}
+
 	chapters, err := s.ListChaptersAccessible(userID, novelID)
 	if err != nil {
 		return nil, err
@@ -667,6 +702,39 @@ func (s *Store) UpdateNovelCover(userID, novelID string, blob []byte, mimeType s
 		return nil, err
 	}
 	return s.GetOwnedNovel(userID, novelID)
+}
+
+func (s *Store) readNovelFileBlob(novelID, fileName string) ([]byte, string, error) {
+	collection, err := s.App.FindCollectionByNameOrId(NovelsCollection)
+	if err != nil {
+		return nil, "", err
+	}
+	record, err := s.App.FindRecordById(collection, novelID)
+	if err != nil {
+		return nil, "", err
+	}
+	fsys, err := s.App.NewFilesystem()
+	if err != nil {
+		return nil, "", err
+	}
+	defer fsys.Close()
+
+	fileKey := record.BaseFilesPath() + "/" + fileName
+	reader, err := fsys.GetReader(fileKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("get reader for %s: %w", fileKey, err)
+	}
+	defer reader.Close()
+
+	blob, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("read file %s: %w", fileName, err)
+	}
+	mime := mime.TypeByExtension(path.Ext(fileName))
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	return blob, mime, nil
 }
 
 func coverExtension(mimeType string) string {
