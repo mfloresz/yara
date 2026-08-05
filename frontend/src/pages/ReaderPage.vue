@@ -1311,6 +1311,83 @@ function applyTypography() {
   justify-content: center;
 }
 
+/* ── Footnotes ── */
+.reader-body :deep(sup a[href^="#fnref:"]) {
+  display: inline-block;
+  font-size: 0.72em;
+  line-height: 1;
+  vertical-align: super;
+  color: var(--accent-link);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0 0.2em;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.reader-body :deep(sup a[href^="#fnref:"]:hover),
+.reader-body :deep(sup a[href^="#fnref:"]:focus-visible) {
+  background: color-mix(in oklab, var(--accent-link) 12%, transparent);
+  color: var(--foreground);
+  outline: none;
+}
+
+.reader-body :deep(sup a[href^="#fnref:"]:focus-visible) {
+  box-shadow: 0 0 0 2px var(--accent-link);
+}
+
+.reader-body :deep(.footnotes) {
+  counter-reset: footnote;
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--divide);
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  list-style: none;
+  padding-left: 0;
+}
+
+.reader-body :deep(.footnotes li) {
+  counter-increment: footnote;
+  padding: 0.25em 0;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+  position: relative;
+}
+
+.reader-body :deep(.footnotes li::before) {
+  content: counter(footnote);
+  position: absolute;
+  left: 0;
+  top: 0.25em;
+  font-size: 0.75em;
+  color: var(--accent-link);
+  font-weight: 600;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]) {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 0 0.2em;
+  border-radius: 2px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]:hover),
+.reader-body :deep(.footnotes a[href^="#fnref:"]:focus-visible) {
+  background: color-mix(in oklab, var(--accent-link) 10%, transparent);
+  color: var(--accent-link);
+  outline: none;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]:focus-visible) {
+  box-shadow: 0 0 0 2px var(--accent-link);
+}
+
 @media (max-width: 480px) {
   .reader-chapter-nav {
     flex-direction: column;
