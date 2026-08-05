@@ -9,6 +9,7 @@ import (
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
 	"github.com/zendev-sh/goai/provider/openai"
+	"github.com/zendev-sh/goai/provider/openrouter"
 )
 
 type OpenAIProvider struct {
@@ -19,6 +20,9 @@ type OpenAIProvider struct {
 	// ProviderOptions are passed to goai on every call. Use for provider-specific
 	// behavior toggles like forcing Chat Completions (e.g. Venice) or strict JSON schema.
 	ProviderOptions map[string]any
+	// OpenRouter selects goai's native OpenRouter provider, which adds the
+	// gateway's recommended headers and usage reporting.
+	OpenRouter bool
 }
 
 func (p *OpenAIProvider) model() (provider.LanguageModel, error) {
@@ -29,38 +33,62 @@ func (p *OpenAIProvider) model() (provider.LanguageModel, error) {
 	if p.BaseURL != "" {
 		opts = append(opts, openai.WithBaseURL(p.BaseURL))
 	}
-	return openai.Chat(p.Model, opts...), nil
+	if p.OpenRouter {
+		openRouterOpts := []openrouter.Option{openrouter.WithAPIKey(p.APIKey)}
+		if p.BaseURL != "" {
+			openRouterOpts = append(openRouterOpts, openrouter.WithBaseURL(p.BaseURL))
+		}
+		return openrouter.Chat(p.modelID(), openRouterOpts...), nil
+	}
+	return openai.Chat(p.modelID(), opts...), nil
+}
+
+// modelID maps UI-friendly model variants to the actual model ID accepted by
+// OpenRouter. The reasoning effort is sent separately in provider options.
+func (p *OpenAIProvider) modelID() string {
+	const prefix = "openai/gpt-5.6-luna (reasoning: "
+	if strings.HasPrefix(p.Model, prefix) && strings.HasSuffix(p.Model, ")") {
+		return "openai/gpt-5.6-luna"
+	}
+	return p.Model
+}
+
+func (p *OpenAIProvider) providerOptions() map[string]any {
+	opts := make(map[string]any, len(p.ProviderOptions)+1)
+	for k, v := range p.ProviderOptions {
+		opts[k] = v
+	}
+	const prefix = "openai/gpt-5.6-luna (reasoning: "
+	if strings.HasPrefix(p.Model, prefix) && strings.HasSuffix(p.Model, ")") {
+		effort := strings.TrimSuffix(strings.TrimPrefix(p.Model, prefix), ")")
+		if effort == "none" || effort == "low" || effort == "medium" {
+			opts["reasoning"] = map[string]any{"effort": effort}
+		}
+	}
+	return opts
 }
 
 func (p *OpenAIProvider) opts() []goai.Option {
-	var o []goai.Option
-	if len(p.ProviderOptions) > 0 {
-		opts := make(map[string]any, len(p.ProviderOptions))
-		for k, v := range p.ProviderOptions {
-			opts[k] = v
-		}
-		if strings.Contains(p.Model, "deepseek") {
-			opts["structuredOutputs"] = false
-		}
-		o = append(o, goai.WithProviderOptions(opts))
+	opts := p.providerOptions()
+	if strings.Contains(p.modelID(), "deepseek") {
+		opts["structuredOutputs"] = false
 	}
-	return o
+	if len(opts) == 0 {
+		return nil
+	}
+	return []goai.Option{goai.WithProviderOptions(opts)}
 }
 
 func (p *OpenAIProvider) textOpts() []goai.Option {
-	var o []goai.Option
-	if len(p.ProviderOptions) > 0 {
-		opts := make(map[string]any, len(p.ProviderOptions))
-		for k, v := range p.ProviderOptions {
-			opts[k] = v
-		}
-		if strings.Contains(p.Model, "deepseek") {
-			opts["structuredOutputs"] = false
-		}
-		delete(opts, "strictJsonSchema")
-		o = append(o, goai.WithProviderOptions(opts))
+	opts := p.providerOptions()
+	if strings.Contains(p.modelID(), "deepseek") {
+		opts["structuredOutputs"] = false
 	}
-	return o
+	delete(opts, "strictJsonSchema")
+	if len(opts) == 0 {
+		return nil
+	}
+	return []goai.Option{goai.WithProviderOptions(opts)}
 }
 
 func (p *OpenAIProvider) TranslateTitle(ctx context.Context, in TranslateTitleInput) (string, error) {

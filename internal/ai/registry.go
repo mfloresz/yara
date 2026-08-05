@@ -28,6 +28,25 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
+		ID:      "openrouter",
+		Name:    "OpenRouter",
+		BaseURL: "https://openrouter.ai/api/v1",
+		Models: []string{
+			"openai/gpt-5.6-luna (reasoning: none)",
+			"openai/gpt-5.6-luna (reasoning: low)",
+			"openai/gpt-5.6-luna (reasoning: medium)",
+			"deepseek/deepseek-v4-flash-0731",
+			"google/gemini-3.5-flash-lite",
+		},
+		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
 		ID:           "opencode-go",
 		Name:         "OpenCode Go",
 		BaseURL:      "https://opencode.ai/zen/go/v1",
