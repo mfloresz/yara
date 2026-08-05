@@ -152,7 +152,7 @@ async function connect() {
     return;
   }
 
-  const wsUrl = `ws://${config.serverAddr}/ws/browser-worker`;
+  const wsUrl = browserWorkerWebSocketURL(config.serverAddr);
   log('Connecting to:', wsUrl);
   setState(WorkerState.CONNECTING);
 
@@ -203,6 +203,20 @@ function scheduleReconnect() {
     connect();
   }, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+}
+
+function browserWorkerWebSocketURL(serverAddr) {
+  const value = String(serverAddr || '').trim().replace(/\/$/, '');
+  if (value.startsWith('ws://') || value.startsWith('wss://')) {
+    return `${value}/ws/browser-worker`;
+  }
+  if (value.startsWith('https://')) {
+    return `wss://${value.slice('https://'.length)}/ws/browser-worker`;
+  }
+  if (value.startsWith('http://')) {
+    return `ws://${value.slice('http://'.length)}/ws/browser-worker`;
+  }
+  return `ws://${value}/ws/browser-worker`;
 }
 
 function sendRegister(token) {

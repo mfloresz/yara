@@ -127,7 +127,7 @@ btnAuth.addEventListener('click', async () => {
   await setConfig({ serverAddr: addr });
   
   const extId = chrome.runtime.id;
-  const authURL = `http://${addr}/api/worker-auth/authorize?extension_id=${extId}`;
+  const authURL = browserWorkerHTTPURL(addr) + `/api/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
   chrome.tabs.create({ url: authURL });
 });
 
@@ -156,6 +156,20 @@ btnRefresh.addEventListener('click', async () => {
     try { await chrome.tabs.reload(challengeTabId); challengePanel.classList.add('hidden'); } catch {}
   }
 });
+
+function browserWorkerHTTPURL(serverAddr) {
+  const value = String(serverAddr || '').trim().replace(/\/$/, '');
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  if (value.startsWith('ws://')) {
+    return `http://${value.slice('ws://'.length)}`;
+  }
+  if (value.startsWith('wss://')) {
+    return `https://${value.slice('wss://'.length)}`;
+  }
+  return `http://${value}`;
+}
 
 serverAddrInput.addEventListener('change', () => {
   const addr = serverAddrInput.value.trim();

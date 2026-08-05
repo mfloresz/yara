@@ -31,6 +31,25 @@ func (p *skydemonorderParser) CanHandle(urlStr string) bool {
 	return host == "skydemonorder.com"
 }
 
+// IsSkyDemonOrderProjectURL reports whether rawURL is a SkyDemonOrder project
+// page (the novel metadata/catalog page), rather than an individual chapter.
+// Project pages need JavaScript/Livewire rendering to expose freeChapters;
+// chapter pages contain their content in the initial HTML response.
+func IsSkyDemonOrderProjectURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+	if host != "skydemonorder.com" {
+		return false
+	}
+
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	return len(parts) == 2 && parts[0] == "projects" && parts[1] != ""
+}
+
 // firstChapterURL extracts the chapter-1 link from the project page. The
 // "Start Reading" button points at the first chapter; failing that we fall
 // back to the canonical project slug + "/1-…" pattern. The site has no
@@ -100,6 +119,18 @@ func (p *skydemonorderParser) GetNovelInfo(ctx context.Context, client HTTPClien
 }
 
 func (p *skydemonorderParser) GetChapterURLs(ctx context.Context, client HTTPClient, doc *goquery.Document, pageURL string) ([]ChapterURL, error) {
+	// A rendered project document already contains the complete catalog. Do not
+	// walk every chapter when the caller has already fetched that document.
+	if rawHTML, err := doc.Html(); err == nil {
+		chapters, extractErr := p.extractChaptersFromHTML(rawHTML, pageURL)
+		if extractErr != nil {
+			return nil, fmt.Errorf("extracting chapters from document: %w", extractErr)
+		}
+		if len(chapters) > 0 {
+			return chapters, nil
+		}
+	}
+
 	startURL, err := p.firstChapterURL(doc, pageURL)
 	if err != nil {
 		return nil, fmt.Errorf("resolving first chapter: %w", err)
