@@ -24,7 +24,7 @@ import (
 
 var chapterOrderRegex = regexp.MustCompile(`(\d+)`)
 
-const previewCacheTTL = 15 * time.Minute
+const previewCacheTTL = 30 * time.Minute
 
 type previewCacheEntry struct {
 	chapters  []noveldownloader.ChapterURL

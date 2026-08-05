@@ -81,6 +81,12 @@
             <template #icon><n-icon><RefreshOutline /></n-icon></template>
             Actualizar
           </n-button>
+          <n-button secondary block :loading="downloadingOffline" @click="handleToggleOfflineCache">
+            <template #icon>
+              <n-icon><CloudDoneOutline v-if="isNovelCached" /><CloudDownloadOutline v-else /></n-icon>
+            </template>
+            {{ isNovelCached ? 'Guardado Offline' : 'Guardar Offline' }}
+          </n-button>
         </div>
 
         <div class="novel-sidebar-tags">
@@ -471,6 +477,8 @@ import {
   ImageOutline,
   BookmarkOutline,
   CheckmarkCircleOutline,
+  CloudDownloadOutline,
+  CloudDoneOutline,
 } from "@vicons/ionicons5";
 import { markdownToHtml } from "@/utils/markdown";
 import type { ChapterSummary } from "@/api/types";
@@ -479,6 +487,7 @@ import { useChapters } from "@/composables/useChapters";
 import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useTranslationJobs } from "@/composables/useTranslationJobs";
+import { useOfflineCache } from "@/composables/useOfflineCache";
 import {
   jobStatusLabel,
   jobTagType,
@@ -513,6 +522,7 @@ const novelId = computed(() => String(route.params.novelId || ""));
 const { chapters, loading: chaptersLoading, listChapters, createChapter, updateChapter, bulkCreateChapters, deleteChapter, bulkDeleteChapters } = useChapters(novelId, { autoLoad: false });
 const { hasActive } = useActiveJobStatus();
 const { jobs: failedJobs, listJobs: listFailedJobs, createJob, updateJob } = useTranslationJobs(novelId, { failedOnly: true, autoLoad: false });
+const { isOnline, isNovelCached, downloadNovelForOffline, removeCachedNovel, syncPendingChanges, syncStatus, getCachedNovel } = useOfflineCache(novelId);
 
 const tabs = [
   { value: "chapters", label: "Capítulos" },
@@ -582,6 +592,10 @@ const chapterGaps = ref<Array<{ from: number; to: number; count: number }>>([]);
 const descriptionEl = ref<HTMLElement | null>(null);
 const descriptionExpanded = ref(false);
 const descriptionOverflow = ref(false);
+
+// Estados para caché offline
+const downloadingOffline = ref(false);
+const offlineSyncing = ref(false);
 
 const novelLoading = ref(true);
 const novel = ref<Novel | null>(null);
@@ -746,7 +760,21 @@ async function loadCurrentNovel() {
   if (!novelId.value) return;
   novelLoading.value = true;
   try {
-    const current = await getNovel(novelId.value);
+    let current: Novel | null = null;
+    
+    // Si no hay conexión, intentar cargar desde caché offline
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) {
+        current = cached.novel;
+      }
+    }
+    
+    // Si hay conexión o no se encontró en caché, intentar desde API
+    if (!current) {
+      current = await getNovel(novelId.value);
+    }
+    
     if (!current) {
       novel.value = null;
       return;
@@ -802,6 +830,27 @@ function mergeChapterSummaries(fresh: ChapterSummary[]) {
   }
 }
 
+// Convertir Chapter a ChapterSummary para usar en la lista
+function chapterToSummary(chapter: Chapter): ChapterSummary {
+  return {
+    id: chapter.id,
+    novelId: chapter.novelId,
+    chapterOrder: chapter.chapterOrder,
+    title: chapter.title,
+    translatedTitle: chapter.translatedTitle,
+    status: chapter.status,
+    errorMessage: chapter.errorMessage,
+    hasOriginalContent: !!chapter.originalContent,
+    hasTranslatedContent: !!chapter.translatedContent,
+    hasRefinedContent: !!chapter.refinedContent,
+    originalChars: chapter.originalContent?.length || 0,
+    translatedChars: chapter.translatedContent?.length || 0,
+    refinedChars: chapter.refinedContent?.length || 0,
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt,
+  };
+}
+
 async function loadChapterSummaries() {
   if (!novelId.value) {
     chapterSummaries.value = [];
@@ -811,13 +860,52 @@ async function loadChapterSummaries() {
   }
   chapterSummariesLoading.value = true;
   try {
-    const [result, gapsResult] = await Promise.all([
-      api.chapters.listSummaries(novelId.value, {
-        limit: chapterPageSize,
-        offset: chapterPage.value * chapterPageSize,
-      }),
-      api.chapters.gaps(novelId.value),
-    ]);
+    let result: { items: ChapterSummary[]; total: number } | null = null;
+    let gapsResult: { gaps: Array<{ from: number; to: number; count: number }> } | null = null;
+    
+    // Si no hay conexión, intentar cargar desde caché offline
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) {
+        // Convertir chapters a summaries
+        const summaries = cached.chapters.map(chapterToSummary);
+        result = { items: summaries, total: summaries.length };
+        // Calcular gaps manualmente para datos offline
+        const sortedChapters = [...cached.chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
+        const gaps: Array<{ from: number; to: number; count: number }> = [];
+        if (sortedChapters.length > 0) {
+          let expectedOrder = 1;
+          let gapStart: number | null = null;
+          for (const ch of sortedChapters) {
+            if (ch.chapterOrder > expectedOrder) {
+              if (gapStart === null) gapStart = expectedOrder;
+            } else if (gapStart !== null && ch.chapterOrder === expectedOrder) {
+              gaps.push({ from: gapStart, to: expectedOrder - 1, count: expectedOrder - gapStart });
+              gapStart = null;
+            }
+            expectedOrder = ch.chapterOrder + 1;
+          }
+          if (gapStart !== null) {
+            gaps.push({ from: gapStart, to: expectedOrder - 1, count: expectedOrder - gapStart });
+          }
+        }
+        gapsResult = { gaps };
+      }
+    }
+    
+    // Si no se cargó desde caché o hay conexión, cargar desde API
+    if (!result || !gapsResult) {
+      const [apiResult, apiGapsResult] = await Promise.all([
+        api.chapters.listSummaries(novelId.value, {
+          limit: chapterPageSize,
+          offset: chapterPage.value * chapterPageSize,
+        }),
+        api.chapters.gaps(novelId.value),
+      ]);
+      result = apiResult;
+      gapsResult = apiGapsResult;
+    }
+    
     chapterSummaryTotal.value = result.total;
     mergeChapterSummaries(result.items);
     chapterGaps.value = gapsResult.gaps;
@@ -841,7 +929,22 @@ async function loadAllSummaries(force = false) {
   }
   allSummariesLoading.value = true;
   try {
-    allSummaries.value = await api.chapters.listEligible(novelId.value, translateOperation.value);
+    let summaries: ChapterSummary[] = [];
+    
+    // Si no hay conexión, intentar cargar desde caché
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) {
+        summaries = cached.chapters.map(chapterToSummary);
+      }
+    }
+    
+    // Si hay conexión o no se encontró en caché
+    if (summaries.length === 0 || isOnline.value) {
+      summaries = await api.chapters.listEligible(novelId.value, translateOperation.value);
+    }
+    
+    allSummaries.value = summaries;
     allSummariesLoaded.value = true;
     allSummariesDirty.value = false;
   } finally {
@@ -854,7 +957,22 @@ async function loadTranslateAll(force = false) {
   if (!force && translateAllLoaded.value) return;
   translateAllLoading.value = true;
   try {
-    translateAllSummaries.value = await api.chapters.list(novelId.value);
+    let summaries: ChapterSummary[] = [];
+    
+    // Si no hay conexión, intentar cargar desde caché
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) {
+        summaries = cached.chapters.map(chapterToSummary);
+      }
+    }
+    
+    // Si hay conexión o no se encontró en caché
+    if (summaries.length === 0 || isOnline.value) {
+      summaries = await api.chapters.list(novelId.value);
+    }
+    
+    translateAllSummaries.value = summaries;
     translateAllLoaded.value = true;
   } finally {
     translateAllLoading.value = false;
@@ -864,7 +982,22 @@ async function loadTranslateAll(force = false) {
 async function ensureFullChaptersLoaded(force = false) {
   if (!novelId.value) return [];
   if (fullChaptersLoaded.value && !force) return chapters.value;
-  const items = await listChapters();
+  
+  let items: Chapter[] = [];
+  
+  // Si no hay conexión, intentar cargar desde caché
+  if (!isOnline.value) {
+    const cached = await getCachedNovel(novelId.value);
+    if (cached) {
+      items = cached.chapters;
+    }
+  }
+  
+  // Si hay conexión o no se encontró en caché
+  if (items.length === 0 || isOnline.value) {
+    items = await listChapters();
+  }
+  
   fullChaptersLoaded.value = true;
   return items;
 }
@@ -1331,6 +1464,53 @@ async function cancelFailedHistoryJob(jobId: string) {
     await ensureFailedJobsLoaded(true);
   } catch (err) {
     message.error(`Error al cancelar trabajo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+// Funciones para manejar la caché offline
+async function handleToggleOfflineCache() {
+  if (!novel.value) return;
+  
+  if (isNovelCached.value) {
+    // Eliminar de caché
+    try {
+      await removeCachedNovel(novel.value.id);
+      message.success('Novela eliminada de caché offline', { duration: 2500 });
+    } catch (err) {
+      message.error(`Error al eliminar de caché: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+    }
+  } else {
+    // Descargar y guardar
+    downloadingOffline.value = true;
+    try {
+      const result = await downloadNovelForOffline(novel.value.id);
+      if (result) {
+        message.success('Novela guardada para lectura offline', { duration: 2500 });
+      } else {
+        throw new Error('No se pudo descargar la novela');
+      }
+    } catch (err) {
+      message.error(`Error al guardar offline: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+    } finally {
+      downloadingOffline.value = false;
+    }
+  }
+}
+
+async function handleSyncOfflineChanges() {
+  if (!isOnline.value) {
+    message.warning('No tienes conexión a internet', { duration: 2500 });
+    return;
+  }
+  
+  offlineSyncing.value = true;
+  try {
+    await syncPendingChanges();
+    message.success('Cambios sincronizados', { duration: 2500 });
+  } catch (err) {
+    message.error(`Error al sincronizar: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  } finally {
+    offlineSyncing.value = false;
   }
 }
 

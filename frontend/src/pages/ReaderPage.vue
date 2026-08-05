@@ -232,12 +232,14 @@ import { useNovels } from "@/composables/useNovels";
 import { getNovelDisplayTitle, type Chapter, type Novel } from "@/domain";
 import { markdownToHtml } from "@/utils/markdown";
 import { useReadingProgress } from "@/composables/useReadingProgress";
+import { useOfflineCache } from "@/composables/useOfflineCache";
 
 const route = useRoute();
 const router = useRouter();
 const { api } = useAppServices();
 const novelId = computed(() => String(route.params.novelId || ""));
 const { getNovel } = useNovels();
+const { getCachedNovel } = useOfflineCache(novelId);
 
 const READER_STORAGE_KEY = "reader-settings";
 
@@ -382,6 +384,26 @@ watch(novelId, () => {
 
 watch([fontSize, lineHeight, contentWidth, variant], saveReaderSettings);
 
+function chapterToSummary(chapter: Chapter): ChapterSummary {
+  return {
+    id: chapter.id,
+    novelId: chapter.novelId,
+    chapterOrder: chapter.chapterOrder,
+    title: chapter.title,
+    translatedTitle: chapter.translatedTitle,
+    status: chapter.status,
+    errorMessage: chapter.errorMessage,
+    hasOriginalContent: Boolean(chapter.originalContent),
+    hasTranslatedContent: Boolean(chapter.translatedContent),
+    hasRefinedContent: Boolean(chapter.refinedContent),
+    originalChars: chapter.originalContent?.length || 0,
+    translatedChars: chapter.translatedContent?.length || 0,
+    refinedChars: chapter.refinedContent?.length || 0,
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt,
+  };
+}
+
 function summaryHasVariantContent(summary: ChapterSummary) {
   return variant.value === "translated"
     ? summary.hasRefinedContent || summary.hasTranslatedContent
@@ -407,7 +429,18 @@ async function loadCurrentNovel() {
     novel.value = null;
     return;
   }
-  novel.value = await getNovel(novelId.value, false);
+
+  try {
+    novel.value = await getNovel(novelId.value, false);
+  } catch {
+    const cached = await getCachedNovel(novelId.value);
+    novel.value = cached?.novel ?? null;
+  }
+
+  if (!novel.value) {
+    const cached = await getCachedNovel(novelId.value);
+    novel.value = cached?.novel ?? null;
+  }
 }
 
 async function initializeReader() {
@@ -461,6 +494,16 @@ async function loadSummaryRange(first: number, last: number): Promise<number> {
           summarySlots.value[slotIndex] = item;
         }
       });
+    }
+  } catch {
+    const cached = await getCachedNovel(novelId.value);
+    if (cached) {
+      const summaries = cached.chapters
+        .slice()
+        .sort((a, b) => a.chapterOrder - b.chapterOrder)
+        .map(chapterToSummary);
+      summarySlots.value = summaries;
+      apiTotal = summaries.length;
     }
   } finally {
     summaryLoading.value = false;
@@ -532,6 +575,9 @@ async function loadActiveChapter(chapterId: string) {
   chapterLoading.value = true;
   try {
     activeChapter.value = await api.chapters.get(novelId.value, chapterId);
+  } catch {
+    const cached = await getCachedNovel(novelId.value);
+    activeChapter.value = cached?.chapters.find((chapter) => chapter.id === chapterId) ?? null;
   } finally {
     chapterLoading.value = false;
   }

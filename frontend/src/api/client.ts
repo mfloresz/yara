@@ -273,11 +273,12 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         return { ...result, novel: withDefaults(result.novel) };
       },
       async list(
-        params: { cursor?: string; limit?: number; select?: string[] } = {},
+        params: { limit?: number; offset?: number; select?: string[]; q?: string } = {},
       ): Promise<PaginatedResult<Novel>> {
         const search = new URLSearchParams();
-        if (params.cursor) search.set("cursor", params.cursor);
         if (params.limit) search.set("limit", String(params.limit));
+        if (params.offset !== undefined) search.set("offset", String(params.offset));
+        if (params.q) search.set("q", params.q);
         if (params.select && params.select.length > 0)
           search.set("select", params.select.join(","));
         const suffix = search.size > 0 ? `?${search.toString()}` : "";
@@ -289,6 +290,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       async get(novelId: string): Promise<Novel | null> {
         const novel = await http.get<Novel | null>(`/api/db/novels/${novelId}`);
         return novel ? withDefaults(novel) : null;
+      },
+      async getFull(novelId: string): Promise<{ novel: Novel; chapters: Chapter[] } | null> {
+        const result = await http.get<{ novel: Novel; chapters: Chapter[] } | null>(`/api/db/novels/${novelId}/full`);
+        if (!result) return null;
+        return { novel: withDefaults(result.novel), chapters: result.chapters };
       },
       async listTagSuggestions(query = "", limit = 100): Promise<string[]> {
         const search = new URLSearchParams();

@@ -2,7 +2,7 @@ import type { Novel, Chapter, TranslationJob } from "@/domain";
 
 export type PaginatedResult<T> = {
   items: T[];
-  nextCursor?: string;
+  hasMore?: boolean;
 };
 
 export type AuthUser = {

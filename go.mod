@@ -9,7 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.4
-	github.com/zendev-sh/goai v0.8.5
+	github.com/zendev-sh/goai v0.9.4
 	golang.org/x/image v0.43.0
 	golang.org/x/net v0.55.0
 	golang.org/x/text v0.38.0

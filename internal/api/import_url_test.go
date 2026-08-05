@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 	"translator-server/internal/noveldownloader"
 )
 
@@ -646,4 +647,126 @@ func createChapterWithTitle(t *testing.T, handler http.Handler, token, novelID s
 		"originalContent": "Texto original",
 	})
 	assertStatus(t, resp, http.StatusCreated)
+}
+
+// TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent is a
+// regression test for canceling a download job while the worker is sleeping
+// between chapters. Cancellation during that wait used to make
+// processDownloadJob return early with ctx.Err(), skipping the final
+// RecalculateNovelStats and leaving the persisted novel stats stale (the
+// chapter saved right before the sleep was missing from chapterCount,
+// maxChapterOrder and the char counts).
+func TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent(t *testing.T) {
+	const indexHTML = `<!doctype html><html><head>
+<meta itemprop="description" content="A test novel used to exercise download-job cancellation.">
+</head><body>
+<div class="main-head"><h1>Cancel Test Novel</h1></div>
+<span itemprop="author">Tester</span>
+<ul class="chapter-list">
+  <li><a href="chapter-1"><span class="chapter-title">Chapter 1</span></a></li>
+  <li><a href="chapter-2"><span class="chapter-title">Chapter 2</span></a></li>
+  <li><a href="chapter-3"><span class="chapter-title">Chapter 3</span></a></li>
+</ul>
+</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if strings.Contains(r.URL.Path, "/chapter-") {
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
+			return
+		}
+		_, _ = fmt.Fprint(w, indexHTML)
+	}))
+	defer mock.Close()
+
+	transport := &hostRewritingTransport{rewrites: map[string]string{"novelfire.net": mock.URL}}
+	client := noveldownloader.NewHTTPClientWithTransport(transport)
+
+	env := newAPITestEnv(t)
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
+		dl := noveldownloader.NewDownloaderWithClient(client)
+		// A fixed 5s inter-chapter delay guarantees SleepBetweenChapters
+		// blocks long enough for the test to cancel while the worker waits.
+		dl.MinChapterDelay = 5 * time.Second
+		dl.MaxChapterDelay = 5 * time.Second
+		return dl
+	}
+
+	alice := registerUser(t, env.handler, "alice-dl-cancel@example.com", "secret123", "Alice")
+
+	// 3 chapters: chapter 1 is imported synchronously; chapters 2-3 become a
+	// background download job (chapter 2 saved first, then a 5s sleep before 3).
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/import-from-url", alice.Token, map[string]any{
+		"url":            "https://novelfire.net/book/cancel-test",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"startChapter":   1,
+		"endChapter":     3,
+	})
+	assertStatus(t, resp, http.StatusCreated)
+
+	var importResp struct {
+		Novel struct {
+			ID string `json:"id"`
+		} `json:"novel"`
+		DownloadJob struct {
+			ID string `json:"id"`
+		} `json:"downloadJob"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &importResp); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if importResp.Novel.ID == "" || importResp.DownloadJob.ID == "" {
+		t.Fatalf("expected novel and download job ids, got %s", resp.Body.String())
+	}
+
+	// The worker saves the first queued chapter (order 2) via
+	// UpsertChapterWithoutStats and then sleeps before the next one. Once it
+	// reports completedChapters=1 the sleep is imminent, so cancel now: the
+	// cancellation must hit SleepBetweenChapters while it is blocking.
+	// cancelJob mirrors what the PATCH cancel endpoint does (minus its
+	// best-effort stats recalc), so the worker's own recalc is what is tested.
+	waitForCondition(t, 15*time.Second, "worker to save the first queued chapter", func() bool {
+		job, err := env.store.GetJob(importResp.DownloadJob.ID)
+		return err == nil && job.CompletedChapters == 1
+	})
+	env.server.cancelJob(importResp.DownloadJob.ID)
+
+	// processDownloadJob must leave the loop through the common path on
+	// cancellation (not return early), so RecalculateNovelStats still runs and
+	// the novel reflects the two saved chapters (imported ch1 + downloaded ch2).
+	waitForCondition(t, 5*time.Second, "novel stats to reflect the saved chapters after cancel", func() bool {
+		novel, err := env.store.GetNovelAccessible(alice.User.ID, importResp.Novel.ID)
+		return err == nil && novel.ChapterCount == 2
+	})
+
+	novel, err := env.store.GetNovelAccessible(alice.User.ID, importResp.Novel.ID)
+	if err != nil {
+		t.Fatalf("get novel: %v", err)
+	}
+	if novel.ChapterCount != 2 {
+		t.Errorf("expected chapterCount=2 after canceled download, got %d", novel.ChapterCount)
+	}
+	if novel.MaxChapterOrder != 2 {
+		t.Errorf("expected maxChapterOrder=2 after canceled download, got %d", novel.MaxChapterOrder)
+	}
+	if novel.OriginalCharCount <= 0 {
+		t.Errorf("expected non-zero originalCharCount after canceled download, got %d", novel.OriginalCharCount)
+	}
+	if novel.TranslatedCount != 0 || novel.CompletedCount != 0 {
+		t.Errorf("expected no translated/completed chapters after download only, got translated=%d completed=%d",
+			novel.TranslatedCount, novel.CompletedCount)
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }

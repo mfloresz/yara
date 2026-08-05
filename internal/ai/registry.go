@@ -15,7 +15,7 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"e2ee-deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
+		Models:       []string{"e2ee-deepseek-v4-flash", "deepseek-v4-flash-0731", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
 		DefaultModel: "e2ee-deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
@@ -24,6 +24,38 @@ var knownProviders = []ProviderInfo{
 			"venice_parameters": map[string]any{
 				"include_venice_system_prompt": false,
 			},
+		},
+	},
+
+	{
+		ID:      "openrouter",
+		Name:    "OpenRouter",
+		BaseURL: "https://openrouter.ai/api/v1",
+		Models: []string{
+			"openai/gpt-5.6-luna (reasoning: none)",
+			"openai/gpt-5.6-luna (reasoning: low)",
+			"openai/gpt-5.6-luna (reasoning: medium)",
+			"deepseek/deepseek-v4-flash-0731",
+			"google/gemini-3.5-flash-lite",
+		},
+		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
+		ID:           "meta",
+		Name:         "Meta",
+		BaseURL:      "https://api.meta.ai/v1",
+		Models:       []string{"muse-spark-1.2-contributor"},
+		DefaultModel: "muse-spark-1.2-contributor",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
 		},
 	},
 

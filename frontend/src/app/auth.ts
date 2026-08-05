@@ -8,6 +8,7 @@ import {
 } from "@/theme/naive-theme";
 
 const THEME_KEY = "theme";
+const AUTH_USER_KEY = "yara.auth.user";
 
 const user = ref<AuthUser | null>(null);
 const ready = ref(false);
@@ -62,7 +63,19 @@ export function applyTheme(theme: "light" | "dark" | "system") {
 
 export function setAuth(result: AuthResponse) {
   user.value = result.user;
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(result.user));
   applyTheme(result.user.theme || "system");
+}
+
+export function restoreStoredUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    localStorage.removeItem(AUTH_USER_KEY);
+    return null;
+  }
 }
 
 export function setAuthReady() {
@@ -71,5 +84,6 @@ export function setAuthReady() {
 
 export function clearAuth() {
   user.value = null;
+  localStorage.removeItem(AUTH_USER_KEY);
   applyTheme(getStoredTheme());
 }

@@ -48,6 +48,7 @@ func NewDownloader() *Downloader {
 			New69ShubaParser(),
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
+			NewLiteroticaParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -70,6 +71,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			New69ShubaParser(),
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
+			NewLiteroticaParser(),
 		},
 		client: client,
 	}

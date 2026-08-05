@@ -160,6 +160,8 @@ Every item must correspond to an actual code change — do not invent release no
 
 When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff vPREV..HEAD --stat` against the previous tag. Reference the previous tag URL at the bottom (e.g. `https://github.com/mfloresz/yara/releases/tag/vPREV`).
 
+**The changelog must always be written in English**, even if the user gave instructions in another language. The GitHub Release is public and English is the project's canonical language for release notes.
+
 ## Tests & verification
 
 - Backend: `go test ./...`. Integration tests live next to handlers (`internal/api/router_integration_test.go`, `import_url_test.go`, `runtime_config_test.go`, `refine_test.go`, `segmentation_test.go`, `cleaner_test.go`) and `internal/store/store_test.go`. They boot a real PocketBase against `t.TempDir()` via the shared `newAPITestEnv` helper — there is no in-memory mock.
