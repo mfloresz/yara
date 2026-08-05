@@ -15,7 +15,7 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"e2ee-deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
+		Models:       []string{"e2ee-deepseek-v4-flash", "deepseek-v4-flash-0731", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
 		DefaultModel: "e2ee-deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
