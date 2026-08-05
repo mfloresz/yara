@@ -449,7 +449,7 @@ Authorization: Bearer <token>
 - `limit` (opcional, default 100, max 1000) — cantidad de resultados por página.
 - `offset` (opcional, default 0) — desplazamiento para paginación.
 - `select` (opcional) — campos específicos separados por coma. Ej: `id,sourceTitle,sourceAuthor,coverPath`.
-- `q` (opcional) — texto de búsqueda. Busca coincidencias parciales (ILIKE) en `sourceTitle`, `sourceAuthor`, `sourceSeries`, `targetTitle`, `targetAuthor`, `targetSeries`. Cuando se usa `q`, el resultado incluye novelas de toda la base de datos (no solo las primeras 100).
+- `q` (opcional) — texto de búsqueda. Busca coincidencias parciales en `sourceTitle`, `sourceAuthor`, `sourceSeries`, `targetTitle`, `targetAuthor`, `targetSeries`, incluyendo novelas públicas (`isPublic: true`) además de las propias. Usa la misma paginación que el listado normal (`limit`/`offset`, con `hasMore`).
 
 **Response `200 OK`**
 
@@ -663,7 +663,7 @@ Authorization: Bearer <token>
       "originalContent": "Full chapter text...",
       "translatedContent": "Texto del capítulo traducido...",
       "refinedContent": "Texto refinado...",
-      "status": "completed",
+      "status": "refined",
       "errorMessage": "",
       "createdAt": "...",
       "updatedAt": "..."
@@ -733,7 +733,7 @@ Authorization: Bearer <token>
     "chapterOrder": 1,
     "title": "1.00 - Welcome to Inn",
     "translatedTitle": "1.00 - Bienvenido a la Posada",
-    "status": "completed",
+    "status": "refined",
     "errorMessage": "",
     "hasOriginalContent": true,
     "hasTranslatedContent": true,
@@ -783,7 +783,7 @@ Authorization: Bearer <token>
     "originalContent": "Full chapter text...",
     "translatedContent": "Texto traducido...",
     "refinedContent": "Texto refinado...",
-    "status": "completed",
+    "status": "refined",
     "errorMessage": "",
     "createdAt": "...",
     "updatedAt": "..."
@@ -856,7 +856,7 @@ Authorization: Bearer <token>
   "originalContent": "Full chapter text...",
   "translatedContent": "Texto traducido...",
   "refinedContent": "Texto refinado...",
-  "status": "completed",
+  "status": "refined",
   "errorMessage": "",
   "createdAt": "2024-01-10 10:00:00.000Z",
   "updatedAt": "2024-01-15 12:00:00.000Z"
@@ -876,7 +876,7 @@ Content-Type: application/json
   "chapterOrder": 1,
   "title": "1.00 - Welcome to Inn",
   "originalContent": "Full chapter text...",
-  "status": "draft"
+  "status": "pending"
 }
 ```
 
@@ -932,7 +932,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "status": "completed",
+  "status": "done",
   "errorMessage": ""
 }
 ```
@@ -953,8 +953,8 @@ Authorization: Bearer <token>
 ```json
 {
   "gaps": [
-    { "start": 5, "end": 8 },
-    { "start": 12, "end": 12 }
+    { "from": 5, "to": 8, "count": 4 },
+    { "from": 12, "to": 12, "count": 1 }
   ]
 }
 ```
@@ -972,15 +972,15 @@ Content-Type: application/json
 
 {
   "chapterId": "chapter-id-1",
-  "mode": "removeDuplicates",
+  "mode": "remove_duplicates",
   "applyTo": "original"
 }
 ```
 
-**Modes disponibles:** `removeAfter`, `removeDuplicates`, `removeLine`, `removeMultipleBlanks`, `searchReplace`.
+**Modes disponibles:** `remove_after`, `remove_duplicates`, `remove_line`, `remove_multiple_blanks`, `search_replace`.
 
 **Campos adicionales según mode:**
-- `searchText` / `replaceText` — para `searchReplace`
+- `searchText` / `replaceText` — para `search_replace`
 - `caseSensitive` / `useRegex` — booleanos (opcional)
 
 **applyTo:** `original`, `translated`, `refined`, `all`
@@ -990,15 +990,10 @@ Content-Type: application/json
 ```json
 {
   "chapterTitle": "1.00 - Welcome to Inn",
-  "cleanResult": {
-    "cleaned": "Texto limpio...",
-    "changed": true,
-    "removedAfter": 0,
-    "duplicatesRemoved": 5,
-    "linesRemoved": 0,
-    "blanksRemoved": 0,
-    "replacements": 0
-  }
+  "original": "Texto original...",
+  "cleaned": "Texto limpio...",
+  "changed": true,
+  "removedLines": 5
 }
 ```
 
@@ -1013,7 +1008,7 @@ Content-Type: application/json
 
 {
   "chapterIds": ["chapter-id-1", "chapter-id-2"],
-  "mode": "removeDuplicates",
+  "mode": "remove_duplicates",
   "applyTo": "original"
 }
 ```
@@ -1141,7 +1136,7 @@ Content-Type: application/json
 }
 ```
 
-**Status:** `pending`, `running`, `completed`, `failed`, `cancelled`.  
+**Status:** `pending`, `running`, `done`, `failed`, `cancelled`.  
 Si se setea a `pending`, se reencola. Si se setea a `cancelled`, se cancela y se reconcilian los capítulos.
 
 **Response `200 OK`** — job record actualizado.
@@ -1586,7 +1581,7 @@ GET /api/epubs/epub-id/download
 Authorization: Bearer <token>
 ```
 
-**Response `200`** — stream del archivo EPUB (application/octet-stream).  
+**Response `200`** — stream del archivo EPUB (application/epub+zip).  
 Cache-Control: `no-store` (los EPUBs se regeneran in-place).
 
 ---
@@ -1966,15 +1961,12 @@ Si la novela tiene un thumbnail generado, `coverPath` apunta al thumbnail en lug
 
 | Status | Significado |
 |---|---|
-| `pending` | Capítulo nuevo, sin traducir |
-| `translating` | En progreso de traducción |
-| `translated` | Traducido, pendiente de refinar |
-| `refining` | En progreso de refinamiento |
-| `refined` | Refinado, pendiente de verificar |
-| `checking` | En progreso de verificación |
-| `completed` | Completado (refinado o verificado) |
+| `pending` | Capítulo nuevo, sin traducir (importado o descargado) |
+| `processing` | Marcado para procesar por un job encolado o en ejecución |
+| `translated` | Traducido (elegible para refinar) |
+| `refined` | Refinado |
+| `done` | Completado manualmente (estado terminal) |
 | `failed` | Error en la operación |
-| `draft` | Borrador (importado manualmente) |
 
 ### Estados de Job
 
@@ -1982,7 +1974,7 @@ Si la novela tiene un thumbnail generado, `coverPath` apunta al thumbnail en lug
 |---|---|
 | `pending` | En cola para ejecutar |
 | `running` | En ejecución |
-| `completed` | Finalizado exitosamente |
+| `done` | Finalizado exitosamente |
 | `failed` | Falló |
 | `cancelled` | Cancelado por el usuario |
 
