@@ -288,6 +288,9 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		}
 		if idx > 0 {
 			if err := dl.SleepBetweenChapters(ctx); err != nil {
+				if ctx.Err() != nil {
+					break
+				}
 				return err
 			}
 		}
