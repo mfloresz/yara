@@ -41,10 +41,35 @@ func TestProvidersContainKnownEntries(t *testing.T) {
 		}
 		ids[p.ID] = true
 	}
-	for _, want := range []string{"venice", "opencode-go", "openrouter"} {
+	for _, want := range []string{"venice", "meta", "opencode-go", "openrouter"} {
 		if !ids[want] {
 			t.Fatalf("missing known provider %q", want)
 		}
+	}
+}
+
+func TestProviderByIDMeta(t *testing.T) {
+	info, ok := ProviderByID("meta")
+	if !ok {
+		t.Fatal("meta provider not registered")
+	}
+	if info.Name != "Meta" {
+		t.Fatalf("unexpected provider name: %q", info.Name)
+	}
+	if info.BaseURL != "https://api.meta.ai/v1" {
+		t.Fatalf("unexpected base url: %q", info.BaseURL)
+	}
+	if !info.OpenAICompat {
+		t.Fatal("meta should be OpenAI compatible")
+	}
+	if got, _ := info.GoAIOptions["useResponsesAPI"].(bool); got {
+		t.Fatal("meta should force chat/completions instead of responses API")
+	}
+	if info.DefaultModel != "muse-spark-1.2-contributor" {
+		t.Fatalf("unexpected default model: %q", info.DefaultModel)
+	}
+	if len(info.Models) != 1 || info.Models[0] != "muse-spark-1.2-contributor" {
+		t.Fatalf("unexpected model list: %v", info.Models)
 	}
 }
 

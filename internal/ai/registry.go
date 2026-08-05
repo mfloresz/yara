@@ -47,6 +47,19 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
+		ID:           "meta",
+		Name:         "Meta",
+		BaseURL:      "https://api.meta.ai/v1",
+		Models:       []string{"muse-spark-1.2-contributor"},
+		DefaultModel: "muse-spark-1.2-contributor",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
 		ID:           "opencode-go",
 		Name:         "OpenCode Go",
 		BaseURL:      "https://opencode.ai/zen/go/v1",
