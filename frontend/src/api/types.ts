@@ -164,6 +164,8 @@ export type ChapterSummary = {
   id: string;
   novelId: string;
   chapterOrder: number;
+  position?: number;
+  excluded?: boolean;
   title: string;
   translatedTitle?: string;
   status: Chapter["status"];
@@ -194,6 +196,17 @@ export type ChapterStats = {
   refinedCharacters: number;
   totalCharacters: number;
   maxChapterOrder: number;
+};
+
+export type ChapterGap = { from: number; to: number; count: number };
+
+export type ChapterGapsResponse = {
+  gaps: ChapterGap[];
+  excludedOrders: number[];
+};
+
+export type ChapterOrderResponse = {
+  items: ChapterSummary[];
 };
 
 export type CleanPreviewResponse = {

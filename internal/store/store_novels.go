@@ -181,7 +181,7 @@ func (s *Store) GetOwnedNovelChapterIDsByStatus(userID, novelID string) (pending
 	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
 		return nil, err
 	}
-	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && (status = 'pending' || (original_content != '' && translated_content = ''))", "chapter_order", 5000, 0, dbx.Params{"novel": novelID})
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && excluded = false && (status = 'pending' || (original_content != '' && translated_content = ''))", "position,chapter_order", 5000, 0, dbx.Params{"novel": novelID})
 	if err != nil {
 		return nil, err
 	}

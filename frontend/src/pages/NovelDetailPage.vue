@@ -142,6 +142,18 @@
 
       <section v-if="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
         <h2 id="tab-chapters" class="sr-only">Capítulos</h2>
+        <div v-if="isOwner" class="row-wrap" style="justify-content: flex-end">
+          <n-button
+            size="small"
+            secondary
+            :disabled="chapterSummaryTotal === 0"
+            :loading="chapterSummariesLoading"
+            @click="openReorder"
+          >
+            <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
+            Reordenar
+          </n-button>
+        </div>
         <ChapterList
           :chapters="chapterSummaries"
           :total="chapterSummaryTotal"
@@ -157,6 +169,23 @@
           @import="bulkImportOpen = true"
           @update:page="chapterPage = $event"
         />
+        <div v-if="excludedChapters.length > 0" class="stack-sm">
+          <h3 class="small muted" style="margin: 0">Capítulos excluidos ({{ excludedChapters.length }})</h3>
+          <n-card size="small">
+            <div
+              v-for="chapter in excludedChapters"
+              :key="chapter.id"
+              style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
+            >
+              <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
+              <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
+              <n-button size="tiny" secondary @click="restoreChapter(chapter)">
+                <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                Restaurar
+              </n-button>
+            </div>
+          </n-card>
+        </div>
       </section>
 
       <section v-else-if="activeTab === 'translate'" class="stack-md tab-panel" aria-labelledby="tab-translate">
@@ -427,6 +456,57 @@
       @update:open="updateUrlOpen = $event"
       @updated="onUrlUpdated"
     />
+
+    <n-modal v-model:show="reorderOpen" preset="card" title="Reordenar capítulos" :style="{ width: 'min(520px, 96vw)' }">
+      <div class="stack-md">
+        <p class="small muted">
+          El orden de lectura, traducción y exportación es independiente del número de capítulo fuente. Los capítulos
+          excluidos se mantienen al final y pueden volver a ordenarse tras restaurarlos.
+        </p>
+        <div v-if="reorderSaving" class="muted small">Guardando orden…</div>
+        <div v-else class="stack-sm">
+          <div
+            v-for="(chapter, index) in reorderItems"
+            :key="chapter.id"
+            style="display: flex; gap: 0.5rem; align-items: center; padding: 0.375rem 0; border-bottom: 1px solid var(--divide)"
+          >
+            <span class="mono small muted" style="width: 2ch">{{ index + 1 }}</span>
+            <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
+            <n-button
+              quaternary
+              circle
+              size="tiny"
+              :disabled="index === 0"
+              aria-label="Subir"
+              @click="moveReorderChapter(index, -1)"
+            >
+              <template #icon><n-icon :size="14"><ChevronUpOutline /></n-icon></template>
+            </n-button>
+            <n-button
+              quaternary
+              circle
+              size="tiny"
+              :disabled="index === reorderItems.length - 1"
+              aria-label="Bajar"
+              @click="moveReorderChapter(index, 1)"
+            >
+              <template #icon><n-icon :size="14"><ChevronDownOutline /></n-icon></template>
+            </n-button>
+          </div>
+        </div>
+      </div>
+      <template #action>
+        <n-button secondary @click="reorderOpen = false">Cancelar</n-button>
+        <n-button
+          type="primary"
+          :loading="reorderSaving"
+          :disabled="reorderItems.length === 0"
+          @click="saveReorder"
+        >
+          Guardar orden
+        </n-button>
+      </template>
+    </n-modal>
   </AppLayout>
 </template>
 
@@ -473,6 +553,7 @@ import {
   ChevronDownOutline,
   ChevronForwardOutline,
   ChevronUpOutline,
+  SwapVerticalOutline,
   DownloadOutline,
   ImageOutline,
   BookmarkOutline,
@@ -503,6 +584,7 @@ import {
   getNovelDisplayNumber,
   getNovelDisplaySeries,
   getNovelDisplayTitle,
+  chapterPosition,
   type Chapter,
   type ChapterUpsertInput,
   type CreateNovelInput,
@@ -588,6 +670,10 @@ const exportProgress = ref(0);
 const exportFeedback = ref<string | null>(null);
 
 const chapterGaps = ref<Array<{ from: number; to: number; count: number }>>([]);
+const excludedChapters = ref<ChapterSummary[]>([]);
+const reorderOpen = ref(false);
+const reorderSaving = ref(false);
+const reorderItems = ref<ChapterSummary[]>([]);
 
 const descriptionEl = ref<HTMLElement | null>(null);
 const descriptionExpanded = ref(false);
@@ -791,6 +877,8 @@ function shallowSummaryEquals(a: ChapterSummary, b: ChapterSummary): boolean {
     a.id === b.id &&
     a.novelId === b.novelId &&
     a.chapterOrder === b.chapterOrder &&
+    a.position === b.position &&
+    a.excluded === b.excluded &&
     a.title === b.title &&
     a.translatedTitle === b.translatedTitle &&
     a.status === b.status &&
@@ -836,6 +924,8 @@ function chapterToSummary(chapter: Chapter): ChapterSummary {
     id: chapter.id,
     novelId: chapter.novelId,
     chapterOrder: chapter.chapterOrder,
+    position: chapter.position,
+    excluded: chapter.excluded,
     title: chapter.title,
     translatedTitle: chapter.translatedTitle,
     status: chapter.status,
@@ -862,15 +952,18 @@ async function loadChapterSummaries() {
   try {
     let result: { items: ChapterSummary[]; total: number } | null = null;
     let gapsResult: { gaps: Array<{ from: number; to: number; count: number }> } | null = null;
-    
+
     // Si no hay conexión, intentar cargar desde caché offline
     if (!isOnline.value) {
       const cached = await getCachedNovel(novelId.value);
       if (cached) {
-        // Convertir chapters a summaries
-        const summaries = cached.chapters.map(chapterToSummary);
+        // Excluded chapters stay hidden from the visible list, but their source
+        // orders are still occupied: they must not be reported as missing.
+        const visible = cached.chapters.filter((c) => !c.excluded);
+        const summaries = visible.map(chapterToSummary);
         result = { items: summaries, total: summaries.length };
-        // Calcular gaps manualmente para datos offline
+        // Calcular gaps manualmente para datos offline (sobre todos los capítulos,
+        // incluidos los excluidos, para no generar falsos huecos).
         const sortedChapters = [...cached.chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
         const gaps: Array<{ from: number; to: number; count: number }> = [];
         if (sortedChapters.length > 0) {
@@ -889,10 +982,12 @@ async function loadChapterSummaries() {
             gaps.push({ from: gapStart, to: expectedOrder - 1, count: expectedOrder - gapStart });
           }
         }
-        gapsResult = { gaps };
+        gapsResult = {
+          gaps,
+        };
       }
     }
-    
+
     // Si no se cargó desde caché o hay conexión, cargar desde API
     if (!result || !gapsResult) {
       const [apiResult, apiGapsResult] = await Promise.all([
@@ -905,7 +1000,7 @@ async function loadChapterSummaries() {
       result = apiResult;
       gapsResult = apiGapsResult;
     }
-    
+
     chapterSummaryTotal.value = result.total;
     mergeChapterSummaries(result.items);
     chapterGaps.value = gapsResult.gaps;
@@ -935,7 +1030,7 @@ async function loadAllSummaries(force = false) {
     if (!isOnline.value) {
       const cached = await getCachedNovel(novelId.value);
       if (cached) {
-        summaries = cached.chapters.map(chapterToSummary);
+        summaries = cached.chapters.filter((c) => !c.excluded).map(chapterToSummary);
       }
     }
     
@@ -963,7 +1058,7 @@ async function loadTranslateAll(force = false) {
     if (!isOnline.value) {
       const cached = await getCachedNovel(novelId.value);
       if (cached) {
-        summaries = cached.chapters.map(chapterToSummary);
+        summaries = cached.chapters.filter((c) => !c.excluded).map(chapterToSummary);
       }
     }
     
@@ -1003,7 +1098,7 @@ async function ensureFullChaptersLoaded(force = false) {
 }
 
 async function refreshNovelAndChapterMeta() {
-  await Promise.all([loadCurrentNovel(), loadChapterSummaries()]);
+  await Promise.all([loadCurrentNovel(), loadChapterSummaries(), loadExcludedChapters()]);
 }
 
 async function refreshChapterViews() {
@@ -1153,7 +1248,7 @@ function jobFailedChapters(job: TranslationJob) {
   const idSet = new Set(job.chapterIds);
   return allSummaries.value
     .filter((chapter) => idSet.has(chapter.id) && chapter.status === "failed")
-    .sort((a, b) => a.chapterOrder - b.chapterOrder);
+    .sort((a, b) => chapterPosition(a) - chapterPosition(b));
 }
 
 function toggleJobFailedChapters(jobId: string) {
@@ -1206,7 +1301,7 @@ async function confirmDeleteChapter() {
     markAllSummariesDirty();
     await refreshChapterViews();
   } catch (err) {
-    message.error(`Error al eliminar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+    message.error(`Error al excluir capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     deletingChapter.value = false;
     pendingDeleteChapterId.value = null;
@@ -1220,9 +1315,9 @@ function onDeleteChapter({ chapter }: { event: Event; chapter: ChapterSummary })
 
 function askDeleteChapter(event: Event, id: string) {
   dialog.warning({
-    title: "¿Eliminar este capítulo?",
-    content: "Esta acción no se puede deshacer.",
-    positiveText: "Eliminar",
+    title: "¿Excluir este capítulo?",
+    content: "El capítulo se conservará oculto y podrás restaurarlo cuando quieras.",
+    positiveText: "Excluir",
     negativeText: "Cancelar",
     onPositiveClick: () => {
       pendingDeleteChapterId.value = id;
@@ -1239,9 +1334,9 @@ function onBulkDeleteChapters(event: Event) {
   if (selectedChapters.value.length <= 1) return;
   const count = selectedChapters.value.length;
   dialog.warning({
-    title: `¿Eliminar ${count} capítulos?`,
-    content: "Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.",
-    positiveText: `Eliminar ${count}`,
+    title: `¿Excluir ${count} capítulos?`,
+    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
+    positiveText: `Excluir ${count}`,
     negativeText: "Cancelar",
     onPositiveClick: () => void confirmBulkDeleteChapters(),
   });
@@ -1251,9 +1346,9 @@ function askBulkDeleteChapters(event: Event) {
   if (selectedChapters.value.length <= 1) return;
   const count = selectedChapters.value.length;
   dialog.warning({
-    title: `¿Eliminar ${count} capítulos?`,
-    content: "Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.",
-    positiveText: `Eliminar ${count}`,
+    title: `¿Excluir ${count} capítulos?`,
+    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
+    positiveText: `Excluir ${count}`,
     negativeText: "Cancelar",
     onPositiveClick: () => void confirmBulkDeleteChapters(),
   });
@@ -1275,12 +1370,12 @@ async function confirmBulkDeleteChapters() {
     selectedChapters.value = [];
     if (deleted === requested) {
       message.success(
-        `Capítulos eliminados: ${deleted} ${deleted === 1 ? "capítulo eliminado" : "capítulos eliminados"}.`,
+        `Capítulos excluidos: ${deleted} ${deleted === 1 ? "capítulo excluido" : "capítulos excluidos"}.`,
         { duration: 3000 },
       );
     } else {
       message.warning(
-        `Eliminación parcial: ${deleted} de ${requested} capítulos eliminados.`,
+        `Exclusión parcial: ${deleted} de ${requested} capítulos excluidos.`,
         { duration: 4500 },
       );
     }
@@ -1288,6 +1383,75 @@ async function confirmBulkDeleteChapters() {
     message.error(`Error al eliminar capítulos: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     bulkDeleting.value = false;
+  }
+}
+
+async function loadExcludedChapters() {
+  if (!novelId.value) {
+    excludedChapters.value = [];
+    return;
+  }
+  try {
+    excludedChapters.value = await api.chapters.listExcluded(novelId.value);
+  } catch {
+    excludedChapters.value = [];
+  }
+}
+
+async function restoreChapter(chapter: ChapterSummary) {
+  if (!novelId.value) return;
+  try {
+    await api.chapters.setVisibility(novelId.value, chapter.id, false);
+    markAllSummariesDirty();
+    await refreshChapterViews();
+    message.success(`Capítulo #${chapter.chapterOrder} restaurado`, { duration: 2500 });
+  } catch (err) {
+    message.error(`Error al restaurar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+async function openReorder() {
+  if (!novelId.value) return;
+  try {
+    const [visible, excluded] = await Promise.all([
+      api.chapters.listFull(novelId.value),
+      api.chapters.listExcluded(novelId.value),
+    ]);
+    // The reorder endpoint requires a complete permutation of every chapter of
+    // the novel. Excluded chapters are appended (kept at the end) until
+    // restored.
+    reorderItems.value = [...visible.map(chapterToSummary), ...excluded];
+    reorderOpen.value = true;
+  } catch (err) {
+    message.error(`Error al cargar el orden: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+function moveReorderChapter(index: number, delta: number) {
+  const target = index + delta;
+  if (target < 0 || target >= reorderItems.value.length) return;
+  const items = [...reorderItems.value];
+  const [moved] = items.splice(index, 1);
+  items.splice(target, 0, moved);
+  reorderItems.value = items;
+}
+
+async function saveReorder() {
+  if (!novelId.value || reorderItems.value.length === 0) return;
+  reorderSaving.value = true;
+  try {
+    await api.chapters.reorder(
+      novelId.value,
+      reorderItems.value.map((chapter) => chapter.id),
+    );
+    reorderOpen.value = false;
+    markAllSummariesDirty();
+    await refreshChapterViews();
+    message.success("Orden de capítulos actualizado", { duration: 2500 });
+  } catch (err) {
+    message.error(`Error al reordenar capítulos: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  } finally {
+    reorderSaving.value = false;
   }
 }
 

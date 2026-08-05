@@ -19,7 +19,7 @@
           @click="emit('bulk-delete', $event)"
         >
           <template #icon><n-icon><TrashOutline /></n-icon></template>
-          Eliminar {{ selected.length }}
+          Excluir {{ selected.length }}
         </n-button>
         <n-button size="small" secondary @click="emit('import')">
           <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
@@ -66,62 +66,66 @@
     </n-card>
 
     <div v-else class="chapter-list-items">
-      <template v-for="item in mergedItems" :key="item.key">
-        <div v-if="item.type === 'gap'" class="chapter-list-gap-row">
-          <n-icon :size="14" class="chapter-list-gap-icon"><WarningOutline /></n-icon>
-          <span class="chapter-list-gap-text">
-            {{ item.gap.count === 1 ? 'Falta 1 capítulo' : `Faltan ${item.gap.count} capítulos` }}
-          </span>
-        </div>
-        <article
-          v-else
-          class="chapter-list-item"
-          :class="{ 'chapter-list-item--selected': isSelected(item.chapter) }"
+      <!-- Real source gaps come only from the backend (which includes excluded
+           chapters in its calculation). Never infer gaps from display-order
+           adjacency: chapters are shown in manual `position` order, so adjacent
+           chapterOrder values are not meaningful here. -->
+      <div v-for="gap in gaps" :key="`gap-${gap.from}`" class="chapter-list-gap-row">
+        <n-icon :size="14" class="chapter-list-gap-icon"><WarningOutline /></n-icon>
+        <span class="chapter-list-gap-text">
+          {{ gap.count === 1 ? 'Falta 1 capítulo' : `Faltan ${gap.count} capítulos` }}
+          ({{ gap.from }}–{{ gap.to }})
+        </span>
+      </div>
+      <article
+        v-for="chapter in chapters"
+        :key="chapter.id"
+        class="chapter-list-item"
+        :class="{ 'chapter-list-item--selected': isSelected(chapter) }"
+      >
+        <n-checkbox
+          v-if="isOwner"
+          :checked="isSelected(chapter)"
+          class="chapter-list-checkbox"
+          :aria-label="`Seleccionar capítulo ${chapter.chapterOrder}`"
+          @update:checked="toggleSelected(chapter, $event)"
+        />
+
+        <RouterLink
+          :to="`/novels/${chapter.novelId}/chapters/${chapter.id}`"
+          class="chapter-list-link"
+          :aria-label="`Editar capítulo ${chapter.chapterOrder}: ${chapter.title}`"
         >
-          <n-checkbox
-            v-if="isOwner"
-            :checked="isSelected(item.chapter)"
-            class="chapter-list-checkbox"
-            :aria-label="`Seleccionar capítulo ${item.chapter.chapterOrder}`"
-            @update:checked="toggleSelected(item.chapter, $event)"
-          />
+          <span class="chapter-list-order mono small muted">#{{ String(chapter.chapterOrder).padStart(2, "0") }}</span>
+          <span class="chapter-list-title line-clamp-2">{{ chapter.title }}</span>
+        </RouterLink>
 
-          <RouterLink
-            :to="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
-            class="chapter-list-link"
-            :aria-label="`Editar capítulo ${item.chapter.chapterOrder}: ${item.chapter.title}`"
-          >
-            <span class="chapter-list-order mono small muted">#{{ String(item.chapter.chapterOrder).padStart(2, "0") }}</span>
-            <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
-          </RouterLink>
+        <n-tag
+          :type="chapterTagType(resolvedStatus(chapter))"
+          size="small"
+          round
+          class="chapter-list-status"
+        >
+          {{ chapterStatusLabel(resolvedStatus(chapter)) }}
+        </n-tag>
 
-          <n-tag
-            :type="chapterTagType(resolvedStatus(item.chapter))"
-            size="small"
-            round
-            class="chapter-list-status"
-          >
-            {{ chapterStatusLabel(resolvedStatus(item.chapter)) }}
-          </n-tag>
-
-          <div v-if="isOwner" class="chapter-list-item-actions">
-            <n-popconfirm @positive-click="emit('delete', { event: $event, chapter: item.chapter })">
-              <template #trigger>
-                <n-button
-                  quaternary
-                  circle
-                  size="tiny"
-                  class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
-                  aria-label="Eliminar"
-                >
-                  <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
-                </n-button>
-              </template>
-              ¿Eliminar el capítulo "{{ item.chapter.title }}"?
-            </n-popconfirm>
-          </div>
-        </article>
-      </template>
+        <div v-if="isOwner" class="chapter-list-item-actions">
+          <n-popconfirm @positive-click="emit('delete', { event: $event, chapter })">
+            <template #trigger>
+              <n-button
+                quaternary
+                circle
+                size="tiny"
+                class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
+                aria-label="Excluir"
+              >
+                <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
+              </n-button>
+            </template>
+            ¿Excluir el capítulo "{{ chapter.title }}"? Se conservará y podrás restaurarlo.
+          </n-popconfirm>
+        </div>
+      </article>
     </div>
 
     <div class="chapter-list-footer">
@@ -182,39 +186,6 @@ const totalMissingChapters = computed(() => {
 });
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
-
-type MergedItem =
-  | { type: "chapter"; chapter: ChapterSummary; key: string }
-  | { type: "gap"; gap: { from: number; to: number; count: number }; key: string };
-
-const mergedItems = computed<MergedItem[]>(() => {
-  if (!props.gaps || props.gaps.length === 0) {
-    return props.chapters.map((ch) => ({ type: "chapter", chapter: ch, key: ch.id }));
-  }
-  const items: MergedItem[] = [];
-  const sortedGaps = [...props.gaps].sort((a, b) => a.from - b.from);
-  let lastOrder = 0;
-
-  for (const chapter of props.chapters) {
-    for (const gap of sortedGaps) {
-      if (gap.from >= lastOrder + 1 && gap.from <= chapter.chapterOrder) {
-        items.push({ type: "gap", gap, key: `gap-${gap.from}` });
-        lastOrder = gap.to;
-      }
-    }
-    if (chapter.chapterOrder > lastOrder + 1) {
-      items.push({
-        type: "gap",
-        gap: { from: lastOrder + 1, to: chapter.chapterOrder - 1, count: chapter.chapterOrder - lastOrder - 1 },
-        key: `gap-${lastOrder + 1}`,
-      });
-    }
-    items.push({ type: "chapter", chapter, key: chapter.id });
-    lastOrder = chapter.chapterOrder;
-  }
-
-  return items;
-});
 
 function resolvedStatus(chapter: ChapterSummary): Chapter["status"] {
   if (chapter.status === "processing") return "processing";

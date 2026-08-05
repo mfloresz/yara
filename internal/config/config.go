@@ -26,6 +26,7 @@ type Config struct {
 	DownloadMaxDelayMs int
 	MigrateDB             bool
 	MigrateChapterStats   bool
+	MigrateChapterPositions bool
 }
 
 func Load() (*Config, error) {
@@ -36,6 +37,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.StaticDir, "static-dir", "", "dev static dir")
 	flag.BoolVar(&cfg.MigrateDB, "migrate-db", false, "migrate legacy database fields before serving")
 	flag.BoolVar(&cfg.MigrateChapterStats, "migrate-chapter-stats", false, "recalculate chapter stats for every novel and exit")
+	flag.BoolVar(&cfg.MigrateChapterPositions, "migrate-chapter-positions", false, "initialize chapter positions in source order and exit (required once before using chapter reorder/exclusion)")
 	flag.Parse()
 
 	if cfg.Addr == "" {

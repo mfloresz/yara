@@ -351,6 +351,13 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 			&core.NumberField{Name: "original_char_count"},
 			&core.NumberField{Name: "translated_char_count"},
 			&core.NumberField{Name: "refined_char_count"},
+			// position/excluded back the user-controlled reading order and the
+			// logical deletion feature. They are added idempotently here, but
+			// the position backfill and the (novel, position) unique index only
+			// happen under the explicit --migrate-chapter-positions flag so that
+			// existing databases are never bulk-processed on a normal boot.
+			&core.NumberField{Name: "position"},
+			&core.BoolField{Name: "excluded"},
 		} {
 			if err := s.ensureField(c, field); err != nil {
 				return nil, err
@@ -368,6 +375,8 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 	c.DeleteRule = types.Pointer(ownerOnly)
 	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.NumberField{Name: "chapter_order", Required: true})
+	c.Fields.Add(&core.NumberField{Name: "position"})
+	c.Fields.Add(&core.BoolField{Name: "excluded"})
 	c.Fields.Add(&core.TextField{Name: "title", Max: 500})
 	c.Fields.Add(&core.TextField{Name: "translated_title", Max: 500})
 	c.Fields.Add(&core.EditorField{Name: "original_content"})
@@ -380,6 +389,7 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 	c.Fields.Add(&core.NumberField{Name: "refined_char_count"})
 	addSystemDateFields(c)
 	c.AddIndex("idx_chapters_novel_order_unique", true, "novel,chapter_order", "")
+	c.AddIndex("idx_chapters_novel_position_unique", true, "novel,position", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}

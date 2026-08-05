@@ -315,3 +315,150 @@ func TestEnsureSchemaMigratesUsersCollectionWithActiveProvider(t *testing.T) {
 		t.Fatal("expected theme field to be added to existing users collection")
 	}
 }
+
+func TestRunChapterPositionsMigrationBackfillsAndIsIdempotent(t *testing.T) {
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	// Simulate a pre-migration collection: the position/excluded fields exist
+	// (added idempotently by EnsureSchema) but no positions are assigned and
+	// the unique index is absent — exactly the state of an upgraded database
+	// before running --migrate-chapter-positions.
+	chaptersCollection, err := app.FindCollectionByNameOrId(ChaptersCollection)
+	if err != nil {
+		t.Fatalf("find chapters collection: %v", err)
+	}
+	chaptersCollection.RemoveIndex("idx_chapters_novel_position_unique")
+	if err := app.Save(chaptersCollection); err != nil {
+		t.Fatalf("drop position index to simulate legacy schema: %v", err)
+	}
+
+	users, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		t.Fatalf("find users collection: %v", err)
+	}
+	owner := core.NewRecord(users)
+	owner.Set("email", "migration-test@example.com")
+	owner.Set("password", "secret123")
+	owner.Set("passwordConfirm", "secret123")
+	if err := app.Save(owner); err != nil {
+		t.Fatalf("save owner user: %v", err)
+	}
+
+	novels, err := app.FindCollectionByNameOrId(NovelsCollection)
+	if err != nil {
+		t.Fatalf("find novels collection: %v", err)
+	}
+	newNovel := func(title string) *core.Record {
+		n := core.NewRecord(novels)
+		n.Set("owner", owner.Id)
+		n.Set("source_language", "en")
+		n.Set("target_language", "es")
+		n.Set("source_title", title)
+		n.Set("source_author", "Author")
+		if err := app.Save(n); err != nil {
+			t.Fatalf("save novel %s: %v", title, err)
+		}
+		return n
+	}
+	novelA := newNovel("Novel A")
+	novelB := newNovel("Novel B")
+
+	// Legacy inserts: chapter_order only, position left unset (0).
+	addChapter := func(novelID string, order int) string {
+		rec := core.NewRecord(chaptersCollection)
+		rec.Set("novel", novelID)
+		rec.Set("chapter_order", order)
+		rec.Set("title", "Legacy Ch")
+		rec.Set("original_content", "legacy content")
+		rec.Set("status", "pending")
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save legacy chapter: %v", err)
+		}
+		return rec.Id
+	}
+	a3 := addChapter(novelA.Id, 3)
+	a1 := addChapter(novelA.Id, 1)
+	a2 := addChapter(novelA.Id, 2)
+	b10 := addChapter(novelB.Id, 10)
+	b5 := addChapter(novelB.Id, 5)
+
+	if err := st.RunChapterPositionsMigration(); err != nil {
+		t.Fatalf("run chapter positions migration: %v", err)
+	}
+
+	positionOf := func(id string) int {
+		rec, err := app.FindRecordById(ChaptersCollection, id)
+		if err != nil {
+			t.Fatalf("find chapter %s: %v", id, err)
+		}
+		return asInt(rec.GetFloat("position"), 0)
+	}
+	// Novel A: positions assigned in ascending chapter_order (1, 2, 3).
+	if got := positionOf(a1); got != 1 {
+		t.Fatalf("expected a1 position 1, got %d", got)
+	}
+	if got := positionOf(a2); got != 2 {
+		t.Fatalf("expected a2 position 2, got %d", got)
+	}
+	if got := positionOf(a3); got != 3 {
+		t.Fatalf("expected a3 position 3, got %d", got)
+	}
+	// Novel B: independent positions per novel.
+	if got := positionOf(b5); got != 1 {
+		t.Fatalf("expected b5 position 1, got %d", got)
+	}
+	if got := positionOf(b10); got != 2 {
+		t.Fatalf("expected b10 position 2, got %d", got)
+	}
+
+	// Idempotent: re-running changes nothing.
+	snapshot := map[string]int{a1: positionOf(a1), a2: positionOf(a2), a3: positionOf(a3), b5: positionOf(b5), b10: positionOf(b10)}
+	if err := st.RunChapterPositionsMigration(); err != nil {
+		t.Fatalf("re-run migration: %v", err)
+	}
+	for id, want := range snapshot {
+		if got := positionOf(id); got != want {
+			t.Fatalf("migration re-run changed position of %s: got %d, want %d", id, got, want)
+		}
+	}
+
+	// A user reorder is preserved: only unset positions are backfilled.
+	moved := a1
+	rec, err := app.FindRecordById(ChaptersCollection, moved)
+	if err != nil {
+		t.Fatalf("find chapter to move: %v", err)
+	}
+	rec.Set("position", 99)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("simulate reorder: %v", err)
+	}
+	if err := st.RunChapterPositionsMigration(); err != nil {
+		t.Fatalf("re-run migration after reorder: %v", err)
+	}
+	if got := positionOf(moved); got != 99 {
+		t.Fatalf("migration clobbered a user reorder: position %d, want 99", got)
+	}
+
+	// The unique (novel, position) index is created by the migration.
+	fresh, err := app.FindCollectionByNameOrId(ChaptersCollection)
+	if err != nil {
+		t.Fatalf("reload chapters collection: %v", err)
+	}
+	if fresh.GetIndex("idx_chapters_novel_position_unique") == "" {
+		t.Fatal("expected migration to create the unique chapter position index")
+	}
+}

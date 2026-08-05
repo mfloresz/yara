@@ -14,6 +14,8 @@ import type {
   GeneralPromptRecord,
   ChapterSummary,
   ChapterSummaryPage,
+  ChapterGapsResponse,
+  ChapterOrderResponse,
   ImportEpubResult,
   ImportUrlResult,
   NovelEpubRecord,
@@ -431,8 +433,25 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         );
       },
       gaps(novelId: string) {
-        return http.get<{ gaps: Array<{ from: number; to: number; count: number }> }>(
+        return http.get<ChapterGapsResponse>(
           `/api/db/novels/${novelId}/chapters/gaps`,
+        );
+      },
+      listExcluded(novelId: string) {
+        return http.get<ChapterSummary[]>(
+          `/api/db/novels/${novelId}/chapters/excluded`,
+        );
+      },
+      reorder(novelId: string, chapterIds: string[]) {
+        return http.patch<ChapterOrderResponse>(
+          `/api/db/novels/${novelId}/chapters/order`,
+          { chapterIds },
+        );
+      },
+      setVisibility(novelId: string, chapterId: string, excluded: boolean) {
+        return http.patch<Chapter>(
+          `/api/db/novels/${novelId}/chapters/${chapterId}/visibility`,
+          { excluded },
         );
       },
 

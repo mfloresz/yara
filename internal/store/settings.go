@@ -117,6 +117,8 @@ type Chapter struct {
 	ID                string `json:"id,omitempty"`
 	NovelID           string `json:"novelId,omitempty"`
 	ChapterOrder      int    `json:"chapterOrder,omitempty"`
+	Position          int    `json:"position,omitempty"`
+	Excluded          bool   `json:"excluded,omitempty"`
 	Title             string `json:"title,omitempty"`
 	TranslatedTitle   string `json:"translatedTitle,omitempty"`
 	OriginalContent   string `json:"originalContent,omitempty"`
@@ -132,6 +134,8 @@ type ChapterSummary struct {
 	ID                   string `json:"id,omitempty"`
 	NovelID              string `json:"novelId,omitempty"`
 	ChapterOrder         int    `json:"chapterOrder,omitempty"`
+	Position             int    `json:"position,omitempty"`
+	Excluded             bool   `json:"excluded,omitempty"`
 	Title                string `json:"title,omitempty"`
 	TranslatedTitle      string `json:"translatedTitle,omitempty"`
 	Status               string `json:"status,omitempty"`

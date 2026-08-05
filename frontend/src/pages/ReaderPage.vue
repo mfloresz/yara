@@ -389,6 +389,8 @@ function chapterToSummary(chapter: Chapter): ChapterSummary {
     id: chapter.id,
     novelId: chapter.novelId,
     chapterOrder: chapter.chapterOrder,
+    position: chapter.position,
+    excluded: chapter.excluded,
     title: chapter.title,
     translatedTitle: chapter.translatedTitle,
     status: chapter.status,
@@ -500,7 +502,12 @@ async function loadSummaryRange(first: number, last: number): Promise<number> {
     if (cached) {
       const summaries = cached.chapters
         .slice()
-        .sort((a, b) => a.chapterOrder - b.chapterOrder)
+        .filter((c) => !c.excluded)
+        .sort((a, b) => {
+          const pa = a.position && a.position > 0 ? a.position : a.chapterOrder;
+          const pb = b.position && b.position > 0 ? b.position : b.chapterOrder;
+          return pa - pb;
+        })
         .map(chapterToSummary);
       summarySlots.value = summaries;
       apiTotal = summaries.length;

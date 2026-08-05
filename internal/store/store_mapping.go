@@ -73,6 +73,8 @@ func chapterFromRecord(record *core.Record) Chapter {
 		ID:                record.Id,
 		NovelID:           record.GetString("novel"),
 		ChapterOrder:      asInt(record.GetFloat("chapter_order"), 0),
+		Position:          asInt(record.GetFloat("position"), 0),
+		Excluded:          record.GetBool("excluded"),
 		Title:             record.GetString("title"),
 		TranslatedTitle:   record.GetString("translated_title"),
 		OriginalContent:   record.GetString("original_content"),

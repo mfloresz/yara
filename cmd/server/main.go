@@ -70,6 +70,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	if cfg.MigrateChapterPositions {
+		slog.Info("running chapter positions migration")
+		if err := st.RunChapterPositionsMigration(); err != nil {
+			slog.Error("chapter positions migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("chapter positions migration finished, exiting")
+		os.Exit(0)
+	}
+
 	server := api.New(st, cfg)
 	handler := api.Router(server)
 

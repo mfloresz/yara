@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -182,6 +183,17 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 		return e.JSON(http.StatusOK, out)
 	})
+	api.GET("/db/novels/{novelId}/chapters/excluded", func(e *core.RequestEvent) error {
+		chapters, err := s.Store.ListExcludedChapterSummariesAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		out := make([]map[string]any, 0, len(chapters))
+		for _, ch := range chapters {
+			out = append(out, chapterSummaryRecord(ch))
+		}
+		return e.JSON(http.StatusOK, out)
+	})
 	api.GET("/db/novels/{novelId}/chapters/eligible", func(e *core.RequestEvent) error {
 		operation := e.Request.URL.Query().Get("operation")
 		if operation != "translate" && operation != "refine" {
@@ -247,7 +259,12 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		return e.JSON(http.StatusCreated, chapterRecord(*chapter))
 	})
 	api.DELETE("/db/novels/{novelId}/chapters/{chapterId}", func(e *core.RequestEvent) error {
-		if err := s.Store.DeleteChapter(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId")); err != nil {
+		// Logical delete: the record, content, ID and source order are kept and
+		// the chapter can be restored via the visibility endpoint.
+		if err := s.Store.ExcludeChapter(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId")); err != nil {
+			if errors.Is(err, store.ErrActiveJobs) {
+				return e.Error(http.StatusConflict, "cannot exclude chapters while jobs are active on this novel", err)
+			}
 			return notFoundOrForbidden(e, err)
 		}
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
@@ -259,11 +276,66 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
-		deleted, err := s.Store.BulkDeleteChapters(e.Auth.Id, e.Request.PathValue("novelId"), body.IDs)
+		excluded, err := s.Store.BulkExcludeChapters(e.Auth.Id, e.Request.PathValue("novelId"), body.IDs)
+		if err != nil {
+			if errors.Is(err, store.ErrActiveJobs) {
+				return e.Error(http.StatusConflict, "cannot exclude chapters while jobs are active on this novel", err)
+			}
+			return notFoundOrForbidden(e, err)
+		}
+		return e.JSON(http.StatusOK, map[string]any{"deleted": excluded, "requested": len(body.IDs)})
+	})
+	// Reorder applies the complete, atomic position assignment. See
+	// Store.ReorderChapters for the contract.
+	api.PATCH("/db/novels/{novelId}/chapters/order", func(e *core.RequestEvent) error {
+		body := struct {
+			ChapterIDs []string `json:"chapterIds"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+		novelID := e.Request.PathValue("novelId")
+		if err := s.Store.ReorderChapters(e.Auth.Id, novelID, body.ChapterIDs); err != nil {
+			switch {
+			case errors.Is(err, store.ErrActiveJobs):
+				return e.Error(http.StatusConflict, "cannot reorder chapters while jobs are active on this novel", err)
+			case errors.Is(err, store.ErrInvalidReorder):
+				return e.BadRequestError(err.Error(), err)
+			case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrForbidden):
+				return notFoundOrForbidden(e, err)
+			default:
+				return e.InternalServerError("failed to reorder chapters", err)
+			}
+		}
+		chapters, err := s.Store.ListAllChapterSummariesAccessible(e.Auth.Id, novelID)
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, map[string]any{"deleted": deleted, "requested": len(body.IDs)})
+		out := make([]map[string]any, 0, len(chapters))
+		for _, ch := range chapters {
+			out = append(out, chapterSummaryRecord(ch))
+		}
+		return e.JSON(http.StatusOK, map[string]any{"items": out})
+	})
+	// Visibility endpoint: exclude or restore a single chapter.
+	api.PATCH("/db/novels/{novelId}/chapters/{chapterId}/visibility", func(e *core.RequestEvent) error {
+		body := struct {
+			Excluded bool `json:"excluded"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+		if err := s.Store.SetChapterExcluded(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId"), body.Excluded); err != nil {
+			if errors.Is(err, store.ErrActiveJobs) {
+				return e.Error(http.StatusConflict, "cannot exclude chapters while jobs are active on this novel", err)
+			}
+			return notFoundOrForbidden(e, err)
+		}
+		chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		return e.JSON(http.StatusOK, chapterRecord(*chapter))
 	})
 	api.PATCH("/db/novels/{novelId}/chapters/{chapterId}/status", func(e *core.RequestEvent) error {
 		body := struct {
@@ -291,8 +363,13 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err != nil {
 			return e.InternalServerError("failed to get chapter gaps", err)
 		}
+		excludedOrders, err := s.Store.GetExcludedChapterOrders(e.Auth.Id, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to get excluded chapter orders", err)
+		}
 		return e.JSON(http.StatusOK, map[string]any{
-			"gaps": gaps,
+			"gaps":           gaps,
+			"excludedOrders": excludedOrders,
 		})
 	})
 }
