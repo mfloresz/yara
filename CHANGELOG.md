@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.11.1] - 2026-08-05
+
+## Fixes
+
+- Fixed SkyDemonOrder Livewire catalog loading: browser worker now keeps the catalog tab active, uses viewport-based scroll steps, directly fetches the Livewire component snapshot, and waits for the chapter catalog marker before extraction.
+- Fixed browser worker WebSocket read limit (32 MB) to accommodate large Livewire catalog responses.
+- Fixed Go WebSocket read deadline handling for browser worker connections.
+
 ## [v0.11.0] - 2026-08-05
 
 ## What's new
@@ -16,7 +24,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.11.1...HEAD
+[v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.10.0
