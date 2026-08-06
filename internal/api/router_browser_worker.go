@@ -16,7 +16,7 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin:    func(r *http.Request) bool { return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
@@ -90,7 +90,10 @@ func (s *Server) handleBrowserWorkerWS(w http.ResponseWriter, r *http.Request) {
 		slog.Info("browser worker disconnected", "workerId", worker.ID)
 	}()
 
-	conn.SetReadLimit(10 * 1024 * 1024)
+	// Catalog responses can contain a large JSON-encoded chapter list, but the
+	// extension now sends the compact Livewire component instead of the fully
+	// expanded DOM. Keep some headroom for large projects and JSON overhead.
+	conn.SetReadLimit(32 * 1024 * 1024)
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		worker.mu.Lock()
@@ -628,7 +631,7 @@ func generateJobID() string {
 }
 
 var (
-	ErrNoBrowserWorker    = &BrowserWorkerError{"no browser worker connected"}
+	ErrNoBrowserWorker      = &BrowserWorkerError{"no browser worker connected"}
 	ErrBrowserWorkerTimeout = &BrowserWorkerError{"browser worker response timeout"}
 )
 

@@ -467,12 +467,17 @@ async function fetchLivewirePage(url, params = {}) {
 
         log('Livewire: scrolling to trigger lazy-load components...');
 
+        // SkyDemonOrder uses viewport-based lazy loading. Keep this tab active
+        // while Livewire observes the catalog target; hidden tabs may be
+        // throttled and never fire x-intersect reliably.
+        try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+
         // Scroll in steps to trigger x-intersect directives for Livewire lazy loading
-        for (let scrollStep = 0; scrollStep < 10; scrollStep++) {
+        for (let scrollStep = 0; scrollStep < 20; scrollStep++) {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
-              func: () => { window.scrollBy(0, 800); },
+              func: () => { window.scrollBy(0, Math.max(600, window.innerHeight * 0.8)); },
             });
             await sleep(500);
           } catch (e) {
@@ -484,6 +489,25 @@ async function fetchLivewirePage(url, params = {}) {
         // Wait for Livewire to process the intersection and fetch data
         log('Livewire: waiting for components to load...');
         await sleep(6000);
+
+        // Some versions of the page do not let the lazy component fire from
+        // scrolling alone. Reproduce Livewire's own lazy-load request from
+        // the page context so the returned HTML contains the chapter data.
+        const livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
+        if (livewireLoad.ok) {
+          log(`Livewire: direct catalog request succeeded (html=${livewireLoad.htmlLength}, freeChapters=${livewireLoad.hasFreeChapters})`);
+        } else {
+          log(`Livewire: direct catalog request unavailable (${livewireLoad.error || 'no component'})`);
+        }
+
+        // A large HTML document is not enough: Livewire can still be loading
+        // the chapter catalog after the initial page has become complete.
+        // Wait for the exact data marker consumed by the Go parser instead of
+        // taking a snapshot of the page shell and falling back to walkChapters.
+        const catalogReady = await waitForLivewireCatalog(tab.id, 60000);
+        if (!catalogReady) {
+          warn('Livewire: chapter catalog marker not found before timeout; returning the latest HTML');
+        }
 
         // Scroll back to top for clean extraction
         try {
@@ -501,19 +525,30 @@ async function fetchLivewirePage(url, params = {}) {
           try {
             const results = await chrome.scripting.executeScript({
               target: { tabId: tab.id },
-              func: () => ({
-                html: document.documentElement.outerHTML,
-                text: document.body.innerText,
-                title: document.title,
-                url: window.location.href,
-              }),
+              func: () => {
+                const catalog = document.getElementById('yara-livewire-catalog')?.textContent || '';
+                const selected = [
+                  document.querySelector('h1.font-title'),
+                  document.querySelector('h1:not(.font-title)'),
+                  document.querySelector('div.w-full.max-w-72'),
+                  document.querySelector('div[class*="line-clamp-3"]'),
+                ].filter(Boolean).map(element => element.outerHTML);
+                const html = catalog || selected.join('\\n');
+                return {
+                  html,
+                  text: '',
+                  title: document.title,
+                  url: window.location.href,
+                };
+              },
             });
             data = results[0]?.result;
-            if (data && data.html && data.html.length > 100) {
-              log(`Livewire: extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes)`);
+            const hasCatalog = !!data?.html && /freeChapters\s*:\s*JSON\.parse\s*\(\s*['"]/.test(data.html);
+            if (data && data.html && data.html.length > 100 && (hasCatalog || attempt === 2)) {
+              log(`Livewire: extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes, freeChapters=${hasCatalog})`);
               break;
             }
-            log(`Livewire: extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, retrying...`);
+            log(`Livewire: extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, freeChapters=${hasCatalog}, retrying...`);
             await sleep(2000);
           } catch (e) {
             err(`Livewire: extraction attempt ${attempt + 1} failed:`, e);
@@ -534,6 +569,114 @@ async function fetchLivewirePage(url, params = {}) {
     }
   }
   throw new Error('Timeout waiting for Livewire page to load.');
+}
+
+// Ask the page's Livewire chapter-list component for its lazy-loaded HTML.
+// This mirrors the site's normal request: the component snapshot and CSRF
+// token are already present in the initial page, so no server-side auth or
+// extension-specific endpoint is needed.
+async function loadSkyDemonOrderCatalog(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async () => {
+        try {
+          const component = document.querySelector('[wire\\:name="project.chapter-list"]');
+          const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+          const script = [...document.scripts].find(item => (item.src || '').includes('livewire'));
+          const scriptMatch = script?.src.match(/(livewire-[a-f0-9]+)(?:\/|$)/i);
+          const snapshot = component?.getAttribute('wire:snapshot');
+          if (!component || !csrf || !scriptMatch || !snapshot) {
+            return { ok: false, error: 'missing Livewire component, snapshot, CSRF token, or update path' };
+          }
+
+          const endpoint = new URL(`/${scriptMatch[1]}/update`, location.origin).href;
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': csrf,
+              'X-Livewire': '',
+            },
+            body: JSON.stringify({
+              components: [{ snapshot, updates: {}, calls: [] }],
+            }),
+          });
+          if (!response.ok) return { ok: false, error: `Livewire HTTP ${response.status}` };
+
+          const payload = await response.json();
+          const html = payload?.components?.[0]?.effects?.html || '';
+          if (!html) return { ok: false, error: 'Livewire response did not contain component HTML' };
+
+          const previous = document.getElementById('yara-livewire-catalog');
+          previous?.remove();
+          const holder = document.createElement('script');
+          holder.id = 'yara-livewire-catalog';
+          holder.type = 'application/json';
+          holder.textContent = html;
+          document.head.appendChild(holder);
+
+          return {
+            ok: true,
+            htmlLength: html.length,
+            hasFreeChapters: html.includes('freeChapters'),
+          };
+        } catch (error) {
+          return { ok: false, error: error?.message || String(error) };
+        }
+      },
+    });
+    return results[0]?.result || { ok: false, error: 'no result from page' };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+// Wait until the browser DOM contains the same catalog marker that the Go
+// parser expects. This is deliberately checked in the page context because
+// Livewire updates the DOM asynchronously after the load event.
+async function waitForLivewireCatalog(tabId, maxWaitMs) {
+  const startTime = Date.now();
+  let lastStatus = '';
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // Once the Livewire response is available, inspect only that
+          // component payload. Reading outerHTML here would serialize the
+          // expanded "Show all" DOM (12+ MB for large novels).
+          const catalog = document.getElementById('yara-livewire-catalog')?.textContent || '';
+          const html = catalog || document.documentElement?.outerHTML || '';
+          return {
+            htmlLength: html.length,
+            hasFreeChapters: html.includes('freeChapters'),
+            ready: /freeChapters\s*:\s*JSON\.parse\s*\(\s*['"]/.test(html),
+          };
+        },
+      });
+      const status = results[0]?.result || {};
+      const statusLine = `html=${status.htmlLength || 0}, freeChapters=${!!status.hasFreeChapters}, ready=${!!status.ready}`;
+
+      if (status.ready) {
+        log(`Livewire: chapter catalog is ready (${statusLine})`);
+        return true;
+      }
+      if (statusLine !== lastStatus) {
+        log(`Livewire: waiting for chapter catalog (${statusLine})`);
+        lastStatus = statusLine;
+      }
+    } catch (e) {
+      log('Livewire: catalog check failed:', e.message);
+    }
+
+    await sleep(1000);
+  }
+
+  return false;
 }
 
 async function tryBackgroundFetch(url) {
