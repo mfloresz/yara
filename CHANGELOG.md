@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.12.0] - 2026-08-06
+
+### What's new
+
+- Added Firefox browser extension support for Cloudflare bypass, including both production (authenticated) and debug (unauthenticated) variants that mirror the existing Chrome extensions.
+
+### Fixes
+
+- Updated Livewire catalog loading to prioritize direct component-snapshot requests over scrolling.
+- Updated chapter order extraction to prefer parser-provided episode numbers over title-based heuristics.
+
+### Housekeeping
+
+- Reorganized browser extension directory structure for consistency across Chrome and Firefox variants.
+
 ## [v0.11.1] - 2026-08-05
 
 ## Fixes
@@ -24,7 +39,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.12.0...HEAD
+[v0.12.0]: https://github.com/mfloresz/yara/compare/v0.11.1...v0.12.0
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
