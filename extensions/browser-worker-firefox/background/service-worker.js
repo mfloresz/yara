@@ -546,44 +546,54 @@ async function fetchLivewirePage(url, params = {}) {
           continue;
         }
 
-        log('Livewire: scrolling to trigger lazy-load components...');
-
-        // SkyDemonOrder uses viewport-based lazy loading. Keep this tab active
-        // while Livewire observes the catalog target; hidden tabs may be
-        // throttled and never fire x-intersect reliably.
-        try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
-
-        for (let scrollStep = 0; scrollStep < 20; scrollStep++) {
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              func: () => { window.scrollBy(0, Math.max(600, window.innerHeight * 0.8)); },
-            });
-            await sleep(500);
-          } catch (e) {
-            log('Livewire: scroll step failed:', e.message);
-            break;
-          }
+        // The component snapshot, CSRF token and Livewire update path are all
+        // present in the initial HTML, so request the chapter catalog directly
+        // first. Unlike scrolling, this does not depend on tab visibility or
+        // x-intersect timing — the failure mode that made catalog loading
+        // flaky when the browser runs on a different device than the backend.
+        log('Livewire: requesting chapter catalog directly...');
+        let livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
+        for (let loadAttempt = 0; !livewireLoad.ok && loadAttempt < 4; loadAttempt++) {
+          await sleep(1500);
+          livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
         }
 
-        log('Livewire: waiting for components to load...');
-        await sleep(6000);
+        if (!livewireLoad.ok) {
+          log(`Livewire: direct catalog request unavailable (${livewireLoad.error || 'no component'}), scrolling instead...`);
 
-        // Some versions of the page do not let the lazy component fire from
-        // scrolling alone. Reproduce Livewire's own lazy-load request from
-        // the page context so the returned HTML contains the chapter data.
-        const livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
+          // SkyDemonOrder uses viewport-based lazy loading. Keep this tab active
+          // while Livewire observes the catalog target; hidden tabs may be
+          // throttled and never fire x-intersect reliably.
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+
+          for (let scrollStep = 0; scrollStep < 20; scrollStep++) {
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => { window.scrollBy(0, Math.max(600, window.innerHeight * 0.8)); },
+              });
+              await sleep(500);
+            } catch (e) {
+              log('Livewire: scroll step failed:', e.message);
+              break;
+            }
+          }
+
+          log('Livewire: waiting for components to load...');
+          await sleep(6000);
+
+          livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
+        }
+
         if (livewireLoad.ok) {
           log(`Livewire: direct catalog request succeeded (html=${livewireLoad.htmlLength}, freeChapters=${livewireLoad.hasFreeChapters})`);
-        } else {
-          log(`Livewire: direct catalog request unavailable (${livewireLoad.error || 'no component'})`);
         }
 
         // A large HTML document is not enough: Livewire can still be loading
         // the chapter catalog after the initial page has become complete.
         // Wait for the exact data marker consumed by the Go parser instead of
         // taking a snapshot of the page shell and falling back to walkChapters.
-        const catalogReady = await waitForLivewireCatalog(tab.id, 60000);
+        const catalogReady = await waitForLivewireCatalog(tab.id, livewireLoad.ok ? 15000 : 60000);
         if (!catalogReady) {
           warn('Livewire: chapter catalog marker or rendered chapter links not found before timeout; returning the latest HTML');
         }
@@ -614,7 +624,9 @@ async function fetchLivewirePage(url, params = {}) {
                 // Return the compact Livewire component response, never the
                 // fully expanded chapter DOM. The server's WebSocket has a
                 // 10 MB read limit and body.innerText can exceed it too.
-                const html = catalog || selected.join('\\n');
+                // Append the metadata elements: the catalog HTML alone lacks
+                // the title/cover/description the Go parser also needs.
+                const html = catalog ? catalog + '\\n' + selected.join('\\n') : selected.join('\\n');
                 return {
                   html,
                   text: '',

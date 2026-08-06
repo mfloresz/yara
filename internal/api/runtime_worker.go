@@ -479,7 +479,7 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 
 	newAvailable := 0
 	for _, ch := range info.Chapters {
-		chNum := extractChapterOrder(ch.Title)
+		chNum := chapterOrderOf(ch)
 		if chNum > 0 && existingOrders[chNum] {
 			continue
 		}

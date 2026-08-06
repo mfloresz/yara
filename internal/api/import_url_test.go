@@ -422,6 +422,105 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 	}
 }
 
+// SkyDemonOrder catalog titles never carry the episode number; multi-part
+// arcs only have "(1)", "(2)", … suffixes. The old title-based order
+// extraction turned episode 1121's "Some Arc (1)" into order 1, colliding
+// with the orders of already-downloaded chapters and hiding every new
+// multi-part chapter from update checks (preview reported "up to date").
+// The parser-provided Order (episode number) must win over title parsing.
+func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
+	catalog := []map[string]any{
+		{"episode": 1, "title": "Prologue", "slug": "1-prologue"},
+		{"episode": 2, "title": "A Long Journey", "slug": "2-a-long-journey"},
+		{"episode": 3, "title": "The Gate Opens", "slug": "3-the-gate-opens"},
+		{"episode": 4, "title": "The Demon War (1)", "slug": "4-the-demon-war-1"},
+		{"episode": 5, "title": "The Demon War (2)", "slug": "5-the-demon-war-2"},
+		{"episode": 6, "title": "The Demon War (3)", "slug": "6-the-demon-war-3"},
+	}
+	catalogJSON, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	// The real page stores the catalog as a JSON.parse() string with quotes
+	// escaped as \u0022; mirror that so the parser exercises the same path.
+	escaped := strings.ReplaceAll(string(catalogJSON), `"`, `\u0022`)
+	projectHTML := `<!doctype html><html><head><meta name="csrf-token" content="x"></head><body>` +
+		`<h1 class="font-title">Sky Demon Test Novel</h1>` +
+		`<div wire:id="abc" wire:name="project.chapter-list" x-data="{ activeTab: 'free', freeChapters: JSON.parse('` + escaped + `') }"></div>` +
+		`</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, projectHTML)
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"skydemonorder.com": mock.URL}
+	transport := &hostRewritingTransport{rewrites: rewrites}
+	client := noveldownloader.NewHTTPClientWithTransport(transport)
+
+	env := newAPITestEnv(t)
+	oldQueue := env.server.downloadQueue
+	env.server.downloadQueue = make(chan string, 1000)
+	close(oldQueue)
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
+		return noveldownloader.NewDownloaderWithClient(client)
+	}
+
+	alice := registerUser(t, env.handler, "alice-part-titles@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Episodes 1-3 are already downloaded; their stored orders are 1, 2, 3 —
+	// exactly the numbers the old heuristic extracted from "The Demon War (N)".
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "Prologue")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "A Long Journey")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "The Gate Opens")
+
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var preview struct {
+		CurrentChapters int `json:"currentChapters"`
+		TotalChapters   int `json:"totalChapters"`
+		NewChapters     int `json:"newChapters"`
+		FirstNewChapter int `json:"firstNewChapter"`
+		LastNewChapter  int `json:"lastNewChapter"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if preview.TotalChapters != 6 {
+		t.Errorf("totalChapters: got %d, want 6", preview.TotalChapters)
+	}
+	if preview.NewChapters != 3 {
+		t.Errorf("newChapters: got %d, want 3 (episodes 4-6 hidden behind part-number titles)", preview.NewChapters)
+	}
+	if preview.FirstNewChapter != 4 || preview.LastNewChapter != 6 {
+		t.Errorf("first/last new chapter: got %d/%d, want 4/6", preview.FirstNewChapter, preview.LastNewChapter)
+	}
+
+	// The download path applies the same filter: with the preview cache hot it
+	// must schedule exactly episodes 4-6 instead of reporting "up to date".
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	}
+	var update struct {
+		PendingChapters int `json:"pendingChapters"`
+	}
+	decodeResponse(t, updateResp, &update)
+	if update.PendingChapters != 3 {
+		t.Errorf("pendingChapters: got %d, want 3", update.PendingChapters)
+	}
+}
+
 func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	var chapterItems []string
 	for n := 1; n <= 13; n++ {

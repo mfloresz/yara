@@ -472,7 +472,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		firstNew := 0
 		lastNew := 0
 		for _, ch := range info.Chapters {
-			chNum := extractChapterOrder(ch.Title)
+			chNum := chapterOrderOf(ch)
 			if chNum > 0 && existingOrders[chNum] {
 				continue
 			}
@@ -550,7 +550,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		}
 		sourceToDownload := make([]int, 0)
 		for i, ch := range chapters {
-			chNum := extractChapterOrder(ch.Title)
+			chNum := chapterOrderOf(ch)
 			if chNum > 0 && existingOrders[chNum] {
 				continue
 			}
@@ -579,7 +579,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if chTitle == "" {
 				chTitle = fmt.Sprintf("Capítulo %d", srcIdx+1)
 			}
-			chOrder := extractChapterOrder(ch.Title)
+			chOrder := chapterOrderOf(ch)
 			if chOrder <= 0 {
 				chOrder = srcIdx + 1
 			}
@@ -589,7 +589,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				Order: chOrder,
 			})
 		}
-		firstNewOrder := extractChapterOrder(chapters[sourceToDownload[0]].Title)
+		firstNewOrder := chapterOrderOf(chapters[sourceToDownload[0]])
 		if firstNewOrder <= 0 {
 			firstNewOrder = sourceToDownload[0] + 1
 		}
@@ -688,7 +688,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			lastNew := 0
 			startOrder := 0
 			for srcIdx, ch := range info.Chapters {
-				chNum := extractChapterOrder(ch.Title)
+				chNum := chapterOrderOf(ch)
 				if chNum > 0 && existingOrders[chNum] {
 					continue
 				}
@@ -715,7 +715,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				if chTitle == "" {
 					chTitle = fmt.Sprintf("Capítulo %d", pos)
 				}
-				chOrder := extractChapterOrder(ch.Title)
+				chOrder := chapterOrderOf(ch)
 				if chOrder <= 0 {
 					chOrder = pos
 				}
@@ -775,7 +775,10 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if sel.StartChapter > 0 || sel.EndChapter > 0 {
 				filtered := make([]store.DownloadChapterInfo, 0)
 				for _, ch := range sel.NewChapterInfo {
-					order := extractChapterOrder(ch.Title)
+					order := ch.Order
+					if order <= 0 {
+						order = extractChapterOrder(ch.Title)
+					}
 					if order <= 0 {
 						order = sel.StartOrder + len(filtered)
 					}
@@ -792,7 +795,10 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if len(chaptersToDownload) == 0 {
 				continue
 			}
-			firstOrder := extractChapterOrder(chaptersToDownload[0].Title)
+			firstOrder := chaptersToDownload[0].Order
+			if firstOrder <= 0 {
+				firstOrder = extractChapterOrder(chaptersToDownload[0].Title)
+			}
 			if firstOrder <= 0 {
 				firstOrder = sel.StartOrder
 			}
@@ -1016,6 +1022,19 @@ func extractChapterOrder(filename string) int {
 		}
 	}
 	return 0
+}
+
+// chapterOrderOf returns the chapter number to use for a parsed chapter.
+// Parsers that know the canonical position (e.g. SkyDemonOrder reports the
+// real episode number) set ChapterURL.Order — trust it first. The title
+// fallback is only a heuristic: multi-part titles such as "Some Arc (3)"
+// yield the part number, which collides with low episode orders already
+// stored and silently hides those chapters from update checks.
+func chapterOrderOf(ch noveldownloader.ChapterURL) int {
+	if ch.Order > 0 {
+		return ch.Order
+	}
+	return extractChapterOrder(ch.Title)
 }
 
 func extractChapterTitle(content, filename string) string {
