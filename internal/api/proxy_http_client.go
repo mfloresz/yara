@@ -57,18 +57,7 @@ func (c *ProxyHTTPClient) Fetch(ctx context.Context, url string) ([]byte, error)
 // extraction. Individual chapter pages do NOT need this — their content
 // is server-rendered in the initial HTML.
 func isLivewireSite(urlStr string) bool {
-	if !strings.Contains(urlStr, "skydemonorder.com") {
-		return false
-	}
-	// Match novel info pages: /projects/<id>-<slug>
-	// Exclude chapter pages:   /projects/<id>-<slug>/<chapter>
-	idx := strings.Index(urlStr, "/projects/")
-	if idx == -1 {
-		return false
-	}
-	rest := urlStr[idx+len("/projects/"):]
-	// If there's no '/' after the project slug, it's the novel info page.
-	return !strings.Contains(rest, "/")
+	return noveldownloader.IsSkyDemonOrderProjectURL(urlStr)
 }
 
 func (c *ProxyHTTPClient) FetchDocument(ctx context.Context, url string) (*goquery.Document, error) {
