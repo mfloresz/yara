@@ -18,16 +18,28 @@ Total de archivos: **29**
 
 ```
 
-┌─────────────────────────────────────────────────────┐
-│                  Chrome Extension                   │
-│  (browser-worker/)                                  │
-│  ┌──────────────┐  ┌───────────────────────────┐   │
-│  │ service-worker│  │ popup / auth             │   │
-│  │ · fetch()     │  │ · UI state               │   │
-│  │ · challenge   │  │ · OAuth flow             │   │
-│  │   tab mgmt    │  │ · server config          │   │
-│  └──────┬───────┘  └───────────────────────────┘   │
-└─────────┼───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│            Chrome Extension (browser-worker-chrome/)     │
+│  ┌──────────────┐  ┌───────────────────────────┐       │
+│  │ service-worker│  │ popup / auth             │       │
+│  │ · fetch()     │  │ · UI state               │       │
+│  │ · challenge   │  │ · OAuth flow             │       │
+│  │   tab mgmt    │  │ · server config          │       │
+│  └──────┬───────┘  └───────────────────────────┘       │
+└─────────┼───────────────────────────────────────────────┘
+          │
+          │  (Same WebSocket protocol, same server endpoints)
+          │
+┌─────────┼───────────────────────────────────────────────┐
+│         ▼                                               │
+│  Firefox Extension (browser-worker-firefox/)            │
+│  ┌──────────────┐  ┌───────────────────────────┐       │
+│  │ service-worker│  │ popup / auth             │       │
+│  │ · fetch()     │  │ · UI state               │       │
+│  │ · challenge   │  │ · OAuth flow             │       │
+│  │   tab mgmt    │  │ · server config          │       │
+│  └──────┬───────┘  └───────────────────────────┘       │
+└─────────┼───────────────────────────────────────────────┘
           │ WebSocket (ws://host:port/ws/browser-worker)
           ▼
 ┌─────────────────────────────────────────────────────┐
@@ -5784,7 +5796,7 @@ func applyNovelToRecord(record *core.Record, novel *Novel) {
 
 ## Extension manifest
 
-**Archivo:** `browser-worker/manifest.json`
+**Archivo:** `extensions/browser-worker-chrome/manifest.json` (Chrome) / `extensions/browser-worker-firefox/manifest.json` (Firefox)
 
 Chrome Extension Manifest v3 — permissions (tabs, activeTab, storage, scripting, <all_urls>), service worker, popup, OAuth callback page.
 
@@ -5835,7 +5847,7 @@ Chrome Extension Manifest v3 — permissions (tabs, activeTab, storage, scriptin
 
 ## WebSocket protocol constants
 
-**Archivo:** `browser-worker/shared/protocol.js`
+**Archivo:** `extensions/browser-worker-chrome/shared/protocol.js` (Chrome) / `extensions/browser-worker-firefox/shared/protocol.js` (Firefox)
 
 MessageType (JOB_REQUEST, PING, JOB_RESULT, PONG, HEARTBEAT, REGISTER), JobStatus (OK, ERROR, CHALLENGE, WAITING_USER), WorkerState enum, createMessage/parseMessage helpers.
 
@@ -5894,7 +5906,7 @@ export function parseMessage(data) {
 
 ## Chrome storage helpers
 
-**Archivo:** `browser-worker/shared/storage.js`
+**Archivo:** `extensions/browser-worker-chrome/shared/storage.js` (Chrome) / `extensions/browser-worker-firefox/shared/storage.js` (Firefox)
 
 getConfig, setConfig, getWorkerToken, setWorkerToken, clearWorkerToken — manages server address, auto-connect, and auth token.
 
@@ -5961,7 +5973,7 @@ export async function clearWorkerToken() {
 
 ## Service worker — core proxy logic
 
-**Archivo:** `browser-worker/background/service-worker.js`
+**Archivo:** `extensions/browser-worker-chrome/background/service-worker.js` (Chrome) / `extensions/browser-worker-firefox/background/service-worker.js` (Firefox)
 
 WebSocket connection management, heartbeat, reconnect with exponential backoff, OAuth token registration. Core proxy strategy: 1) try background fetch() (shares cf_clearance cookies), 2) if challenge detected, open a hidden tab for Cloudflare challenge solving, 3) reuse challenge tab for same origin.
 
@@ -6374,7 +6386,7 @@ init();
 
 ## Popup HTML
 
-**Archivo:** `browser-worker/popup/popup.html`
+**Archivo:** `extensions/browser-worker-chrome/popup/popup.html` (Chrome) / `extensions/browser-worker-firefox/popup/popup.html` (Firefox)
 
 Extension popup UI — status bar, auth panel, Cloudflare challenge panel, server address input, connect/disconnect buttons, info panel showing browser/uptime/token status.
 
@@ -6462,7 +6474,7 @@ Extension popup UI — status bar, auth panel, Cloudflare challenge panel, serve
 
 ## Popup JS
 
-**Archivo:** `browser-worker/popup/popup.js`
+**Archivo:** `extensions/browser-worker-chrome/popup/popup.js` (Chrome) / `extensions/browser-worker-firefox/popup/popup.js` (Firefox)
 
 Popup logic — state-driven UI updates, connect/disconnect, OAuth trigger, Cloudflare challenge notification, server address persistence.
 
@@ -6644,7 +6656,7 @@ init();
 
 ## Popup CSS
 
-**Archivo:** `browser-worker/popup/popup.css`
+**Archivo:** `extensions/browser-worker-chrome/popup/popup.css` (Chrome) / `extensions/browser-worker-firefox/popup/popup.css` (Firefox)
 
 Popup styling — dark theme, status indicators (disconnected/connecting/connected/downloading), challenge panel with warning colors, form inputs in dark mode.
 
@@ -6913,7 +6925,7 @@ h1 {
 
 ## Auth callback HTML
 
-**Archivo:** `browser-worker/auth/auth.html`
+**Archivo:** `extensions/browser-worker-chrome/auth/auth.html` (Chrome) / `extensions/browser-worker-firefox/auth/auth.html` (Firefox)
 
 OAuth callback page — receives token from server via URL parameter, displays success/error state.
 
@@ -7009,7 +7021,7 @@ OAuth callback page — receives token from server via URL parameter, displays s
 
 ## Auth callback JS
 
-**Archivo:** `browser-worker/auth/auth.js`
+**Archivo:** `extensions/browser-worker-chrome/auth/auth.js` (Chrome) / `extensions/browser-worker-firefox/auth/auth.js` (Firefox)
 
 Extracts token from URL query string, stores in chrome.storage.local, sends auth_complete message to service worker.
 

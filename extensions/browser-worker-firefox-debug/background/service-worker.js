@@ -1,0 +1,890 @@
+import { MessageType, JobStatus, WorkerState, createMessage, parseMessage } from '../shared/protocol.js';
+import { getConfig, setConfig } from '../shared/storage.js';
+
+let ws = null;
+let state = WorkerState.DISCONNECTED;
+let reconnectTimer = null;
+let reconnectDelay = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+
+let challengeTabId = null;
+let challengeOrigin = null;
+
+const log = (msg, ...args) => console.log(`[DebugWorker] ${msg}`, ...args);
+const warn = (msg, ...args) => console.warn(`[DebugWorker] ${msg}`, ...args);
+const err = (msg, ...args) => console.error(`[DebugWorker] ${msg}`, ...args);
+
+const KEEPALIVE_ALARM = 'keepalive';
+const KEEPALIVE_INTERVAL_MS = 20000;
+const STALE_THRESHOLD_MS = 60000;
+let lastTraffic = 0;
+
+async function init() {
+  log('Initializing (DEBUG mode - no auth required)...');
+  const config = await getConfig();
+  if (config.autoConnect) connect();
+  chrome.runtime.onMessage.addListener(handleInternalMessage);
+  chrome.alarms.onAlarm.addListener(onAlarm);
+  scheduleKeepAlive();
+}
+
+function scheduleKeepAlive() {
+  chrome.alarms.create(KEEPALIVE_ALARM, { when: Date.now() + KEEPALIVE_INTERVAL_MS });
+}
+
+function onAlarm(alarm) {
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+  keepAlive().finally(scheduleKeepAlive);
+}
+
+async function keepAlive() {
+  const config = await getConfig();
+  if (config.autoConnect === false) return;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log('KeepAlive: socket not open, reconnecting...');
+    reconnectDelay = 1000;
+    connect();
+    return;
+  }
+
+  if (lastTraffic > 0 && Date.now() - lastTraffic > STALE_THRESHOLD_MS) {
+    log('KeepAlive: no traffic from server, reconnecting...');
+    reconnectDelay = 1000;
+    disconnect();
+    connect();
+    return;
+  }
+
+  try {
+    ws.send(createMessage(MessageType.HEARTBEAT, { timestamp: Date.now() }));
+  } catch (e) {
+    err('KeepAlive: heartbeat failed, reconnecting:', e);
+    reconnectDelay = 1000;
+    disconnect();
+    connect();
+  }
+}
+
+function handleInternalMessage(msg, sender, sendResponse) {
+  if (msg.type === 'CONNECT') {
+    connect().then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg.type === 'DISCONNECT') {
+    disconnect();
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg.type === 'GET_STATE') {
+    sendResponse({ state, connected: ws?.readyState === WebSocket.OPEN });
+    return false;
+  }
+  if (msg.type === 'UPDATE_CONFIG') {
+    setConfig(msg.config).then(() => {
+      if (msg.config.serverAddr) {
+        disconnect();
+        connect();
+      }
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+}
+
+async function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const config = await getConfig();
+  
+  // Use debug endpoint - no token required
+  const wsUrl = `ws://${config.serverAddr}/ws/browser-worker-debug`;
+  log('Connecting to:', wsUrl);
+  setState(WorkerState.CONNECTING);
+
+  try {
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      log('WebSocket connected, sending registration (no auth)...');
+      setState(WorkerState.CONNECTING);
+      reconnectDelay = 1000;
+      sendRegister();
+    };
+
+    ws.onmessage = (event) => {
+      lastTraffic = Date.now();
+      const msg = parseMessage(event.data);
+      if (!msg) return;
+      handleServerMessage(msg);
+    };
+
+    ws.onclose = (event) => {
+      log('WebSocket closed:', event.code);
+      setState(WorkerState.DISCONNECTED);
+      broadcastState();
+      if (!event.wasClean) scheduleReconnect();
+    };
+
+    ws.onerror = (error) => err('WebSocket error:', error);
+  } catch (e) {
+    err('Connection failed:', e);
+    setState(WorkerState.DISCONNECTED);
+    scheduleReconnect();
+  }
+}
+
+function disconnect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws) { ws.close(1000, 'User disconnect'); ws = null; }
+  setState(WorkerState.DISCONNECTED);
+  broadcastState();
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+}
+
+function sendRegister() {
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  const ua = navigator.userAgent;
+  let browser = 'chrome';
+  if (ua.includes('Firefox')) browser = 'firefox';
+  else if (ua.includes('Edg/')) browser = 'edge';
+  
+  // No token sent - debug mode
+  ws.send(createMessage(MessageType.REGISTER, {
+    browser: { name: browser, userAgent: ua },
+    capabilities: ['cookies', 'dom', 'javascript'],
+    version: '1.0.0-debug',
+  }));
+}
+
+async function handleServerMessage(msg) {
+  switch (msg.type) {
+    case MessageType.REGISTER_RESPONSE:
+      if (msg.payload.ok) {
+        log('Registration successful (DEBUG mode)');
+        setState(WorkerState.CONNECTED);
+        broadcastState();
+      } else {
+        warn('Registration failed:', msg.payload.error);
+        setState(WorkerState.UNAUTHENTICATED);
+        broadcastState();
+      }
+      break;
+    case MessageType.JOB_REQUEST:
+      await handleJobRequest(msg.payload);
+      break;
+    case MessageType.PING:
+      ws.send(createMessage(MessageType.PONG, { timestamp: Date.now() }));
+      break;
+    case MessageType.HEARTBEAT_ACK:
+      lastTraffic = Date.now();
+      break;
+    case MessageType.CANCEL_JOB:
+      break;
+  }
+}
+
+async function handleJobRequest(payload) {
+  const { jobId, url, operation, params = {} } = payload;
+  if (operation === 'fetch_image') {
+    log(`Job ${jobId}: fetch_image ${url}`);
+    setState(WorkerState.DOWNLOADING);
+    try {
+      const result = await fetchImage(url, params);
+      sendJobResult(jobId, JobStatus.OK, result);
+    } catch (e) {
+      err(`Job ${jobId} fetch_image failed:`, e);
+      sendJobResult(jobId, JobStatus.ERROR, { error: e.message });
+    } finally {
+      setState(WorkerState.CONNECTED);
+    }
+    return;
+  }
+  if (operation === 'fetch_livewire') {
+    log(`Job ${jobId}: fetch_livewire ${url}`);
+    setState(WorkerState.DOWNLOADING);
+    try {
+      const result = await fetchLivewirePage(url, params);
+      sendJobResult(jobId, JobStatus.OK, result);
+    } catch (e) {
+      err(`Job ${jobId} fetch_livewire failed:`, e);
+      sendJobResult(jobId, JobStatus.ERROR, { error: e.message });
+    } finally {
+      setState(WorkerState.CONNECTED);
+    }
+    return;
+  }
+  log(`Job ${jobId}: fetch_page ${url}`);
+  setState(WorkerState.DOWNLOADING);
+
+  try {
+    const result = await fetchRawPage(url, params);
+    sendJobResult(jobId, JobStatus.OK, result);
+  } catch (e) {
+    err(`Job ${jobId} failed:`, e);
+    const isChallenge = e.message?.includes('challenge') || e.message?.includes('captcha');
+    sendJobResult(jobId, isChallenge ? JobStatus.CHALLENGE : JobStatus.ERROR, { error: e.message });
+  } finally {
+    setState(WorkerState.CONNECTED);
+  }
+}
+
+// Fetches a binary image (e.g. a novel cover) through the browser so it
+// inherits site cookies such as cf_clearance. Hosts that hotlink- or
+// Cloudflare-protect their images return a 403 challenge to a plain HTTP GET,
+// but the authenticated browser resolves to the real bytes. The image is
+// returned base64-encoded because the WebSocket transport carries JSON.
+//
+// Strategy mirrors how a human loads the cover: the background fetch() shares
+// cookies but is still flagged by Cloudflare's bot checks, so on failure we
+// fall back to a hidden tab (a real navigation that passes the checks) and
+// read the bytes from the page context.
+async function fetchImage(url, params = {}) {
+  const maxWait = (params.timeout || 120) * 1000;
+  try {
+    return await fetchImageBackground(url);
+  } catch (e) {
+    log(`fetch_image background failed (${e.message}), falling back to tab`);
+    return await fetchImageViaTab(url, maxWait);
+  }
+}
+
+async function fetchImageBackground(url) {
+  const resp = await fetch(url, {
+    credentials: 'include',
+    headers: {
+      'User-Agent': navigator.userAgent,
+      'Accept': 'image/avif,image/webp,image/apng,image/png,image/*,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': new URL(url).origin + '/',
+    },
+  });
+  if (!resp.ok) {
+    let snippet = '';
+    try { snippet = (await resp.text()).slice(0, 200); } catch { /* ignore */ }
+    throw new Error(`HTTP ${resp.status} :: ${snippet}`);
+  }
+  const buffer = await resp.arrayBuffer();
+  const { dataBase64 } = bytesToBase64(buffer);
+  const contentType = resp.headers.get('content-type') || '';
+  log(`fetch_image (background) succeeded for ${url} (${buffer.byteLength} bytes, ${contentType})`);
+  return { dataBase64, contentType, url, size: buffer.byteLength };
+}
+
+// Opens a hidden tab to the image (a real navigation that satisfies
+// Cloudflare) and extracts the raw bytes from the page context. Falls back to
+// a canvas re-encode if the in-page fetch is blocked.
+async function fetchImageViaTab(url, maxWait) {
+  const parsed = new URL(url);
+  const origin = parsed.origin;
+  const startTime = Date.now();
+
+  let tab;
+  if (challengeTabId !== null && challengeOrigin === origin) {
+    try {
+      tab = await chrome.tabs.get(challengeTabId);
+      await chrome.tabs.update(tab.id, { url, active: false });
+    } catch {
+      challengeTabId = null; challengeOrigin = null;
+      tab = await chrome.tabs.create({ url, active: false });
+      challengeTabId = tab.id; challengeOrigin = origin;
+    }
+  } else {
+    if (challengeTabId !== null) { try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ } }
+    tab = await chrome.tabs.create({ url, active: false });
+    challengeTabId = tab.id; challengeOrigin = origin;
+  }
+
+  const cleanup = async () => {
+    try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+    challengeTabId = null; challengeOrigin = null;
+  };
+
+  while (Date.now() - startTime < maxWait) {
+    let tabInfo;
+    try { tabInfo = await chrome.tabs.get(tab.id); } catch { break; }
+    if (tabInfo.status === 'complete') {
+      const isChallenge = await checkForChallenge(tab.id);
+      if (isChallenge) {
+        log('fetch_image tab hit Cloudflare challenge, waiting for user...');
+        chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
+        await sleep(3000);
+        continue;
+      }
+
+      // 1. In-page fetch (lossless, same-origin, carries cf_clearance).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              try {
+                const run = async () => {
+                  const resp = await fetch(self.location.href, { credentials: 'include', cache: 'force-cache' });
+                  if (!resp.ok) return { error: 'page fetch ' + resp.status };
+                  const buf = await resp.arrayBuffer();
+                  const bytes = new Uint8Array(buf);
+                  let binary = '';
+                  const c = 0x8000;
+                  for (let i = 0; i < bytes.length; i += c) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + c));
+                  return { dataBase64: btoa(binary), contentType: resp.headers.get('content-type') || 'image/jpeg', size: bytes.length };
+                };
+                return run();
+              } catch (e) { return { error: e.message }; }
+            },
+          });
+          const r = results[0]?.result;
+          if (r && r.dataBase64) { await cleanup(); return r; }
+          if (r && r.error) log(`tab image page-fetch error (attempt ${attempt + 1}): ${r.error}`);
+        } catch (e) {
+          err(`fetch_image tab script failed (attempt ${attempt + 1}):`, e);
+        }
+        await sleep(2000);
+      }
+
+      // 2. Canvas fallback (re-encodes; last resort).
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const img = document.querySelector('img');
+            if (!img) return { error: 'no img element' };
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png');
+            return { dataUrl, contentType: 'image/png' };
+          },
+        });
+        const r = results[0]?.result;
+        if (r && r.dataUrl) {
+          const dataBase64 = r.dataUrl.split(',')[1] || '';
+          await cleanup();
+          log(`fetch_image (canvas fallback) succeeded for ${url} (${dataBase64.length} b64 chars)`);
+          return { dataBase64, contentType: r.contentType, url, size: Math.floor(dataBase64.length * 3 / 4) };
+        }
+      } catch (e) {
+        err('fetch_image canvas fallback failed:', e);
+      }
+
+      await cleanup();
+      throw new Error('failed to extract image bytes from tab');
+    }
+    await sleep(500);
+  }
+
+  await cleanup();
+  throw new Error('timeout loading image tab');
+}
+
+// Converts an ArrayBuffer to a base64 string using chunked String.fromCharCode
+// to avoid call-stack limits on large images.
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return { dataBase64: btoa(binary), contentType: '' };
+}
+
+function sendJobResult(jobId, status, data) {
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(createMessage(MessageType.JOB_RESULT, { jobId, status, data }));
+}
+
+async function fetchRawPage(url, params = {}) {
+  const maxWait = (params.timeout || 120) * 1000;
+
+  const bgResult = await tryBackgroundFetch(url);
+  if (bgResult) return bgResult;
+
+  log('Background fetch hit Cloudflare challenge, using tab...');
+  return fetchViaChallengeTab(url, maxWait);
+}
+
+async function fetchLivewirePage(url, params = {}) {
+  const maxWait = (params.timeout || 120) * 1000;
+  const parsedUrl = new URL(url);
+  const origin = parsedUrl.origin;
+  const startTime = Date.now();
+
+  let tab;
+  if (challengeTabId !== null && challengeOrigin === origin) {
+    try {
+      tab = await chrome.tabs.get(challengeTabId);
+      await chrome.tabs.update(tab.id, { url, active: false });
+    } catch {
+      challengeTabId = null;
+      challengeOrigin = null;
+      tab = await chrome.tabs.create({ url, active: false });
+      challengeTabId = tab.id;
+      challengeOrigin = origin;
+    }
+  } else {
+    if (challengeTabId !== null) {
+      try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
+    }
+    tab = await chrome.tabs.create({ url, active: false });
+    challengeTabId = tab.id;
+    challengeOrigin = origin;
+  }
+
+  log('Livewire: waiting for page load (max', maxWait / 1000, 's)...');
+
+  while (Date.now() - startTime < maxWait) {
+    try {
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.status === 'complete') {
+        const isChallenge = await checkForChallenge(tab.id);
+        if (isChallenge) {
+          log('Livewire: Cloudflare challenge detected, bringing tab to front for user...');
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+          chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
+          await sleep(3000);
+          continue;
+        }
+        log('Livewire: page loaded, waiting for redirects to settle...');
+        await sleep(4000);
+
+        const verifyChallenge = await checkForChallenge(tab.id);
+        if (verifyChallenge) {
+          log('Livewire: page still shows challenge after wait, continuing to poll...');
+          await sleep(3000);
+          continue;
+        }
+
+        log('Livewire: scrolling to trigger lazy-load components...');
+
+        // SkyDemonOrder uses viewport-based lazy loading. Keep this tab active
+        // while Livewire observes the catalog target; hidden tabs may be
+        // throttled and never fire x-intersect reliably.
+        try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+
+        // Scroll in steps to trigger x-intersect directives for Livewire lazy loading
+        for (let scrollStep = 0; scrollStep < 20; scrollStep++) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => { window.scrollBy(0, Math.max(600, window.innerHeight * 0.8)); },
+            });
+            await sleep(500);
+          } catch (e) {
+            log('Livewire: scroll step failed:', e.message);
+            break;
+          }
+        }
+
+        // Wait for Livewire to process the intersection and fetch data
+        log('Livewire: waiting for components to load...');
+        await sleep(6000);
+
+        // Some versions of the page do not let the lazy component fire from
+        // scrolling alone. Reproduce Livewire's own lazy-load request from
+        // the page context so the returned HTML contains the chapter data.
+        const livewireLoad = await loadSkyDemonOrderCatalog(tab.id);
+        if (livewireLoad.ok) {
+          log(`Livewire: direct catalog request succeeded (html=${livewireLoad.htmlLength}, freeChapters=${livewireLoad.hasFreeChapters})`);
+        } else {
+          log(`Livewire: direct catalog request unavailable (${livewireLoad.error || 'no component'})`);
+        }
+
+        // A large HTML document is not enough: Livewire can still be loading
+        // the chapter catalog after the initial page has become complete.
+        // Wait for the exact data marker consumed by the Go parser instead of
+        // taking a snapshot of the page shell and falling back to walkChapters.
+        const catalogReady = await waitForLivewireCatalog(tab.id, 60000);
+        if (!catalogReady) {
+          warn('Livewire: chapter catalog marker not found before timeout; returning the latest HTML');
+        }
+
+        // Scroll back to top for clean extraction
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => { window.scrollTo(0, 0); },
+          });
+          await sleep(1000);
+        } catch {}
+
+        log('Livewire: extracting HTML...');
+
+        let data = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => {
+                const catalog = document.getElementById('yara-livewire-catalog')?.textContent || '';
+                const selected = [
+                  document.querySelector('h1.font-title'),
+                  document.querySelector('h1:not(.font-title)'),
+                  document.querySelector('div.w-full.max-w-72'),
+                  document.querySelector('div[class*="line-clamp-3"]'),
+                ].filter(Boolean).map(element => element.outerHTML);
+                const html = catalog || selected.join('\\n');
+                return {
+                  html,
+                  text: '',
+                  title: document.title,
+                  url: window.location.href,
+                };
+              },
+            });
+            data = results[0]?.result;
+            const hasCatalog = !!data?.html && /freeChapters\s*:\s*JSON\.parse\s*\(\s*['"]/.test(data.html);
+            if (data && data.html && data.html.length > 100 && (hasCatalog || attempt === 2)) {
+              log(`Livewire: extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes, freeChapters=${hasCatalog})`);
+              break;
+            }
+            log(`Livewire: extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, freeChapters=${hasCatalog}, retrying...`);
+            await sleep(2000);
+          } catch (e) {
+            err(`Livewire: extraction attempt ${attempt + 1} failed:`, e);
+            await sleep(2000);
+          }
+        }
+
+        try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+        challengeTabId = null;
+        challengeOrigin = null;
+
+        return data || { html: '', text: '', title: '', url };
+      }
+      await sleep(500);
+    } catch (e) {
+      err('Livewire: error checking tab:', e);
+      await sleep(1000);
+    }
+  }
+  throw new Error('Timeout waiting for Livewire page to load.');
+}
+
+// Ask the page's Livewire chapter-list component for its lazy-loaded HTML.
+// This mirrors the site's normal request: the component snapshot and CSRF
+// token are already present in the initial page, so no server-side auth or
+// extension-specific endpoint is needed.
+async function loadSkyDemonOrderCatalog(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async () => {
+        try {
+          const component = document.querySelector('[wire\\:name="project.chapter-list"]');
+          const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+          const script = [...document.scripts].find(item => (item.src || '').includes('livewire'));
+          const scriptMatch = script?.src.match(/(livewire-[a-f0-9]+)(?:\/|$)/i);
+          const snapshot = component?.getAttribute('wire:snapshot');
+          if (!component || !csrf || !scriptMatch || !snapshot) {
+            return { ok: false, error: 'missing Livewire component, snapshot, CSRF token, or update path' };
+          }
+
+          const endpoint = new URL(`/${scriptMatch[1]}/update`, location.origin).href;
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': csrf,
+              'X-Livewire': '',
+            },
+            body: JSON.stringify({
+              components: [{ snapshot, updates: {}, calls: [] }],
+            }),
+          });
+          if (!response.ok) return { ok: false, error: `Livewire HTTP ${response.status}` };
+
+          const payload = await response.json();
+          const html = payload?.components?.[0]?.effects?.html || '';
+          if (!html) return { ok: false, error: 'Livewire response did not contain component HTML' };
+
+          const previous = document.getElementById('yara-livewire-catalog');
+          previous?.remove();
+          const holder = document.createElement('script');
+          holder.id = 'yara-livewire-catalog';
+          holder.type = 'application/json';
+          holder.textContent = html;
+          document.head.appendChild(holder);
+
+          return {
+            ok: true,
+            htmlLength: html.length,
+            hasFreeChapters: html.includes('freeChapters'),
+          };
+        } catch (error) {
+          return { ok: false, error: error?.message || String(error) };
+        }
+      },
+    });
+    return results[0]?.result || { ok: false, error: 'no result from page' };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+// Wait until the browser DOM contains the same catalog marker that the Go
+// parser expects. This is deliberately checked in the page context because
+// Livewire updates the DOM asynchronously after the load event.
+async function waitForLivewireCatalog(tabId, maxWaitMs) {
+  const startTime = Date.now();
+  let lastStatus = '';
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // Once the Livewire response is available, inspect only that
+          // component payload. Reading outerHTML here would serialize the
+          // expanded "Show all" DOM (12+ MB for large novels).
+          const catalog = document.getElementById('yara-livewire-catalog')?.textContent || '';
+          const html = catalog || document.documentElement?.outerHTML || '';
+          return {
+            htmlLength: html.length,
+            hasFreeChapters: html.includes('freeChapters'),
+            ready: /freeChapters\s*:\s*JSON\.parse\s*\(\s*['"]/.test(html),
+          };
+        },
+      });
+      const status = results[0]?.result || {};
+      const statusLine = `html=${status.htmlLength || 0}, freeChapters=${!!status.hasFreeChapters}, ready=${!!status.ready}`;
+
+      if (status.ready) {
+        log(`Livewire: chapter catalog is ready (${statusLine})`);
+        return true;
+      }
+      if (statusLine !== lastStatus) {
+        log(`Livewire: waiting for chapter catalog (${statusLine})`);
+        lastStatus = statusLine;
+      }
+    } catch (e) {
+      log('Livewire: catalog check failed:', e.message);
+    }
+
+    await sleep(1000);
+  }
+
+  return false;
+}
+
+async function tryBackgroundFetch(url) {
+  try {
+    const resp = await fetch(url, {
+      credentials: 'include',
+      headers: {
+        'User-Agent': navigator.userAgent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+    });
+
+    if (!resp.ok) {
+      log(`Background fetch returned ${resp.status} for ${url}`);
+      return null;
+    }
+
+    const buffer = await resp.arrayBuffer();
+    let charset = 'utf-8';
+
+    const contentType = resp.headers.get('content-type') || '';
+    const csMatch = contentType.match(/charset\s*=\s*([^;]+)/i);
+    if (csMatch) {
+      charset = csMatch[1].trim().toLowerCase();
+    }
+
+    if (charset === 'utf-8' || charset === 'utf8') {
+      const peekLen = Math.min(4096, buffer.byteLength);
+      const peekBytes = new Uint8Array(buffer, 0, peekLen);
+      const peekStr = new TextDecoder('windows-1252').decode(peekBytes);
+      if (/charset\s*=\s*["']?\s*gb/i.test(peekStr)) {
+        charset = 'gbk';
+      }
+    }
+
+    let html;
+    try {
+      html = new TextDecoder(charset, { fatal: false }).decode(buffer);
+    } catch (e) {
+      log(`TextDecoder failed for charset "${charset}", falling back to utf-8`, e);
+      html = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+    }
+
+    // Cloudflare challenge detection is anchored to structural artifacts that
+    // ONLY the challenge page injects — never to prose text, which can
+    // legitimately contain words like "Access denied" or "Just a moment".
+    // This avoids false positives on real chapter content (e.g. Marriage Mate
+    // ch.25, whose prose contains those phrases).
+    const cfHasTitle = /<title[^>]*>\s*Just a moment\.\.\.\s*<\/title>/i.test(html);
+    const cfHasScript = /<script[^>]+src=["'][^"']*\/cdn-cgi\/challenge-platform\//i.test(html);
+    const cfHasDom = /id=["']cf-(?:challenge-running|please-wait)["']|id=["']challenge-form["']/i.test(html);
+    const cfHasTurnstile = /class=["'][^"']*cf-turnstile[^"']*["']/i.test(html);
+    let cfMitigated = false;
+    try { cfMitigated = resp.headers.get('cf-mitigated') === 'challenge'; } catch {}
+
+    const isCfChallenge = cfMitigated || cfHasScript || cfHasDom || (cfHasTitle && cfHasTurnstile);
+    if (isCfChallenge) {
+      const sigs = [];
+      if (cfMitigated) sigs.push('header:cf-mitigated');
+      if (cfHasTitle) sigs.push('title');
+      if (cfHasScript) sigs.push('script');
+      if (cfHasDom) sigs.push('dom');
+      if (cfHasTurnstile) sigs.push('turnstile');
+      log(`Background fetch: Cloudflare challenge detected (${sigs.join(',')}) for ${url}`);
+      return null;
+    }
+
+    log(`Background fetch succeeded for ${url} (${html.length} bytes)`);
+
+    let title = '';
+    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    if (titleMatch) title = titleMatch[1];
+
+    return { html, text: '', title, url };
+  } catch (e) {
+    log(`Background fetch error for ${url}:`, e);
+    return null;
+  }
+}
+
+async function fetchViaChallengeTab(url, maxWait) {
+  const parsedUrl = new URL(url);
+  const origin = parsedUrl.origin;
+  const startTime = Date.now();
+
+  let tab;
+  if (challengeTabId !== null && challengeOrigin === origin) {
+    try {
+      tab = await chrome.tabs.get(challengeTabId);
+      await chrome.tabs.update(tab.id, { url, active: false });
+    } catch {
+      challengeTabId = null;
+      challengeOrigin = null;
+      tab = await chrome.tabs.create({ url, active: false });
+      challengeTabId = tab.id;
+      challengeOrigin = origin;
+    }
+  } else {
+    if (challengeTabId !== null) {
+      try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
+    }
+    tab = await chrome.tabs.create({ url, active: false });
+    challengeTabId = tab.id;
+    challengeOrigin = origin;
+  }
+
+  log('Waiting for page load on challenge tab (max', maxWait / 1000, 's)...');
+
+  while (Date.now() - startTime < maxWait) {
+    try {
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.status === 'complete') {
+        const isChallenge = await checkForChallenge(tab.id);
+        if (isChallenge) {
+          log('Cloudflare challenge detected, waiting for user to solve it...');
+          chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
+          await sleep(3000);
+          continue;
+        }
+        log('Challenge solved, waiting for redirects to settle...');
+        await sleep(4000);
+
+        const verifyChallenge = await checkForChallenge(tab.id);
+        if (verifyChallenge) {
+          log('Page still shows challenge after wait, continuing to poll...');
+          await sleep(3000);
+          continue;
+        }
+
+        log('Challenge fully resolved, extracting HTML...');
+
+        const tabInfo2 = await chrome.tabs.get(tab.id);
+        log(`Tab URL before extraction: ${tabInfo2.url}`);
+
+        let data = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => ({
+                html: document.documentElement.outerHTML,
+                text: document.body.innerText,
+                title: document.title,
+                url: window.location.href,
+              }),
+            });
+            data = results[0]?.result;
+            if (data && data.html && data.html.length > 100) {
+              log(`Extraction attempt ${attempt + 1} succeeded (${data.html.length} bytes)`);
+              break;
+            }
+            log(`Extraction attempt ${attempt + 1}: html=${data?.html?.length || 0} bytes, retrying...`);
+            await sleep(2000);
+          } catch (e) {
+            err(`Extraction attempt ${attempt + 1} failed:`, e);
+            await sleep(2000);
+          }
+        }
+
+        try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+        challengeTabId = null;
+        challengeOrigin = null;
+
+        return data || { html: '', text: '', title: '', url };
+      }
+      await sleep(500);
+    } catch (e) {
+      err('Error checking challenge tab:', e);
+      await sleep(1000);
+    }
+  }
+  throw new Error('Timeout waiting for Cloudflare challenge to be solved.');
+}
+
+async function checkForChallenge(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const signals = [];
+        if ((document.title || '').trim() === 'Just a moment...') signals.push('title');
+        if (document.querySelector('script[src*="/cdn-cgi/challenge-platform/"]')) signals.push('script');
+        if (document.querySelector('#cf-challenge-running, #cf-please-wait, #challenge-form')) signals.push('dom');
+        if (document.querySelector('.cf-turnstile, [data-sitekey]')) signals.push('turnstile');
+        // A real challenge is still present only when a Cloudflare-exclusive
+        // artifact exists. Plain prose (e.g. a chapter titled "Just a moment")
+        // never injects these, so we never false-positive on it.
+        return {
+          isChallenge: signals.includes('script') || signals.includes('dom') || signals.includes('turnstile'),
+          signals,
+        };
+      },
+    });
+    return results[0]?.result?.isChallenge || false;
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function setState(newState) {
+  if (state !== newState) { state = newState; broadcastState(); }
+}
+
+function broadcastState() {
+  chrome.runtime.sendMessage({ type: 'STATE_CHANGED', state }).catch(() => {});
+}
+
+init();

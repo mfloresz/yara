@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yara Browser Worker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="../icons/icon48.png" alt="Yara" class="logo">
+      <h1>Browser Worker</h1>
+    </div>
+
+    <div id="status-bar" class="status-bar disconnected">
+      <span class="status-dot"></span>
+      <span id="status-text">Desconectado</span>
+    </div>
+
+    <div id="auth-panel" class="auth-panel hidden">
+      <div class="auth-icon">&#128274;</div>
+      <div class="auth-text">No autenticado</div>
+      <div class="auth-hint">Conecta tu cuenta para usar el worker</div>
+      <button id="btn-auth" class="btn btn-primary">Autenticar con el Servidor</button>
+    </div>
+
+    <div id="challenge-panel" class="challenge-panel hidden">
+      <div class="challenge-icon">&#9888;</div>
+      <div class="challenge-text">Cloudflare Challenge Detectado</div>
+      <div class="challenge-hint">Resuelve el challenge en la pesta&ntilde;a del navegador</div>
+      <button id="btn-refresh" class="btn btn-warning">Refrescar P&aacute;gina</button>
+    </div>
+
+    <div class="form-group">
+      <label for="server-addr">Servidor</label>
+      <input type="text" id="server-addr" placeholder="192.168.1.100:5176" spellcheck="false">
+      <small class="help-text">host:puerto del servidor Yara</small>
+    </div>
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" id="auto-connect" checked>
+        Conectar autom&aacute;ticamente al iniciar
+      </label>
+    </div>
+
+    <div class="button-group">
+      <button id="btn-connect" class="btn btn-primary">Conectar</button>
+      <button id="btn-disconnect" class="btn btn-secondary" disabled>Desconectar</button>
+    </div>
+
+    <div id="info-panel" class="info-panel hidden">
+      <div class="info-row">
+        <span class="info-label">Navegador:</span>
+        <span id="info-browser" class="info-value">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Uptime:</span>
+        <span id="info-uptime" class="info-value">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Token:</span>
+        <span id="info-token" class="info-value">-</span>
+      </div>
+    </div>
+
+    <div id="error-panel" class="error-panel hidden">
+      <span id="error-text"></span>
+    </div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

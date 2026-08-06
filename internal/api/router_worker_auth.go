@@ -137,7 +137,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 		if len(shortID) > 8 {
 			shortID = shortID[:8]
 		}
-		label := fmt.Sprintf("Chrome Extension (%s)", shortID)
+		label := fmt.Sprintf("Browser Extension (%s)", shortID)
 		_, plaintext, err := s.Store.CreateWorkerToken(e.Auth.Id, pending.ExtensionID, label)
 		if err != nil {
 			return e.InternalServerError("failed to create token", err)

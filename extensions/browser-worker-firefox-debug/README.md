@@ -1,6 +1,6 @@
-# Yara Browser Worker (Debug)
+# Yara Browser Worker Debug (Firefox)
 
-Debug version of the browser worker extension. **No authentication required**. Designed for development and testing with Cloudflare-protected sites.
+Debug version of the browser worker extension for Firefox. **No authentication required**. Designed for development and testing with Cloudflare-protected sites.
 
 ## Browser support
 
@@ -30,18 +30,10 @@ Debug version of the browser worker extension. **No authentication required**. D
 
 ## Installation
 
-### Chrome
-
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable "Developer mode" (top right corner)
-3. Click "Load unpacked"
-4. Select the `browser-worker-chrome-debug/` folder
-5. The extension will appear with a "DEBUG" badge
-
-### Firefox
+### Firefox (temporary add-on)
 
 1. Open Firefox and navigate to `about:debugging`
-2. Click "This Firefox" (or "This Thunderbird")
+2. Click "This Firefox"
 3. Click "Load Temporary Add-on"
 4. Select the `manifest.json` file from `browser-worker-firefox-debug/`
 5. The extension will appear with a "DEBUG" badge

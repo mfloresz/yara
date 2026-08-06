@@ -22,8 +22,10 @@ Layout:
 - `internal/epubimport/`, `internal/noveldownloader/` — pure parsers/scrappers with no HTTP or store dependencies.
 - `frontend/` — Vue 3 + Vite + PrimeVue SPA. Vite dev port is fixed at 5175 and proxies `/api` and `/ai` to the Go backend on `127.0.0.1:5176`.
 - `frontend_embed.go` — `package translatorserver`, `//go:embed all:frontend/dist`. The Go import alias `translatorserver "translator-server"` (note: matches the module name, NOT the kebab-case path) is what makes the embed reachable from `internal/api`.
-- `browser-worker/` — Chrome extension (Manifest V3) that proxies HTTP requests through a real browser to bypass Cloudflare. Requires user authentication via `/api/worker-auth/`.
-- `browser-worker-debug/` — Debug version of the browser worker extension. **No authentication required**. Uses a standalone debug proxy server (port 5177). For development/testing with Cloudflare-protected sites. Install as unpacked extension in Chrome developer mode.
+- `extensions/browser-worker-chrome/` — Chrome extension (Manifest V3) that proxies HTTP requests through a real browser to bypass Cloudflare. Requires user authentication via `/api/worker-auth/`.
+- `extensions/browser-worker-firefox/` — Firefox extension (Manifest V3), same functionality as the Chrome version.
+- `extensions/browser-worker-chrome-debug/` — Chrome extension (debug, no auth required). Uses a standalone debug proxy server (port 5177). For development/testing with Cloudflare-protected sites. Install as unpacked extension in Chrome developer mode.
+- `extensions/browser-worker-firefox-debug/` — Firefox extension (debug, no auth required). Same functionality as the Chrome debug version.
 - `cmd/debug-proxy/` — Standalone micro-server for debug browser worker. Listens on `:5177`, accepts WebSocket connections without auth, and exposes `POST /api/proxy/fetch` to relay requests through the connected extension. Used for parser development against Cloudflare-protected sites.
 - `docs/` — historical planning notes (`pocketbase-multiuser-plan.md`, `go-backend-refactor-plan.md`). Treat as context, not current truth.
 - `test/` — gitignored fixtures (EPUBs, chapter text) used by some manual tests. Not used by `go test`.
@@ -59,7 +61,7 @@ When adding or debugging parsers for sites protected by Cloudflare, use the debu
    ```
    Output shows: `Debug proxy listening on :5177`
 
-2. **User opens Chrome** with the `browser-worker-debug` extension installed. The extension auto-connects to `ws://localhost:5177/ws/browser-worker-debug`. Verify connection:
+2. **User opens Chrome or Firefox** with the `browser-worker-debug` extension installed (use `browser-worker-chrome-debug` for Chrome, `browser-worker-firefox-debug` for Firefox). The extension auto-connects to `ws://localhost:5177/ws/browser-worker-debug`. Verify connection:
    ```bash
    curl -s http://localhost:5177/api/workers
    ```
@@ -79,7 +81,7 @@ When adding or debugging parsers for sites protected by Cloudflare, use the debu
 ### Key details
 
 - Debug proxy runs on port **5177** (separate from the main server on 5176)
-- The `browser-worker-debug` extension uses separate storage (`yara_browser_worker_debug`) — no conflict with the production extension
+- The debug extensions use separate storage (`yara_browser_worker_debug` for Chrome, `yara_browser_worker_firefox_debug` for Firefox) — no conflict with the production extensions or between browsers
 - The proxy accepts connections without auth — it's a standalone dev tool
 - After debugging, the user does `make build` and tests with the production extension (which requires auth)
 

@@ -13,7 +13,7 @@ Build a library of AI-translated novels with full multi-user support, flexible i
 - **Progress tracking** — Monitor in-progress translations, automated jobs, and reading progress
 - **In-process workers** — Concurrent download and translation workers that run automatically in the background
 - **Android support** — Runs on Termux and Android devices for on-the-go translation
-- **Cloudflare bypass** — Chrome extension proxies requests through a real browser for protected sites
+- **Cloudflare bypass** — Browser extensions (Chrome/Firefox) proxy requests through a real browser for protected sites
 
 ## Typical workflows
 
@@ -158,8 +158,10 @@ User → Browser → API Backend → SQLite Database + Workers
 - **`internal/epubexport/`** — EPUB generator
 - **`frontend/`** — Vue 3 SPA with 8 pages, 7 components, 8 composables
 - **`frontend_embed.go`** — Embeds `frontend/dist/` into the Go binary
-- **`browser-worker/`** — Chrome extension (production)
-- **`browser-worker-debug/`** — Chrome extension (debug, no auth required)
+- **`extensions/browser-worker-chrome/`** — Chrome extension (production)
+- **`extensions/browser-worker-firefox/`** — Firefox extension (production)
+- **`extensions/browser-worker-chrome-debug/`** — Chrome extension (debug, no auth required)
+- **`extensions/browser-worker-firefox-debug/`** — Firefox extension (debug, no auth required)
 
 ## Key concepts
 

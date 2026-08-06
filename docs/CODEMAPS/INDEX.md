@@ -79,8 +79,10 @@ User → HTTP → PocketBase Auth → api.Server → store.Store → SQLite
 | `internal/noveldownloader` | Web scrapers | 8 site parsers + downloader | goquery, html-to-markdown |
 | `frontend/` | Vue 3 SPA | 8 pages, 6 components, 8 composables | vue, naive-ui |
 | `cmd/debug-proxy` | Debug proxy micro-server | `main.go` | gorilla/websocket |
-| `browser-worker/` | Chrome extension (production) | `service-worker.js` | — |
-| `browser-worker-debug/` | Chrome extension (debug, no auth) | `service-worker.js` | — |
+| `extensions/browser-worker-chrome/` | Chrome extension (production) | `service-worker.js` | — |
+| `extensions/browser-worker-firefox/` | Firefox extension (production) | `service-worker.js` | — |
+| `extensions/browser-worker-chrome-debug/` | Chrome extension (debug, no auth) | `service-worker.js` | — |
+| `extensions/browser-worker-firefox-debug/` | Firefox extension (debug, no auth) | `service-worker.js` | — |
 
 ## Related codemaps
 
