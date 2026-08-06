@@ -908,16 +908,6 @@ function applyTypography() {
   widows: 3;
 }
 
-.reader-body :deep(p:first-of-type)::first-letter {
-  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
-  font-size: 4.2em;
-  font-weight: 700;
-  color: var(--accent-link);
-  float: left;
-  line-height: 0.78;
-  margin: 0.08em 0.08em 0 0;
-  padding: 0;
-}
 
 .reader-body :deep(h1) {
   font-family: 'Playfair Display Variable', 'Playfair Display', serif;
