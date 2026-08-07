@@ -49,6 +49,7 @@ func NewDownloader() *Downloader {
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
 			NewLiteroticaParser(),
+			NewWTRLabParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -72,6 +73,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
 			NewLiteroticaParser(),
+			NewWTRLabParser(),
 		},
 		client: client,
 	}
