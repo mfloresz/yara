@@ -13,13 +13,14 @@ import (
 // fenrirChapterContent maps the JSON returned by
 // GET /api/new/v2/series/{slug}/chapters/{chapterSlug}.
 type fenrirChapterContent struct {
-	ID      int    `json:"id"`
-	Slug    string `json:"slug"`
-	Name    string `json:"name"`
-	Title   string `json:"title"`
-	Content string `json:"content"` // TipTap JSON string
-	Type    string `json:"type"`
-	Number  int    `json:"number"`
+	ID      int            `json:"id"`
+	Slug    string         `json:"slug"`
+	Name    string         `json:"name"`
+	Title   string         `json:"title"`
+	Content string         `json:"content"` // TipTap JSON string (free) or plain-text preview (locked)
+	Type    string         `json:"type"`
+	Number  int            `json:"number"`
+	Locked  fenrirLockInfo `json:"locked"`
 }
 
 // tiptapNode represents a node in TipTap's JSON content format.
@@ -62,6 +63,14 @@ func (p *FenrirRealmParser) ParseChapter(ctx context.Context, client HTTPClient,
 	var chContent fenrirChapterContent
 	if err := json.Unmarshal(body, &chContent); err != nil {
 		return nil, fmt.Errorf("parsing chapter content: %w", err)
+	}
+
+	// Premium chapters sit behind the paywall and the API returns only a short
+	// plain-text preview for them, not the TipTap content. They are normally
+	// excluded from the chapter list, but guard here so a direct request to a
+	// locked chapter fails with a clear message instead of a TipTap parse error.
+	if chContent.Locked.Price > 0 {
+		return nil, fmt.Errorf("chapter %s is premium/locked (price %d) and cannot be downloaded", chSlug, chContent.Locked.Price)
 	}
 
 	// Parse the TipTap JSON content.
