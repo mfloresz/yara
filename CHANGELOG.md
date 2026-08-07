@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.13.0] - 2026-08-07
+
+### What's new
+
+- Added the WTR Lab parser (`wtr-lab.com`) for novel downloading, targeting the raw "web" reading mode and supporting AES-GCM decryption of chapter content.
+
+### Fixes
+
+- Fixed the FenrirRealm parser to skip premium (paywalled) chapters instead of failing with a cryptic TipTap content parse error.
+
 ## [v0.12.0] - 2026-08-06
 
 ### What's new
@@ -39,7 +49,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.13.0...HEAD
+[v0.13.0]: https://github.com/mfloresz/yara/compare/v0.12.0...v0.13.0
 [v0.12.0]: https://github.com/mfloresz/yara/compare/v0.11.1...v0.12.0
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
