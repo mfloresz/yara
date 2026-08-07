@@ -227,6 +227,46 @@ func TestRealFenrirRealmRange(t *testing.T) {
 	}
 }
 
+func TestRealFenrirRealmHTMLFormat(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://fenrirealm.com/series/clearing-the-world-starting-as-a-low-rank-adventurer"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q totalChapters=%d", info.Title, len(info.Chapters))
+	if len(info.Chapters) == 0 {
+		t.Fatal("no chapters found")
+	}
+
+	// This series uses content_format "html" with Cloudflare obfuscation.
+	chapter, err := dl.DownloadChapter(ctx, info.Chapters[0].URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("chapter title=%q markdownLen=%d", chapter.Title, len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 100 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+	}
+	// Verify CF obfuscation was stripped — content should not contain
+	// invisible zero-width characters.
+	for _, ch := range chapter.Markdown {
+		if ch == '\u200b' || ch == '\u200d' || ch == '\u200f' {
+			t.Errorf("markdown contains invisible Unicode character (CF obfuscation not stripped): U+%04X", ch)
+			break
+		}
+	}
+}
+
 func TestRealSkyDemonOrder(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real URL test in short mode")

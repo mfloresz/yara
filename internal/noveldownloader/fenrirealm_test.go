@@ -122,7 +122,7 @@ func TestFenrirRealmParseChapterRejectsPremium(t *testing.T) {
 
 func TestFenrirRealmParseChapterFree(t *testing.T) {
 	p := NewFenrirRealmParser()
-	freeContent := `{"id":1,"slug":"1","name":"Chapter 1","title":"One","content":"{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Hello world\"}]}]}","type":"text","number":1,"locked":{"price":0,"unlocked_at":"2025-02-24T21:46:04.000000Z","is_read_only":false}}`
+	freeContent := `{"id":1,"slug":"1","name":"Chapter 1","title":"One","content_format":"json","content":"{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Hello world\"}]}]}","type":"text","number":1,"locked":{"price":0,"unlocked_at":"2025-02-24T21:46:04.000000Z","is_read_only":false}}`
 	client := &fenrirStubClient{responses: map[string]string{
 		"https://fenrirealm.com/api/new/v2/series/absolute-regression/chapters/1": freeContent,
 	}}
@@ -136,5 +136,103 @@ func TestFenrirRealmParseChapterFree(t *testing.T) {
 	}
 	if !strings.Contains(ch.Content, "Hello world") {
 		t.Errorf("content missing text: %q", ch.Content)
+	}
+}
+
+func TestFenrirRealmParseChapterHTML(t *testing.T) {
+	p := NewFenrirRealmParser()
+	htmlContent := `{"id":10,"slug":"10","name":"Chapter 10","title":"Ten","content_format":"html","content":"<p>He said hello.</p><p>She replied softly.</p>","type":"text","number":10,"locked":{"price":0,"unlocked_at":"2025-02-24T21:46:04.000000Z","is_read_only":false}}`
+	client := &fenrirStubClient{responses: map[string]string{
+		"https://fenrirealm.com/api/new/v2/series/clearing/chapters/10": htmlContent,
+	}}
+
+	ch, err := p.ParseChapter(context.Background(), client, "https://fenrirealm.com/series/clearing/10")
+	if err != nil {
+		t.Fatalf("ParseChapter: %v", err)
+	}
+	if ch.Title != "Chapter 10" {
+		t.Errorf("unexpected title: %q", ch.Title)
+	}
+	if !strings.Contains(ch.Content, "He said hello") {
+		t.Errorf("HTML content not preserved: %q", ch.Content)
+	}
+}
+
+func TestFenrirRealmParseChapterHTMLCFObfuscation(t *testing.T) {
+	p := NewFenrirRealmParser()
+	// Simulate Cloudflare obfuscation: a hidden div with encoded text
+	// followed by real HTML content with invisible Unicode characters.
+	cfContent := `{"id":20,"slug":"20","name":"Chapter 20","title":"Twenty","content_format":"html","content":"<style>.cf123{position:absolute;width:1px;height:1px}</style><div class=\"cf123\" aria-hidden=\"true\">obfuscated-data-here</div><p>Real\u200b\u200dcontent\u200fhere</p>","type":"text","number":20,"locked":{"price":0,"unlocked_at":"2025-02-24T21:46:04.000000Z","is_read_only":false}}`
+	client := &fenrirStubClient{responses: map[string]string{
+		"https://fenrirealm.com/api/new/v2/series/clearing/chapters/20": cfContent,
+	}}
+
+	ch, err := p.ParseChapter(context.Background(), client, "https://fenrirealm.com/series/clearing/20")
+	if err != nil {
+		t.Fatalf("ParseChapter: %v", err)
+	}
+	if strings.Contains(ch.Content, "<style>") {
+		t.Errorf("CF style block not stripped: %q", ch.Content)
+	}
+	if strings.Contains(ch.Content, "aria-hidden") {
+		t.Errorf("CF hidden div not stripped: %q", ch.Content)
+	}
+	if strings.Contains(ch.Content, "obfuscated-data-here") {
+		t.Errorf("CF obfuscated text not stripped: %q", ch.Content)
+	}
+	if !strings.Contains(ch.Content, "Real") || !strings.Contains(ch.Content, "content") || !strings.Contains(ch.Content, "here") {
+		t.Errorf("real content missing or corrupted: %q", ch.Content)
+	}
+}
+
+func TestFenrirStripCFObfuscation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string // substring that must be in output
+		excludes []string
+	}{
+		{
+			name:     "plain HTML passthrough",
+			input:    "<p>Hello world</p>",
+			contains: "Hello world",
+		},
+		{
+			name:     "CF style block stripped",
+			input:    "<style>.cf123{position:absolute}</style><p>Content</p>",
+			contains: "Content",
+			excludes: []string{"<style>", ".cf123"},
+		},
+		{
+			name:     "CF hidden div stripped",
+			input:    `<div class="cf123" aria-hidden="true">secret-data</div><p>Real text</p>`,
+			contains: "Real text",
+			excludes: []string{"aria-hidden", "secret-data"},
+		},
+		{
+			name:     "invisible unicode stripped",
+			input:    "<p>Hel\u200b\u200dlo w\u200for\u200fld</p>",
+			contains: "Hello world",
+		},
+		{
+			name:     "full CF obfuscation",
+			input:    "<style>.cf19b{position:absolute}</style><div class=\"cf19b\" aria-hidden=\"true\">encoded</div><p>Ch\u200bapter \u200done</p>",
+			contains: "Chapter one",
+			excludes: []string{"<style>", "cf19b", "encoded", "\u200b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fenrirStripCFObfuscation(tt.input)
+			if !strings.Contains(got, tt.contains) {
+				t.Errorf("expected output to contain %q, got %q", tt.contains, got)
+			}
+			for _, ex := range tt.excludes {
+				if strings.Contains(got, ex) {
+					t.Errorf("expected output to NOT contain %q, got %q", ex, got)
+				}
+			}
+		})
 	}
 }
