@@ -52,7 +52,73 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 			UseRegex:      body.UseRegex,
 		})
 
-		return e.JSON(http.StatusOK, CleanPreviewResult{ChapterTitle: chapter.Title, CleanResult: result})
+		return e.JSON(http.StatusOK, CleanPreviewResult{
+			ChapterTitle: chapter.Title,
+			Changes:      diffLines(result.Original, result.Cleaned),
+			CleanResult:  result,
+		})
+	})
+	api.POST("/db/novels/{novelId}/chapters/clean-preview-bulk", func(e *core.RequestEvent) error {
+		body := struct {
+			ChapterIDs    []string `json:"chapterIds"`
+			Mode          string   `json:"mode"`
+			SearchText    string   `json:"searchText"`
+			ReplaceText   string   `json:"replaceText"`
+			CaseSensitive bool     `json:"caseSensitive"`
+			UseRegex      bool     `json:"useRegex"`
+			ApplyTo       string   `json:"applyTo"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+
+		if !isValidCleanMode(body.Mode) {
+			return e.BadRequestError("invalid mode", nil)
+		}
+		if !isValidApplyTo(body.ApplyTo) {
+			return e.BadRequestError("invalid applyTo", nil)
+		}
+		if len(body.ChapterIDs) == 0 {
+			return e.BadRequestError("chapterIds is required", nil)
+		}
+
+		if _, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("novelId")); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+
+		opts := CleanOptions{
+			Mode:          CleanMode(body.Mode),
+			SearchText:    body.SearchText,
+			ReplaceText:   body.ReplaceText,
+			CaseSensitive: body.CaseSensitive,
+			UseRegex:      body.UseRegex,
+		}
+
+		items := make([]CleanPreviewBulkItem, 0, len(body.ChapterIDs))
+		for _, chapterID := range body.ChapterIDs {
+			chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), chapterID)
+			if err != nil {
+				continue
+			}
+
+			result := ApplyClean(cleaningSource(chapter, body.ApplyTo), opts)
+			if !result.Changed {
+				continue
+			}
+			items = append(items, CleanPreviewBulkItem{
+				ChapterID:    chapter.ID,
+				ChapterOrder: chapter.ChapterOrder,
+				ChapterTitle: chapter.Title,
+				Changes:      diffLines(result.Original, result.Cleaned),
+				CleanResult:  result,
+			})
+		}
+
+		return e.JSON(http.StatusOK, map[string]any{
+			"items":   items,
+			"total":   len(body.ChapterIDs),
+			"changed": len(items),
+		})
 	})
 	api.POST("/db/novels/{novelId}/chapters/clean", func(e *core.RequestEvent) error {
 		body := struct {

@@ -209,7 +209,7 @@
       <section v-else-if="activeTab === 'clean'" class="stack-md tab-panel" aria-labelledby="tab-clean">
         <h2 id="tab-clean" class="sr-only">Limpieza de texto</h2>
         <n-card title="Limpieza de texto">
-            <div v-if="allSummariesLoading" class="stack-md">
+            <div v-if="cleanAllSummariesLoading" class="stack-md">
               <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
               <n-skeleton width="100%" height="12rem" style="border-radius: 12px" />
             </div>
@@ -256,37 +256,31 @@
                 <div class="row-wrap small muted">
                   <n-button size="small" text @click="cleanSelectedIds = new Set(cleanEligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
                   <n-button size="small" text @click="cleanSelectedIds = new Set()">Ninguno</n-button>
+                  <span>{{ cleanEligibleChapters.length }} capítulos con contenido</span>
                 </div>
-                <n-button type="primary" :loading="cleanApplying" :disabled="cleanSelectedIds.size === 0" @click="applyCleaningToSelected">
-                  <template #icon><n-icon><SaveOutline /></n-icon></template>
-                  Aplicar a {{ cleanSelectedIds.size }} capítulos
-                </n-button>
+                <div class="row-wrap">
+                  <n-button :loading="cleanPreviewLoading" :disabled="cleanSelectedIds.size === 0" @click="previewSelectedCleaning">
+                    <template #icon><n-icon><EyeOutline /></n-icon></template>
+                    Previsualizar ({{ cleanSelectedIds.size }})
+                  </n-button>
+                  <n-button type="primary" :loading="cleanApplying" :disabled="cleanSelectedIds.size === 0" @click="applyCleaningToSelected">
+                    <template #icon><n-icon><SaveOutline /></n-icon></template>
+                    Aplicar a {{ cleanSelectedIds.size }} capítulos
+                  </n-button>
+                </div>
               </div>
 
               <n-alert v-if="cleanFeedback" type="success">{{ cleanFeedback }}</n-alert>
 
-              <div v-if="cleanEligibleChapters.length === 0" class="muted small">Selecciona primero el tipo de limpieza arriba para ver capítulos disponibles.</div>
+              <div v-if="cleanEligibleChapters.length === 0" class="muted small">No hay capítulos con contenido para el tipo seleccionado.</div>
               <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 320px">
                 <div v-for="chapter in cleanEligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
                   <n-checkbox :checked="cleanSelectedIds.has(chapter.id)" @update:checked="toggleCleanChapter(chapter.id, $event)" />
                   <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
                   <span style="flex: 1">{{ chapter.title }}</span>
-                  <n-button size="small" secondary @click="previewCleaning(chapter)">Previsualizar</n-button>
+                  <n-button size="small" secondary @click="previewCleanChapter(chapter)">Previsualizar</n-button>
                 </div>
               </div>
-
-              <n-card v-if="cleanPreview" :title="`Vista previa · ${cleanPreview.chapterTitle}`">
-                  <div class="row-wrap">
-                    <div style="flex: 1; min-width: 280px">
-                      <label class="small muted">Original</label>
-                      <n-input type="textarea" :value="cleanPreview.result.original" :autosize="{ minRows: 12 }" readonly class="mono" />
-                    </div>
-                    <div style="flex: 1; min-width: 280px">
-                      <label class="small muted">Limpio</label>
-                      <n-input type="textarea" :value="cleanPreview.result.cleaned" :autosize="{ minRows: 12 }" readonly class="mono" />
-                    </div>
-                  </div>
-              </n-card>
             </div>
         </n-card>
       </section>
@@ -427,6 +421,62 @@
       @update:open="updateUrlOpen = $event"
       @updated="onUrlUpdated"
     />
+
+    <n-modal
+      v-model:show="cleanPreviewOpen"
+      preset="card"
+      title="Vista previa de limpieza"
+      :style="{ width: 'min(880px, 96vw)' }"
+    >
+      <div class="stack-md">
+        <n-alert v-if="cleanPreviewItems.length === 0" type="warning">
+          Ninguno de los {{ cleanPreviewTotal }} capítulos se verá afectado por la limpieza actual.
+        </n-alert>
+        <n-alert v-else type="info">
+          Se modificarán {{ cleanPreviewItems.length }} de {{ cleanPreviewTotal }} capítulos seleccionados.
+        </n-alert>
+
+        <div style="display: flex; flex-direction: column; gap: 1rem; max-height: 62vh; overflow: auto">
+          <div
+            v-for="item in cleanPreviewDisplay"
+            :key="item.chapterId"
+            style="border: 1px solid var(--divide); border-radius: 12px; padding: 0.875rem 1rem"
+          >
+            <div class="row-between" style="margin-bottom: 0.75rem">
+              <span class="small muted">#{{ item.chapterOrder }} · {{ item.chapterTitle }}</span>
+              <n-tag size="small" round type="warning">−{{ item.removedLines }} líneas</n-tag>
+            </div>
+            <div v-if="item.hunks.length === 0" class="small muted">Sin cambios de líneas.</div>
+            <div v-else style="display: flex; flex-direction: column; gap: 0.5rem">
+              <div
+                v-for="(hunk, hunkIndex) in item.hunks"
+                :key="hunkIndex"
+                style="border: 1px solid var(--divide); border-radius: 8px; overflow: hidden"
+              >
+                <div
+                  v-for="(line, lineIndex) in hunk.before"
+                  :key="`b-${hunkIndex}-${lineIndex}`"
+                  class="clean-diff-line clean-diff-before"
+                >− {{ line }}</div>
+                <div v-if="hunk.beforeHidden > 0" class="small muted" style="padding: 0.25rem 0.75rem">… y {{ hunk.beforeHidden }} líneas eliminadas más</div>
+                <div
+                  v-for="(line, lineIndex) in hunk.after"
+                  :key="`a-${hunkIndex}-${lineIndex}`"
+                  class="clean-diff-line clean-diff-after"
+                >+ {{ line }}</div>
+                <div v-if="hunk.afterHidden > 0" class="small muted" style="padding: 0.25rem 0.75rem">… y {{ hunk.afterHidden }} líneas añadidas más</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #action>
+        <n-button secondary @click="cleanPreviewOpen = false">Cerrar</n-button>
+        <n-button type="primary" :loading="cleanApplying" :disabled="cleanPreviewItems.length === 0" @click="applyFromCleanPreview">
+          Aplicar a {{ cleanPreviewItems.length }} capítulos
+        </n-button>
+      </template>
+    </n-modal>
   </AppLayout>
 </template>
 
@@ -479,9 +529,10 @@ import {
   CheckmarkCircleOutline,
   CloudDownloadOutline,
   CloudDoneOutline,
+  EyeOutline,
 } from "@vicons/ionicons5";
 import { markdownToHtml } from "@/utils/markdown";
-import type { ChapterSummary } from "@/api/types";
+import type { ChapterSummary, CleanPreviewItem } from "@/api/types";
 import { useAppServices } from "@/app/services";
 import { useChapters } from "@/composables/useChapters";
 import { useNovels } from "@/composables/useNovels";
@@ -580,7 +631,14 @@ const cleanUseRegex = ref(false);
 const cleanSelectedIds = ref<Set<string>>(new Set());
 const cleanApplying = ref(false);
 const cleanFeedback = ref<string | null>(null);
-const cleanPreview = ref<{ chapterTitle: string; result: { original: string; cleaned: string; changed: boolean; removedLines: number } } | null>(null);
+const cleanAllSummaries = ref<ChapterSummary[]>([]);
+const cleanAllSummariesLoading = ref(false);
+const cleanAllSummariesLoaded = ref(false);
+const cleanAllSummariesDirty = ref(false);
+const cleanPreviewOpen = ref(false);
+const cleanPreviewLoading = ref(false);
+const cleanPreviewItems = ref<CleanPreviewItem[]>([]);
+const cleanPreviewTotal = ref(0);
 
 const exportSource = ref<"refined" | "translated" | "original">("refined");
 const exportBuilding = ref(false);
@@ -665,11 +723,26 @@ const cleanApplyOptions = [
   { value: "refined", label: "Refinado" },
   { value: "all", label: "Todos (prioriza refinado)" },
 ];
-const cleanEligibleChapters = computed(() => allSummaries.value.filter((chapter) => {
+const cleanEligibleChapters = computed(() => cleanAllSummaries.value.filter((chapter) => {
   if (cleanApplyTo.value === "all") return chapter.hasOriginalContent || chapter.hasTranslatedContent || chapter.hasRefinedContent;
   if (cleanApplyTo.value === "original") return chapter.hasOriginalContent;
   if (cleanApplyTo.value === "translated") return chapter.hasTranslatedContent;
   return chapter.hasRefinedContent;
+}));
+const cleanPreviewDisplay = computed(() => cleanPreviewItems.value.map((item) => {
+  const maxLines = 40;
+  return {
+    chapterId: item.chapterId,
+    chapterOrder: item.chapterOrder,
+    chapterTitle: item.chapterTitle,
+    removedLines: item.removedLines,
+    hunks: item.changes.map((hunk) => ({
+      before: hunk.before.length > maxLines ? hunk.before.slice(0, maxLines) : hunk.before,
+      after: hunk.after.length > maxLines ? hunk.after.slice(0, maxLines) : hunk.after,
+      beforeHidden: Math.max(0, hunk.before.length - maxLines),
+      afterHidden: Math.max(0, hunk.after.length - maxLines),
+    })),
+  };
 }));
 const exportSourceOptions = [
   { value: "refined", label: "Refinados" },
@@ -712,7 +785,11 @@ function tabNeedsFullChapters(_tab: string) {
 }
 
 function tabNeedsAllSummaries(tab: string) {
-  return tab === "clean" || tab === "translate" || tab === "jobs";
+  return tab === "translate" || tab === "jobs";
+}
+
+function tabNeedsCleanSummaries(tab: string) {
+  return tab === "clean";
 }
 
 function patchSummaryStatus(
@@ -735,6 +812,7 @@ function patchSummaryStatus(
 
 function markAllSummariesDirty() {
   allSummariesDirty.value = true;
+  cleanAllSummariesDirty.value = true;
 }
 
 function markFailedJobsDirty() {
@@ -952,6 +1030,42 @@ async function loadAllSummaries(force = false) {
   }
 }
 
+async function loadCleanAllSummaries(force = false) {
+  if (!novelId.value) {
+    cleanAllSummaries.value = [];
+    cleanAllSummariesLoaded.value = false;
+    cleanAllSummariesDirty.value = false;
+    return;
+  }
+  if (!force && cleanAllSummariesLoaded.value && !cleanAllSummariesDirty.value) {
+    return;
+  }
+  cleanAllSummariesLoading.value = true;
+  try {
+    let summaries: ChapterSummary[] = [];
+
+    // Si no hay conexión, intentar cargar desde caché
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) {
+        summaries = cached.chapters.map(chapterToSummary);
+      }
+    }
+
+    // Si hay conexión o no se encontró en caché, cargar TODOS los capítulos
+    // (no solo los elegibles para traducción) para poder limpiar los ya traducidos.
+    if (summaries.length === 0 || isOnline.value) {
+      summaries = await api.chapters.list(novelId.value);
+    }
+
+    cleanAllSummaries.value = summaries;
+    cleanAllSummariesLoaded.value = true;
+    cleanAllSummariesDirty.value = false;
+  } finally {
+    cleanAllSummariesLoading.value = false;
+  }
+}
+
 async function loadTranslateAll(force = false) {
   if (!novelId.value) return;
   if (!force && translateAllLoaded.value) return;
@@ -1011,6 +1125,9 @@ async function refreshChapterViews() {
   if (tabNeedsAllSummaries(activeTab.value)) {
     await loadAllSummaries(true);
   }
+  if (tabNeedsCleanSummaries(activeTab.value)) {
+    await loadCleanAllSummaries(true);
+  }
   if (fullChaptersLoaded.value || tabNeedsFullChapters(activeTab.value)) {
     await ensureFullChaptersLoaded(true);
   }
@@ -1022,6 +1139,9 @@ watch(activeTab, (tab) => {
   }
   if (tabNeedsAllSummaries(tab)) {
     void loadAllSummaries();
+  }
+  if (tabNeedsCleanSummaries(tab)) {
+    void loadCleanAllSummaries();
   }
   if (tab === "jobs") {
     void ensureFailedJobsLoaded();
@@ -1039,6 +1159,13 @@ watch(novelId, () => {
   allSummaries.value = [];
   allSummariesLoaded.value = false;
   allSummariesDirty.value = false;
+  cleanAllSummaries.value = [];
+  cleanAllSummariesLoaded.value = false;
+  cleanAllSummariesDirty.value = false;
+  cleanSelectedIds.value = new Set();
+  cleanPreviewOpen.value = false;
+  cleanPreviewItems.value = [];
+  cleanFeedback.value = null;
   failedJobsLoaded.value = false;
   failedJobsDirty.value = false;
   void refreshNovelAndChapterMeta();
@@ -1370,21 +1497,39 @@ async function startTranslationJob() {
   }
 }
 
-async function previewCleaning(chapter: ChapterSummary) {
+function cleanPreviewInput(chapterIds: string[]) {
+  return {
+    chapterIds,
+    mode: cleanMode.value,
+    searchText: cleanSearchText.value,
+    replaceText: cleanReplaceText.value,
+    caseSensitive: cleanCaseSensitive.value,
+    useRegex: cleanUseRegex.value,
+    applyTo: cleanApplyTo.value,
+  };
+}
+
+async function runCleanPreview(chapterIds: string[]) {
+  if (chapterIds.length === 0) return;
+  cleanPreviewLoading.value = true;
   try {
-    const res = await api.chapters.cleanPreview(novelId.value, {
-      chapterId: chapter.id,
-      mode: cleanMode.value,
-      searchText: cleanSearchText.value,
-      replaceText: cleanReplaceText.value,
-      caseSensitive: cleanCaseSensitive.value,
-      useRegex: cleanUseRegex.value,
-      applyTo: cleanApplyTo.value,
-    });
-    cleanPreview.value = { chapterTitle: res.chapterTitle, result: res };
+    const res = await api.chapters.cleanPreviewBulk(novelId.value, cleanPreviewInput(chapterIds));
+    cleanPreviewItems.value = res.items;
+    cleanPreviewTotal.value = res.total;
+    cleanPreviewOpen.value = true;
   } catch (err) {
     message.error(`Error al previsualizar: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  } finally {
+    cleanPreviewLoading.value = false;
   }
+}
+
+function previewSelectedCleaning() {
+  void runCleanPreview(Array.from(cleanSelectedIds.value));
+}
+
+function previewCleanChapter(chapter: ChapterSummary) {
+  void runCleanPreview([chapter.id]);
 }
 
 function toggleCleanChapter(id: string, checked: boolean) {
@@ -1393,22 +1538,13 @@ function toggleCleanChapter(id: string, checked: boolean) {
   cleanSelectedIds.value = next;
 }
 
-async function applyCleaningToSelected() {
+async function applyCleaning(chapterIds: string[]) {
   cleanApplying.value = true;
   cleanFeedback.value = null;
   try {
-    const chapterIds = Array.from(cleanSelectedIds.value);
-    const result = await api.chapters.clean(novelId.value, {
-      chapterIds,
-      mode: cleanMode.value,
-      searchText: cleanSearchText.value,
-      replaceText: cleanReplaceText.value,
-      caseSensitive: cleanCaseSensitive.value,
-      useRegex: cleanUseRegex.value,
-      applyTo: cleanApplyTo.value,
-    });
+    const result = await api.chapters.clean(novelId.value, cleanPreviewInput(chapterIds));
     markAllSummariesDirty();
-    await Promise.all([loadAllSummaries(true), loadChapterSummaries()]);
+    await Promise.all([loadAllSummaries(true), loadCleanAllSummaries(true), loadChapterSummaries()]);
     cleanFeedback.value = `Limpieza aplicada a ${result.modified} capítulos.`;
     const issues: string[] = [];
     if (result.skipped) issues.push(`${result.skipped} sin contenido aplicable`);
@@ -1423,6 +1559,16 @@ async function applyCleaningToSelected() {
   } finally {
     cleanApplying.value = false;
   }
+}
+
+function applyCleaningToSelected() {
+  void applyCleaning(Array.from(cleanSelectedIds.value));
+}
+
+function applyFromCleanPreview() {
+  const chapterIds = cleanPreviewItems.value.map((item) => item.chapterId);
+  cleanPreviewOpen.value = false;
+  void applyCleaning(chapterIds);
 }
 
 async function buildAndDownloadEpub() {
@@ -1713,5 +1859,24 @@ function formatDate(value: string) {
   .novel-description {
     font-size: 0.8125rem;
   }
+}
+
+.clean-diff-line {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  padding: 0.125rem 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.clean-diff-before {
+  color: color-mix(in oklab, var(--danger) 82%, var(--text-primary));
+  background: color-mix(in oklab, var(--danger) 9%, transparent);
+}
+
+.clean-diff-after {
+  color: color-mix(in oklab, var(--success) 82%, var(--text-primary));
+  background: color-mix(in oklab, var(--success) 9%, transparent);
 }
 </style>

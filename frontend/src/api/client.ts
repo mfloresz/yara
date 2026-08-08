@@ -8,6 +8,7 @@ import type {
   BatchTranslateResponse,
   BatchTranslateSelection,
   BatchTranslateStartResponse,
+  CleanPreviewBulkResponse,
   CleanPreviewResponse,
   EpubPreviewResult,
   GeneralPromptKey,
@@ -492,6 +493,23 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       ) {
         return http.post<CleanPreviewResponse>(
           `/api/db/novels/${novelId}/chapters/clean-preview`,
+          input,
+        );
+      },
+      cleanPreviewBulk(
+        novelId: string,
+        input: {
+          chapterIds: string[];
+          mode: string;
+          searchText: string;
+          replaceText?: string;
+          caseSensitive: boolean;
+          useRegex: boolean;
+          applyTo: string;
+        },
+      ) {
+        return http.post<CleanPreviewBulkResponse>(
+          `/api/db/novels/${novelId}/chapters/clean-preview-bulk`,
           input,
         );
       },

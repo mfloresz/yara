@@ -164,3 +164,69 @@ func TestApplyClean_NormalizeLineEndings(t *testing.T) {
 		t.Errorf("got %q, want %q", res.Cleaned, want)
 	}
 }
+
+func TestDiffLines_SearchReplace(t *testing.T) {
+	original := "foo bar\nbaz foo"
+	cleaned := "qux bar\nbaz qux"
+	hunks := diffLines(original, cleaned)
+	if len(hunks) != 1 {
+		t.Fatalf("expected 1 hunk, got %d (%+v)", len(hunks), hunks)
+	}
+	h := hunks[0]
+	if len(h.Before) != 2 || h.Before[0] != "foo bar" || h.Before[1] != "baz foo" {
+		t.Errorf("unexpected before lines: %+v", h.Before)
+	}
+	if len(h.After) != 2 || h.After[0] != "qux bar" || h.After[1] != "baz qux" {
+		t.Errorf("unexpected after lines: %+v", h.After)
+	}
+}
+
+func TestDiffLines_RemoveLine(t *testing.T) {
+	original := "keep\nremove this\nkeep too"
+	cleaned := "keep\nkeep too"
+	hunks := diffLines(original, cleaned)
+	if len(hunks) != 1 {
+		t.Fatalf("expected 1 hunk, got %d (%+v)", len(hunks), hunks)
+	}
+	if len(hunks[0].Before) != 1 || hunks[0].Before[0] != "remove this" {
+		t.Errorf("unexpected before lines: %+v", hunks[0].Before)
+	}
+	if len(hunks[0].After) != 0 {
+		t.Errorf("expected no after lines, got %+v", hunks[0].After)
+	}
+}
+
+func TestDiffLines_RemoveAfter(t *testing.T) {
+	original := "line one\nline two\nSTOP\nline four"
+	cleaned := "line one\nline two"
+	hunks := diffLines(original, cleaned)
+	if len(hunks) != 1 {
+		t.Fatalf("expected 1 hunk, got %d (%+v)", len(hunks), hunks)
+	}
+	want := []string{"STOP", "line four"}
+	if len(hunks[0].Before) != len(want) {
+		t.Fatalf("unexpected before lines: %+v", hunks[0].Before)
+	}
+	for i, line := range want {
+		if hunks[0].Before[i] != line {
+			t.Errorf("before[%d]=%q, want %q", i, hunks[0].Before[i], line)
+		}
+	}
+	if len(hunks[0].After) != 0 {
+		t.Errorf("expected no after lines, got %+v", hunks[0].After)
+	}
+}
+
+func TestDiffLines_NoChange(t *testing.T) {
+	hunks := diffLines("same\nlines", "same\nlines")
+	if len(hunks) != 0 {
+		t.Errorf("expected no hunks, got %+v", hunks)
+	}
+}
+
+func TestDiffLines_IgnoresLineEndingNormalization(t *testing.T) {
+	hunks := diffLines("a\r\nb", "a\nb")
+	if len(hunks) != 0 {
+		t.Errorf("expected no hunks for CRLF-only differences, got %+v", hunks)
+	}
+}

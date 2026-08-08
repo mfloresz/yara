@@ -792,6 +792,89 @@ func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
 	}
 }
 
+func TestCleanPreviewBulkReturnsOnlyChangedChapters(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-preview@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Vista Previa", "es", "en")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo Uno",
+		"originalContent": "línea uno\nlínea dos\nBORRAR\nlínea tres",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var ch1 chapterPayload
+	decodeResponse(t, resp, &ch1)
+
+	resp = doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    2,
+		"title":           "Capítulo Dos",
+		"originalContent": "sin coincidencia alguna",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var ch2 chapterPayload
+	decodeResponse(t, resp, &ch2)
+
+	previewResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, map[string]any{
+		"chapterIds": []string{ch1.ID, ch2.ID},
+		"mode":       "remove_after",
+		"searchText": "BORRAR",
+		"applyTo":    "original",
+	})
+	assertStatus(t, previewResp, http.StatusOK)
+
+	var body struct {
+		Items   []CleanPreviewBulkItem `json:"items"`
+		Total   int                    `json:"total"`
+		Changed int                    `json:"changed"`
+	}
+	decodeResponse(t, previewResp, &body)
+
+	if body.Total != 2 {
+		t.Fatalf("expected total=2, got %d", body.Total)
+	}
+	if body.Changed != 1 {
+		t.Fatalf("expected changed=1, got %d", body.Changed)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	item := body.Items[0]
+	if item.ChapterID != ch1.ID {
+		t.Fatalf("expected chapter %q, got %q", ch1.ID, item.ChapterID)
+	}
+	if item.ChapterTitle != "Capítulo Uno" {
+		t.Fatalf("expected chapter title %q, got %q", "Capítulo Uno", item.ChapterTitle)
+	}
+	if item.Cleaned != "línea uno\nlínea dos" {
+		t.Fatalf("expected cleaned %q, got %q", "línea uno\nlínea dos", item.Cleaned)
+	}
+	if !item.Changed {
+		t.Fatal("expected changed=true on the affected chapter")
+	}
+	if len(item.Changes) == 0 {
+		t.Fatal("expected changes to be present on the affected chapter")
+	}
+	foundRemoval := false
+	for _, hunk := range item.Changes {
+		if len(hunk.Before) > 0 && len(hunk.After) == 0 {
+			foundRemoval = true
+		}
+	}
+	if !foundRemoval {
+		t.Fatalf("expected at least one pure-removal hunk, got %+v", item.Changes)
+	}
+
+	// Invalid mode is rejected.
+	badResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, map[string]any{
+		"chapterIds": []string{ch1.ID},
+		"mode":       "nope",
+		"applyTo":    "original",
+	})
+	assertStatus(t, badResp, http.StatusBadRequest)
+}
+
 func createChapter(t *testing.T, handler http.Handler, token, novelID string, order int) chapterPayload {
 	t.Helper()
 	resp := doJSONRequest(t, handler, http.MethodPost, "/api/db/novels/"+novelID+"/chapters", token, map[string]any{

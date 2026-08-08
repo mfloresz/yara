@@ -198,10 +198,33 @@ export type ChapterStats = {
 
 export type CleanPreviewResponse = {
   chapterTitle: string;
+  changes: CleanDiffHunk[];
   original: string;
   cleaned: string;
   changed: boolean;
   removedLines: number;
+};
+
+export type CleanDiffHunk = {
+  before: string[];
+  after: string[];
+};
+
+export type CleanPreviewItem = {
+  chapterId: string;
+  chapterOrder: number;
+  chapterTitle: string;
+  changes: CleanDiffHunk[];
+  original: string;
+  cleaned: string;
+  changed: boolean;
+  removedLines: number;
+};
+
+export type CleanPreviewBulkResponse = {
+  items: CleanPreviewItem[];
+  total: number;
+  changed: number;
 };
 
 export type TranslationJobPatch = Partial<TranslationJob>;
