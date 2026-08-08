@@ -190,9 +190,21 @@ async function cancel(job: TranslationJob) {
 }
 
 .job-title {
+  display: block;
+  width: 100%;
+  min-width: 0;
   padding: 0;
+  overflow: hidden;
   font-weight: 600;
   text-align: left;
+}
+
+.job-title :deep(.n-button__content),
+.job-title :deep(.n-ellipsis) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .failed-chapters {
