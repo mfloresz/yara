@@ -169,6 +169,9 @@ func TestOpenRouterReasoningVariantWireFormat(t *testing.T) {
 		if !ok || reasoning["effort"] != "medium" {
 			t.Fatalf("unexpected reasoning options: %v", body["reasoning"])
 		}
+		if tier, ok := body["service_tier"].(string); !ok || tier != "flex" {
+			t.Fatalf("luna models should ride the flex tier, got: %v", body["service_tier"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
@@ -178,6 +181,34 @@ func TestOpenRouterReasoningVariantWireFormat(t *testing.T) {
 		APIKey:  "test-key",
 		BaseURL: srv.URL,
 		Model:   "openai/gpt-5.6-luna (reasoning: medium)",
+		ProviderOptions: map[string]any{
+			"useResponsesAPI": false,
+		},
+		OpenRouter: true,
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+}
+
+func TestOpenRouterNonLunaModelOmitsServiceTier(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if _, ok := body["service_tier"]; ok {
+			t.Fatalf("service_tier must not be set for non-luna models: %v", body["service_tier"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Model:   "deepseek/deepseek-v4-flash-0731",
 		ProviderOptions: map[string]any{
 			"useResponsesAPI": false,
 		},

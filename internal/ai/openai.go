@@ -54,7 +54,7 @@ func (p *OpenAIProvider) modelID() string {
 }
 
 func (p *OpenAIProvider) providerOptions() map[string]any {
-	opts := make(map[string]any, len(p.ProviderOptions)+1)
+	opts := make(map[string]any, len(p.ProviderOptions)+2)
 	for k, v := range p.ProviderOptions {
 		opts[k] = v
 	}
@@ -64,6 +64,12 @@ func (p *OpenAIProvider) providerOptions() map[string]any {
 		if effort == "none" || effort == "low" || effort == "medium" {
 			opts["reasoning"] = map[string]any{"effort": effort}
 		}
+	}
+	// OpenRouter serves luna (OpenAI gpt-5.6) on the flex tier for a ~50%
+	// cost reduction at higher latency. Flex is opt-in per request and never
+	// falls back to a standard-tier endpoint on capacity errors.
+	if p.OpenRouter && strings.HasPrefix(p.Model, "openai/gpt-5.6-luna") {
+		opts["serviceTier"] = "flex"
 	}
 	return opts
 }
