@@ -39,7 +39,12 @@ func registerJobRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server)
 				slog.Error("mark job chapters processing", "jobId", job.ID, "error", err)
 			}
 		}
-		s.enqueueJob(job.ID)
+		if !s.enqueueJob(job.ID) {
+			if err := s.Store.ReconcileProcessingChaptersForJob(job.ID); err != nil {
+				slog.Warn("reconcile chapters after queue rejection", "jobId", job.ID, "error", err)
+			}
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
 		return e.JSON(http.StatusCreated, jobRecord(*job))
 	})
 	api.GET("/db/novels/{novelId}/translation-jobs", func(e *core.RequestEvent) error {
@@ -78,12 +83,32 @@ func registerJobRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server)
 			return e.BadRequestError("invalid body", err)
 		}
 		jobId := e.Request.PathValue("jobId")
+		status, hasStatus := patch["status"].(string)
+		if hasStatus {
+			job, err := s.Store.GetOwnedJob(e.Auth.Id, jobId)
+			if err != nil {
+				return notFoundOrForbidden(e, err)
+			}
+			// Cancelling is always allowed; re-queueing is a retry and must not
+			// race an in-flight execution, which would run the job twice.
+			switch status {
+			case "cancelled":
+			case "pending":
+				if job.Status == "pending" || job.Status == "running" {
+					return e.Error(http.StatusConflict, "job is already active and cannot be re-queued", nil)
+				}
+			default:
+				return e.BadRequestError("invalid job status", nil)
+			}
+		}
 		if err := s.Store.UpdateJobForUser(e.Auth.Id, jobId, patch); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if status, _ := patch["status"].(string); status == "pending" {
-			s.enqueueJob(jobId)
-		} else if status == "cancelled" {
+		if hasStatus && status == "pending" {
+			if !s.enqueueJob(jobId) {
+				return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+			}
+		} else if hasStatus && status == "cancelled" {
 			s.cancelJob(jobId)
 			if err := s.Store.ReconcileProcessingChaptersForJob(jobId); err != nil {
 				slog.Error("reconcile cancelled job chapters", "jobId", jobId, "error", err)

@@ -21,12 +21,16 @@ const chapterDownloadMaxRetries = 3
 // waits n * baseDelay before retrying.
 const chapterDownloadRetryBaseDelay = 5 * time.Second
 
+// jobQueueFullMessage is persisted as the job errorMessage and returned to the
+// client when a job cannot be enqueued because the worker queue is saturated.
+const jobQueueFullMessage = "Server is busy processing other jobs. Please wait a few minutes and try again."
+
 func (s *Server) startJobWorker() {
 	s.downloadQueue = make(chan string, 128)
 	s.translateQueue = make(chan string, 128)
 
-	go s.downloadWorkerLoop()
-	go s.translateWorkerLoop()
+	go s.workerLoop(s.downloadQueue)
+	go s.workerLoop(s.translateQueue)
 
 	jobs, err := s.Store.ListRunnableJobs()
 	if err != nil {
@@ -38,9 +42,9 @@ func (s *Server) startJobWorker() {
 	}
 }
 
-func (s *Server) enqueueJob(jobID string) {
+func (s *Server) enqueueJob(jobID string) bool {
 	if jobID == "" {
-		return
+		return false
 	}
 	s.queueMu.Lock()
 	if s.queuedJobs == nil {
@@ -48,7 +52,7 @@ func (s *Server) enqueueJob(jobID string) {
 	}
 	if _, exists := s.queuedJobs[jobID]; exists {
 		s.queueMu.Unlock()
-		return
+		return true
 	}
 	s.queuedJobs[jobID] = struct{}{}
 	s.queueMu.Unlock()
@@ -56,7 +60,10 @@ func (s *Server) enqueueJob(jobID string) {
 	job, err := s.Store.GetJob(jobID)
 	if err != nil {
 		slog.Error("enqueue job: get job", "jobId", jobID, "error", err)
-		return
+		s.queueMu.Lock()
+		delete(s.queuedJobs, jobID)
+		s.queueMu.Unlock()
+		return false
 	}
 
 	var queue chan string
@@ -69,14 +76,14 @@ func (s *Server) enqueueJob(jobID string) {
 
 	select {
 	case queue <- jobID:
+		return true
 	default:
 		s.queueMu.Lock()
 		delete(s.queuedJobs, jobID)
 		s.queueMu.Unlock()
-		msg := "Server is busy processing other jobs. Please wait a few minutes and try again."
 		if ue := s.Store.UpdateJob(jobID, map[string]any{
 			"status":       "failed",
-			"errorMessage": msg,
+			"errorMessage": jobQueueFullMessage,
 		}); ue != nil {
 			slog.Error("update job status on queue saturation", "jobId", jobID, "error", ue)
 		}
@@ -84,6 +91,7 @@ func (s *Server) enqueueJob(jobID string) {
 			"jobId", jobID,
 			"queueLen", len(queue),
 			"queueCap", cap(queue))
+		return false
 	}
 }
 
@@ -96,14 +104,6 @@ func (s *Server) workerLoop(queue chan string) {
 			slog.Error("job failed", "jobId", jobID, "error", err)
 		}
 	}
-}
-
-func (s *Server) downloadWorkerLoop() {
-	s.workerLoop(s.downloadQueue)
-}
-
-func (s *Server) translateWorkerLoop() {
-	s.workerLoop(s.translateQueue)
 }
 
 func (s *Server) processJob(jobID string) error {
@@ -121,6 +121,18 @@ func (s *Server) processJob(jobID string) error {
 		cancel()
 		s.unregisterJobCancel(jobID)
 	}()
+
+	// A cancellation request can land between the status check above and the
+	// registration of the cancel func. Re-read the job after registering so a
+	// job cancelled in that window is not processed: from now on cancelJob
+	// always finds a registered func and cancels runCtx.
+	job, err = s.Store.GetJob(jobID)
+	if err != nil {
+		return fmt.Errorf("recheck job after cancel registration: %w", err)
+	}
+	if job.Status == "cancelled" || job.Status == "done" || job.Status == "failed" {
+		return nil
+	}
 
 	if job.Operation == "download" {
 		return s.processDownloadJob(runCtx, job)
@@ -247,6 +259,22 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			slog.Error("update job status on invalid options", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("parse download options: %w", err)
+	}
+	if opts.ReDownload {
+		activeJobs, err := s.Store.ListActiveNovelJobs(job.NovelID)
+		if err != nil {
+			return fmt.Errorf("check active novel jobs: %w", err)
+		}
+		for _, activeJob := range activeJobs {
+			if activeJob.ID == job.ID {
+				continue
+			}
+			message := "No se puede re-descargar: ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo."
+			if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": message}); ue != nil {
+				slog.Error("update redownload job after active job conflict", "jobId", job.ID, "error", ue)
+			}
+			return fmt.Errorf("redownload blocked by active job %s", activeJob.ID)
+		}
 	}
 	dl := s.DownloaderFactory(job.OwnerID)
 	if len(opts.Chapters) == 0 {

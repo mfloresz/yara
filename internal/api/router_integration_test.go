@@ -421,6 +421,174 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 	}
 }
 
+func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+
+	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/translation-jobs", alice.Token, map[string]any{
+		"chapterIds": []string{chapter.ID},
+		"operation":  "translate",
+		"options":    map[string]any{},
+	})
+	assertStatus(t, jobResp, http.StatusServiceUnavailable)
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected exactly one job, got %d", len(jobs))
+	}
+	if jobs[0].Status != "failed" {
+		t.Fatalf("expected rejected job to be failed, got %q", jobs[0].Status)
+	}
+	if jobs[0].ErrorMessage != jobQueueFullMessage {
+		t.Fatalf("expected queue-full error message, got %q", jobs[0].ErrorMessage)
+	}
+
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	var updatedChapter chapterPayload
+	decodeResponse(t, chapterResp, &updatedChapter)
+	if updatedChapter.Status != "pending" {
+		t.Fatalf("expected rejected job chapter to reset to pending, got %q", updatedChapter.Status)
+	}
+}
+
+func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-novel-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
+	first := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	second := createChapter(t, env.handler, alice.Token, novel.ID, 2)
+
+	// No chapterIds: the job covers the whole novel, so the handler marks every
+	// chapter processing before the queue rejects it.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/translation-jobs", alice.Token, map[string]any{
+		"operation": "translate",
+		"options":   map[string]any{},
+	})
+	assertStatus(t, resp, http.StatusServiceUnavailable)
+
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != "failed" {
+		t.Fatalf("expected one failed job, got %+v", jobs)
+	}
+
+	for _, id := range []string{first.ID, second.ID} {
+		chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+id, alice.Token, nil)
+		assertStatus(t, chapterResp, http.StatusOK)
+		var updated chapterPayload
+		decodeResponse(t, chapterResp, &updated)
+		if updated.Status != "pending" {
+			t.Fatalf("expected chapter %s to reset to pending, got %q", id, updated.Status)
+		}
+	}
+}
+
+func TestJobPatchStatusTransitions(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-transitions@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Transiciones", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	ids, _ := json.Marshal([]string{chapter.ID})
+
+	newJob := func(status string) string {
+		t.Helper()
+		job := &store.Job{
+			NovelID:       novel.ID,
+			Status:        status,
+			Operation:     "translate",
+			ChapterIDs:    string(ids),
+			TotalChapters: 1,
+		}
+		if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+			t.Fatalf("create job: %v", err)
+		}
+		return job.ID
+	}
+	patchStatus := func(jobID string, status string) *httptest.ResponseRecorder {
+		t.Helper()
+		return doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/translation-jobs/"+jobID, alice.Token, map[string]any{
+			"status": status,
+		})
+	}
+
+	pendingID := newJob("pending")
+	assertStatus(t, patchStatus(pendingID, "pending"), http.StatusConflict)
+
+	runningID := newJob("running")
+	assertStatus(t, patchStatus(runningID, "pending"), http.StatusConflict)
+
+	failedID := newJob("failed")
+	assertStatus(t, patchStatus(failedID, "bogus"), http.StatusBadRequest)
+	assertStatus(t, patchStatus(failedID, "pending"), http.StatusOK)
+
+	assertStatus(t, patchStatus(runningID, "cancelled"), http.StatusOK)
+}
+
+func TestBatchTranslateQueueRejectionMarkedInResponse(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-batch-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Lote", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/batch-translate", alice.Token, map[string]any{
+		"selections": []map[string]any{
+			{"novelId": novel.ID, "chapterIds": []string{chapter.ID}},
+		},
+	})
+	assertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Jobs []struct {
+			NovelID       string `json:"novelId"`
+			JobID         string `json:"jobId"`
+			EnqueueFailed bool   `json:"enqueueFailed"`
+		} `json:"jobs"`
+		TotalPending int `json:"totalPending"`
+	}
+	decodeResponse(t, resp, &result)
+	if len(result.Jobs) != 1 {
+		t.Fatalf("expected one job entry, got %+v", result.Jobs)
+	}
+	if !result.Jobs[0].EnqueueFailed {
+		t.Fatalf("expected enqueueFailed on rejected job entry: %+v", result.Jobs[0])
+	}
+	if result.TotalPending != 0 {
+		t.Fatalf("expected totalPending 0 for rejected job, got %d", result.TotalPending)
+	}
+
+	storedJob, err := env.store.GetJob(result.Jobs[0].JobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if storedJob.Status != "failed" {
+		t.Fatalf("expected rejected job to be failed, got %q", storedJob.Status)
+	}
+
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	var updated chapterPayload
+	decodeResponse(t, chapterResp, &updated)
+	if updated.Status != "pending" {
+		t.Fatalf("expected rejected batch chapter to reset to pending, got %q", updated.Status)
+	}
+}
+
 func TestJobPatchRequiresOwner(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
@@ -429,18 +597,19 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
-	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/translation-jobs", alice.Token, map[string]any{
-		"chapterIds": []string{chapter.ID},
-		"operation":  "translate",
-		"options": map[string]any{
-			"provider": "venice",
-			"model":    "deepseek-v4-flash",
-		},
-	})
-	assertStatus(t, jobResp, http.StatusCreated)
-
-	var job jobPayload
-	decodeResponse(t, jobResp, &job)
+	// Create the job directly: a job created through the HTTP endpoint would be
+	// picked up by the live translation worker and race the PATCH assertions.
+	ids, _ := json.Marshal([]string{chapter.ID})
+	job := &store.Job{
+		NovelID:       novel.ID,
+		Status:        "pending",
+		Operation:     "translate",
+		ChapterIDs:    string(ids),
+		TotalChapters: 1,
+	}
+	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
 
 	forbiddenResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/translation-jobs/"+job.ID, bob.Token, map[string]any{
 		"status": "cancelled",
@@ -458,9 +627,10 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 	})
 	assertStatus(t, okResp, http.StatusOK)
 
-	decodeResponse(t, okResp, &job)
-	if job.Status != "cancelled" {
-		t.Fatalf("expected job status cancelled, got %q", job.Status)
+	var patched jobPayload
+	decodeResponse(t, okResp, &patched)
+	if patched.Status != "cancelled" {
+		t.Fatalf("expected job status cancelled, got %q", patched.Status)
 	}
 
 	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)

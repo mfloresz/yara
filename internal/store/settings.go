@@ -306,6 +306,7 @@ type BatchUpdateJobResult struct {
 	NovelID         string `json:"novelId"`
 	JobID           string `json:"jobId"`
 	PendingChapters int    `json:"pendingChapters"`
+	EnqueueFailed   bool   `json:"enqueueFailed"`
 }
 
 type BatchUpdateResponse struct {
@@ -340,6 +341,7 @@ type BatchTranslateJobResult struct {
 	NovelID         string `json:"novelId"`
 	JobID           string `json:"jobId"`
 	PendingChapters int    `json:"pendingChapters"`
+	EnqueueFailed   bool   `json:"enqueueFailed"`
 }
 
 type BatchTranslateStartResponse struct {

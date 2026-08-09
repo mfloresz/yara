@@ -409,7 +409,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
 				slog.Error("failed to create download job", "novel", result.Novel.ID, "error", err)
 			} else {
-				s.enqueueJob(job.ID)
+				if !s.enqueueJob(job.ID) {
+					return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+				}
 				downloadJobID = job.ID
 			}
 		}
@@ -513,6 +515,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
+		if body.StartChapter > 0 && body.EndChapter > 0 && body.StartChapter > body.EndChapter {
+			return e.BadRequestError("invalid chapter range", nil)
+		}
 		novelID := e.Request.PathValue("id")
 		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
 		if err != nil {
@@ -611,7 +616,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
 			return e.InternalServerError("failed to create download job", err)
 		}
-		s.enqueueJob(job.ID)
+		if !s.enqueueJob(job.ID) {
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
 		return e.JSON(http.StatusOK, map[string]any{
 			"chaptersAdded":   0,
 			"chapters":        []map[string]any{},
@@ -629,6 +636,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
+		}
+		if body.StartChapter > 0 && body.EndChapter > 0 && body.StartChapter > body.EndChapter {
+			return e.BadRequestError("invalid chapter range", nil)
 		}
 		novelID := e.Request.PathValue("id")
 		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
@@ -713,17 +723,18 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			})
 		}
 
-		// A re-download rewrites original_content of existing chapters. Refuse
-		// to start while a translate/refine job is still working on any of
-		// them, otherwise the translation could be saved on top of a different
-		// original. Jobs without explicit chapter ids cover the whole novel.
-		activeJobs, err := s.Store.ListActiveTranslationJobs(novelID)
+		// Serialize check + create + enqueue per novel so two concurrent
+		// redownload requests cannot both pass the active-jobs check.
+		unlockNovel := s.lockNovel(novelID)
+		defer unlockNovel()
+
+		activeJobs, err := s.Store.ListActiveNovelJobs(novelID)
 		if err != nil {
 			return e.InternalServerError("failed to check active jobs", err)
 		}
-		if conflicts := redownloadConflictIDs(plan.chapters, activeJobs); len(conflicts) > 0 {
-			return e.Error(http.StatusConflict, fmt.Sprintf(
-				"No se puede re-descargar: %d capítulo(s) tienen traducción o refinamiento en curso. Espera a que terminen e inténtalo de nuevo.", len(conflicts)), nil)
+		if len(activeJobs) > 0 {
+			return e.Error(http.StatusConflict,
+				"No se puede re-descargar: ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo.", nil)
 		}
 
 		optionsJSON, _ := json.Marshal(map[string]any{
@@ -745,7 +756,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
 			return e.InternalServerError("failed to create download job", err)
 		}
-		s.enqueueJob(job.ID)
+		if !s.enqueueJob(job.ID) {
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
 		return e.JSON(http.StatusOK, map[string]any{
 			"pendingChapters": len(plan.chapters),
 			"downloadJobId":   job.ID,
@@ -895,6 +908,11 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if len(body.Selections) == 0 {
 			return e.BadRequestError("selections required", nil)
 		}
+		for _, sel := range body.Selections {
+			if sel.StartChapter > 0 && sel.EndChapter > 0 && sel.StartChapter > sel.EndChapter {
+				return e.BadRequestError("invalid chapter range", nil)
+			}
+		}
 		jobs := make([]store.BatchUpdateJobResult, 0, len(body.Selections))
 		totalPending := 0
 		for _, sel := range body.Selections {
@@ -951,13 +969,16 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
 				continue
 			}
-			s.enqueueJob(job.ID)
+			enqueueFailed := !s.enqueueJob(job.ID)
 			jobs = append(jobs, store.BatchUpdateJobResult{
 				NovelID:         sel.NovelID,
 				JobID:           job.ID,
 				PendingChapters: len(chaptersToDownload),
+				EnqueueFailed:   enqueueFailed,
 			})
-			totalPending += len(chaptersToDownload)
+			if !enqueueFailed {
+				totalPending += len(chaptersToDownload)
+			}
 		}
 		return e.JSON(http.StatusOK, store.BatchUpdateResponse{
 			Jobs: jobs, TotalPending: totalPending,
@@ -1045,13 +1066,21 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 					slog.Warn("mark chapters processing for batch translate", "novel", sel.NovelID, "jobId", job.ID, "error", err)
 				}
 			}
-			s.enqueueJob(job.ID)
+			enqueueFailed := !s.enqueueJob(job.ID)
+			if enqueueFailed {
+				if err := s.Store.ReconcileProcessingChaptersForJob(job.ID); err != nil {
+					slog.Warn("reconcile chapters after batch queue rejection", "jobId", job.ID, "error", err)
+				}
+			}
 			jobs = append(jobs, store.BatchTranslateJobResult{
 				NovelID:         sel.NovelID,
 				JobID:           job.ID,
 				PendingChapters: len(chapterIDs),
+				EnqueueFailed:   enqueueFailed,
 			})
-			totalPending += len(chapterIDs)
+			if !enqueueFailed {
+				totalPending += len(chapterIDs)
+			}
 			_ = novel
 		}
 		return e.JSON(http.StatusOK, store.BatchTranslateStartResponse{
@@ -1068,10 +1097,11 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if len(body.NovelIDs) == 0 {
 			return e.BadRequestError("novelIds required", nil)
 		}
-		type checkResult struct {
-			NovelID string `json:"novelId"`
-			JobID   string `json:"jobId"`
-		}
+	type checkResult struct {
+		NovelID string `json:"novelId"`
+		JobID   string `json:"jobId"`
+		Error   string `json:"error,omitempty"`
+	}
 		results := make([]checkResult, 0, len(body.NovelIDs))
 		for _, novelID := range body.NovelIDs {
 			novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
@@ -1091,8 +1121,11 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
 				continue
 			}
-			s.enqueueJob(job.ID)
-			results = append(results, checkResult{NovelID: novelID, JobID: job.ID})
+			result := checkResult{NovelID: novelID, JobID: job.ID}
+			if !s.enqueueJob(job.ID) {
+				result.Error = jobQueueFullMessage
+			}
+			results = append(results, result)
 		}
 		return e.JSON(http.StatusOK, map[string]any{"jobs": results})
 	})
@@ -1260,34 +1293,4 @@ func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store
 		}
 	}
 	return plan
-}
-
-// redownloadConflictIDs returns the plan chapter ids that have an active
-// translate/refine job. A job without explicit chapter ids is treated as
-// covering every chapter of the novel.
-func redownloadConflictIDs(chapters []store.DownloadChapterInfo, activeJobs []store.Job) map[string]bool {
-	inPlan := make(map[string]bool, len(chapters))
-	for _, ch := range chapters {
-		inPlan[ch.ChapterID] = true
-	}
-	conflicts := make(map[string]bool)
-	for _, job := range activeJobs {
-		raw := strings.TrimSpace(job.ChapterIDs)
-		if raw == "" || raw == "[]" {
-			for id := range inPlan {
-				conflicts[id] = true
-			}
-			continue
-		}
-		var ids []string
-		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-			continue
-		}
-		for _, id := range ids {
-			if inPlan[id] {
-				conflicts[id] = true
-			}
-		}
-	}
-	return conflicts
 }

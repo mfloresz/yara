@@ -93,11 +93,13 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.InternalServerError("failed to create job", err)
 		}
 
-		s.enqueueJob(job.ID)
+		if !s.enqueueJob(job.ID) {
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
 
 		return e.JSON(http.StatusOK, map[string]any{
-			"jobId": job.ID,
-			"status": job.Status,
+			"jobId":     job.ID,
+			"status":    job.Status,
 			"operation": job.Operation,
 		})
 	})

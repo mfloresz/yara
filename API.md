@@ -5,7 +5,7 @@
 - **Base URL:** `http://<host>:5176`
 - **Content-Type general:** `application/json`
 - **Autenticación:** `Authorization: Bearer <token>` (obtenido via `/api/auth/login` o `/api/auth/register`)
-- **Errores comunes:** `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `500 Internal Server Error`
+- **Errores comunes:** `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict`, `500 Internal Server Error`, `503 Service Unavailable`
 
 ---
 
@@ -990,10 +990,53 @@ Content-Type: application/json
 ```json
 {
   "chapterTitle": "1.00 - Welcome to Inn",
+  "changes": [
+    { "before": ["línea 5 duplicada"], "after": [] },
+    { "before": [], "after": ["línea insertada"] }
+  ],
   "original": "Texto original...",
   "cleaned": "Texto limpio...",
   "changed": true,
   "removedLines": 5
+}
+```
+
+- `changes` — diff a nivel de línea entre `original` y `cleaned` (hunks de líneas eliminadas en `before` y añadidas en `after`).
+
+#### `POST /api/db/novels/{novelId}/chapters/clean-preview-bulk`
+
+Vista previa de limpieza para múltiples capítulos a la vez. Mismo cuerpo que `clean` (con `chapterIds` en lugar de `chapterId`); solo se incluyen en `items` los capítulos donde la limpieza produciría cambios.
+
+```
+POST /api/db/novels/novel-id-abc/chapters/clean-preview-bulk
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "chapterIds": ["chapter-id-1", "chapter-id-2"],
+  "mode": "remove_duplicates",
+  "applyTo": "original"
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "chapterId": "chapter-id-1",
+      "chapterOrder": 1,
+      "chapterTitle": "1.00 - Welcome to Inn",
+      "changes": [ { "before": ["..."], "after": [] } ],
+      "original": "Texto original...",
+      "cleaned": "Texto limpio...",
+      "changed": true,
+      "removedLines": 5
+    }
+  ],
+  "total": 2,
+  "changed": 1
 }
 ```
 
@@ -1030,6 +1073,8 @@ Content-Type: application/json
 ## 9. Jobs
 
 Los jobs son trabajos asíncronos (traducción, descarga, generación de glosario).
+
+> **Cola saturada:** si las colas del worker (cap. 128) están llenas, los endpoints que crean o reencolan jobs responden `503 Service Unavailable` con el mensaje `Server is busy processing other jobs. Please wait a few minutes and try again.`. Si el job ya fue persistido, queda con estado `failed` y ese mensaje como `errorMessage`.
 
 ### `GET /api/db/translation-jobs/active/status`
 
@@ -1120,7 +1165,8 @@ Content-Type: application/json
 
 **operation:** `translate`, `refine`, `download`, `check`, `generate-glossary`
 
-**Response `201 Created`** — job record.
+**Response `201 Created`** — job record.  
+Si la cola está saturada: `503 Service Unavailable` (los capítulos marcados `processing` se reconcilian a `pending`).
 
 ### `PATCH /api/db/translation-jobs/{jobId}`
 
@@ -1136,8 +1182,11 @@ Content-Type: application/json
 }
 ```
 
-**Status:** `pending`, `running`, `done`, `failed`, `cancelled`.  
-Si se setea a `pending`, se reencola. Si se setea a `cancelled`, se cancela y se reconcilian los capítulos.
+**Status:** `pending`, `running`, `done`, `failed`, `cancelled`.
+
+- `cancelled` — se cancela y se reconcilian los capítulos (`processing` → `pending`).
+- `pending` — reencola el job como reintento, pero solo si no está activo: reencolar un job `pending`/`running` responde `409 Conflict` (`job is already active and cannot be re-queued`). Si la cola está saturada al reencolar: `503 Service Unavailable`.
+- Cualquier otro valor de `status` responde `400 Bad Request`.
 
 **Response `200 OK`** — job record actualizado.
 
@@ -1364,6 +1413,60 @@ Content-Type: application/json
 }
 ```
 
+**Response `400 Bad Request`** si `startChapter > endChapter` ("invalid chapter range").  
+Si la cola está saturada: `503 Service Unavailable`.
+
+#### `POST /api/db/novels/{id}/redownload-from-url`
+
+Re-descarga capítulos desde la URL fuente **sobrescribiendo el `originalContent`** y conservando las traducciones existentes. Flujo de dos pasos con confirmación: la primera llamada devuelve una vista previa y, si los títulos originales ya no coinciden con los almacenados, la petición debe repetirse con `confirm: true` (reutiliza la lista cacheada, no re-scrapea).
+
+```
+POST /api/db/novels/novel-id-abc/redownload-from-url
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "startChapter": 1,
+  "endChapter": 142,
+  "confirm": false
+}
+```
+
+**Response `200 OK`** (preview sin desajustes o request confirmado)
+
+```json
+{
+  "pendingChapters": 42,
+  "downloadJobId": "job-id-abc",
+  "message": "Re-descarga iniciada. 42 capítulos se actualizarán en segundo plano conservando sus traducciones."
+}
+```
+
+**Response `200 OK`** (requiere confirmación)
+
+```json
+{
+  "pendingChapters": 42,
+  "titleMismatches": 3,
+  "needsConfirmation": true,
+  "chapters": [ ... ]
+}
+```
+
+**Response `200 OK`** (sin capítulos para re-descargar)
+
+```json
+{
+  "pendingChapters": 0,
+  "message": "No se encontraron capítulos para re-descargar. Verifica que la novela tenga capítulos o que el rango sea válido."
+}
+```
+
+**Errores:**
+- `400 Bad Request` si `startChapter > endChapter` ("invalid chapter range").
+- `409 Conflict` si existe cualquier job activo (`pending`/`running`) para la novela — ya no solo los que tocan los mismos capítulos: `No se puede re-descargar: ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo.` (la secuencia check + creación + encolado se serializa por novela para evitar carreras).
+- `503 Service Unavailable` si la cola está saturada.
+
 ### Batch Operations
 
 #### `GET /api/db/novels/check-batch-updates`
@@ -1403,6 +1506,8 @@ Authorization: Bearer <token>
 }
 ```
 
+- `error` (por resultado) — mensaje de error si falló la verificación de esa novela; vacío si fue exitosa. Si la cola está saturada, el job se crea igualmente y el resultado incluye `"error": "Server is busy processing other jobs..."`.
+
 #### `POST /api/db/novels/batch-update-from-url`
 
 Inicia descargas batch para múltiples novelas.
@@ -1430,11 +1535,13 @@ Content-Type: application/json
 ```json
 {
   "jobs": [
-    { "novelId": "novel-id-abc", "jobId": "job-id-xyz", "pendingChapters": 42 }
+    { "novelId": "novel-id-abc", "jobId": "job-id-xyz", "pendingChapters": 42, "enqueueFailed": false }
   ],
   "totalPending": 42
 }
 ```
+
+- `enqueueFailed` — `true` si el job se creó pero la cola del worker estaba saturada (no cuenta en `totalPending`). Si `startChapter > endChapter` en alguna selección: `400 Bad Request`.
 
 #### `GET /api/db/novels/batch-translate-preview`
 
@@ -1491,11 +1598,13 @@ Content-Type: application/json
 ```json
 {
   "jobs": [
-    { "novelId": "novel-id-abc", "jobId": "job-id-xyz", "pendingChapters": 50 }
+    { "novelId": "novel-id-abc", "jobId": "job-id-xyz", "pendingChapters": 50, "enqueueFailed": false }
   ],
   "totalPending": 50
 }
 ```
+
+- `enqueueFailed` — `true` si el job se creó pero la cola del worker estaba saturada (los capítulos marcados `processing` se reconcilian a `pending`; no cuenta en `totalPending`).
 
 #### `POST /api/db/novels/batch-check`
 
@@ -1703,6 +1812,8 @@ Content-Type: application/json
   "operation": "generate-glossary"
 }
 ```
+
+Si la cola está saturada: `503 Service Unavailable`.
 
 ### `GET /api/db/novels/{novelId}/estimate-glossary-tokens`
 

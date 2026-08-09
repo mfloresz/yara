@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -404,6 +405,69 @@ func TestRedownloadFromUrlTitleMismatchRequiresConfirmation(t *testing.T) {
 		if !strings.Contains(ch.OriginalContent, "sunny morning") {
 			t.Errorf("chapter %d not refreshed: %q", ch.ChapterOrder, ch.OriginalContent)
 		}
+	}
+}
+
+func TestRedownloadFromUrlRejectsInvertedRange(t *testing.T) {
+	fx := setupRedownloadFixture(t, true)
+
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{
+		"startChapter": 3,
+		"endChapter":   1,
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	jobs, err := fx.env.store.ListJobs(fx.alice.User.ID, fx.novelID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected no job for inverted range, got %+v", jobs)
+	}
+}
+
+func TestRedownloadFromUrlRejectsActiveDownloadJob(t *testing.T) {
+	fx := setupRedownloadFixture(t, true)
+
+	job := &store.Job{
+		NovelID:       fx.novelID,
+		Status:        "running",
+		Operation:     "download",
+		ChapterIDs:    "[]",
+		TotalChapters: 1,
+	}
+	if err := fx.env.store.CreateJob(fx.alice.User.ID, job); err != nil {
+		t.Fatalf("create download job: %v", err)
+	}
+
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	assertStatus(t, resp, http.StatusConflict)
+}
+
+func TestRedownloadFromUrlConcurrentRequestsConflict(t *testing.T) {
+	fx := setupRedownloadFixture(t, true)
+
+	// Park the created job in the queue so the download worker cannot consume
+	// it between the two concurrent requests.
+	oldQueue := fx.env.server.downloadQueue
+	fx.env.server.downloadQueue = make(chan string, 10)
+	close(oldQueue)
+
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
+			codes[i] = resp.Code
+		}(i)
+	}
+	wg.Wait()
+
+	sort.Ints(codes)
+	if codes[0] != http.StatusOK || codes[1] != http.StatusConflict {
+		t.Fatalf("expected one 200 and one 409, got %v", codes)
 	}
 }
 

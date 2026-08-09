@@ -55,6 +55,10 @@ type Server struct {
 	browserQueue           chan BrowserJob
 	pendingBrowserJobs     map[string]*pendingBrowserJob
 	pendingBrowserJobsMu   sync.Mutex
+	// redownloadLocks serializes the check+create+enqueue sequence of
+	// redownload-from-url per novel, so two concurrent requests cannot both pass
+	// the active-jobs check and create competing redownload jobs.
+	redownloadLocks sync.Map
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {
@@ -117,6 +121,14 @@ func (s *Server) cancelJob(jobID string) {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// lockNovel returns an unlock function holding the per-novel redownload lock.
+func (s *Server) lockNovel(novelID string) func() {
+	mu, _ := s.redownloadLocks.LoadOrStore(novelID, &sync.Mutex{})
+	lock := mu.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
 }
 
 func Router(s *Server) http.Handler {

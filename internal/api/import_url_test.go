@@ -603,6 +603,51 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	}
 }
 
+func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, redownloadIndexHTML(redownloadChapterTitles))
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"novelfire.net": mock.URL}
+	transport := &hostRewritingTransport{rewrites: rewrites}
+	client := noveldownloader.NewHTTPClientWithTransport(transport)
+
+	env := newAPITestEnv(t)
+	oldQueue := env.server.downloadQueue
+	env.server.downloadQueue = make(chan string)
+	close(oldQueue)
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
+		return noveldownloader.NewDownloaderWithClient(client)
+	}
+
+	alice := registerUser(t, env.handler, "alice-update-queue@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://novelfire.net/book/test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	assertStatus(t, resp, http.StatusServiceUnavailable)
+
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected exactly one job, got %d", len(jobs))
+	}
+	if jobs[0].Status != "failed" {
+		t.Errorf("expected rejected job to be failed, got %q", jobs[0].Status)
+	}
+	if jobs[0].ErrorMessage != jobQueueFullMessage {
+		t.Errorf("expected queue-full error message, got %q", jobs[0].ErrorMessage)
+	}
+}
+
 func TestUpdateUrlPreviewRejectsNovelWithoutURL(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-update-nourl@example.com", "secret123", "Alice")
