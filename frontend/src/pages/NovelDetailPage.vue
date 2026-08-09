@@ -736,12 +736,16 @@ const cleanPreviewDisplay = computed(() => cleanPreviewItems.value.map((item) =>
     chapterOrder: item.chapterOrder,
     chapterTitle: item.chapterTitle,
     removedLines: item.removedLines,
-    hunks: item.changes.map((hunk) => ({
-      before: hunk.before.length > maxLines ? hunk.before.slice(0, maxLines) : hunk.before,
-      after: hunk.after.length > maxLines ? hunk.after.slice(0, maxLines) : hunk.after,
-      beforeHidden: Math.max(0, hunk.before.length - maxLines),
-      afterHidden: Math.max(0, hunk.after.length - maxLines),
-    })),
+    hunks: item.changes.map((hunk) => {
+      const before = hunk.before ?? [];
+      const after = hunk.after ?? [];
+      return {
+        before: before.length > maxLines ? before.slice(0, maxLines) : before,
+        after: after.length > maxLines ? after.slice(0, maxLines) : after,
+        beforeHidden: Math.max(0, before.length - maxLines),
+        afterHidden: Math.max(0, after.length - maxLines),
+      };
+    }),
   };
 }));
 const exportSourceOptions = [

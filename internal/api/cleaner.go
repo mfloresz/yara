@@ -285,12 +285,12 @@ func diffLines(original, cleaned string) []CleanDiffHunk {
 	b := splitLinesNormalized(cleaned)
 
 	var hunks []CleanDiffHunk
-	var cur CleanDiffHunk
+	cur := CleanDiffHunk{Before: []string{}, After: []string{}}
 
 	flush := func() {
 		if len(cur.Before) > 0 || len(cur.After) > 0 {
 			hunks = append(hunks, cur)
-			cur = CleanDiffHunk{}
+			cur = CleanDiffHunk{Before: []string{}, After: []string{}}
 		}
 	}
 

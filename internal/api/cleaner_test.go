@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -214,6 +215,13 @@ func TestDiffLines_RemoveAfter(t *testing.T) {
 	}
 	if len(hunks[0].After) != 0 {
 		t.Errorf("expected no after lines, got %+v", hunks[0].After)
+	}
+	encoded, err := json.Marshal(hunks)
+	if err != nil {
+		t.Fatalf("marshal hunks: %v", err)
+	}
+	if string(encoded) != `[{"before":["STOP","line four"],"after":[]}]` {
+		t.Errorf("expected empty after array in JSON, got %s", encoded)
 	}
 }
 
