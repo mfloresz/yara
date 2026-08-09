@@ -272,48 +272,6 @@ type DownloadChapterInfo struct {
 	ChapterID string `json:"chapterId,omitempty"` // id of an existing chapter when re-downloading
 }
 
-type BatchCheckNovelResult struct {
-	NovelID         string                `json:"novelId"`
-	SourceTitle     string                `json:"sourceTitle"`
-	SourceAuthor    string                `json:"sourceAuthor,omitempty"`
-	CoverURL        string                `json:"coverUrl,omitempty"`
-	NewChapters     int                   `json:"newChapters"`
-	FirstNewChapter int                   `json:"firstNewChapter"`
-	LastNewChapter  int                   `json:"lastNewChapter"`
-	StartOrder      int                   `json:"startOrder"`
-	CurrentChapters int                   `json:"currentChapters"`
-	TotalChapters   int                   `json:"totalChapters"`
-	NewChapterInfo  []DownloadChapterInfo `json:"newChapterInfo"`
-	Error           string                `json:"error,omitempty"`
-}
-
-type BatchCheckResponse struct {
-	Results     []BatchCheckNovelResult `json:"results"`
-	Checked     int                     `json:"checked"`
-	WithUpdates int                     `json:"withUpdates"`
-	Errors      int                     `json:"errors"`
-}
-
-type BatchUpdateSelection struct {
-	NovelID        string                `json:"novelId"`
-	StartOrder     int                   `json:"startOrder"`
-	StartChapter   int                   `json:"startChapter,omitempty"`
-	EndChapter     int                   `json:"endChapter,omitempty"`
-	NewChapterInfo []DownloadChapterInfo `json:"newChapterInfo"`
-}
-
-type BatchUpdateJobResult struct {
-	NovelID         string `json:"novelId"`
-	JobID           string `json:"jobId"`
-	PendingChapters int    `json:"pendingChapters"`
-	EnqueueFailed   bool   `json:"enqueueFailed"`
-}
-
-type BatchUpdateResponse struct {
-	Jobs         []BatchUpdateJobResult `json:"jobs"`
-	TotalPending int                    `json:"totalPending"`
-}
-
 type BatchTranslateNovelResult struct {
 	NovelID            string `json:"novelId"`
 	SourceTitle        string `json:"sourceTitle"`
@@ -344,9 +302,15 @@ type BatchTranslateJobResult struct {
 	EnqueueFailed   bool   `json:"enqueueFailed"`
 }
 
+type BatchSkipResult struct {
+	NovelID string `json:"novelId"`
+	Reason  string `json:"reason"`
+}
+
 type BatchTranslateStartResponse struct {
 	Jobs         []BatchTranslateJobResult `json:"jobs"`
 	TotalPending int                       `json:"totalPending"`
+	Skipped      []BatchSkipResult         `json:"skipped"`
 }
 
 type ImportedZipChapter struct {

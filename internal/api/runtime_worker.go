@@ -269,7 +269,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			if activeJob.ID == job.ID {
 				continue
 			}
-			message := "No se puede re-descargar: ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo."
+			message := jobInProgressMessage
 			if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": message}); ue != nil {
 				slog.Error("update redownload job after active job conflict", "jobId", job.ID, "error", ue)
 			}
@@ -342,7 +342,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 				chTitle = chInfo.Title
 			}
 			if chTitle == "" {
-				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
+				chTitle = fmt.Sprintf("Chapter %d", chOrder)
 			}
 			if opts.ReDownload {
 				// Re-download mode: update only the original content of an
@@ -524,34 +524,10 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		return fmt.Errorf("get existing titles: %w", err)
 	}
 
-	newAvailable := 0
-	for _, ch := range info.Chapters {
-		chNum := chapterOrderOf(ch)
-		if chNum > 0 && existingOrders[chNum] {
-			continue
-		}
-		if existingTitles[ch.Title] {
-			continue
-		}
-		newAvailable++
-	}
+	newAvailable := diffNewChapters(info.Chapters, existingOrders, existingTitles, 0, 0).newAvailable
 
 	cacheKey := job.OwnerID + ":" + job.NovelID
-	s.previewCacheMu.Lock()
-	s.previewCache[cacheKey] = previewCacheEntry{
-		chapters:  info.Chapters,
-		createdAt: time.Now(),
-	}
-	s.previewCacheMu.Unlock()
-	time.AfterFunc(previewCacheTTL, func() {
-		s.previewCacheMu.Lock()
-		defer s.previewCacheMu.Unlock()
-		if entry, exists := s.previewCache[cacheKey]; exists {
-			if time.Since(entry.createdAt) >= previewCacheTTL {
-				delete(s.previewCache, cacheKey)
-			}
-		}
-	})
+	s.previewCache.set(cacheKey, info.Chapters)
 
 	checkedAt := time.Now().Format(time.RFC3339)
 	if err := s.Store.UpdateNovelCheckResult(job.NovelID, checkedAt, newAvailable); err != nil {

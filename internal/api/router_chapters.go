@@ -95,14 +95,18 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 
 		items := make([]CleanPreviewBulkItem, 0, len(body.ChapterIDs))
+		notFound := 0
+		unchanged := 0
 		for _, chapterID := range body.ChapterIDs {
 			chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), chapterID)
 			if err != nil {
+				notFound++
 				continue
 			}
 
 			result := ApplyClean(cleaningSource(chapter, body.ApplyTo), opts)
 			if !result.Changed {
+				unchanged++
 				continue
 			}
 			items = append(items, CleanPreviewBulkItem{
@@ -115,9 +119,11 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		}
 
 		return e.JSON(http.StatusOK, map[string]any{
-			"items":   items,
-			"total":   len(body.ChapterIDs),
-			"changed": len(items),
+			"items":     items,
+			"total":     len(body.ChapterIDs),
+			"changed":   len(items),
+			"notFound":  notFound,
+			"unchanged": unchanged,
 		})
 	})
 	api.POST("/db/novels/{novelId}/chapters/clean", func(e *core.RequestEvent) error {

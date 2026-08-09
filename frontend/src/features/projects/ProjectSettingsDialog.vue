@@ -817,6 +817,7 @@ import { useAppServices } from "@/app/services";
 import { emitJobChanged } from "@/utils/job-events";
 import { safeUuid } from "@/utils/safe-uuid";
 import { LANGUAGES } from "@/config/languages";
+import { ApiError } from "@/api/http";
 import type { RedownloadFromUrlResult } from "@/api/types";
 
 const props = defineProps<{
@@ -1297,11 +1298,22 @@ async function onReDownloadChapters() {
     }
     reportReDownloadResult(result);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Error desconocido";
-    message.error(`Error al re-descargar capítulos: ${msg}`);
+    reDownloadErrorToast(err);
   } finally {
     reDownloading.value = false;
   }
+}
+
+function reDownloadErrorToast(err: unknown) {
+  if (err instanceof ApiError && err.code === "JOB_IN_PROGRESS") {
+    message.error(
+      "Ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo.",
+      { duration: 4000 },
+    );
+    return;
+  }
+  const msg = err instanceof Error ? err.message : "Error desconocido";
+  message.error(`Error al re-descargar capítulos: ${msg}`);
 }
 
 function askReDownloadConfirmation(result: RedownloadFromUrlResult) {
@@ -1335,8 +1347,7 @@ async function startReDownload(confirm: boolean) {
     });
     reportReDownloadResult(result);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Error desconocido";
-    message.error(`Error al re-descargar capítulos: ${msg}`);
+    reDownloadErrorToast(err);
   } finally {
     reDownloading.value = false;
   }
@@ -1347,11 +1358,16 @@ function reportReDownloadResult(result: RedownloadFromUrlResult) {
   if (pending > 0) {
     emitJobChanged();
     message.success(
-      `${pending} capítulos se re-descargarán en segundo plano conservando sus traducciones.`,
+      `Re-descarga iniciada. ${pending} capítulos se actualizarán en segundo plano conservando sus traducciones.`,
+      { duration: 4000 },
+    );
+  } else if (result.code === "NO_CHAPTERS_TO_REDOWNLOAD") {
+    message.info(
+      "No se encontraron capítulos para re-descargar. Verifica que la novela tenga capítulos o que el rango sea válido.",
       { duration: 4000 },
     );
   } else {
-    message.info(result.message ?? "No hay capítulos para re-descargar.");
+    message.info("No hay capítulos para re-descargar.");
   }
 }
 

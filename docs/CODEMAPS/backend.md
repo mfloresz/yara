@@ -150,8 +150,6 @@ cmd/server/main.go
 /api/db/novels/import-from-zip              [auth]
 /api/db/novels/preview-from-url             [auth]
 /api/db/novels/import-from-url              [auth]
-/api/db/novels/check-batch-updates          [auth]
-/api/db/novels/batch-update-from-url        [auth]
 /api/db/novels/batch-translate-preview      [auth]
 /api/db/novels/batch-translate              [auth]
 /api/db/novels/batch-check                  [auth]

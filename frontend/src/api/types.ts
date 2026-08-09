@@ -117,6 +117,13 @@ export type ApiErrorPayload = {
     message?: string;
   };
   message?: string;
+  /** PocketBase ApiError payload: `data.code.code` carries the stable error code. */
+  data?: {
+    code?: {
+      code?: string;
+      message?: string;
+    };
+  };
 };
 
 export type ImportUrlResult = {
@@ -145,6 +152,7 @@ export type UpdateUrlResult = {
   pendingChapters?: number;
   downloadJobId?: string;
   message?: string;
+  code?: string;
 };
 
 export type RedownloadMismatch = {
@@ -157,6 +165,7 @@ export type RedownloadFromUrlResult = {
   pendingChapters: number;
   downloadJobId?: string;
   message?: string;
+  code?: string;
   /** Present when the source titles no longer match the stored ones and the user must confirm before the job is created. */
   needsConfirmation?: boolean;
   titleMismatches?: number;
@@ -241,51 +250,12 @@ export type CleanPreviewBulkResponse = {
   items: CleanPreviewItem[];
   total: number;
   changed: number;
+  notFound?: number;
+  unchanged?: number;
 };
 
 export type TranslationJobPatch = Partial<TranslationJob>;
 export type ChapterList = Chapter[];
-
-export type BatchCheckNovelResult = {
-  novelId: string;
-  sourceTitle: string;
-  sourceAuthor?: string;
-  coverUrl?: string;
-  newChapters: number;
-  firstNewChapter: number;
-  lastNewChapter: number;
-  startOrder: number;
-  currentChapters: number;
-  totalChapters: number;
-  newChapterInfo: { url: string; title: string }[];
-  error?: string;
-};
-
-export type BatchCheckResponse = {
-  results: BatchCheckNovelResult[];
-  checked: number;
-  withUpdates: number;
-  errors: number;
-};
-
-export type BatchUpdateSelection = {
-  novelId: string;
-  startOrder: number;
-  startChapter?: number;
-  endChapter?: number;
-  newChapterInfo: { url: string; title: string }[];
-};
-
-export type BatchUpdateJobResult = {
-  novelId: string;
-  jobId: string;
-  pendingChapters: number;
-};
-
-export type BatchUpdateResponse = {
-  jobs: BatchUpdateJobResult[];
-  totalPending: number;
-};
 
 export type BatchTranslateNovelResult = {
   novelId: string;
@@ -329,6 +299,7 @@ export type ReadingProgress = {
 export type BatchTranslateStartResponse = {
   jobs: BatchTranslateJobResult[];
   totalPending: number;
+  skipped?: { novelId: string; reason: string }[];
 };
 
 export type WorkerToken = {

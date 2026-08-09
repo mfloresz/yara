@@ -39,22 +39,20 @@ type pendingBrowserJob struct {
 }
 
 type Server struct {
-	Store                  *store.Store
-	Cfg                    *config.Config
-	downloadQueue          chan string
-	translateQueue         chan string
-	queuedJobs             map[string]struct{}
-	queueMu                sync.Mutex
-	cancelMu               sync.Mutex
-	jobCancels             map[string]context.CancelFunc
-	DownloaderFactory      func(userID string) *noveldownloader.Downloader
-	previewCacheMu         sync.RWMutex
-	previewCache           map[string]previewCacheEntry
-	importInfoCacheMu      sync.RWMutex
-	importInfoCache        map[string]importInfoCacheEntry
-	browserQueue           chan BrowserJob
-	pendingBrowserJobs     map[string]*pendingBrowserJob
-	pendingBrowserJobsMu   sync.Mutex
+	Store                *store.Store
+	Cfg                  *config.Config
+	downloadQueue        chan string
+	translateQueue       chan string
+	queuedJobs           map[string]struct{}
+	queueMu              sync.Mutex
+	cancelMu             sync.Mutex
+	jobCancels           map[string]context.CancelFunc
+	DownloaderFactory    func(userID string) *noveldownloader.Downloader
+	previewCache         *expiringCache[[]noveldownloader.ChapterURL]
+	importInfoCache      *expiringCache[*noveldownloader.NovelInfo]
+	browserQueue         chan BrowserJob
+	pendingBrowserJobs   map[string]*pendingBrowserJob
+	pendingBrowserJobsMu sync.Mutex
 	// redownloadLocks serializes the check+create+enqueue sequence of
 	// redownload-from-url per novel, so two concurrent requests cannot both pass
 	// the active-jobs check and create competing redownload jobs.
@@ -67,8 +65,8 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		Cfg:                cfg,
 		queuedJobs:         map[string]struct{}{},
 		jobCancels:         map[string]context.CancelFunc{},
-		previewCache:       make(map[string]previewCacheEntry),
-		importInfoCache:    make(map[string]importInfoCacheEntry),
+		previewCache:       newExpiringCache[[]noveldownloader.ChapterURL](previewCacheTTL),
+		importInfoCache:    newExpiringCache[*noveldownloader.NovelInfo](previewCacheTTL),
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
 	}

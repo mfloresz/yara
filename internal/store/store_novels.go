@@ -131,29 +131,6 @@ func (s *Store) populateLastReadAt(novels []Novel, userID string) {
 	}
 }
 
-func (s *Store) ListOwnedNovelsWithURL(ownerID string) ([]Novel, error) {
-	const pageSize = 200
-	var out []Novel
-	offset := 0
-	for {
-		records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner} && url != '' && status != 'completed' && status != 'cancelled'", "-created", pageSize, offset, dbx.Params{"owner": ownerID})
-		if err != nil {
-			return nil, err
-		}
-		for _, record := range records {
-			out = append(out, s.novelFromRecord(record))
-		}
-		if len(records) < pageSize {
-			break
-		}
-		offset += pageSize
-	}
-	if out == nil {
-		out = []Novel{}
-	}
-	return out, nil
-}
-
 func (s *Store) ListOwnedNovelsWithTranslationStats(ownerID string) ([]Novel, error) {
 	const pageSize = 200
 	var out []Novel

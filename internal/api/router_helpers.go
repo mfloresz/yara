@@ -10,6 +10,31 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// Stable machine-readable codes returned to the frontend so it can localize
+// response and error messages client-side instead of parsing English text.
+const (
+	codeNoNewChapters          = "NO_NEW_CHAPTERS"
+	codeNoChaptersToRedownload = "NO_CHAPTERS_TO_REDOWNLOAD"
+	codeJobInProgress          = "JOB_IN_PROGRESS"
+)
+
+// jobInProgressMessage is the user-facing message for the redownload conflict.
+// It is used both by the HTTP 409 response and by the persisted job
+// errorMessage so the two always stay in sync.
+const jobInProgressMessage = "Another job is already running for this novel. Wait for it to finish and try again."
+
+// jobConflictCode carries codeJobInProgress through PocketBase's ApiError
+// normalization. Plain string values in the error data map are rewritten to
+// generic validation items, so the code must implement the SafeErrorItem
+// interface (Code()/Error()) to survive and reach the client as
+// `data.code.code`.
+type jobConflictCode struct{}
+
+func (jobConflictCode) Code() string { return codeJobInProgress }
+func (jobConflictCode) Error() string {
+	return jobInProgressMessage
+}
+
 func jsonString(value any, fallback string) string {
 	if value == nil {
 		return fallback

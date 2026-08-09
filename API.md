@@ -1469,80 +1469,6 @@ Content-Type: application/json
 
 ### Batch Operations
 
-#### `GET /api/db/novels/check-batch-updates`
-
-Verifica actualizaciones para múltiples novelas con URL.
-
-```
-GET /api/db/novels/check-batch-updates
-Authorization: Bearer <token>
-```
-
-**Response `200 OK`**
-
-```json
-{
-  "results": [
-    {
-      "novelId": "novel-id-abc",
-      "sourceTitle": "The Wandering Inn",
-      "sourceAuthor": "pirateaba",
-      "coverUrl": "https://...",
-      "newChapters": 42,
-      "firstNewChapter": 101,
-      "lastNewChapter": 142,
-      "startOrder": 101,
-      "currentChapters": 100,
-      "totalChapters": 142,
-      "newChapterInfo": [
-        { "url": "https://...", "title": "5.00 - New Chapter", "order": 101 }
-      ],
-      "error": ""
-    }
-  ],
-  "checked": 5,
-  "withUpdates": 2,
-  "errors": 0
-}
-```
-
-- `error` (por resultado) — mensaje de error si falló la verificación de esa novela; vacío si fue exitosa. Si la cola está saturada, el job se crea igualmente y el resultado incluye `"error": "Server is busy processing other jobs..."`.
-
-#### `POST /api/db/novels/batch-update-from-url`
-
-Inicia descargas batch para múltiples novelas.
-
-```
-POST /api/db/novels/batch-update-from-url
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "selections": [
-    {
-      "novelId": "novel-id-abc",
-      "startOrder": 101,
-      "startChapter": 101,
-      "endChapter": 142,
-      "newChapterInfo": [ ... ]
-    }
-  ]
-}
-```
-
-**Response `200 OK`**
-
-```json
-{
-  "jobs": [
-    { "novelId": "novel-id-abc", "jobId": "job-id-xyz", "pendingChapters": 42, "enqueueFailed": false }
-  ],
-  "totalPending": 42
-}
-```
-
-- `enqueueFailed` — `true` si el job se creó pero la cola del worker estaba saturada (no cuenta en `totalPending`). Si `startChapter > endChapter` en alguna selección: `400 Bad Request`.
-
 #### `GET /api/db/novels/batch-translate-preview`
 
 Previsualiza qué novelas tienen capítulos pendientes de traducir.
@@ -1608,7 +1534,7 @@ Content-Type: application/json
 
 #### `POST /api/db/novels/batch-check`
 
-Encola jobs de verificación de actualizaciones.
+Encola jobs de verificación de actualizaciones. Este endpoint sustituye al antiguo endpoint síncrono de verificación batch: crea un job `check` por novela y los resultados se leen a través de `GET /api/db/novels/{novelId}/translation-jobs` y de los campos `lastCheckedAt` / `lastCheckNewChapters` de cada novela.
 
 ```
 POST /api/db/novels/batch-check

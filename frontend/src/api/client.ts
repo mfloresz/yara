@@ -2,9 +2,6 @@ import type { Ref } from "vue";
 import { createHttpClient } from "@/api/http";
 import type {
   AuthResponse,
-  BatchCheckResponse,
-  BatchUpdateResponse,
-  BatchUpdateSelection,
   BatchTranslateResponse,
   BatchTranslateSelection,
   BatchTranslateStartResponse,
@@ -376,21 +373,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         );
         return withDefaults(novel);
       },
-      async checkBatchUpdates(): Promise<BatchCheckResponse> {
-        return http.get<BatchCheckResponse>(
-          "/api/db/novels/check-batch-updates",
-        );
-      },
-      async batchCheck(novelIds: string[]): Promise<{ jobs: { novelId: string; jobId: string }[] }> {
+      async batchCheck(novelIds: string[]): Promise<{ jobs: { novelId: string; jobId: string; error?: string }[] }> {
         return http.post("/api/db/novels/batch-check", { novelIds });
-      },
-      async batchUpdateFromUrl(
-        selections: BatchUpdateSelection[],
-      ): Promise<BatchUpdateResponse> {
-        return http.post<BatchUpdateResponse>(
-          "/api/db/novels/batch-update-from-url",
-          { selections },
-        );
       },
       async batchTranslatePreview(): Promise<BatchTranslateResponse> {
         return http.get<BatchTranslateResponse>(

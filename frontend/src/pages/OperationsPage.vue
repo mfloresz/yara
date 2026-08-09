@@ -401,9 +401,13 @@ async function handleTranslateNovel(novel: Novel) {
     return;
   }
   try {
-    await api.novels.batchTranslate([{ novelId: novel.id }]);
+    const result = await api.novels.batchTranslate([{ novelId: novel.id }]);
     emitJobChanged();
-    message.success(`${novel.sourceTitle}: Trabajo de traducción iniciado`);
+    if (result.skipped?.length) {
+      message.warning(`${result.skipped.length} novelas omitidas (${result.skipped[0].reason})`);
+    } else {
+      message.success(`${novel.sourceTitle}: Trabajo de traducción iniciado`);
+    }
   } catch (err) {
     message.error(`${novel.sourceTitle}: ${err instanceof Error ? err.message : String(err)}`);
   }

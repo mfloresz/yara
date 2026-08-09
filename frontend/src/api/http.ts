@@ -43,7 +43,7 @@ export function createHttpClient(config: HttpClientConfig) {
       throw new ApiError(
         payload.error?.message || payload.message || `HTTP ${response.status}`,
         response.status,
-        payload.error?.code,
+        payload.error?.code ?? payload.data?.code?.code,
       );
     }
 
