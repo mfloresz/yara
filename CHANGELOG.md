@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.14.1] - 2026-08-08
+
+### Fixes
+
+- Fixed the bulk clean preview failing when a diff hunk has empty before/after content: line arrays are now serialized as `[]` instead of `null` and the frontend display guards against missing arrays.
+
 ## [v0.14.0] - 2026-08-08
 
 ### What's new
@@ -65,7 +71,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.14.1...HEAD
+[v0.14.1]: https://github.com/mfloresz/yara/compare/v0.14.0...v0.14.1
 [v0.14.0]: https://github.com/mfloresz/yara/compare/v0.13.1...v0.14.0
 [v0.13.0]: https://github.com/mfloresz/yara/compare/v0.12.0...v0.13.0
 [v0.12.0]: https://github.com/mfloresz/yara/compare/v0.11.1...v0.12.0
