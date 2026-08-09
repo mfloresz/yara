@@ -521,6 +521,138 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 	}
 }
 
+// Novelfire chapter URLs are numbered sequentially (chapter-93, chapter-94)
+// while their titles keep the novel's own numbering ("Chapter 92.1",
+// "Chapter 92.2"), with a prologue ("c-1") shifting every title off its URL
+// number. The old title-based order extraction collapsed both decimals to
+// order 92: update checks reported "up to date" because order 92 already
+// existed, and when both decimals were queued the unique (novel,
+// chapter_order) index rejected the second insert, silently dropping one
+// chapter. The parser-provided Order (URL number) must keep them distinct.
+func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
+	var items []string
+	items = append(items, `<li><a href="chapter-1"><span class="chapter-title">c-1: Prologue</span></a></li>`)
+	for n := 2; n <= 92; n++ {
+		items = append(items, fmt.Sprintf(`<li><a href="chapter-%d"><span class="chapter-title">Chapter %d: Filler</span></a></li>`, n, n-1))
+	}
+	items = append(items,
+		`<li><a href="chapter-93"><span class="chapter-title">Chapter 92.1: Collapse of Xyrus</span></a></li>`,
+		`<li><a href="chapter-94"><span class="chapter-title">Chapter 92.2: Bird's Cage</span></a></li>`,
+	)
+	chapterHTML := `<!doctype html><html><head>
+<meta property="og:image" content="https://novelfire.net/cover.jpg">
+<meta itemprop="description" content="A novel with decimal-numbered chapters.">
+</head><body>
+<div class="main-head"><h1>Decimal Test Novel</h1></div>
+<span itemprop="author">Tester</span>
+<ul class="chapter-list">` + strings.Join(items, "") + `</ul>
+</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("fake-jpeg"))
+		case strings.Contains(r.URL.Path, "/chapter-"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, chapterHTML)
+		}
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"novelfire.net": mock.URL}
+	transport := &hostRewritingTransport{rewrites: rewrites}
+	client := noveldownloader.NewHTTPClientWithTransport(transport)
+
+	env := newAPITestEnv(t)
+	oldQueue := env.server.downloadQueue
+	env.server.downloadQueue = make(chan string, 1000)
+	close(oldQueue)
+	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
+		return noveldownloader.NewDownloaderWithClient(client)
+	}
+
+	alice := registerUser(t, env.handler, "alice-decimal-chapters@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://novelfire.net/book/decimal-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Chapters 1-92 were downloaded by a previous import: stored orders are
+	// the sequential URL positions, which is what import-from-url assigns.
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "c-1: Prologue")
+	for n := 2; n <= 92; n++ {
+		createChapterWithTitle(t, env.handler, alice.Token, novel.ID, n, fmt.Sprintf("Chapter %d: Filler", n-1))
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("preview: expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var preview struct {
+		TotalChapters   int `json:"totalChapters"`
+		NewChapters     int `json:"newChapters"`
+		FirstNewChapter int `json:"firstNewChapter"`
+		LastNewChapter  int `json:"lastNewChapter"`
+	}
+	decodeResponse(t, resp, &preview)
+	if preview.TotalChapters != 94 {
+		t.Errorf("totalChapters: got %d, want 94", preview.TotalChapters)
+	}
+	if preview.NewChapters != 2 {
+		t.Errorf("newChapters: got %d, want 2 (the two decimal chapters)", preview.NewChapters)
+	}
+	if preview.FirstNewChapter != 93 || preview.LastNewChapter != 94 {
+		t.Errorf("first/last new chapter: got %d/%d, want 93/94", preview.FirstNewChapter, preview.LastNewChapter)
+	}
+
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	}
+	var update struct {
+		PendingChapters int `json:"pendingChapters"`
+	}
+	decodeResponse(t, updateResp, &update)
+	if update.PendingChapters != 2 {
+		t.Fatalf("pendingChapters: got %d, want 2", update.PendingChapters)
+	}
+
+	// The queued job must carry the sequential URL orders (93, 94), not the
+	// colliding title-derived 92 — otherwise the unique (novel,
+	// chapter_order) index drops one of the two decimal chapters.
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected one job, got %d", len(jobs))
+	}
+	var opts struct {
+		Chapters []struct {
+			Order int `json:"order"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(jobs[0].OptionsJSON), &opts); err != nil {
+		t.Fatalf("decode job options: %v", err)
+	}
+	orders := map[int]bool{}
+	for _, ch := range opts.Chapters {
+		if orders[ch.Order] {
+			t.Errorf("duplicate order %d in download job", ch.Order)
+		}
+		orders[ch.Order] = true
+	}
+	if !orders[93] || !orders[94] || len(orders) != 2 {
+		t.Errorf("expected job orders {93, 94}, got %v", orders)
+	}
+}
+
 func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	var chapterItems []string
 	for n := 1; n <= 13; n++ {
