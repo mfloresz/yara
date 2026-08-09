@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.14.0] - 2026-08-08
+
+### What's new
+
+- Added bulk clean preview with line-level diffs: select any number of chapters, see exactly which lines will change, and apply the cleaning directly from the preview.
+- Added re-download of chapters from the source URL (novel settings). Only the original content is replaced; existing translations and refinements are preserved. A confirmation step warns when the source chapter titles no longer match the stored ones.
+- OpenRouter `luna` models now use the flex tier, roughly halving cost at higher latency.
+
+### Fixes
+
+- Fixed job titles overflowing in the jobs drawer.
+
+### Housekeeping
+
+- Removed stray agent session artifacts from the repository.
+
 ## [v0.13.0] - 2026-08-07
 
 ### What's new
@@ -49,7 +65,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.14.0...HEAD
+[v0.14.0]: https://github.com/mfloresz/yara/compare/v0.13.1...v0.14.0
 [v0.13.0]: https://github.com/mfloresz/yara/compare/v0.12.0...v0.13.0
 [v0.12.0]: https://github.com/mfloresz/yara/compare/v0.11.1...v0.12.0
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
