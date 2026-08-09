@@ -621,6 +621,137 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se están descargando en segundo plano.", len(downloadChapters)),
 		})
 	})
+	api.POST("/db/novels/{id}/redownload-from-url", func(e *core.RequestEvent) error {
+		body := struct {
+			StartChapter int  `json:"startChapter"`
+			EndChapter   int  `json:"endChapter"`
+			Confirm      bool `json:"confirm"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+		novelID := e.Request.PathValue("id")
+		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		if strings.TrimSpace(novel.URL) == "" {
+			return e.BadRequestError("novel has no source URL", nil)
+		}
+		existing, err := s.Store.ListChaptersAccessible(e.Auth.Id, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to load chapters", err)
+		}
+		byOrder := make(map[int]store.Chapter, len(existing))
+		byTitle := make(map[string]store.Chapter, len(existing))
+		for _, ch := range existing {
+			byOrder[ch.ChapterOrder] = ch
+			if ch.Title != "" {
+				byTitle[ch.Title] = ch
+			}
+		}
+
+		// The first request (confirm=false) is a preview: it fetches the source
+		// chapter list and, when original titles no longer line up with the
+		// stored ones, asks the user to confirm before a job is created. The
+		// confirmed request (confirm=true) reuses the cached list.
+		cacheKey := e.Auth.Id + ":" + novelID + ":redownload"
+		var chapters []noveldownloader.ChapterURL
+		loadFresh := func() error {
+			dl := s.DownloaderFactory(e.Auth.Id)
+			info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
+			if err != nil {
+				return e.InternalServerError("failed to fetch novel info", err)
+			}
+			chapters = info.Chapters
+			return nil
+		}
+		if !body.Confirm {
+			if err := loadFresh(); err != nil {
+				return err
+			}
+		} else {
+			s.previewCacheMu.RLock()
+			cached, ok := s.previewCache[cacheKey]
+			s.previewCacheMu.RUnlock()
+			if ok {
+				chapters = cached.chapters
+				s.previewCacheMu.Lock()
+				delete(s.previewCache, cacheKey)
+				s.previewCacheMu.Unlock()
+			} else if err := loadFresh(); err != nil {
+				return err
+			}
+		}
+
+		plan := planRedownload(chapters, byOrder, byTitle, body.StartChapter, body.EndChapter)
+		if len(plan.chapters) == 0 {
+			return e.JSON(http.StatusOK, map[string]any{
+				"pendingChapters": 0,
+				"message":         "No se encontraron capítulos para re-descargar. Verifica que la novela tenga capítulos o que el rango sea válido.",
+			})
+		}
+		if !body.Confirm && len(plan.mismatches) > 0 {
+			// Cache the fresh list so the confirmed request does not re-scrape.
+			s.previewCacheMu.Lock()
+			s.previewCache[cacheKey] = previewCacheEntry{chapters: chapters, createdAt: time.Now()}
+			s.previewCacheMu.Unlock()
+			time.AfterFunc(previewCacheTTL, func() {
+				s.previewCacheMu.Lock()
+				defer s.previewCacheMu.Unlock()
+				if entry, exists := s.previewCache[cacheKey]; exists {
+					if time.Since(entry.createdAt) >= previewCacheTTL {
+						delete(s.previewCache, cacheKey)
+					}
+				}
+			})
+			return e.JSON(http.StatusOK, map[string]any{
+				"pendingChapters":   len(plan.chapters),
+				"titleMismatches":   len(plan.mismatches),
+				"needsConfirmation": true,
+				"chapters":          plan.mismatches,
+			})
+		}
+
+		// A re-download rewrites original_content of existing chapters. Refuse
+		// to start while a translate/refine job is still working on any of
+		// them, otherwise the translation could be saved on top of a different
+		// original. Jobs without explicit chapter ids cover the whole novel.
+		activeJobs, err := s.Store.ListActiveTranslationJobs(novelID)
+		if err != nil {
+			return e.InternalServerError("failed to check active jobs", err)
+		}
+		if conflicts := redownloadConflictIDs(plan.chapters, activeJobs); len(conflicts) > 0 {
+			return e.Error(http.StatusConflict, fmt.Sprintf(
+				"No se puede re-descargar: %d capítulo(s) tienen traducción o refinamiento en curso. Espera a que terminen e inténtalo de nuevo.", len(conflicts)), nil)
+		}
+
+		optionsJSON, _ := json.Marshal(map[string]any{
+			"url":            novel.URL,
+			"chapters":       plan.chapters,
+			"startOrder":     plan.chapters[0].Order,
+			"sourceLanguage": novel.SourceLanguage,
+			"targetLanguage": novel.TargetLanguage,
+			"reDownload":     true,
+		})
+		job := &store.Job{
+			NovelID:       novelID,
+			Status:        "pending",
+			Operation:     "download",
+			ChapterIDs:    "[]",
+			OptionsJSON:   string(optionsJSON),
+			TotalChapters: len(plan.chapters),
+		}
+		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+			return e.InternalServerError("failed to create download job", err)
+		}
+		s.enqueueJob(job.ID)
+		return e.JSON(http.StatusOK, map[string]any{
+			"pendingChapters": len(plan.chapters),
+			"downloadJobId":   job.ID,
+			"message":         fmt.Sprintf("Re-descarga iniciada. %d capítulos se actualizarán en segundo plano conservando sus traducciones.", len(plan.chapters)),
+		})
+	})
 	api.GET("/db/novels/check-batch-updates", func(e *core.RequestEvent) error {
 		novels, err := s.Store.ListOwnedNovelsWithURL(e.Auth.Id)
 		if err != nil {
@@ -1065,4 +1196,98 @@ func contentAfterTitle(content string) string {
 		return strings.TrimSpace(content)
 	}
 	return strings.TrimSpace(rest)
+}
+
+type redownloadMismatch struct {
+	Order       int    `json:"order"`
+	SourceTitle string `json:"sourceTitle"`
+	StoredTitle string `json:"storedTitle"`
+}
+
+type redownloadPlan struct {
+	chapters   []store.DownloadChapterInfo
+	mismatches []redownloadMismatch
+}
+
+// planRedownload matches a fresh chapter list from the source site against the
+// stored chapters (by order, falling back to title) and flags chapters whose
+// source title no longer matches the stored one — a sign the source renumbered
+// or replaced its chapters. Stored titles are the original ones: translated
+// titles live in a separate field and re-downloads never touch them, so a
+// mismatch here means the pairing of original content to chapters may have
+// shifted.
+func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store.Chapter, byTitle map[string]store.Chapter, startChapter, endChapter int) redownloadPlan {
+	plan := redownloadPlan{chapters: make([]store.DownloadChapterInfo, 0)}
+	for i, ch := range chapters {
+		chNum := chapterOrderOf(ch)
+		if chNum <= 0 {
+			chNum = i + 1
+		}
+		if startChapter > 0 && chNum < startChapter {
+			continue
+		}
+		if endChapter > 0 && chNum > endChapter {
+			continue
+		}
+		existingCh, ok := byOrder[chNum]
+		if !ok && ch.Title != "" {
+			existingCh, ok = byTitle[ch.Title]
+		}
+		if !ok {
+			// Not downloaded yet — new chapters are handled by update-from-url.
+			continue
+		}
+		chTitle := ch.Title
+		if chTitle == "" {
+			chTitle = existingCh.Title
+		}
+		if chTitle == "" {
+			chTitle = fmt.Sprintf("Capítulo %d", chNum)
+		}
+		plan.chapters = append(plan.chapters, store.DownloadChapterInfo{
+			URL:       ch.URL,
+			Title:     chTitle,
+			Order:     chNum,
+			ChapterID: existingCh.ID,
+		})
+		if ch.Title != "" && existingCh.Title != "" &&
+			!strings.EqualFold(strings.TrimSpace(ch.Title), strings.TrimSpace(existingCh.Title)) {
+			plan.mismatches = append(plan.mismatches, redownloadMismatch{
+				Order:       chNum,
+				SourceTitle: ch.Title,
+				StoredTitle: existingCh.Title,
+			})
+		}
+	}
+	return plan
+}
+
+// redownloadConflictIDs returns the plan chapter ids that have an active
+// translate/refine job. A job without explicit chapter ids is treated as
+// covering every chapter of the novel.
+func redownloadConflictIDs(chapters []store.DownloadChapterInfo, activeJobs []store.Job) map[string]bool {
+	inPlan := make(map[string]bool, len(chapters))
+	for _, ch := range chapters {
+		inPlan[ch.ChapterID] = true
+	}
+	conflicts := make(map[string]bool)
+	for _, job := range activeJobs {
+		raw := strings.TrimSpace(job.ChapterIDs)
+		if raw == "" || raw == "[]" {
+			for id := range inPlan {
+				conflicts[id] = true
+			}
+			continue
+		}
+		var ids []string
+		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if inPlan[id] {
+				conflicts[id] = true
+			}
+		}
+	}
+	return conflicts
 }

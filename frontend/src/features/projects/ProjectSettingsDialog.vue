@@ -655,7 +655,7 @@
         <!-- ========== AVANZADO ========== -->
         <n-scrollbar v-else class="pane-scroll">
           <div class="pane-pad stack-sm">
-            <n-collapse :default-expanded-names="['commands']">
+            <n-collapse :default-expanded-names="['commands', 'redownload']">
               <n-collapse-item title="Comandos personalizados" name="commands">
                 <n-input
                   id="novel-custom-commands"
@@ -666,6 +666,59 @@
                   class="mono"
                   placeholder="Comandos especiales de procesamiento"
                 />
+              </n-collapse-item>
+              <n-collapse-item name="redownload">
+                <template #header>
+                  <span>Redescargar capítulos</span>
+                </template>
+                <div class="stack-sm">
+                  <p class="small muted" style="margin: 0">
+                    Vuelve a descargar el contenido original desde la fuente y
+                    reemplaza el original de los capítulos del rango (vacío =
+                    todos). Las traducciones y refinamientos existentes se
+                    conservan.
+                  </p>
+                  <div class="field-grid-4">
+                    <div class="form-group">
+                      <label class="lbl">Cap. desde</label>
+                      <n-input-number
+                        v-model:value="reDownloadStart"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                        clearable
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl">Cap. hasta</label>
+                      <n-input-number
+                        v-model:value="reDownloadEnd"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                        clearable
+                      />
+                    </div>
+                  </div>
+                  <div class="redownload-actions">
+                    <n-popconfirm :disabled="!props.novel.url" @positive-click="onReDownloadChapters">
+                      <template #trigger>
+                        <n-button size="small" :loading="reDownloading" :disabled="!props.novel.url">
+                          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                          Re-descargar capítulos
+                        </n-button>
+                      </template>
+                      <div style="max-width: 280px">
+                        Se reemplazará el <strong>contenido original</strong> de los
+                        capítulos seleccionados con el de la fuente. Las traducciones
+                        y refinamientos se conservan. Puede tardar varios minutos.
+                      </div>
+                    </n-popconfirm>
+                    <span v-if="!props.novel.url" class="small muted">
+                      La novela no tiene URL de origen.
+                    </span>
+                  </div>
+                </div>
               </n-collapse-item>
               <n-collapse-item name="danger">
                 <template #header>
@@ -714,7 +767,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from "vue";
+import { computed, h, ref, watch, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
 import {
   useMessage,
@@ -737,6 +790,7 @@ import {
   NCollapse,
   NCollapseItem,
   NTooltip,
+  useDialog,
 } from "naive-ui";
 import {
   AddOutline,
@@ -749,6 +803,7 @@ import {
   HardwareChipOutline,
   LanguageOutline,
   DocumentTextOutline,
+  RefreshOutline,
   SettingsOutline,
 } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
@@ -762,6 +817,7 @@ import { useAppServices } from "@/app/services";
 import { emitJobChanged } from "@/utils/job-events";
 import { safeUuid } from "@/utils/safe-uuid";
 import { LANGUAGES } from "@/config/languages";
+import type { RedownloadFromUrlResult } from "@/api/types";
 
 const props = defineProps<{
   open: boolean;
@@ -777,6 +833,7 @@ const emit = defineEmits<{
 const { api, defaults } = useAppServices();
 const router = useRouter();
 const message = useMessage();
+const dialog = useDialog();
 const { deleteNovel } = useNovels();
 const novelRef = computed(() => props.novel);
 const { settings, globalPrompts, loading: settingsLoading } = useProjectSettings(novelRef);
@@ -802,6 +859,9 @@ const glossaryGenOptions = ref<GlossaryGenerationOptions>({
   model: "",
 });
 const glossaryGenerating = ref(false);
+const reDownloadStart = ref<number | null>(null);
+const reDownloadEnd = ref<number | null>(null);
+const reDownloading = ref(false);
 const estimatedTokens = ref<number | null>(null);
 const estimatedTokensLoading = ref(false);
 let estimateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1223,6 +1283,78 @@ async function generateGlossary() {
   }
 }
 
+async function onReDownloadChapters() {
+  if (reDownloading.value) return;
+  reDownloading.value = true;
+  try {
+    const result = await api.novels.redownloadFromUrl(props.novel.id, {
+      startChapter: reDownloadStart.value ?? undefined,
+      endChapter: reDownloadEnd.value ?? undefined,
+    });
+    if (result.needsConfirmation && (result.titleMismatches ?? 0) > 0) {
+      askReDownloadConfirmation(result);
+      return;
+    }
+    reportReDownloadResult(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Error desconocido";
+    message.error(`Error al re-descargar capítulos: ${msg}`);
+  } finally {
+    reDownloading.value = false;
+  }
+}
+
+function askReDownloadConfirmation(result: RedownloadFromUrlResult) {
+  const mismatches = result.chapters ?? [];
+  const lines = mismatches
+    .slice(0, 8)
+    .map((m) => `Cap. ${m.order}: "${m.storedTitle}" → "${m.sourceTitle}"`);
+  const extra = mismatches.length > 8 ? `\n... y ${mismatches.length - 8} más` : "";
+  dialog.warning({
+    title: `${result.titleMismatches} capítulo(s) con título distinto en la fuente`,
+    content: () =>
+      h("div", { style: "white-space: pre-line" }, [
+        "Los títulos en la fuente ya no coinciden con los guardados; la fuente puede haber reordenado o renumerado sus capítulos. Revisa antes de continuar:\n\n",
+        lines.join("\n"),
+        extra,
+        "\n\nEl contenido original se reemplazará igualmente. ¿Continuar?",
+      ]),
+    positiveText: "Continuar",
+    negativeText: "Cancelar",
+    onPositiveClick: () => startReDownload(true),
+  });
+}
+
+async function startReDownload(confirm: boolean) {
+  reDownloading.value = true;
+  try {
+    const result = await api.novels.redownloadFromUrl(props.novel.id, {
+      startChapter: reDownloadStart.value ?? undefined,
+      endChapter: reDownloadEnd.value ?? undefined,
+      confirm,
+    });
+    reportReDownloadResult(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Error desconocido";
+    message.error(`Error al re-descargar capítulos: ${msg}`);
+  } finally {
+    reDownloading.value = false;
+  }
+}
+
+function reportReDownloadResult(result: RedownloadFromUrlResult) {
+  const pending = result.pendingChapters ?? 0;
+  if (pending > 0) {
+    emitJobChanged();
+    message.success(
+      `${pending} capítulos se re-descargarán en segundo plano conservando sus traducciones.`,
+      { duration: 4000 },
+    );
+  } else {
+    message.info(result.message ?? "No hay capítulos para re-descargar.");
+  }
+}
+
 function reset() {
   settingsDraft.value = {
     notes: "",
@@ -1570,6 +1702,13 @@ async function save() {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.redownload-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 

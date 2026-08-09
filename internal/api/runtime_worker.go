@@ -237,6 +237,7 @@ type downloadJobOptions struct {
 	StartOrder     int                         `json:"startOrder"`
 	SourceLanguage string                      `json:"sourceLanguage"`
 	TargetLanguage string                      `json:"targetLanguage"`
+	ReDownload     bool                        `json:"reDownload"`
 }
 
 func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
@@ -315,7 +316,25 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			if chTitle == "" {
 				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 			}
-			if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+			if opts.ReDownload {
+				// Re-download mode: update only the original content of an
+				// existing chapter (matched by id). Title, status and any
+				// existing translation/refinement are preserved because the
+				// upsert only overwrites non-empty fields.
+				if chInfo.ChapterID == "" {
+					failed++
+					slog.Error("re-download chapter without id", "jobId", job.ID, "chapter", chTitle)
+				} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+					ID:              chInfo.ChapterID,
+					ChapterOrder:    chOrder,
+					OriginalContent: ch.Markdown,
+				}); err != nil {
+					failed++
+					slog.Error("failed to save re-downloaded chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
+				} else {
+					completed++
+				}
+			} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
 				ChapterOrder:    chOrder,
 				Title:           chTitle,
 				OriginalContent: ch.Markdown,

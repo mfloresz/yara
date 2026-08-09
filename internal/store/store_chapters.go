@@ -256,7 +256,11 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 		record.Set("refined_content", "")
 	}
 	if chapter.OriginalContent != "" || chapter.TranslatedContent != "" || chapter.RefinedContent != "" || record.IsNew() {
-		setCharCounts(record, chapter.OriginalContent, chapter.TranslatedContent, chapter.RefinedContent)
+		setCharCounts(record,
+			record.GetString("original_content"),
+			record.GetString("translated_content"),
+			record.GetString("refined_content"),
+		)
 	}
 	record.Set("status", status)
 	if chapter.ErrorMessage != "" {

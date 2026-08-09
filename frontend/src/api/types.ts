@@ -147,6 +147,22 @@ export type UpdateUrlResult = {
   message?: string;
 };
 
+export type RedownloadMismatch = {
+  order: number;
+  sourceTitle: string;
+  storedTitle: string;
+};
+
+export type RedownloadFromUrlResult = {
+  pendingChapters: number;
+  downloadJobId?: string;
+  message?: string;
+  /** Present when the source titles no longer match the stored ones and the user must confirm before the job is created. */
+  needsConfirmation?: boolean;
+  titleMismatches?: number;
+  chapters?: RedownloadMismatch[];
+};
+
 export type UpdateUrlPreviewResult = {
   title: string;
   author?: string;

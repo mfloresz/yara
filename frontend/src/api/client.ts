@@ -21,6 +21,7 @@ import type {
   PaginatedResult,
   PreviewUrlResult,
   ReadingProgress,
+  RedownloadFromUrlResult,
   UpdateUrlPreviewResult,
   ProvidersResponse,
   ServerSettings,
@@ -241,6 +242,19 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       ): Promise<UpdateUrlResult> {
         return http.post<UpdateUrlResult>(
           `/api/db/novels/${novelId}/update-from-url`,
+          input,
+        );
+      },
+      async redownloadFromUrl(
+        novelId: string,
+        input: {
+          startChapter?: number;
+          endChapter?: number;
+          confirm?: boolean;
+        },
+      ): Promise<RedownloadFromUrlResult> {
+        return http.post<RedownloadFromUrlResult>(
+          `/api/db/novels/${novelId}/redownload-from-url`,
           input,
         );
       },

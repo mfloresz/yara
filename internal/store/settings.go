@@ -266,9 +266,10 @@ type ReadingProgress struct {
 }
 
 type DownloadChapterInfo struct {
-	URL   string `json:"url"`
-	Title string `json:"title"`
-	Order int    `json:"order"`
+	URL       string `json:"url"`
+	Title     string `json:"title"`
+	Order     int    `json:"order"`
+	ChapterID string `json:"chapterId,omitempty"` // id of an existing chapter when re-downloading
 }
 
 type BatchCheckNovelResult struct {
