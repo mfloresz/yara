@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.15.0] - 2026-08-10
+
+### What's new
+
+- Added sorting to the novels dashboard: sort by title, creation date, or last-read across listings and search, with the order preserved while browsing pages.
+- Added shared-novel indicators and improved mobile search controls on the dashboard.
+
+### Fixes
+
+- Streamlined chapter cleaning result feedback in the novel detail page.
+
+## [v0.14.2] - 2026-08-09
+
+### Fixes
+
+- Fixed Novelfire chapter ordering for novels with decimal-numbered chapters (e.g. "92.1", "92.2") by using the sequential URL numbers as the canonical order, avoiding duplicate order collisions on import.
+- Improved job queue rejection handling: jobs are now rejected with clear feedback when the queue is full, and chapter statuses are reconciled for rejected jobs.
+- Added redownload conflict detection to prevent concurrent re-downloads of the same novel.
+
 ## [v0.14.1] - 2026-08-08
 
 ### Fixes
@@ -71,7 +90,9 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.15.0...HEAD
+[v0.15.0]: https://github.com/mfloresz/yara/compare/v0.14.2...v0.15.0
+[v0.14.2]: https://github.com/mfloresz/yara/compare/v0.14.1...v0.14.2
 [v0.14.1]: https://github.com/mfloresz/yara/compare/v0.14.0...v0.14.1
 [v0.14.0]: https://github.com/mfloresz/yara/compare/v0.13.1...v0.14.0
 [v0.13.0]: https://github.com/mfloresz/yara/compare/v0.12.0...v0.13.0
