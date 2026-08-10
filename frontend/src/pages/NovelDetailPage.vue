@@ -270,8 +270,6 @@
                 </div>
               </div>
 
-              <n-alert v-if="cleanFeedback" type="success">{{ cleanFeedback }}</n-alert>
-
               <div v-if="cleanEligibleChapters.length === 0" class="muted small">No hay capítulos con contenido para el tipo seleccionado.</div>
               <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 320px">
                 <div v-for="chapter in cleanEligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
@@ -630,7 +628,6 @@ const cleanCaseSensitive = ref(true);
 const cleanUseRegex = ref(false);
 const cleanSelectedIds = ref<Set<string>>(new Set());
 const cleanApplying = ref(false);
-const cleanFeedback = ref<string | null>(null);
 const cleanAllSummaries = ref<ChapterSummary[]>([]);
 const cleanAllSummariesLoading = ref(false);
 const cleanAllSummariesLoaded = ref(false);
@@ -1169,7 +1166,6 @@ watch(novelId, () => {
   cleanSelectedIds.value = new Set();
   cleanPreviewOpen.value = false;
   cleanPreviewItems.value = [];
-  cleanFeedback.value = null;
   failedJobsLoaded.value = false;
   failedJobsDirty.value = false;
   void refreshNovelAndChapterMeta();
@@ -1544,12 +1540,9 @@ function toggleCleanChapter(id: string, checked: boolean) {
 
 async function applyCleaning(chapterIds: string[]) {
   cleanApplying.value = true;
-  cleanFeedback.value = null;
   try {
     const result = await api.chapters.clean(novelId.value, cleanPreviewInput(chapterIds));
-    markAllSummariesDirty();
-    await Promise.all([loadAllSummaries(true), loadCleanAllSummaries(true), loadChapterSummaries()]);
-    cleanFeedback.value = `Limpieza aplicada a ${result.modified} capítulos.`;
+    message.success(`Limpieza aplicada a ${result.modified} capítulos.`, { duration: 4000 });
     const issues: string[] = [];
     if (result.skipped) issues.push(`${result.skipped} sin contenido aplicable`);
     if (result.notFound) issues.push(`${result.notFound} no encontrados`);
@@ -1558,7 +1551,6 @@ async function applyCleaning(chapterIds: string[]) {
       message.warning(issues.join(", ") + ".", { duration: 5000 });
     }
   } catch (err) {
-    cleanFeedback.value = null;
     message.error(`Error al aplicar limpieza: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     cleanApplying.value = false;
