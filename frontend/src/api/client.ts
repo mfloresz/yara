@@ -288,12 +288,21 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         return { ...result, novel: withDefaults(result.novel) };
       },
       async list(
-        params: { limit?: number; offset?: number; select?: string[]; q?: string } = {},
+        params: {
+          limit?: number;
+          offset?: number;
+          select?: string[];
+          q?: string;
+          sort?: "title" | "created" | "lastRead";
+          order?: "asc" | "desc";
+        } = {},
       ): Promise<PaginatedResult<Novel>> {
         const search = new URLSearchParams();
         if (params.limit) search.set("limit", String(params.limit));
         if (params.offset !== undefined) search.set("offset", String(params.offset));
         if (params.q) search.set("q", params.q);
+        if (params.sort) search.set("sort", params.sort);
+        if (params.order) search.set("order", params.order);
         if (params.select && params.select.length > 0)
           search.set("select", params.select.join(","));
         const suffix = search.size > 0 ? `?${search.toString()}` : "";

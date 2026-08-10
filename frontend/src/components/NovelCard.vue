@@ -15,6 +15,10 @@
         <div v-else class="library-cover-placeholder">
           <n-icon :size="40"><ImageOutline /></n-icon>
         </div>
+        <span v-if="shared" class="shared-badge" aria-label="Novela compartida">
+          <n-icon :size="13"><ShareSocialOutline /></n-icon>
+          Compartida
+        </span>
       </div>
     </RouterLink>
 
@@ -39,11 +43,12 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
 import { NIcon } from "naive-ui";
-import { ImageOutline } from "@vicons/ionicons5";
+import { ImageOutline, ShareSocialOutline } from "@vicons/ionicons5";
 import { getNovelDisplayTitle, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 
 defineProps<{
   novel: Novel;
+  shared?: boolean;
 }>();
 </script>
 
@@ -96,6 +101,27 @@ defineProps<{
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
+}
+
+.shared-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: calc(100% - 1rem);
+  padding: 0.2rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--info-blue, #2563eb) 35%, var(--divide));
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--surface-elevated) 84%, var(--info-blue, #2563eb));
+  color: var(--info-blue, #2563eb);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(6px);
 }
 
 .library-meta {

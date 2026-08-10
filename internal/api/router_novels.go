@@ -17,15 +17,17 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
 		selectParam := e.Request.URL.Query().Get("select")
 		searchQuery := e.Request.URL.Query().Get("q")
+		sortParam := e.Request.URL.Query().Get("sort")
+		orderParam := e.Request.URL.Query().Get("order")
 
 		var list []store.Novel
 		var hasMore bool
 		var err error
 
 		if searchQuery != "" {
-			list, hasMore, err = s.Store.SearchNovels(e.Auth.Id, searchQuery, limit, offset)
+			list, hasMore, err = s.Store.SearchNovels(e.Auth.Id, searchQuery, limit, offset, sortParam, orderParam)
 		} else {
-			list, hasMore, err = s.Store.ListNovels(e.Auth.Id, limit, offset)
+			list, hasMore, err = s.Store.ListNovels(e.Auth.Id, limit, offset, sortParam, orderParam)
 		}
 		if err != nil {
 			return e.InternalServerError("failed to list novels", err)

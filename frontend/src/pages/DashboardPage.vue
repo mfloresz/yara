@@ -2,7 +2,7 @@
   <AppLayout>
     <div class="stack-lg">
       <header class="page-header">
-        <div>
+        <div class="page-context">
           <p class="muted small">
             {{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}
             <span v-if="searchQuery.trim() && loadingMore" class="search-hint">&nbsp;· buscando…</span>
@@ -10,15 +10,19 @@
           </p>
         </div>
         <div class="page-actions">
+          <n-button class="mobile-search-button" quaternary circle aria-label="Buscar novelas" @click="openMobileSearch">
+            <template #icon><n-icon><SearchOutline /></n-icon></template>
+          </n-button>
           <n-input
+            ref="searchInputRef"
             v-model:value="searchQuery"
             placeholder="Buscar novela..."
             clearable
             class="search-input"
+            :class="{ 'mobile-search-open': mobileSearchOpen }"
+            @clear="closeMobileSearch"
           >
-            <template #prefix>
-              <n-icon><SearchOutline /></n-icon>
-            </template>
+            <template #prefix><n-icon><SearchOutline /></n-icon></template>
           </n-input>
           <div class="sort-controls">
             <n-select
@@ -32,15 +36,11 @@
               quaternary
               circle
               size="small"
+              class="sort-direction"
               :aria-label="sortOrder === 'asc' ? 'Cambiar a orden descendente' : 'Cambiar a orden ascendente'"
               @click="toggleSortOrder"
             >
-              <template #icon>
-                <n-icon>
-                   <ArrowUpOutline v-if="sortOrder === 'asc'" />
-                   <ArrowDownOutline v-else />
-                </n-icon>
-              </template>
+              <template #icon><n-icon><ArrowUpOutline v-if="sortOrder === 'asc'" /><ArrowDownOutline v-else /></n-icon></template>
             </n-button>
           </div>
           <n-button
@@ -51,27 +51,26 @@
             size="small"
             class="group-toggle"
             :aria-label="groupBySeries ? 'Desagrupar por serie' : 'Agrupar por serie'"
-            @click="groupBySeries = !groupBySeries"
+            @click="toggleGroupBySeries"
           >
-            <template #icon>
-              <n-icon>
-                <PricetagsOutline v-if="groupBySeries" />
-                <PricetagOutline v-else />
-              </n-icon>
-            </template>
+            <template #icon><n-icon><PricetagsOutline v-if="groupBySeries" /><PricetagOutline v-else /></n-icon></template>
           </n-button>
-          <n-button class="page-action desktop-only" secondary @click="importOpen = true">
-            <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
-            Importar EPUB
-          </n-button>
-          <n-button class="page-action desktop-only" secondary @click="importUrlOpen = true">
-            <template #icon><n-icon><GlobeOutline /></n-icon></template>
-            Desde URL
-          </n-button>
-          <n-button type="primary" class="page-action desktop-only" @click="createOpen = true">
-            <template #icon><n-icon><AddOutline /></n-icon></template>
-            Nueva novela
-          </n-button>
+          <n-dropdown trigger="click" :options="novelCreationOptions" @select="handleNovelCreationSelect">
+            <n-button type="primary" class="create-menu-button">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              Nueva novela
+            </n-button>
+          </n-dropdown>
+          <n-dropdown trigger="click" :options="novelCreationOptions" @select="handleNovelCreationSelect">
+            <n-button
+              type="primary"
+              circle
+              class="create-menu-button-mobile"
+              aria-label="Nueva novela"
+            >
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+            </n-button>
+          </n-dropdown>
         </div>
       </header>
 
@@ -107,17 +106,12 @@
 
       <template v-if="!groupBySeries">
         <div class="library-grid" role="list">
-          <div v-if="sorting" class="sorting-overlay" aria-hidden="true">
-            <LibrarySkeleton />
-          </div>
-          <template v-else>
           <NovelCard
             v-for="novel in sortedNovels"
             :key="novel.id"
             :novel="novel"
-
+            :shared="isSharedNovel(novel)"
           />
-          </template>
         </div>
       </template>
       <template v-else>
@@ -254,7 +248,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, h, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, h, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   NSelect,
@@ -280,6 +274,7 @@ import {
   TrashOutline,
   CopyOutline,
   SearchOutline,
+  ShareSocialOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
@@ -303,9 +298,35 @@ const sortOptions = [
 
 const sortField = ref<SortField>("title");
 const sortOrder = ref<"asc" | "desc">("asc");
-const sorting = ref(false);
+const groupBySeries = ref(false);
 const searchQuery = ref("");
-let sortTimeout: ReturnType<typeof setTimeout> | null = null;
+const mobileSearchOpen = ref(false);
+const searchInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const preferenceKey = ref<string | null>(null);
+
+function restorePreferences(userId?: string) {
+  if (!userId) return;
+  preferenceKey.value = `dashboard-preferences:v1:${userId}`;
+  try {
+    const raw = localStorage.getItem(preferenceKey.value);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as Partial<{ sortField: SortField; sortOrder: "asc" | "desc"; groupBySeries: boolean }>;
+    if (saved.sortField && sortOptions.some((option) => option.value === saved.sortField)) sortField.value = saved.sortField;
+    if (saved.sortOrder === "asc" || saved.sortOrder === "desc") sortOrder.value = saved.sortOrder;
+    if (typeof saved.groupBySeries === "boolean") groupBySeries.value = saved.groupBySeries;
+  } catch {
+    // Ignore invalid preferences and use defaults.
+  }
+}
+
+function savePreferences() {
+  if (!preferenceKey.value) return;
+  localStorage.setItem(preferenceKey.value, JSON.stringify({
+    sortField: sortField.value,
+    sortOrder: sortOrder.value,
+    groupBySeries: groupBySeries.value,
+  }));
+}
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Watch searchQuery and debounce backend search
@@ -318,17 +339,54 @@ watch(searchQuery, (newQuery) => {
   }
 });
 
+const LIST_SELECT = [
+  "id",
+  "sourceTitle",
+  "targetTitle",
+  "sourceAuthor",
+  "targetAuthor",
+  "sourceSeries",
+  "targetSeries",
+  "sourceNumber",
+  "targetNumber",
+  "coverPath",
+  "ownerId",
+  "isPublic",
+  "lastReadAt",
+  "createdAt",
+];
+
+// The library is pre-sorted by the backend; changing the sort reloads page 0 so
+// pagination stays consistent with the requested ordering.
+async function reloadLibrary() {
+  await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value);
+}
+
 function toggleSortOrder() {
   sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
+  savePreferences();
+  void reloadLibrary();
 }
 
 function onSortChange() {
-  sorting.value = true;
-  if (sortTimeout) clearTimeout(sortTimeout);
-  sortTimeout = setTimeout(() => {
-    sorting.value = false;
-  }, 300);
+  savePreferences();
+  void reloadLibrary();
 }
+
+function toggleGroupBySeries() {
+  groupBySeries.value = !groupBySeries.value;
+  savePreferences();
+}
+
+function openMobileSearch() {
+  mobileSearchOpen.value = true;
+  void nextTick(() => searchInputRef.value?.focus());
+}
+
+function closeMobileSearch() {
+  if (!searchQuery.value.trim()) mobileSearchOpen.value = false;
+}
+
 
 const sortedNovels = computed(() => {
   const list = [...novels.value];
@@ -381,8 +439,6 @@ type GroupedResult = {
   groups: NovelGroup[];
   ungrouped: Novel[];
 };
-
-const groupBySeries = ref(false);
 
 const groupedNovels = computed((): GroupedResult => {
   const groups = new Map<string, NovelGroup>();
@@ -469,6 +525,22 @@ const languageOptions = LANGUAGES.map((l) => ({ label: l.name, value: l.code }))
 const languageOptionsNoAuto = LANGUAGES.filter((l) => l.code !== "auto").map((l) => ({ label: l.name, value: l.code }));
 const canCreate = computed(() => Boolean(form.sourceTitle.trim() && form.sourceLanguage && form.targetLanguage));
 
+const novelCreationOptions = [
+  { label: "Nueva novela", key: "create", icon: () => h(NIcon, null, { default: () => h(AddOutline) }) },
+  { label: "Importar EPUB", key: "import-epub", icon: () => h(NIcon, null, { default: () => h(CloudUploadOutline) }) },
+  { label: "Desde URL", key: "import-url", icon: () => h(NIcon, null, { default: () => h(GlobeOutline) }) },
+];
+
+function handleNovelCreationSelect(key: string) {
+  if (key === "create") createOpen.value = true;
+  else if (key === "import-epub") importOpen.value = true;
+  else if (key === "import-url") importUrlOpen.value = true;
+}
+
+function isSharedNovel(novel: Novel) {
+  return novel.ownerId !== auth.user.value?.id;
+}
+
 const novelMenuDropdownItems = computed(() => {
   const novel = selectedNovel.value;
   if (!novel) return [];
@@ -497,12 +569,13 @@ function handleNovelMenuSelect(key: string) {
 }
 
 onMounted(() => {
+  restorePreferences(auth.user.value?.id);
   void loadLibrary();
 });
 
 async function loadLibrary() {
   try {
-    await listNovels(false, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
+    await listNovels(false, LIST_SELECT, sortField.value, sortOrder.value);
   } catch {
     const cached = await offlineCache.loadCachedNovels();
     hydrateCachedNovels(Object.values(cached).map((item) => item.novel));
@@ -598,7 +671,7 @@ async function submitImport() {
 async function copyNovel(novelId: string) {
   try {
     await api.novels.copy(novelId);
-    await listNovels(true, ["id", "sourceTitle", "targetTitle", "sourceAuthor", "targetAuthor", "sourceSeries", "targetSeries", "sourceNumber", "targetNumber", "coverPath", "ownerId", "lastReadAt", "createdAt"]);
+    await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value);
     message.success("Novela copiada a tu biblioteca");
   } catch (err) {
     message.error("Error al copiar: " + (err instanceof Error ? err.message : String(err)));
@@ -644,8 +717,14 @@ function onBackToUrlDialog() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1rem clamp(1rem, 3vw, 2rem);
   flex-wrap: wrap;
+}
+
+.page-context {
+  flex: 0 1 auto;
+  min-width: 7rem;
+  padding-top: 0.6rem;
 }
 
 .page-title {
@@ -658,27 +737,41 @@ function onBackToUrlDialog() {
 .page-actions {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 1 1 42rem;
+  width: 100%;
+  min-width: 0;
   flex-wrap: wrap;
+  box-sizing: border-box;
 }
 
-.page-action {
+.create-menu-button {
   white-space: nowrap;
+}
+
+.create-menu-button-mobile {
+  display: none;
+}
+
+.mobile-search-button {
+  display: none;
 }
 
 .sort-controls {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
 .sort-select {
-  min-width: 8rem;
+  width: clamp(8rem, 17vw, 11rem);
+  min-width: 0;
 }
 
 .search-input {
-  min-width: 12rem;
-  max-width: 16rem;
+  width: clamp(12rem, 22vw, 17rem);
 }
 
 .search-hint {
@@ -766,17 +859,72 @@ function onBackToUrlDialog() {
   font-style: italic;
 }
 
-.sorting-overlay {
-  display: contents;
+@media (max-width: 820px) {
+  .page-header {
+    display: block;
+  }
+
+  .page-context {
+    padding-top: 0;
+    margin-bottom: 0.75rem;
+  }
+
+  .page-actions {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 640px) {
-  .desktop-only {
-    display: none;
+  .page-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "search sort direction"
+      "create create group";
+    align-items: center;
+    justify-content: stretch;
+    gap: 0.5rem;
   }
 
-  .mobile-only {
+  .mobile-search-button {
     display: inline-flex;
+    grid-area: search;
+    justify-self: start;
+  }
+
+  .search-input {
+    display: none;
+    width: 100%;
+    min-width: 0;
+    grid-area: search;
+  }
+
+  .search-input.mobile-search-open {
+    display: flex;
+  }
+
+  .sort-controls {
+    grid-area: sort;
+    min-width: 0;
+  }
+
+  .sort-select {
+    width: clamp(7rem, 30vw, 9rem);
+  }
+
+  .sort-direction {
+    grid-area: direction;
+  }
+
+  .group-toggle {
+    grid-area: group;
+    justify-self: end;
+  }
+
+  .create-menu-button {
+    grid-area: create;
+    width: 100%;
+    justify-self: stretch;
   }
 
   .page-title {
@@ -784,12 +932,33 @@ function onBackToUrlDialog() {
   }
 
   .library-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1rem;
   }
 }
 
 @media (max-width: 380px) {
+  .page-actions {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "create search group direction"
+      "sort sort sort sort";
+  }
+
+  .create-menu-button {
+    display: none;
+  }
+
+  .create-menu-button-mobile {
+    display: inline-flex;
+    grid-area: create;
+    justify-self: start;
+  }
+
+  .sort-select {
+    width: 100%;
+  }
+
   .library-grid {
     grid-template-columns: repeat(2, 1fr);
   }

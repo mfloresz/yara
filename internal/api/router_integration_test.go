@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"translator-server/internal/config"
@@ -237,6 +239,127 @@ func TestListNovelsSortByCreatedSucceeds(t *testing.T) {
 	if len(listResp.Items) != 1 {
 		t.Fatalf("expected 1 novel in list, got %d", len(listResp.Items))
 	}
+}
+
+func TestListNovelsSorting(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-sorting@example.com", "secret123", "Alice")
+
+	createNovelFull := func(sourceTitle, targetTitle string) novelPayload {
+		t.Helper()
+		body := map[string]any{
+			"sourceTitle":    sourceTitle,
+			"sourceLanguage": "en",
+			"targetLanguage": "es",
+		}
+		if targetTitle != "" {
+			body["targetTitle"] = targetTitle
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels", alice.Token, body)
+		assertStatus(t, resp, http.StatusCreated)
+		var n novelPayload
+		decodeResponse(t, resp, &n)
+		return n
+	}
+
+	bravo := createNovelFull("Bravo", "")
+	time.Sleep(20 * time.Millisecond)
+	alpha := createNovelFull("Alpha", "")
+	time.Sleep(20 * time.Millisecond)
+	// Zulu displays as "Charlie" (target title preferred), so title-sorted order is
+	// Alpha, Bravo, Charlie while creation order is Bravo, Alpha, Zulu.
+	zulu := createNovelFull("Zulu", "Charlie")
+
+	listSorted := func(query string) (items []map[string]any, hasMore bool) {
+		t.Helper()
+		path := "/api/db/novels"
+		if query != "" {
+			path += "?" + query
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodGet, path, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var listResp struct {
+			Items   []map[string]any `json:"items"`
+			HasMore bool             `json:"hasMore"`
+		}
+		decodeResponse(t, resp, &listResp)
+		return listResp.Items, listResp.HasMore
+	}
+
+	ids := func(items []map[string]any) []string {
+		out := make([]string, 0, len(items))
+		for _, it := range items {
+			out = append(out, it["id"].(string))
+		}
+		return out
+	}
+
+	assertIDs := func(name string, got, want []string) {
+		t.Helper()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s = %v, want %v", name, got, want)
+		}
+	}
+
+	// Default sort is title ascending, preferring target titles.
+	def, _ := listSorted("")
+	assertIDs("default sort (title asc)", ids(def), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// Explicit title sort both directions.
+	asc, _ := listSorted("sort=title&order=asc")
+	assertIDs("title asc", ids(asc), []string{alpha.ID, bravo.ID, zulu.ID})
+	desc, _ := listSorted("sort=title&order=desc")
+	assertIDs("title desc", ids(desc), []string{zulu.ID, bravo.ID, alpha.ID})
+
+	// created follows the UI convention: asc = most-recent first (Zulu created
+	// last), desc = oldest first (Bravo created first).
+	createdAsc, _ := listSorted("sort=created&order=asc")
+	assertIDs("created asc", ids(createdAsc), []string{zulu.ID, alpha.ID, bravo.ID})
+	createdDesc, _ := listSorted("sort=created&order=desc")
+	assertIDs("created desc", ids(createdDesc), []string{bravo.ID, alpha.ID, zulu.ID})
+
+	// Invalid sort/order values fall back to the defaults (title asc).
+	fallback, _ := listSorted("sort=bogus&order=sideways")
+	assertIDs("invalid sort/order fallback", ids(fallback), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// lastRead requires reading progress: bravo read first, then zulu; alpha unread.
+	// Like created, asc = most-recently-read first; unread (alpha) stays last.
+	chBravo := createChapter(t, env.handler, alice.Token, bravo.ID, 1)
+	time.Sleep(20 * time.Millisecond)
+	chZulu := createChapter(t, env.handler, alice.Token, zulu.ID, 1)
+
+	progressResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/user/novels/"+bravo.ID+"/reading-progress", alice.Token, map[string]any{
+		"chapterId": chBravo.ID, "scrollPercent": 0,
+	})
+	assertStatus(t, progressResp, http.StatusOK)
+	time.Sleep(20 * time.Millisecond)
+	progressResp = doJSONRequest(t, env.handler, http.MethodPut, "/api/user/novels/"+zulu.ID+"/reading-progress", alice.Token, map[string]any{
+		"chapterId": chZulu.ID, "scrollPercent": 0,
+	})
+	assertStatus(t, progressResp, http.StatusOK)
+
+	lastReadAsc, _ := listSorted("sort=lastRead&order=asc")
+	assertIDs("lastRead asc", ids(lastReadAsc), []string{zulu.ID, bravo.ID, alpha.ID})
+	lastReadDesc, _ := listSorted("sort=lastRead&order=desc")
+	assertIDs("lastRead desc", ids(lastReadDesc), []string{bravo.ID, zulu.ID, alpha.ID})
+
+	// Pagination stays globally consistent with the requested sort: page 1 + page 2
+	// reconstructs the full title-asc order with no duplicates.
+	page1, p1More := listSorted("sort=title&order=asc&limit=2&offset=0")
+	if len(page1) != 2 || !p1More {
+		t.Fatalf("expected 2 items with hasMore on page 1, got %d items hasMore=%v", len(page1), p1More)
+	}
+	page2, p2More := listSorted("sort=title&order=asc&limit=2&offset=2")
+	if len(page2) != 1 || p2More {
+		t.Fatalf("expected 1 item without hasMore on page 2, got %d items hasMore=%v", len(page2), p2More)
+	}
+	assertIDs("paged title asc", append(ids(page1), ids(page2)...), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// Search applies the same sort/order (query "a" matches Alpha, Bravo, Charlie).
+	searchDesc, _ := listSorted("q=a&sort=title&order=desc")
+	assertIDs("search title desc", ids(searchDesc), []string{zulu.ID, bravo.ID, alpha.ID})
+	searchFallback, _ := listSorted("q=a&sort=created&order=asc")
+	assertIDs("search created asc", ids(searchFallback), []string{zulu.ID, alpha.ID, bravo.ID})
 }
 
 func TestImportedCoverIsPubliclyFetchable(t *testing.T) {

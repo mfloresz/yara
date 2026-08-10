@@ -18,13 +18,25 @@ let lastSelect: string[] | undefined;
 const PAGE_SIZE = 100;
 const maxListLimit = 1000;
 
+export type NovelSortField = "title" | "created" | "lastRead";
+export type NovelSortOrder = "asc" | "desc";
+
+// Track the sort/order used for the last list load so pagination (loadMore) and
+// search reuse the same ordering. Changing the sort changes the list signature,
+// which forces a fresh page-0 load.
+let lastSort: NovelSortField = "title";
+let lastOrder: NovelSortOrder = "asc";
+
 export function useNovels() {
   const { api } = useAppServices();
   const loading = ref(false);
 
-  function listSignature(select?: string[]) {
-    if (!select || select.length === 0) return "__full__";
-    return [...select].sort().join(",");
+  function listSignature(select?: string[], sort?: NovelSortField, order?: NovelSortOrder) {
+    const s = sort ?? lastSort;
+    const o = order ?? lastOrder;
+    const key = `${s}:${o}`;
+    if (!select || select.length === 0) return `${key}:__full__`;
+    return `${key}:${[...select].sort().join(",")}`;
   }
 
   function markNovelsFull(items: Novel[]) {
@@ -53,15 +65,30 @@ export function useNovels() {
     );
   }
 
-  async function listNovels(force = false, select?: string[]) {
-    const signature = listSignature(select);
+  async function listNovels(
+    force = false,
+    select?: string[],
+    sort?: NovelSortField,
+    order?: NovelSortOrder,
+  ) {
+    const nextSort = sort ?? lastSort;
+    const nextOrder = order ?? lastOrder;
+    lastSort = nextSort;
+    lastOrder = nextOrder;
+    const signature = listSignature(select, nextSort, nextOrder);
     if (loadedListSignatures.has(signature) && !force) return novels.value;
     loading.value = true;
     currentOffset = 0;
     lastSelect = select;
     hasMore.value = true;
     try {
-      const result = await api.novels.list({ select, limit: PAGE_SIZE, offset: 0 });
+      const result = await api.novels.list({
+        select,
+        sort: nextSort,
+        order: nextOrder,
+        limit: PAGE_SIZE,
+        offset: 0,
+      });
       novels.value = mergeNovelList(result.items, select);
       hasMore.value = result.hasMore ?? false;
       currentOffset = result.items.length;
@@ -79,7 +106,13 @@ export function useNovels() {
     if (!hasMore.value || loadingMore.value) return;
     loadingMore.value = true;
     try {
-      const result = await api.novels.list({ select: lastSelect, limit: PAGE_SIZE, offset: currentOffset });
+      const result = await api.novels.list({
+        select: lastSelect,
+        sort: lastSort,
+        order: lastOrder,
+        limit: PAGE_SIZE,
+        offset: currentOffset,
+      });
       const merged = mergeNovelList(result.items, lastSelect);
       novels.value = [...novels.value, ...merged];
       hasMore.value = result.hasMore ?? false;
@@ -100,7 +133,13 @@ export function useNovels() {
     lastSearchQuery = query;
     loadingMore.value = true;
     try {
-      const result = await api.novels.list({ q: query, select: lastSelect, limit: maxListLimit });
+      const result = await api.novels.list({
+        q: query,
+        select: lastSelect,
+        sort: lastSort,
+        order: lastOrder,
+        limit: maxListLimit,
+      });
       // Ignore stale response if query changed while request was in flight
       if (lastSearchQuery !== query) return;
       // Merge results: only add novels not already in the list
