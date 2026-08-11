@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -167,7 +168,9 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 				}
 			case strings.HasPrefix(lower, "translated/"):
 				name := normalized[len("translated/"):]
-				if name != "" {
+				// Empty files (0-byte placeholders) carry no translation: skip
+				// them so we never invent a translated title from the filename.
+				if name != "" && len(bytes.TrimSpace(e.content)) > 0 {
 					translated[name] = zipFile{name: name, content: string(e.content)}
 				}
 			}
@@ -196,7 +199,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			origContent := contentAfterTitle(entry.content)
 			transContent := ""
 			transTitle := ""
-			if t, ok := translated[entry.name]; ok {
+			if t, ok := translated[entry.name]; ok && strings.TrimSpace(t.content) != "" {
 				transContent = contentAfterTitle(t.content)
 				transTitle = extractChapterTitle(t.content, entry.name)
 			}

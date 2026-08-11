@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -221,6 +222,87 @@ func TestImportEpubPersistsCoverFile(t *testing.T) {
 	}
 	if len(coverBody) == 0 {
 		t.Fatal("expected non-empty cover body")
+	}
+}
+
+func TestImportZipIgnoresEmptyTranslatedFiles(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-zip-empty@example.com", "secret123", "Alice")
+
+	var zipBuf bytes.Buffer
+	zipWriter := zip.NewWriter(&zipBuf)
+	addZipEntry := func(name, content string) {
+		w, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+	addZipEntry("metadata.json", `{"sourceTitle":"Zipped Novel","sourceLanguage":"en","targetLanguage":"es"}`)
+	addZipEntry("originals/chapter-002.md", "Chapter 2: Situation\nOriginal body text.")
+	// 0-byte placeholder: must not produce a translated title or content.
+	addZipEntry("translated/chapter-002.md", "")
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, err := writer.CreateFormFile("file", "novel.zip")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fileWriter.Write(zipBuf.Bytes()); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/db/novels/import-from-zip", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+alice.Token)
+
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var importResp struct {
+		Novel            map[string]any `json:"novel"`
+		ChaptersImported int            `json:"chaptersImported"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &importResp); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if importResp.ChaptersImported != 1 {
+		t.Fatalf("expected 1 chapter imported, got %d", importResp.ChaptersImported)
+	}
+
+	chaptersResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+importResp.Novel["id"].(string)+"/chapters", alice.Token, nil)
+	assertStatus(t, chaptersResp, http.StatusOK)
+
+	var chaptersFromAPI []chapterPayload
+	decodeResponse(t, chaptersResp, &chaptersFromAPI)
+	if len(chaptersFromAPI) != 1 {
+		t.Fatalf("expected 1 chapter, got %d", len(chaptersFromAPI))
+	}
+	chapter := chaptersFromAPI[0]
+	if chapter.Title != "Chapter 2: Situation" {
+		t.Fatalf("expected original title %q, got %q", "Chapter 2: Situation", chapter.Title)
+	}
+	if chapter.TranslatedTitle != "" {
+		t.Fatalf("expected empty translated title for empty translated file, got %q", chapter.TranslatedTitle)
+	}
+	if chapter.TranslatedContent != "" {
+		t.Fatalf("expected empty translated content, got %q", chapter.TranslatedContent)
+	}
+	if chapter.Status != "pending" {
+		t.Fatalf("expected chapter status pending, got %q", chapter.Status)
 	}
 }
 
