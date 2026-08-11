@@ -232,6 +232,46 @@
       </template>
     </n-modal>
 
+    <n-modal v-model:show="importZipOpen" preset="card" title="Importar novela desde ZIP" style="width: min(720px, 96vw)">
+      <div class="stack-md">
+        <n-alert type="info" title="Estructura requerida">
+          El ZIP debe contener un archivo <code>metadata.json</code> y la carpeta <code>originals/</code>.
+          Los idiomas y los datos de la novela se leen desde el metadata; no hace falta introducirlos aquí.
+        </n-alert>
+        <n-card size="small">
+          <div class="stack-sm small">
+            <strong>Ejemplo de estructura</strong>
+            <pre class="zip-structure">novela.zip
+├── metadata.json
+├── cover.jpg              (opcional)
+├── originals/
+│   ├── 001-capitulo-1.html
+│   └── 002-capitulo-2.html
+└── translated/            (opcional)
+    ├── 001-capitulo-1.html
+    └── 002-capitulo-2.html</pre>
+            <div class="muted">El número del nombre determina el orden. Los archivos de <code>translated/</code> deben coincidir con los de <code>originals/</code>.</div>
+          </div>
+        </n-card>
+        <div class="small">
+          <strong>metadata.json mínimo</strong>
+          <pre class="zip-structure">{
+  "sourceTitle": "Título original",
+  "sourceLanguage": "en",
+  "targetLanguage": "es"
+}</pre>
+          <div class="muted">También puedes incluir autor, descripción, serie, número, URL y títulos traducidos.</div>
+        </div>
+        <input type="file" accept=".zip,application/zip" @change="handleImportZipFile" />
+        <div v-if="importZipFile" class="small muted">Archivo seleccionado: {{ importZipFile.name }}</div>
+        <n-alert v-if="importZipError" type="error" :title="importZipError" />
+      </div>
+      <template #footer>
+        <n-button secondary @click="resetImportZip">Cancelar</n-button>
+        <n-button type="primary" :loading="importingZip" :disabled="!importZipFile" @click="submitImportZip">Importar ZIP</n-button>
+      </template>
+    </n-modal>
+
     <ImportUrlDialog
       :open="importUrlOpen"
       @update:open="importUrlOpen = $event"
@@ -275,6 +315,7 @@ import {
   CopyOutline,
   SearchOutline,
   ShareSocialOutline,
+  ArchiveOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
@@ -491,6 +532,7 @@ const {
   searchNovels,
   createNovel,
   importNovelFromEpub,
+  importNovelFromZip,
   deleteNovel,
   hydrateCachedNovels,
 } = useNovels();
@@ -500,6 +542,7 @@ const createOpen = ref(false);
 const creating = ref(false);
 const createError = ref<string | null>(null);
 const importOpen = ref(false);
+const importZipOpen = ref(false);
 const importUrlOpen = ref(false);
 const importUrlConfirmOpen = ref(false);
 const urlPreview = ref<PreviewUrlResult | null>(null);
@@ -509,6 +552,9 @@ const importError = ref<string | null>(null);
 const importFile = ref<File | null>(null);
 const importTargetLang = ref<string | null>(null);
 const importSourceLang = ref<string | null>(null);
+const importingZip = ref(false);
+const importZipError = ref<string | null>(null);
+const importZipFile = ref<File | null>(null);
 const importPreview = ref<{ title: string; author: string; description: string; language: string; chapterCount: number } | null>(null);
 const novelMenuAnchor = ref<HTMLElement | null>(null);
 const selectedNovel = ref<Novel | null>(null);
@@ -528,12 +574,14 @@ const canCreate = computed(() => Boolean(form.sourceTitle.trim() && form.sourceL
 const novelCreationOptions = [
   { label: "Nueva novela", key: "create", icon: () => h(NIcon, null, { default: () => h(AddOutline) }) },
   { label: "Importar EPUB", key: "import-epub", icon: () => h(NIcon, null, { default: () => h(CloudUploadOutline) }) },
+  { label: "Importar ZIP", key: "import-zip", icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }) },
   { label: "Desde URL", key: "import-url", icon: () => h(NIcon, null, { default: () => h(GlobeOutline) }) },
 ];
 
 function handleNovelCreationSelect(key: string) {
   if (key === "create") createOpen.value = true;
   else if (key === "import-epub") importOpen.value = true;
+  else if (key === "import-zip") importZipOpen.value = true;
   else if (key === "import-url") importUrlOpen.value = true;
 }
 
@@ -610,6 +658,35 @@ async function submitCreate() {
     createError.value = err instanceof Error ? err.message : String(err);
   } finally {
     creating.value = false;
+  }
+}
+
+function handleImportZipFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  importZipError.value = null;
+  importZipFile.value = file;
+}
+
+function resetImportZip() {
+  importZipOpen.value = false;
+  importingZip.value = false;
+  importZipError.value = null;
+  importZipFile.value = null;
+}
+
+async function submitImportZip() {
+  if (!importZipFile.value) return;
+  importingZip.value = true;
+  importZipError.value = null;
+  try {
+    const result = await importNovelFromZip(importZipFile.value);
+    resetImportZip();
+    await router.push(`/novels/${result.novel.id}`);
+  } catch (err) {
+    importZipError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    importingZip.value = false;
   }
 }
 
@@ -713,6 +790,14 @@ function onBackToUrlDialog() {
 </script>
 
 <style scoped>
+.zip-structure {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
 .page-header {
   display: flex;
   align-items: flex-start;

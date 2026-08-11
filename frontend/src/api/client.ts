@@ -17,6 +17,7 @@ import type {
   ChapterSummaryPage,
   ImportEpubResult,
   ImportUrlResult,
+  ImportZipResult,
   NovelEpubRecord,
   PaginatedResult,
   PreviewUrlResult,
@@ -283,6 +284,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         form.set("targetLanguage", input.targetLanguage);
         const result = await http.post<ImportEpubResult>(
           "/api/db/novels/import-epub",
+          form,
+        );
+        return { ...result, novel: withDefaults(result.novel) };
+      },
+      async importFromZip(file: Blob, fileName: string): Promise<ImportZipResult> {
+        const form = new FormData();
+        form.set("file", new File([file], fileName, { type: "application/zip" }));
+        const result = await http.post<ImportZipResult>(
+          "/api/db/novels/import-from-zip",
           form,
         );
         return { ...result, novel: withDefaults(result.novel) };

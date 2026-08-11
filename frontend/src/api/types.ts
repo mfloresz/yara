@@ -32,6 +32,11 @@ export type ImportEpubResult = {
   chaptersImported: number;
 };
 
+export type ImportZipResult = {
+  novel: Novel;
+  chaptersImported: number;
+};
+
 export type GeneralPromptKey = "translation" | "refine" | "check" | "glossary";
 
 export type GeneralPromptRecord = {

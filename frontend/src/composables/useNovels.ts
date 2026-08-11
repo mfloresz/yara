@@ -3,6 +3,7 @@ import type { CreateNovelInput, Novel, UpdateNovelInput } from "@/domain";
 import type {
   ImportEpubResult,
   ImportUrlResult,
+  ImportZipResult,
   PreviewUrlResult,
 } from "@/api/types";
 import { useAppServices } from "@/app/services";
@@ -174,6 +175,16 @@ export function useNovels() {
     return result;
   }
 
+  async function importNovelFromZip(file: File): Promise<ImportZipResult> {
+    const result = await api.novels.importFromZip(file, file.name);
+    novels.value = [
+      result.novel,
+      ...novels.value.filter((item) => item.id !== result.novel.id),
+    ];
+    fullNovelIds.add(result.novel.id);
+    return result;
+  }
+
   async function importNovelFromUrl(input: {
     url: string;
     sourceLanguage?: string;
@@ -260,6 +271,7 @@ export function useNovels() {
     loadMoreNovels,
     searchNovels,
     importNovelFromEpub,
+    importNovelFromZip,
     importNovelFromUrl,
     previewNovelFromUrl,
     getNovel,
