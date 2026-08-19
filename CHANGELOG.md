@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.17.1] - 2026-08-19
+
+### What's new
+
+- Added the `muse-spark-1.2-contributor` model to the OpenCode Go provider. This model uses the OpenAI Responses API instead of chat completions.
+
 ## [v0.17.0] - 2026-08-18
 
 ### What's new
