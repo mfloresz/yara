@@ -80,6 +80,30 @@ func TestNewAIProviderKnownProviderUsesResolvedBaseURLAndProviderOptions(t *test
 	}
 }
 
+func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
+	env := newAPITestEnv(t)
+	server := New(env.store, nil)
+
+	provider, err := server.newAIProvider(store.AISettings{
+		Provider: "opencode-go",
+		APIKey:   "test-key",
+		Model:    "muse-spark-1.2-contributor",
+	})
+	if err != nil {
+		t.Fatalf("new AI provider: %v", err)
+	}
+	op, ok := provider.(*ai.OpenAIProvider)
+	if !ok {
+		t.Fatalf("expected *ai.OpenAIProvider, got %T", provider)
+	}
+	if got, _ := op.ProviderOptions["useResponsesAPI"].(bool); !got {
+		t.Fatal("expected muse-spark-1.2-contributor on opencode-go to use the responses API")
+	}
+	if got, _ := op.ProviderOptions["strictJsonSchema"].(bool); !got {
+		t.Fatal("expected strict JSON schema to remain enabled for muse-spark-1.2-contributor")
+	}
+}
+
 func TestJobRecordIncludesAutoSegmentEnabled(t *testing.T) {
 	payload := jobRecord(store.Job{
 		ID:                        "job-1",

@@ -94,8 +94,9 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: none)":   true,
 		"openai/gpt-5.6-luna (reasoning: low)":    true,
 		"openai/gpt-5.6-luna (reasoning: medium)": true,
-		"mimo-v2.5":         true,
-		"deepseek-v4-flash": true,
+		"mimo-v2.5":                  true,
+		"deepseek-v4-flash":          true,
+		"muse-spark-1.2-contributor": true,
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
@@ -104,6 +105,9 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		if !wantModels[m] {
 			t.Fatalf("unexpected model %q in opencode-go", m)
 		}
+	}
+	if got, _ := info.ModelOptions["muse-spark-1.2-contributor"]["useResponsesAPI"].(bool); !got {
+		t.Fatal("muse-spark-1.2-contributor on opencode-go should use the responses API")
 	}
 }
 
@@ -134,6 +138,42 @@ func TestOpenCodeGoLunaVariantWireFormat(t *testing.T) {
 		Model:   "openai/gpt-5.6-luna (reasoning: medium)",
 		ProviderOptions: map[string]any{
 			"useResponsesAPI": false,
+		},
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+}
+
+func TestOpenCodeGoMuseSparkUsesResponsesAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("expected requests against the responses endpoint, got %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body["model"] != "muse-spark-1.2-contributor" {
+			t.Fatalf("unexpected model: %v", body["model"])
+		}
+		if _, ok := body["input"]; !ok {
+			t.Fatalf("responses request should carry an input array, got: %v", body)
+		}
+		if _, ok := body["messages"]; ok {
+			t.Fatalf("responses request must not carry a chat-completions messages array: %v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"test","model":"muse-spark-1.2-contributor","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Model:   "muse-spark-1.2-contributor",
+		ProviderOptions: map[string]any{
+			"useResponsesAPI": true,
 		},
 	}
 	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {

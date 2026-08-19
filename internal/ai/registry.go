@@ -8,6 +8,25 @@ type ProviderInfo struct {
 	DefaultModel string         `json:"defaultModel"`
 	OpenAICompat bool           `json:"openaiCompat"`
 	GoAIOptions  map[string]any `json:"goaiOptions,omitempty"`
+	// ModelOptions holds per-model overrides merged over GoAIOptions for
+	// requests targeting that model.
+	ModelOptions map[string]map[string]any `json:"modelOptions,omitempty"`
+}
+
+// OptionsForModel merges GoAIOptions with any per-model overrides.
+func (p ProviderInfo) OptionsForModel(model string) map[string]any {
+	overrides, ok := p.ModelOptions[model]
+	if !ok || len(overrides) == 0 {
+		return p.GoAIOptions
+	}
+	out := make(map[string]any, len(p.GoAIOptions)+len(overrides))
+	for k, v := range p.GoAIOptions {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
 }
 
 var knownProviders = []ProviderInfo{
@@ -69,12 +88,17 @@ var knownProviders = []ProviderInfo{
 			"openai/gpt-5.6-luna (reasoning: medium)",
 			"mimo-v2.5",
 			"deepseek-v4-flash",
+			"muse-spark-1.2-contributor",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
+		},
+		ModelOptions: map[string]map[string]any{
+			// muse-spark speaks the OpenAI Responses API, not chat completions.
+			"muse-spark-1.2-contributor": {"useResponsesAPI": true},
 		},
 	},
 
