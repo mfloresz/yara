@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.17.0] - 2026-08-18
+
+### What's new
+
+- Added selectable `gpt-5.6-luna` reasoning variants for the OpenCode Go provider.
+- Added a server-authoritative `canUpdate` field so the dashboard's update filter stays aligned with the supported parser catalog.
+
+### Fixes
+
+- Fixed ZIP imports treating empty translated chapter files as translated content.
+
 ## [v0.16.0] - 2026-08-10
 
 ### What's new
@@ -96,7 +107,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.17.0...HEAD
+[v0.17.0]: https://github.com/mfloresz/yara/compare/v0.16.0...v0.17.0
 [v0.16.0]: https://github.com/mfloresz/yara/compare/v0.15.0...v0.16.0
 [v0.15.0]: https://github.com/mfloresz/yara/compare/v0.14.2...v0.15.0
 [v0.14.2]: https://github.com/mfloresz/yara/compare/v0.14.1...v0.14.2
