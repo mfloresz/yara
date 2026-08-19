@@ -60,11 +60,17 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
-		ID:           "opencode-go",
-		Name:         "OpenCode Go",
-		BaseURL:      "https://opencode.ai/zen/go/v1",
-		Models:       []string{"mimo-v2.5", "deepseek-v4-flash"},
-		DefaultModel: "mimo-v2.5",
+		ID:      "opencode-go",
+		Name:    "OpenCode Go",
+		BaseURL: "https://opencode.ai/zen/go/v1",
+		Models: []string{
+			"openai/gpt-5.6-luna (reasoning: none)",
+			"openai/gpt-5.6-luna (reasoning: low)",
+			"openai/gpt-5.6-luna (reasoning: medium)",
+			"mimo-v2.5",
+			"deepseek-v4-flash",
+		},
+		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"useResponsesAPI":  false,

@@ -42,6 +42,8 @@ export type Novel = {
   url: string;
   customCommands: string;
   status: NovelStatus;
+  /** Whether the novel can be updated from its source URL (server-authoritative). */
+  canUpdate: boolean;
   tags: string[];
   coverPath?: string;
   isPublic: boolean;

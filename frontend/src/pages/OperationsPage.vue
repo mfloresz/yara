@@ -91,12 +91,7 @@ import { jobStatusLabel } from "@/composables/useJobHelpers";
 import { emitJobChanged } from "@/utils/job-events";
 import type { Novel, TranslationJob } from "@/domain";
 
-const SUPPORTED_DOMAINS = [
-  "novelfire.net",
-  "novelphoenix.com",
-  "fenrirealm.com",
-];
-
+const PAGE_SIZE = 200;
 const PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 
 type FilterValue = "all" | "actualizable" | "completed";
@@ -138,13 +133,9 @@ const activeDownloadCount = computed(() =>
 );
 
 function isActualizable(novel: Novel): boolean {
-  if (!novel.url) return false;
-  try {
-    const host = new URL(novel.url).hostname.replace(/^www\./, "");
-    return SUPPORTED_DOMAINS.includes(host);
-  } catch {
-    return false;
-  }
+  // Server-authoritative: the backend computes canUpdate from its parser
+  // catalog, so this list never drifts from what the backend accepts.
+  return novel.canUpdate;
 }
 
 const actualizableCount = computed(() =>
@@ -351,8 +342,15 @@ async function loadNovels() {
   loading.value = true;
   error.value = null;
   try {
-    const resp = await api.novels.list({ limit: 200 });
-    novels.value = resp.items;
+    const all: Novel[] = [];
+    let offset = 0;
+    for (;;) {
+      const resp = await api.novels.list({ limit: PAGE_SIZE, offset });
+      all.push(...resp.items);
+      if (!resp.hasMore || resp.items.length === 0) break;
+      offset += resp.items.length;
+    }
+    novels.value = all;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {

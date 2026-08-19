@@ -35,12 +35,23 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		items := make([]map[string]any, 0, len(list))
 		if selectParam != "" {
 			fields := strings.Split(selectParam, ",")
+			wantCanUpdate := false
+			for _, f := range fields {
+				if strings.TrimSpace(f) == "canUpdate" {
+					wantCanUpdate = true
+					break
+				}
+			}
 			for i := range list {
-				items = append(items, parseJSONFieldsSubset(&list[i], fields))
+				item := parseJSONFieldsSubset(&list[i], fields)
+				if wantCanUpdate {
+					item["canUpdate"] = s.DownloaderFactory(e.Auth.Id).IsSupportedURL(list[i].URL)
+				}
+				items = append(items, item)
 			}
 		} else {
 			for i := range list {
-				items = append(items, parseJSONFields(&list[i]))
+				items = append(items, s.novelResponse(&list[i]))
 			}
 		}
 		return e.JSON(http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
@@ -111,7 +122,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err := s.Store.CreateNovel(e.Auth.Id, novel); err != nil {
 			return e.InternalServerError("failed to create novel", err)
 		}
-		return e.JSON(http.StatusCreated, parseJSONFields(novel))
+		return e.JSON(http.StatusCreated, s.novelResponse(novel))
 	})
 	api.GET("/db/novels/tags/suggestions", func(e *core.RequestEvent) error {
 		limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
@@ -136,7 +147,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, parseJSONFields(novel))
+		return e.JSON(http.StatusOK, s.novelResponse(novel))
 	})
 	api.POST("/db/novels/{id}/recalculate-stats", func(e *core.RequestEvent) error {
 		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("id"))
@@ -150,7 +161,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return e.InternalServerError("failed to reload novel", err)
 		}
-		return e.JSON(http.StatusOK, parseJSONFields(reloaded))
+		return e.JSON(http.StatusOK, s.novelResponse(reloaded))
 	})
 	api.PATCH("/db/novels/{id}", func(e *core.RequestEvent) error {
 		patch := map[string]any{}
@@ -161,7 +172,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, parseJSONFields(novel))
+		return e.JSON(http.StatusOK, s.novelResponse(novel))
 	})
 	api.POST("/db/novels/{id}/cover", func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(32 << 20); err != nil {
@@ -184,7 +195,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, parseJSONFields(novel))
+		return e.JSON(http.StatusOK, s.novelResponse(novel))
 	})
 	api.DELETE("/db/novels/{id}", func(e *core.RequestEvent) error {
 		if err := s.Store.DeleteNovel(e.Auth.Id, e.Request.PathValue("id")); err != nil {
@@ -197,7 +208,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusCreated, parseJSONFields(novel))
+		return e.JSON(http.StatusCreated, s.novelResponse(novel))
 	})
 	api.PATCH("/db/novels/{id}/visibility", func(e *core.RequestEvent) error {
 		body := struct {
@@ -210,7 +221,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, parseJSONFields(novel))
+		return e.JSON(http.StatusOK, s.novelResponse(novel))
 	})
 
 	// Endpoint para obtener novela completa con todos sus capítulos (para offline)
@@ -224,7 +235,7 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			return notFoundOrForbidden(e, err)
 		}
 		return e.JSON(http.StatusOK, map[string]any{
-			"novel":    parseJSONFields(novel),
+			"novel":    s.novelResponse(novel),
 			"chapters": chapterRecords(chapters),
 		})
 	})

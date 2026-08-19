@@ -323,6 +323,57 @@ func TestListNovelsSortByCreatedSucceeds(t *testing.T) {
 	}
 }
 
+func TestNovelCanUpdateFlag(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-canupdate@example.com", "secret123", "Alice")
+
+	// Novel without a source URL is never updatable.
+	noURL := createNovel(t, env.handler, alice.Token, "Sin URL", "en", "es")
+
+	// Novel with a parser-supported URL is updatable.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels", alice.Token, map[string]any{
+		"sourceTitle":    "Desde URL",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"url":            "https://www.novelfire.net/novel/123",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var withURL novelPayload
+	decodeResponse(t, resp, &withURL)
+
+	// Novel with a URL from an unsupported domain is not updatable.
+	resp = doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels", alice.Token, map[string]any{
+		"sourceTitle":    "Sitio desconocido",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"url":            "https://example.com/novel/123",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var unknownURL novelPayload
+	decodeResponse(t, resp, &unknownURL)
+
+	getCanUpdate := func(id string) bool {
+		t.Helper()
+		resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+id, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var n struct {
+			CanUpdate bool `json:"canUpdate"`
+		}
+		decodeResponse(t, resp, &n)
+		return n.CanUpdate
+	}
+
+	if getCanUpdate(noURL.ID) {
+		t.Fatalf("expected canUpdate=false for novel without URL")
+	}
+	if !getCanUpdate(withURL.ID) {
+		t.Fatalf("expected canUpdate=true for novelfire.net novel")
+	}
+	if getCanUpdate(unknownURL.ID) {
+		t.Fatalf("expected canUpdate=false for unsupported domain")
+	}
+}
+
 func TestListNovelsSorting(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-sorting@example.com", "secret123", "Alice")

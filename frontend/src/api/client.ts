@@ -107,6 +107,7 @@ function normalizeNovel(
     url: typeof novel.url === "string" ? novel.url : "",
     customCommands:
       typeof novel.customCommands === "string" ? novel.customCommands : "",
+    canUpdate: Boolean(novel.canUpdate),
     status:
       novel.status === "completed" ||
       novel.status === "hiatus" ||

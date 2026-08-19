@@ -44,10 +44,14 @@ func (p *OpenAIProvider) model() (provider.LanguageModel, error) {
 }
 
 // modelID maps UI-friendly model variants to the actual model ID accepted by
-// OpenRouter. The reasoning effort is sent separately in provider options.
+// the selected provider. The reasoning effort is sent separately in provider
+// options.
 func (p *OpenAIProvider) modelID() string {
 	const prefix = "openai/gpt-5.6-luna (reasoning: "
 	if strings.HasPrefix(p.Model, prefix) && strings.HasSuffix(p.Model, ")") {
+		if !p.OpenRouter {
+			return "gpt-5.6-luna"
+		}
 		return "openai/gpt-5.6-luna"
 	}
 	return p.Model

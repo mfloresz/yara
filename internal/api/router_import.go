@@ -87,7 +87,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err != nil {
 			return e.InternalServerError("failed to import epub", err)
 		}
-		return e.JSON(http.StatusCreated, map[string]any{"novel": parseJSONFields(&result.Novel), "epub": epubRecord(result.Epub), "chaptersImported": result.ChaptersImported})
+		return e.JSON(http.StatusCreated, map[string]any{"novel": s.novelResponse(&result.Novel), "epub": epubRecord(result.Epub), "chaptersImported": result.ChaptersImported})
 	})
 	api.POST("/db/novels/import-from-zip", func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(256 << 20); err != nil {
@@ -223,7 +223,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err != nil {
 			return e.InternalServerError("failed to import zip novel", err)
 		}
-		return e.JSON(http.StatusCreated, map[string]any{"novel": parseJSONFields(&result.Novel), "chaptersImported": result.ChaptersImported})
+		return e.JSON(http.StatusCreated, map[string]any{"novel": s.novelResponse(&result.Novel), "chaptersImported": result.ChaptersImported})
 	})
 	api.POST("/db/novels/preview-from-url", func(e *core.RequestEvent) error {
 		body := struct {
@@ -423,7 +423,7 @@ func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 			return e.InternalServerError("failed to reload novel", err)
 		}
 		resp := map[string]any{
-			"novel":            parseJSONFields(novel),
+			"novel":            s.novelResponse(novel),
 			"chaptersImported": 1,
 			"totalChapters":    len(info.Chapters),
 		}

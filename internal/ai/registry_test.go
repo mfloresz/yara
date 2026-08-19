@@ -90,7 +90,13 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 	if got, _ := info.GoAIOptions["strictJsonSchema"].(bool); !got {
 		t.Fatal("opencode-go should enable strict JSON schema")
 	}
-	wantModels := map[string]bool{"mimo-v2.5": true, "deepseek-v4-flash": true}
+	wantModels := map[string]bool{
+		"openai/gpt-5.6-luna (reasoning: none)":   true,
+		"openai/gpt-5.6-luna (reasoning: low)":    true,
+		"openai/gpt-5.6-luna (reasoning: medium)": true,
+		"mimo-v2.5":         true,
+		"deepseek-v4-flash": true,
+	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
 	}
@@ -98,6 +104,40 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		if !wantModels[m] {
 			t.Fatalf("unexpected model %q in opencode-go", m)
 		}
+	}
+}
+
+func TestOpenCodeGoLunaVariantWireFormat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body["model"] != "gpt-5.6-luna" {
+			t.Fatalf("unexpected model: %v", body["model"])
+		}
+		reasoning, ok := body["reasoning"].(map[string]any)
+		if !ok || reasoning["effort"] != "medium" {
+			t.Fatalf("unexpected reasoning options: %v", body["reasoning"])
+		}
+		if _, ok := body["service_tier"]; ok {
+			t.Fatal("service_tier must not be set for OpenCode Go")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Model:   "openai/gpt-5.6-luna (reasoning: medium)",
+		ProviderOptions: map[string]any{
+			"useResponsesAPI": false,
+		},
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
 	}
 }
 
