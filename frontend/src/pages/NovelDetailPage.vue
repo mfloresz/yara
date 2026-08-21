@@ -187,16 +187,24 @@
               </div>
 
               <div class="row-wrap small muted">
-                <n-button size="small" text @click="translateSelectedIds = new Set(eligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
-                <n-button size="small" text @click="translateSelectedIds = new Set()">Ninguno</n-button>
-                <span>{{ eligibleChapters.length }} capítulos elegibles</span>
+                <n-button-group size="small">
+                  <n-button :type="translateSelectionMode === 'todos' ? 'primary' : 'default'" @click="selectAllTranslateChapters">Todos</n-button>
+                  <n-button :type="translateSelectionMode === 'rango' ? 'primary' : 'default'" @click="translateSelectionMode = 'rango'">Rango</n-button>
+                </n-button-group>
+                <template v-if="translateSelectionMode === 'rango'">
+                  <n-input-number v-model:value="rangeFrom" size="small" :min="1" :show-button="false" placeholder="Desde #" style="width: 110px" />
+                  <n-input-number v-model:value="rangeTo" size="small" :min="1" :show-button="false" placeholder="Hasta #" style="width: 110px" />
+                  <n-button size="small" secondary @click="applyRange">Aplicar</n-button>
+                </template>
+                <n-button size="small" text @click="clearTranslateSelection">Ninguno</n-button>
+                <span>{{ translateSelectedIds.size }} seleccionados</span>
                 <span v-if="translateShowAll"> · {{ translateAllSummaries.length }} totales</span>
               </div>
 
               <div v-if="!translateShowAll && eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
               <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 420px">
                 <div v-for="chapter in translateShowAll ? translateSourceSummaries : eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
-                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting || !eligibleChapterIds.has(chapter.id)" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
+                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting || !selectableChapterIds.has(chapter.id)" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
                   <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
                   <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
                   <n-tag :type="chapterTagType(resolvedChapterStatus(chapter))" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
@@ -502,6 +510,7 @@ import {
   NTag,
   NSwitch,
   NIcon,
+  NInputNumber,
   NTabs,
   NTab,
 } from "naive-ui";
@@ -617,7 +626,9 @@ const translateAllLoaded = ref(false);
 const translateAllLoading = ref(false);
 const translateSelectedIds = ref<Set<string>>(new Set());
 const translateSubmitting = ref(false);
-let userTouchedTranslateSelection = false;
+const translateSelectionMode = ref<"todos" | "rango" | null>(null);
+const rangeFrom = ref<number | null>(null);
+const rangeTo = ref<number | null>(null);
 const expandedJobId = ref<string | null>(null);
 
 const cleanMode = ref<CleanMode>("search_replace");
@@ -710,8 +721,9 @@ const eligibleChapters = computed(() => {
     return chapter.hasTranslatedContent && (status === "translated" || status === "failed");
   });
 });
-const eligibleChapterIds = computed(() => new Set(eligibleChapters.value.map((c) => c.id)));
 const translateSourceSummaries = computed(() => translateShowAll.value ? translateAllSummaries.value : allSummaries.value);
+const selectableChapters = computed(() => translateSourceSummaries.value.filter(isChapterSelectable));
+const selectableChapterIds = computed(() => new Set(selectableChapters.value.map((c) => c.id)));
 const cleanModeOptions = Object.entries(CLEAN_MODE_LABELS).map(([value, label]) => ({ value, label }));
 const cleanModeDescription = computed(() => CLEAN_MODE_DESCRIPTIONS[cleanMode.value]);
 const cleanApplyOptions = [
@@ -1155,6 +1167,9 @@ watch(novelId, () => {
   selectedChapters.value = [];
   translateSubmitting.value = false;
   translateShowAll.value = false;
+  translateSelectionMode.value = null;
+  rangeFrom.value = null;
+  rangeTo.value = null;
   translateAllSummaries.value = [];
   translateAllLoaded.value = false;
   allSummaries.value = [];
@@ -1175,31 +1190,30 @@ watch(chapterPage, () => {
   void loadChapterSummaries();
 });
 
-watch(eligibleChapters, (items) => {
-  if (userTouchedTranslateSelection) return;
-  translateSelectedIds.value = new Set(items.map((chapter) => chapter.id));
-}, { immediate: true });
-
 watch(translateOperation, () => {
-  userTouchedTranslateSelection = false;
   translateShowAll.value = false;
   translateAllSummaries.value = [];
   translateAllLoaded.value = false;
   void loadAllSummaries(true);
-  translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
+  translateSelectedIds.value = new Set();
 });
 
 watch(translateShowAll, (showAll) => {
-  userTouchedTranslateSelection = false;
+  translateSelectedIds.value = new Set();
   if (showAll) {
-    void loadTranslateAll(true).then(() => {
-      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
-    });
+    void loadTranslateAll(true);
   } else {
-    void loadAllSummaries(true).then(() => {
-      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
-    });
+    void loadAllSummaries(true);
   }
+});
+
+watch(translateSelectionMode, (mode) => {
+  if (mode !== "rango") return;
+  const orders = translateSourceSummaries.value.map((chapter) => chapter.chapterOrder);
+  if (orders.length === 0) return;
+  const sorted = [...orders].sort((a, b) => a - b);
+  if (rangeFrom.value == null) rangeFrom.value = sorted[0];
+  if (rangeTo.value == null) rangeTo.value = sorted[sorted.length - 1];
 });
 
 watch(hasActive, (active, previous) => {
@@ -1462,11 +1476,38 @@ function onCoverUpdated(updated: Novel) {
   replaceNovelInList(updated);
 }
 
+function isChapterSelectable(chapter: ChapterSummary): boolean {
+  return translateOperation.value === "translate" ? chapter.hasOriginalContent : chapter.hasTranslatedContent;
+}
+
 function toggleTranslateChapter(id: string, checked: boolean) {
-  userTouchedTranslateSelection = true;
   const next = new Set(translateSelectedIds.value);
   if (checked) next.add(id); else next.delete(id);
   translateSelectedIds.value = next;
+}
+
+function selectAllTranslateChapters() {
+  translateSelectionMode.value = "todos";
+  translateSelectedIds.value = new Set(selectableChapters.value.map((chapter) => chapter.id));
+}
+
+function clearTranslateSelection() {
+  translateSelectedIds.value = new Set();
+}
+
+function applyRange() {
+  if (rangeFrom.value == null || rangeTo.value == null) {
+    message.warning("Indica el capítulo inicial y final del rango");
+    return;
+  }
+  const from = Math.min(rangeFrom.value, rangeTo.value);
+  const to = Math.max(rangeFrom.value, rangeTo.value);
+  const matched = selectableChapters.value.filter((chapter) => chapter.chapterOrder >= from && chapter.chapterOrder <= to);
+  if (matched.length === 0) {
+    message.warning(`No hay capítulos seleccionables entre #${from} y #${to}`);
+    return;
+  }
+  translateSelectedIds.value = new Set(matched.map((chapter) => chapter.id));
 }
 
 async function startTranslationJob() {
