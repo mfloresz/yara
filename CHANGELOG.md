@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.19.0] - 2026-08-23
+
+### What's new
+
+- Added `OpenCode Zen` provider (`opencode-zen`) at `https://opencode.ai/zen/v1` with three free models: `x-preview-f-free` (default), `mimo-v2.5-free`, and `muse-spark-1.2-contributor-free`. The `muse-spark` variant uses the OpenAI Responses API via per-model `ModelOptions` override.
+
 ## [v0.18.0] - 2026-08-23
 
 ### What's new
@@ -127,7 +133,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.19.0...HEAD
+[v0.19.0]: https://github.com/mfloresz/yara/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/mfloresz/yara/compare/v0.17.1...v0.18.0
 [v0.17.1]: https://github.com/mfloresz/yara/compare/v0.17.0...v0.17.1
 [v0.17.0]: https://github.com/mfloresz/yara/compare/v0.16.0...v0.17.0
