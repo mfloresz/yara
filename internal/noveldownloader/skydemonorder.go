@@ -21,6 +21,11 @@ func NewSkyDemonOrderParser() *skydemonorderParser {
 
 func (p *skydemonorderParser) Name() string { return "skydemonorder" }
 
+// RequiresBrowser: the site is Cloudflare-protected and project pages render
+// their chapter catalog through Livewire, so direct HTTP often yields only
+// the page shell.
+func (p *skydemonorderParser) RequiresBrowser() bool { return true }
+
 func (p *skydemonorderParser) CanHandle(urlStr string) bool {
 	u, err := url.Parse(urlStr)
 	if err != nil {

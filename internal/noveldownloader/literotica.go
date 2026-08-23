@@ -26,6 +26,8 @@ func NewLiteroticaParser() *literoticaParser {
 
 func (p *literoticaParser) Name() string { return "literotica" }
 
+func (p *literoticaParser) RequiresBrowser() bool { return false }
+
 func (p *literoticaParser) CanHandle(urlStr string) bool {
 	u, err := url.Parse(urlStr)
 	if err != nil {

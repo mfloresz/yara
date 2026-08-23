@@ -326,9 +326,9 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 
 ### Adding a new parser/scraper
 
-1. Create `internal/noveldownloader/yoursite.go` implementing the `Parser` interface (`Name`, `CanHandle`, `GetNovelInfo`, `GetChapterURLs`, `ParseChapter`).
+1. Create `internal/noveldownloader/yoursite.go` implementing the `Parser` interface (`Name`, `RequiresBrowser`, `CanHandle`, `GetNovelInfo`, `GetChapterURLs`, `ParseChapter`).
 2. Add `NewYourSiteParser()` to **both** `NewDownloader()` and `NewDownloaderWithClient()` in `downloader.go` (lines ~40-72). Both lists must stay in sync.
-3. If the site is behind Cloudflare, add the domain to `BrowserRequiredSites` in `browser_required.go`.
+3. Implement `RequiresBrowser()`: return `true` when the site is behind Cloudflare or serves pages via JavaScript rendering (i.e. reliable fetching needs the browser worker extension), `false` otherwise. State the reason in a brief comment above the method. This flag is documentation-only — it must not change fetch behavior.
 4. Write tests: unit tests in the same file; live-URL tests in `realtest_test.go` gated by `if testing.Short() { t.Skip(...) }`.
 5. Test with: `go test -short ./internal/noveldownloader/...`
 6. If behind Cloudflare, use the debug proxy workflow to fetch real HTML first (see `## Debug proxy for Cloudflare-protected sites`).

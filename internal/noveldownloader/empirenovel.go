@@ -26,6 +26,9 @@ func NewEmpireNovelParser() *empirenovelParser {
 
 func (p *empirenovelParser) Name() string { return "empirenovel" }
 
+// RequiresBrowser: the site is Cloudflare-protected.
+func (p *empirenovelParser) RequiresBrowser() bool { return true }
+
 func (p *empirenovelParser) CanHandle(urlStr string) bool {
 	return strings.Contains(urlStr, "empirenovel.com")
 }

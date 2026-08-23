@@ -67,8 +67,9 @@ Module: `internal/noveldownloader/` (30+ files)
 | File | Purpose |
 |------|---------|
 | `browser_worker_provider.go` | Fetches content through browser extension |
-| `browser_required.go` | Lists domains requiring browser bypass |
 | `fallback_client.go` | Falls back to browser worker on HTTP errors |
+
+Each parser's `RequiresBrowser()` method documents whether the site needs this bypass (Cloudflare or JS-rendered pages); it does not change fetch behavior.
 
 ### Downloader — `internal/noveldownloader/downloader.go`
 

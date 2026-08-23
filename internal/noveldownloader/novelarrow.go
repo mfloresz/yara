@@ -20,6 +20,8 @@ func (p *NovelArrowParser) Name() string {
 	return "novelarrow"
 }
 
+func (p *NovelArrowParser) RequiresBrowser() bool { return false }
+
 func (p *NovelArrowParser) CanHandle(urlStr string) bool {
 	_, ok := novelArrowParsePath(urlStr)
 	return ok

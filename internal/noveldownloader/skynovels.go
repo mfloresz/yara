@@ -24,6 +24,8 @@ func NewSkyNovelsParser() *skynovelsParser {
 
 func (p *skynovelsParser) Name() string { return "skynovels" }
 
+func (p *skynovelsParser) RequiresBrowser() bool { return false }
+
 func (p *skynovelsParser) CanHandle(urlStr string) bool {
 	u, err := url.Parse(urlStr)
 	if err != nil {

@@ -33,6 +33,8 @@ func (p *WTRLabParser) Name() string {
 	return "wtr-lab"
 }
 
+func (p *WTRLabParser) RequiresBrowser() bool { return false }
+
 func (p *WTRLabParser) CanHandle(urlStr string) bool {
 	_, ok := wtrLabParsePath(urlStr)
 	return ok
