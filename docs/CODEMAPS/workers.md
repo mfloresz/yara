@@ -9,10 +9,10 @@
 ```
 enqueueJob(jobID)
   │
-  ├─ operation == "download"  → downloadQueue (chan string, cap 128)
+  ├─ operation == "download"
+  ├─ operation == "check"     → downloadQueue (chan string, cap 128)
   ├─ operation == "translate"
-  ├─ operation == "refine"    → translateQueue (chan string, cap 128)
-  └─ operation == "check"     → translateQueue (chan string, cap 128)
+  └─ operation == "refine"    → translateQueue (chan string, cap 128)
                                       │
                                       ▼
                                workerLoop(queue)
@@ -22,8 +22,9 @@ enqueueJob(jobID)
                                  │
                     ┌────────────┴────────────┐
                     │                         │
-             download:                  translate/refine/check:
-             processDownloadJob()       buildJobContext()
+             download/check:           translate/refine:
+             processDownloadJob() /    buildJobContext()
+             processCheckJob()
                     │                         │
                     ▼                         ▼
              noveldownloader             ai.Provider

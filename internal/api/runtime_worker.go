@@ -71,7 +71,9 @@ func (s *Server) enqueueJob(jobID string) bool {
 
 	var queue chan string
 	switch job.Operation {
-	case "download":
+	case "download", "check":
+		// Both fetch from the source site via noveldownloader; they must not
+		// wait behind long-running AI jobs.
 		queue = s.downloadQueue
 	default:
 		queue = s.translateQueue
