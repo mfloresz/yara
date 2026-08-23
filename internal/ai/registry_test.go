@@ -223,6 +223,7 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: medium)",
 		"deepseek/deepseek-v4-flash-0731",
 		"google/gemini-3.5-flash-lite",
+		"tencent/hy-mt2-30b-a3b",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
