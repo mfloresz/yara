@@ -105,6 +105,27 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
+		ID:      "opencode-zen",
+		Name:    "OpenCode Zen",
+		BaseURL: "https://opencode.ai/zen/v1",
+		Models: []string{
+			"x-preview-f-free",
+			"mimo-v2.5-free",
+			"muse-spark-1.2-contributor-free",
+		},
+		DefaultModel: "x-preview-f-free",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+		ModelOptions: map[string]map[string]any{
+			// muse-spark speaks the OpenAI Responses API, not chat completions.
+			"muse-spark-1.2-contributor-free": {"useResponsesAPI": true},
+		},
+	},
+
+	{
 		ID:           "lmstudio",
 		Name:         "LM Studio",
 		BaseURL:      "http://localhost:1234/v1",
