@@ -9,6 +9,7 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
+	"translator-server/internal/ai"
 	"translator-server/internal/config"
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
@@ -59,6 +60,8 @@ type Server struct {
 	// redownload-from-url per novel, so two concurrent requests cannot both pass
 	// the active-jobs check and create competing redownload jobs.
 	redownloadLocks sync.Map
+	// NewAIProvider allows tests to inject a mock provider.
+	NewAIProvider func(store.AISettings) (ai.Provider, error)
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {

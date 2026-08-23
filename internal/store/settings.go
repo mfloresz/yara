@@ -372,6 +372,19 @@ type ImportZipNovelResult struct {
 	ChaptersImported int
 }
 
+const MaxProviderConcurrency = 10
+const MinProviderConcurrency = 1
+
+func NormalizeProviderConcurrency(v int) int {
+	if v < MinProviderConcurrency {
+		return MinProviderConcurrency
+	}
+	if v > MaxProviderConcurrency {
+		return MaxProviderConcurrency
+	}
+	return v
+}
+
 var DefaultAISettings = AISettings{
 	Provider:    "venice",
 	BaseURL:     "https://api.venice.ai/api/v1",

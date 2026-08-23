@@ -18,18 +18,23 @@ func registerProviderRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 	api.PUT("/user/providers/{providerKey}", func(e *core.RequestEvent) error {
 		providerKey := e.Request.PathValue("providerKey")
 		body := struct {
-			Model     string `json:"model"`
-			BaseURL   string `json:"baseUrl"`
-			TimeoutMs int    `json:"timeoutMs"`
+			Model       string `json:"model"`
+			BaseURL     string `json:"baseUrl"`
+			TimeoutMs   int    `json:"timeoutMs"`
+			Concurrency int    `json:"concurrency"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
-		var timeoutArg []int
+		timeout := 0
 		if body.TimeoutMs > 0 {
-			timeoutArg = []int{body.TimeoutMs}
+			timeout = body.TimeoutMs
 		}
-		provider, err := s.Store.UpsertProviderSettings(e.Auth.Id, providerKey, body.Model, body.BaseURL, timeoutArg...)
+		concurrency := 0
+		if body.Concurrency > 0 {
+			concurrency = body.Concurrency
+		}
+		provider, err := s.Store.UpsertProviderSettingsWithConcurrency(e.Auth.Id, providerKey, body.Model, body.BaseURL, timeout, concurrency)
 		if err != nil {
 			return e.InternalServerError("failed to update provider settings", err)
 		}

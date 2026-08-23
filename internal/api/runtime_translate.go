@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"translator-server/internal/ai"
@@ -12,6 +13,7 @@ import (
 )
 
 type jobContext struct {
+	mu                sync.Mutex
 	jobID             string
 	runCtx            context.Context
 	novel             *store.Novel
@@ -81,11 +83,21 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobConte
 }
 
 func (jc *jobContext) markDirty() {
+	jc.mu.Lock()
 	jc.dirty = true
+	jc.mu.Unlock()
+}
+
+func (jc *jobContext) markStatsDirty() {
+	jc.mu.Lock()
+	jc.statsDirty = true
+	jc.mu.Unlock()
 }
 
 func (jc *jobContext) flushProgress(s *Server) {
+	jc.mu.Lock()
 	if !jc.dirty {
+		jc.mu.Unlock()
 		return
 	}
 	patch := map[string]interface{}{
@@ -99,38 +111,51 @@ func (jc *jobContext) flushProgress(s *Server) {
 		"autoSegmentChapterId":      jc.pendingSegChapter,
 		"autoSegmentChapterTitle":   jc.pendingSegTitle,
 	}
+	jc.dirty = false
+	jc.mu.Unlock()
 	if err := s.Store.UpdateJob(jc.jobID, patch); err != nil {
 		slog.Warn("flush job progress", "jobId", jc.jobID, "error", err)
 	}
-	jc.dirty = false
 }
 
 func (jc *jobContext) recordSegProgress(segIndex, segDone, segTotal int, chapterID, chapterTitle string, active bool) {
+	jc.mu.Lock()
 	jc.pendingSegIndex = segIndex
 	jc.pendingSegDone = segDone
 	jc.pendingSegTotal = segTotal
 	jc.pendingSegChapter = chapterID
 	jc.pendingSegTitle = chapterTitle
 	jc.pendingSegActive = active
-	jc.markDirty()
+	jc.dirty = true
+	jc.mu.Unlock()
 }
 
 func (jc *jobContext) recordChapterResult(err error) {
+	jc.mu.Lock()
 	if err != nil {
 		jc.failed++
 		jc.lastError = err.Error()
 	} else {
 		jc.completed++
 	}
-	jc.markDirty()
+	jc.dirty = true
+	jc.mu.Unlock()
 }
 
 func (jc *jobContext) resetSegmentProgress() {
+	jc.mu.Lock()
 	jc.pendingSegActive = false
 	jc.pendingSegIndex = 0
 	jc.pendingSegDone = 0
 	jc.pendingSegTotal = 0
-	jc.markDirty()
+	jc.dirty = true
+	jc.mu.Unlock()
+}
+
+func (jc *jobContext) snapshotProgress() (completed, failed int, lastError string, statsDirty bool) {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.completed, jc.failed, jc.lastError, jc.statsDirty
 }
 
 func previewChapterSegmentation(cfg resolvedJobConfig, chapter store.Chapter) chapterSegmentationStatus {
@@ -176,7 +201,7 @@ func (s *Server) runTranslateChapterDetailed(jc *jobContext, idx int, chapter *s
 	if err := s.Store.SaveChapterTranslationFast(chapter.ID, chapter.TranslatedTitle, chapter.TranslatedContent, "", "translated"); err != nil {
 		return segmentation, fmt.Errorf("save chapter translation: %w", err)
 	}
-	jc.statsDirty = true
+	jc.markStatsDirty()
 	return segmentation, nil
 }
 

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
@@ -175,65 +178,133 @@ func (s *Server) processJob(jobID string) error {
 		return fmt.Errorf("set job running: %w", err)
 	}
 
+	concurrency := store.NormalizeProviderConcurrency(jc.cfg.AI.Concurrency)
+	isConcurrent := concurrency > 1 && len(jc.chapters) > 1
 	var wasCancelled bool
-	for idx := range jc.chapters {
-		if runCtx.Err() != nil {
+	if isConcurrent {
+		if concurrency > len(jc.chapters) {
+			concurrency = len(jc.chapters)
+		}
+		if jc.cfg.IncludePrevTitle {
+			slog.Warn("concurrent translation: disabling includePreviousTitleHints (requires sequential execution)", "jobId", jobID, "concurrency", concurrency)
+			jc.mu.Lock()
+			jc.cfg.IncludePrevTitle = false
+			jc.cfg.Translation.IncludePreviousTitleHints = false
+			jc.mu.Unlock()
+		}
+		slog.Info("starting concurrent translation", "jobId", jobID, "concurrency", concurrency, "totalChapters", len(jc.chapters), "operation", job.Operation)
+		var cancelledMu sync.Mutex
+		setCancelled := func() {
+			cancelledMu.Lock()
 			wasCancelled = true
-			break
+			cancelledMu.Unlock()
 		}
-		chapter := jc.chapters[idx]
-		jc.resetSegmentProgress()
-
-		var chapterErr error
-		switch job.Operation {
-		case "refine":
-			chapterErr = s.runRefineChapter(jc, idx, &chapter)
-		default:
-			segmentation := previewChapterSegmentation(jc.cfg, chapter)
-			jc.recordSegProgress(0, 0, segmentation.SegmentCount, chapter.ID, chapter.Title, segmentation.Applied)
-			jc.flushProgress(s)
-			var segErr error
-			_, segErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
-			chapterErr = segErr
-		}
-
-		if runCtx.Err() != nil {
-			wasCancelled = true
-		}
-
-		jc.recordChapterResult(chapterErr)
-		if chapterErr != nil {
-			if wasCancelled {
-				if err := s.Store.UpdateChapterStatusFast(chapter.ID, "pending", ""); err != nil {
-					slog.Warn("reset chapter status on cancel", "chapterId", chapter.ID, "error", err)
+		g, gCtx := errgroup.WithContext(runCtx)
+		g.SetLimit(concurrency)
+		for idx := range jc.chapters {
+			if runCtx.Err() != nil || gCtx.Err() != nil {
+				setCancelled()
+				break
+			}
+			idx := idx
+			g.Go(func() error {
+				if runCtx.Err() != nil || gCtx.Err() != nil {
+					setCancelled()
+					return nil
 				}
-			} else {
-				if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
-					slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+				chapter := jc.chapters[idx]
+				var chapterErr error
+				switch job.Operation {
+				case "refine":
+					chapterErr = s.runRefineChapter(jc, idx, &chapter)
+				default:
+					_, chapterErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
+				}
+				if runCtx.Err() != nil || gCtx.Err() != nil {
+					setCancelled()
+					if chapterErr != nil {
+						_ = s.Store.UpdateChapterStatusFast(chapter.ID, "pending", "")
+					}
+					return nil
+				}
+				jc.recordChapterResult(chapterErr)
+				if chapterErr != nil {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
+						slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+					}
+				}
+				jc.flushProgress(s)
+				return nil
+			})
+		}
+		_ = g.Wait()
+		if runCtx.Err() != nil {
+			setCancelled()
+		}
+		cancelledMu.Lock()
+		wasCancelled = wasCancelled || runCtx.Err() != nil
+		cancelledMu.Unlock()
+	} else {
+		for idx := range jc.chapters {
+			if runCtx.Err() != nil {
+				wasCancelled = true
+				break
+			}
+			chapter := jc.chapters[idx]
+			jc.resetSegmentProgress()
+
+			var chapterErr error
+			switch job.Operation {
+			case "refine":
+				chapterErr = s.runRefineChapter(jc, idx, &chapter)
+			default:
+				segmentation := previewChapterSegmentation(jc.cfg, chapter)
+				jc.recordSegProgress(0, 0, segmentation.SegmentCount, chapter.ID, chapter.Title, segmentation.Applied)
+				jc.flushProgress(s)
+				var segErr error
+				_, segErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
+				chapterErr = segErr
+			}
+
+			if runCtx.Err() != nil {
+				wasCancelled = true
+			}
+
+			jc.recordChapterResult(chapterErr)
+			if chapterErr != nil {
+				if wasCancelled {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "pending", ""); err != nil {
+						slog.Warn("reset chapter status on cancel", "chapterId", chapter.ID, "error", err)
+					}
+				} else {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
+						slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+					}
 				}
 			}
+			jc.resetSegmentProgress()
+			jc.flushProgress(s)
 		}
-		jc.resetSegmentProgress()
-		jc.flushProgress(s)
 	}
 
 	if err := s.Store.RecalculateNovelStats(jc.novel.ID); err != nil {
 		slog.Error("recalculate novel stats at job end", "jobId", jobID, "error", err)
 	}
 
+	completed, failed, lastErr, _ := jc.snapshotProgress()
 	finalStatus := "done"
 	finalError := ""
 	if wasCancelled {
 		finalStatus = "cancelled"
-	} else if jc.failed > 0 {
+	} else if failed > 0 {
 		finalStatus = "failed"
-		finalError = jc.lastError
+		finalError = lastErr
 	}
 
 	return s.Store.UpdateJob(jobID, map[string]interface{}{
 		"status":                    finalStatus,
-		"completedChapters":         jc.completed,
-		"failedChapters":            jc.failed,
+		"completedChapters":         completed,
+		"failedChapters":            failed,
 		"errorMessage":              finalError,
 		"autoSegmentActive":         false,
 		"autoSegmentCurrentIndex":   0,

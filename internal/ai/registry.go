@@ -89,6 +89,7 @@ var knownProviders = []ProviderInfo{
 			"mimo-v2.5",
 			"deepseek-v4-flash",
 			"muse-spark-1.2-contributor",
+			"ox-alpha-free",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,

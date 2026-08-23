@@ -191,6 +191,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             apiKeyConfigured?: boolean;
             apiKeyUpdatedAt?: string;
             enabled?: boolean;
+            concurrency?: number;
+            timeoutMs?: number;
           }>;
         }>("/api/user/providers");
         return {
@@ -204,12 +206,14 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             apiKeyConfigured: provider.apiKeyConfigured,
             apiKeyUpdatedAt: provider.apiKeyUpdatedAt,
             enabled: provider.enabled,
+            concurrency: provider.concurrency ?? 1,
+            timeoutMs: provider.timeoutMs,
           })),
         };
       },
       async update(
         providerKey: string,
-        payload: { model: string; baseUrl: string; timeoutMs?: number },
+        payload: { model: string; baseUrl: string; timeoutMs?: number; concurrency?: number },
       ) {
         return http.put(`/api/user/providers/${providerKey}`, payload);
       },

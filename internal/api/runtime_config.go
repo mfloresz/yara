@@ -198,6 +198,9 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 }
 
 func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
+	if s.NewAIProvider != nil {
+		return s.NewAIProvider(settings)
+	}
 	provider := strings.TrimSpace(settings.Provider)
 	if provider == "" {
 		provider = store.DefaultAISettings.Provider

@@ -21,12 +21,14 @@ func (s *Store) GetAppSettings(userID string) (AppSettings, error) {
 	if aiTimeout <= 0 {
 		aiTimeout = DefaultAISettings.TimeoutMs
 	}
+	aiConcurrency := NormalizeProviderConcurrency(providerSettings.Concurrency)
 	return AppSettings{
 		AI: AISettings{
-			Provider:  providerSettings.Provider,
-			BaseURL:   providerSettings.BaseURL,
-			Model:     providerSettings.Model,
-			TimeoutMs: aiTimeout,
+			Provider:    providerSettings.Provider,
+			BaseURL:     providerSettings.BaseURL,
+			Model:       providerSettings.Model,
+			TimeoutMs:   aiTimeout,
+			Concurrency: aiConcurrency,
 		},
 		TitleProvider: defaultString(user.GetString("title_provider"), ""),
 		TitleModel:    defaultString(user.GetString("title_model"), ""),
@@ -64,7 +66,11 @@ func (s *Store) SaveAppSettings(userID string, cfg AppSettings) (AppSettings, er
 		if err := s.App.Save(user); err != nil {
 			return AppSettings{}, err
 		}
-		if _, err := s.UpsertProviderSettings(userID, cfg.AI.Provider, cfg.AI.Model, cfg.AI.BaseURL, cfg.AI.TimeoutMs); err != nil {
+		concurrency := cfg.AI.Concurrency
+		if concurrency <= 0 {
+			concurrency = DefaultAISettings.Concurrency
+		}
+		if _, err := s.UpsertProviderSettingsWithConcurrency(userID, cfg.AI.Provider, cfg.AI.Model, cfg.AI.BaseURL, cfg.AI.TimeoutMs, concurrency); err != nil {
 			return AppSettings{}, err
 		}
 	}

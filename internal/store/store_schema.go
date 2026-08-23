@@ -151,6 +151,9 @@ func (s *Store) ensureUserProviderSettingsCollection(users, providers *core.Coll
 		if err := s.ensureField(existing, &core.NumberField{Name: "timeout_ms"}); err != nil {
 			return nil, err
 		}
+		if err := s.ensureField(existing, &core.NumberField{Name: "concurrency"}); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(UserProviderSettingsCollection)
@@ -168,6 +171,7 @@ func (s *Store) ensureUserProviderSettingsCollection(users, providers *core.Coll
 	c.Fields.Add(&core.BoolField{Name: "api_key_configured"})
 	c.Fields.Add(&core.DateField{Name: "api_key_updated_at"})
 	c.Fields.Add(&core.NumberField{Name: "timeout_ms"})
+	c.Fields.Add(&core.NumberField{Name: "concurrency"})
 	c.AddIndex("idx_user_provider_unique", true, "owner,provider", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err

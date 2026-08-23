@@ -85,6 +85,7 @@ export type ServerSettings = {
     baseUrl: string;
     model: string;
     timeoutMs: number;
+    concurrency: number;
   };
   titleProvider: string;
   titleModel: string;
@@ -110,6 +111,8 @@ export type ProviderInfo = {
   apiKeyConfigured?: boolean;
   apiKeyUpdatedAt?: string;
   enabled?: boolean;
+  concurrency?: number;
+  timeoutMs?: number;
 };
 
 export type ProvidersResponse = {
