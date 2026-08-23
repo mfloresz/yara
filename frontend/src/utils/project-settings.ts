@@ -24,7 +24,7 @@ function promptRecordsToSettings(
 
 function ensureGlossaryIds(
   glossary: unknown,
-): Array<{ id: string; source: string; target: string; context?: string }> {
+): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
   if (!Array.isArray(glossary)) return [];
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
@@ -33,6 +33,7 @@ function ensureGlossaryIds(
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,
+      enabled: typeof e.enabled === "boolean" ? e.enabled : true,
     };
   });
 }

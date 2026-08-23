@@ -375,6 +375,13 @@
                     </div>
                   </div>
 
+                  <n-checkbox
+                    v-model:checked="glossaryGenOptions.includeExisting"
+                    size="small"
+                  >
+                    Incluir existentes (entradas habilitadas)
+                  </n-checkbox>
+
                   <div class="row-end">
                     <n-button
                       type="primary"
@@ -413,7 +420,8 @@
               {{ novelDraft.glossary.length === 0 ? 'Sin entradas de glosario.' : 'Sin coincidencias.' }}
             </div>
             <div v-else class="glossary-list">
-              <div class="glossary-list-header">
+              <div class="glossary-list-header glossary-list-header--with-check">
+                <span class="glossary-col-check" />
                 <span class="glossary-col-source">Origen</span>
                 <span class="glossary-col-target">Destino</span>
                 <span class="glossary-col-context">Contexto</span>
@@ -422,8 +430,15 @@
               <div
                 v-for="entry in filteredGlossary"
                 :key="entry.id"
-                class="glossary-list-row"
+                class="glossary-list-row glossary-list-row--with-check"
+                :class="{ 'glossary-row--disabled': entry.enabled === false }"
               >
+                <n-checkbox
+                  :checked="entry.enabled !== false"
+                  size="small"
+                  class="glossary-col-check"
+                  @update:checked="(v: boolean) => (entry.enabled = v)"
+                />
                 <n-input
                   v-model:value="entry.source"
                   placeholder="Origen"
@@ -790,6 +805,7 @@ import {
   NCollapse,
   NCollapseItem,
   NTooltip,
+  NCheckbox,
   useDialog,
 } from "naive-ui";
 import {
@@ -857,6 +873,7 @@ const glossaryGenOptions = ref<GlossaryGenerationOptions>({
   maxTokensPerBatch: 90000,
   provider: "",
   model: "",
+  includeExisting: true,
 });
 const glossaryGenerating = ref(false);
 const reDownloadStart = ref<number | null>(null);
@@ -1119,7 +1136,7 @@ const draftInitialized = ref(false);
 
 function ensureGlossaryIds(
   glossary: unknown,
-): Array<{ id: string; source: string; target: string; context?: string }> {
+): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
   if (!Array.isArray(glossary)) return [];
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
@@ -1128,6 +1145,7 @@ function ensureGlossaryIds(
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,
+      enabled: typeof e.enabled === "boolean" ? e.enabled : true,
     };
   });
 }
@@ -1252,7 +1270,7 @@ watch(
 function addGlossaryEntry() {
   novelDraft.value.glossary = [
     ...novelDraft.value.glossary,
-    { id: safeUuid(), source: "", target: "", context: "" },
+    { id: safeUuid(), source: "", target: "", context: "", enabled: true },
   ];
 }
 
@@ -1271,6 +1289,7 @@ async function generateGlossary() {
       maxTokensPerBatch: glossaryGenOptions.value.maxTokensPerBatch || 90000,
       provider: glossaryGenOptions.value.provider || "",
       model: glossaryGenOptions.value.model || "",
+      includeExisting: glossaryGenOptions.value.includeExisting !== false,
     };
     await api.novels.generateGlossary(props.novel.id, opts);
     emitJobChanged();
@@ -1745,6 +1764,10 @@ async function save() {
   z-index: 1;
 }
 
+.glossary-list-header--with-check {
+  grid-template-columns: 28px 1fr 1fr 1.4fr auto;
+}
+
 .glossary-list-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1.4fr auto;
@@ -1752,6 +1775,25 @@ async function save() {
   padding: 0.2rem 0.5rem;
   align-items: center;
   border-bottom: 1px solid var(--divide);
+}
+
+.glossary-list-row--with-check {
+  grid-template-columns: 28px 1fr 1fr 1.4fr auto;
+}
+
+.glossary-col-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.glossary-row--disabled {
+  opacity: 0.55;
+}
+
+.glossary-row--disabled .glossary-col-source :deep(input),
+.glossary-row--disabled .glossary-col-target :deep(input) {
+  text-decoration: line-through;
 }
 
 .glossary-list-row:last-child { border-bottom: none; }
@@ -1829,14 +1871,17 @@ async function save() {
 
   .span-2 { grid-column: span 1; }
 
-  .glossary-list-header { display: none; }
+  .glossary-list-header,
+  .glossary-list-header--with-check { display: none; }
 
-  .glossary-list-row {
+  .glossary-list-row,
+  .glossary-list-row--with-check {
     grid-template-columns: 1fr auto;
     gap: 0.25rem;
     padding: 0.4rem 0.5rem;
   }
 
+  .glossary-col-check { grid-column: 1; }
   .glossary-col-context { grid-column: 1 / -1; }
 }
 </style>

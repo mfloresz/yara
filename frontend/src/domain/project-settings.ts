@@ -18,6 +18,7 @@ export type GlossaryEntry = {
   source: string;
   target: string;
   context?: string;
+  enabled?: boolean;
 };
 
 export type PromptRoleTemplate = {
@@ -146,4 +147,5 @@ export type GlossaryGenerationOptions = {
   maxTokensPerBatch: number;
   provider: string;
   model: string;
+  includeExisting?: boolean;
 };

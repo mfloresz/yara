@@ -194,13 +194,6 @@ If transliteration is more appropriate than translation, use transliteration.
 
 {EXISTING_TERMS_INSTRUCTION}
 
-If an existing glossary is provided:
-
-- Always preserve existing approved translations.
-- Do not generate alternative translations for existing terms.
-- Only extract new terms that are not already present.
-- Maintain complete terminology consistency.
-
 ---
 
 # Extraction Rules

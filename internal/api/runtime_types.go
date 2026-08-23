@@ -19,6 +19,11 @@ type glossaryEntry struct {
 	Source  string `json:"source"`
 	Target  string `json:"target"`
 	Context string `json:"context,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
+}
+
+func glossaryEnabled(e glossaryEntry) bool {
+	return e.Enabled == nil || *e.Enabled
 }
 
 type novelAIOptions struct {

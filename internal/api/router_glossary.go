@@ -28,6 +28,7 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			MaxTokensPerBatch int    `json:"maxTokensPerBatch"`
 			Provider          string `json:"provider"`
 			Model             string `json:"model"`
+			IncludeExisting   *bool  `json:"includeExisting"`
 		}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -67,6 +68,12 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.BadRequestError("no chapters found in the specified range with content", nil)
 		}
 
+		includeExisting := body.IncludeExisting
+		if includeExisting == nil {
+			v := true
+			includeExisting = &v
+		}
+
 		options := glossaryJobOptions{
 			ChapterFrom:       body.ChapterFrom,
 			ChapterTo:         body.ChapterTo,
@@ -74,6 +81,7 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			MaxTokensPerBatch: body.MaxTokensPerBatch,
 			Provider:          body.Provider,
 			Model:             body.Model,
+			IncludeExisting:   includeExisting,
 		}
 		optionsJSON, err := json.Marshal(options)
 		if err != nil {
@@ -81,11 +89,11 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		}
 
 		job := &store.Job{
-			NovelID:    novelID,
-			Status:     "pending",
-			Operation:  "generate-glossary",
-			Provider:   body.Provider,
-			Model:      body.Model,
+			NovelID:     novelID,
+			Status:      "pending",
+			Operation:   "generate-glossary",
+			Provider:    body.Provider,
+			Model:       body.Model,
 			OptionsJSON: string(optionsJSON),
 		}
 
@@ -150,7 +158,7 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		}
 
 		return e.JSON(http.StatusOK, map[string]any{
-			"totalTokens": totalTokens,
+			"totalTokens":  totalTokens,
 			"chapterCount": chapterCount,
 		})
 	})
