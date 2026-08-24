@@ -53,7 +53,9 @@ func parseJSONFields(n *store.Novel) map[string]any {
 // does not need to duplicate the list of supported domains.
 func (s *Server) novelResponse(n *store.Novel) map[string]any {
 	m := parseJSONFields(n)
-	m["canUpdate"] = s.DownloaderFactory(n.OwnerID).IsSupportedURL(n.URL)
+	dl := s.DownloaderFactory(n.OwnerID)
+	m["canUpdate"] = dl.IsSupportedURL(n.URL)
+	m["requiresBrowser"] = dl.RequiresBrowser(n.URL)
 	return m
 }
 

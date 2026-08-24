@@ -36,16 +36,23 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 		if selectParam != "" {
 			fields := strings.Split(selectParam, ",")
 			wantCanUpdate := false
+			wantRequiresBrowser := false
 			for _, f := range fields {
-				if strings.TrimSpace(f) == "canUpdate" {
+				field := strings.TrimSpace(f)
+				if field == "canUpdate" {
 					wantCanUpdate = true
-					break
+				}
+				if field == "requiresBrowser" {
+					wantRequiresBrowser = true
 				}
 			}
 			for i := range list {
 				item := parseJSONFieldsSubset(&list[i], fields)
 				if wantCanUpdate {
 					item["canUpdate"] = s.DownloaderFactory(e.Auth.Id).IsSupportedURL(list[i].URL)
+				}
+				if wantRequiresBrowser {
+					item["requiresBrowser"] = s.DownloaderFactory(e.Auth.Id).RequiresBrowser(list[i].URL)
 				}
 				items = append(items, item)
 			}

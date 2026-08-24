@@ -109,6 +109,7 @@ function normalizeNovel(
     customCommands:
       typeof novel.customCommands === "string" ? novel.customCommands : "",
     canUpdate: Boolean(novel.canUpdate),
+    requiresBrowser: Boolean((novel as unknown as Record<string, unknown>).requiresBrowser),
     status:
       novel.status === "completed" ||
       novel.status === "hiatus" ||
