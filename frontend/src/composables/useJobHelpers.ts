@@ -13,7 +13,7 @@ export function jobStatusLabel(job: TranslationJob): string {
       }[job.status] || job.status
     );
   }
-  if (job.operation === "check") return "Buscando capítulos nuevos…";
+  if (job.operation === "check") return "Comprobando..";
   if (job.operation === "download") return "Descargando…";
   if (job.operation === "refine") return "Refinando…";
   return "Traduciendo…";
@@ -128,7 +128,7 @@ export function jobCurrentActivityLabel(job: TranslationJob): string {
   }
 
   if (job.operation === "check") {
-    return "Buscando capítulos nuevos…";
+    return "Comprobando..";
   }
 
   if (segmentCount > 1 && chapter) {
