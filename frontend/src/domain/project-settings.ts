@@ -27,6 +27,7 @@ export type PromptRoleTemplate = {
 
 export type PromptSettings = {
   translation?: PromptRoleTemplate;
+  title?: PromptRoleTemplate;
   refine?: PromptRoleTemplate;
   check?: PromptRoleTemplate;
   glossary?: PromptRoleTemplate;
@@ -34,6 +35,7 @@ export type PromptSettings = {
 
 export type LegacyPromptSettings = {
   translationPrompt?: string;
+  titlePrompt?: string;
   refinePrompt?: string;
   checkPrompt?: string;
 };
@@ -123,6 +125,12 @@ export function normalizePromptSettings(
     next.translation = { systemPrompt: maybe.translation.systemPrompt };
   } else if (maybe.translationPrompt) {
     next.translation = { systemPrompt: maybe.translationPrompt };
+  }
+
+  if (maybe.title && typeof maybe.title === "object") {
+    next.title = { systemPrompt: maybe.title.systemPrompt };
+  } else if (maybe.titlePrompt) {
+    next.title = { systemPrompt: maybe.titlePrompt };
   }
 
   if (maybe.refine && typeof maybe.refine === "object") {

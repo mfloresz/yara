@@ -487,6 +487,13 @@
               @update:model-value="setSystemPrompt('translation', $event)"
             />
             <PromptRoleEditor
+              title="Título"
+              :model-value="effectiveSystemPrompt('title')"
+              :global-value="globalSystemPrompt('title')"
+              :overridden="isOverridden('title')"
+              @update:model-value="setSystemPrompt('title', $event)"
+            />
+            <PromptRoleEditor
               title="Refinamiento"
               :model-value="effectiveSystemPrompt('refine')"
               :global-value="globalSystemPrompt('refine')"
@@ -556,47 +563,65 @@
             <div class="subpanel">
               <div class="switch-row">
                 <div>
-                  <div class="switch-title">Modelo distinto para títulos</div>
+                  <div class="switch-title">Seguir configuración global para títulos</div>
                   <div class="small muted">
-                    Modelo más pequeño para títulos. Si falla, usa el de contenido.
+                    Usa el ajuste de Configuración &gt; Modelo para títulos. Desactívalo para personalizar este proyecto.
                   </div>
                 </div>
-                <n-switch v-model:value="settingsDraft.ai.titleEnabled" />
+                <n-switch v-model:value="followGlobalTitle" />
               </div>
-              <div v-if="settingsDraft.ai.titleEnabled" class="field-grid-2" style="margin-top: 0.75rem">
-                <div class="form-group">
-                  <label class="lbl">Proveedor títulos</label>
-                  <n-select
-                    v-model:value="settingsDraft.ai.titleProvider"
-                    :options="providerOptions"
-                    :loading="providersLoading"
-                    :disabled="providersLoading"
-                    placeholder="Proveedor de contenido"
-                    clearable
-                    size="small"
-                    @update:value="onTitleProviderChange"
-                  />
+
+              <template v-if="!followGlobalTitle">
+                <div class="switch-row" style="margin-top: 0.5rem">
+                  <div>
+                    <div class="switch-title">Modelo distinto para títulos</div>
+                    <div class="small muted">
+                      Usa un modelo más pequeño y económico solo para títulos. Si falla, usa el de contenido.
+                    </div>
+                  </div>
+                  <n-switch v-model:value="localTitleDistinct" />
                 </div>
-                <div class="form-group">
-                  <label class="lbl">Modelo títulos</label>
-                  <n-select
-                    v-if="titleModelOptions.length > 1"
-                    v-model:value="settingsDraft.ai.titleModel"
-                    :options="titleModelOptions"
-                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                    placeholder="Modelo de contenido"
-                    clearable
-                    size="small"
-                  />
-                  <n-input
-                    v-else
-                    v-model:value="settingsDraft.ai.titleModel"
-                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                    placeholder="Ej: local-model"
-                    size="small"
-                  />
+                <div v-if="localTitleDistinct" class="field-grid-2" style="margin-top: 0.75rem">
+                  <div class="form-group">
+                    <label class="lbl">Proveedor títulos</label>
+                    <n-select
+                      v-model:value="settingsDraft.ai.titleProvider"
+                      :options="providerOptions"
+                      :loading="providersLoading"
+                      :disabled="providersLoading"
+                      placeholder="Proveedor de contenido"
+                      clearable
+                      size="small"
+                      @update:value="onTitleProviderChange"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label class="lbl">Modelo títulos</label>
+                    <n-select
+                      v-if="titleModelOptions.length > 1"
+                      v-model:value="settingsDraft.ai.titleModel"
+                      :options="titleModelOptions"
+                      :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                      placeholder="Modelo de contenido"
+                      clearable
+                      size="small"
+                    />
+                    <n-input
+                      v-else
+                      v-model:value="settingsDraft.ai.titleModel"
+                      :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                      placeholder="Ej: local-model"
+                      size="small"
+                    />
+                  </div>
                 </div>
-              </div>
+              </template>
+
+              <n-alert v-else type="info" :bordered="false" class="compact-alert" style="margin-top: 0.5rem">
+                Este proyecto seguirá la configuración global — actualmente:
+                <strong>{{ globalTitleEnabled ? `modelo distinto (${globalTitleInfo})` : "mismo modelo para títulos y contenido" }}</strong>.
+                Configurable en Ajustes &gt; Modelo para títulos.
+              </n-alert>
             </div>
           </div>
         </n-scrollbar>
@@ -1041,6 +1066,57 @@ const titleModelOptions = computed(() => {
   return [];
 });
 
+const followGlobalTitle = computed({
+  get: () => settingsDraft.value.ai.titleEnabled == null,
+  set: (v: boolean) => {
+    if (v) {
+      settingsDraft.value.ai.titleEnabled = null;
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    } else {
+      settingsDraft.value.ai.titleEnabled = false;
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    }
+  },
+});
+
+const localTitleDistinct = computed({
+  get: () => settingsDraft.value.ai.titleEnabled === true,
+  set: (v: boolean) => {
+    settingsDraft.value.ai.titleEnabled = v;
+    if (!v) {
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    }
+  },
+});
+
+const globalTitleEnabled = ref(false);
+const globalTitleInfo = ref("");
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (!open) return;
+    try {
+      const s = await api.settings.get();
+      globalTitleEnabled.value = Boolean((s as unknown as Record<string, unknown>).titleProvider);
+      const tp = (s as unknown as Record<string, unknown>).titleProvider as string | undefined;
+      const tm = (s as unknown as Record<string, unknown>).titleModel as string | undefined;
+      if (tp) {
+        const m = tm || (s as unknown as { ai?: { model?: string } }).ai?.model || "";
+        globalTitleInfo.value = m ? `${tp} / ${m}` : tp;
+      } else {
+        globalTitleInfo.value = "";
+      }
+    } catch {
+      globalTitleEnabled.value = false;
+      globalTitleInfo.value = "";
+    }
+  },
+);
+
 function onProviderChange(value: string) {
   const info = byId.value.get(value);
   if (!info) return;
@@ -1057,14 +1133,14 @@ function onTitleProviderChange(value: string) {
   }
 }
 
-type PromptRole = "translation" | "refine" | "check";
+type PromptRole = "translation" | "title" | "refine" | "check";
 
 const globalSystemPrompts = computed<Record<PromptRole, string | undefined>>(() => {
-  const map: Record<PromptRole, string | undefined> = { translation: undefined, refine: undefined, check: undefined };
+  const map: Record<PromptRole, string | undefined> = { translation: undefined, title: undefined, refine: undefined, check: undefined };
   for (const p of globalPrompts.value) {
     if (!p.active) continue;
-    if (p.key === "translation" || p.key === "refine" || p.key === "check") {
-      map[p.key] = p.prompt.systemPrompt;
+    if (p.key === "translation" || p.key === "title" || p.key === "refine" || p.key === "check") {
+      map[p.key as PromptRole] = p.prompt.systemPrompt;
     }
   }
   return map;
@@ -1379,7 +1455,7 @@ function reset() {
     notes: "",
     glossary: [],
     prompts: {},
-    ai: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
+    ai: { provider: "", model: "", timeoutMs: undefined, titleEnabled: null, titleProvider: "", titleModel: "" },
     translation: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
   };
@@ -1389,7 +1465,7 @@ function reset() {
     glossary: [],
     prompts: {},
     notes: "",
-    aiOptions: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
+    aiOptions: { provider: "", model: "", timeoutMs: undefined, titleEnabled: null, titleProvider: "", titleModel: "" },
     translationOptions: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
     url: "",
@@ -1401,9 +1477,13 @@ async function save() {
   saving.value = true;
   try {
     settingsDraft.value.ai.timeoutMs = timeoutSec.value != null ? timeoutSec.value * 1000 : undefined;
-    if (!settingsDraft.value.ai.titleEnabled) {
+    const te = settingsDraft.value.ai.titleEnabled;
+    if (te !== true) {
       settingsDraft.value.ai.titleProvider = "";
       settingsDraft.value.ai.titleModel = "";
+    }
+    if (te === undefined) {
+      settingsDraft.value.ai.titleEnabled = null;
     }
     await props.onSaveNovel({
       sourceLanguage: novelDraft.value.sourceLanguage,

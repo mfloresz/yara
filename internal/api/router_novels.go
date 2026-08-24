@@ -113,6 +113,8 @@ func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			Glossary:                jsonString(in.Glossary, "[]"),
 			TranslationSystemPrompt: promptOverrides.Translation.SystemPrompt,
 			TranslationUserPrompt:   promptOverrides.Translation.UserPrompt,
+			TitleSystemPrompt:       promptOverrides.Title.SystemPrompt,
+			TitleUserPrompt:         promptOverrides.Title.UserPrompt,
 			RefineSystemPrompt:      promptOverrides.Refine.SystemPrompt,
 			RefineUserPrompt:        promptOverrides.Refine.UserPrompt,
 			CheckSystemPrompt:       promptOverrides.Check.SystemPrompt,

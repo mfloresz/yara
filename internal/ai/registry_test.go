@@ -224,6 +224,7 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"deepseek/deepseek-v4-flash-0731",
 		"google/gemini-3.5-flash-lite",
 		"tencent/hy-mt2-30b-a3b",
+		"tencent/hy-mt2-1.8b",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)

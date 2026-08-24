@@ -37,7 +37,7 @@ export type ImportZipResult = {
   chaptersImported: number;
 };
 
-export type GeneralPromptKey = "translation" | "refine" | "check" | "glossary";
+export type GeneralPromptKey = "translation" | "title" | "refine" | "check" | "glossary";
 
 export type GeneralPromptRecord = {
   id: string;

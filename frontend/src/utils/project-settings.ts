@@ -58,7 +58,7 @@ export function buildProjectSettings(
       provider: novel?.aiOptions?.provider ?? "",
       model: novel?.aiOptions?.model ?? "",
       timeoutMs: novel?.aiOptions?.timeoutMs ?? undefined,
-      titleEnabled: novel?.aiOptions?.titleEnabled ?? false,
+      titleEnabled: (novel?.aiOptions?.titleEnabled ?? null) as boolean | null,
       titleProvider: novel?.aiOptions?.titleProvider ?? "",
       titleModel: novel?.aiOptions?.titleModel ?? "",
     },

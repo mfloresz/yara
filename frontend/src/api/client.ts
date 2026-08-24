@@ -99,6 +99,9 @@ function normalizeNovel(
       provider: novel.aiOptions?.provider ?? "",
       model: novel.aiOptions?.model ?? "",
       timeoutMs: novel.aiOptions?.timeoutMs ?? undefined,
+      titleEnabled: novel.aiOptions?.titleEnabled ?? null,
+      titleProvider: novel.aiOptions?.titleProvider ?? "",
+      titleModel: novel.aiOptions?.titleModel ?? "",
     },
     translationOptions: {
       ...(translationDefaults ?? {}),

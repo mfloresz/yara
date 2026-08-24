@@ -81,6 +81,8 @@ type Novel struct {
 	Glossary                string `json:"glossary,omitempty"`
 	TranslationSystemPrompt string `json:"translationSystemPrompt,omitempty"`
 	TranslationUserPrompt   string `json:"translationUserPrompt,omitempty"`
+	TitleSystemPrompt       string `json:"titleSystemPrompt,omitempty"`
+	TitleUserPrompt         string `json:"titleUserPrompt,omitempty"`
 	RefineSystemPrompt      string `json:"refineSystemPrompt,omitempty"`
 	RefineUserPrompt        string `json:"refineUserPrompt,omitempty"`
 	CheckSystemPrompt       string `json:"checkSystemPrompt,omitempty"`

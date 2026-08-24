@@ -425,6 +425,8 @@ func (s *Store) UpdateNovel(userID, novelID string, patch map[string]any) (*Nove
 			overrides := ParseNovelPromptOverrides(value)
 			record.Set("translation_system_prompt", overrides.Translation.SystemPrompt)
 			record.Set("translation_user_prompt", overrides.Translation.UserPrompt)
+			record.Set("title_system_prompt", overrides.Title.SystemPrompt)
+			record.Set("title_user_prompt", overrides.Title.UserPrompt)
 			record.Set("refine_system_prompt", overrides.Refine.SystemPrompt)
 			record.Set("refine_user_prompt", overrides.Refine.UserPrompt)
 			record.Set("check_system_prompt", overrides.Check.SystemPrompt)

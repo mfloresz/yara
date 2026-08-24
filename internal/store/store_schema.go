@@ -257,6 +257,8 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.TextField{Name: "glossary", Max: 10000000})
 	c.Fields.Add(&core.EditorField{Name: "translation_system_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "translation_user_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "title_system_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "title_user_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "refine_system_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "refine_user_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "check_system_prompt"})
@@ -318,6 +320,8 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 		&core.NumberField{Name: "last_check_new_chapters"},
 		&core.EditorField{Name: "translation_system_prompt"},
 		&core.EditorField{Name: "translation_user_prompt"},
+		&core.EditorField{Name: "title_system_prompt"},
+		&core.EditorField{Name: "title_user_prompt"},
 		&core.EditorField{Name: "refine_system_prompt"},
 		&core.EditorField{Name: "refine_user_prompt"},
 		&core.EditorField{Name: "check_system_prompt"},

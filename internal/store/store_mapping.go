@@ -36,6 +36,8 @@ func (s *Store) novelFromRecord(record *core.Record) Novel {
 		Glossary:                defaultString(record.GetString("glossary"), "[]"),
 		TranslationSystemPrompt: record.GetString("translation_system_prompt"),
 		TranslationUserPrompt:   record.GetString("translation_user_prompt"),
+		TitleSystemPrompt:       record.GetString("title_system_prompt"),
+		TitleUserPrompt:         record.GetString("title_user_prompt"),
 		RefineSystemPrompt:      record.GetString("refine_system_prompt"),
 		RefineUserPrompt:        record.GetString("refine_user_prompt"),
 		CheckSystemPrompt:       record.GetString("check_system_prompt"),
@@ -168,6 +170,8 @@ func applyNovelToRecord(record *core.Record, novel *Novel) {
 	record.Set("glossary", defaultString(novel.Glossary, "[]"))
 	record.Set("translation_system_prompt", novel.TranslationSystemPrompt)
 	record.Set("translation_user_prompt", novel.TranslationUserPrompt)
+	record.Set("title_system_prompt", novel.TitleSystemPrompt)
+	record.Set("title_user_prompt", novel.TitleUserPrompt)
 	record.Set("refine_system_prompt", novel.RefineSystemPrompt)
 	record.Set("refine_user_prompt", novel.RefineUserPrompt)
 	record.Set("check_system_prompt", novel.CheckSystemPrompt)

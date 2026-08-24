@@ -57,6 +57,7 @@ var knownProviders = []ProviderInfo{
 			"deepseek/deepseek-v4-flash-0731",
 			"google/gemini-3.5-flash-lite",
 			"tencent/hy-mt2-30b-a3b",
+			"tencent/hy-mt2-1.8b",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
