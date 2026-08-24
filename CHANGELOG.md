@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.21.0] - 2026-08-24
+
+### What's new
+
+- Added per-novel title prompt overrides (`title_system_prompt` / `title_user_prompt`) with full-stack support: schema, store mapping, `NovelPromptOverrides.Title`, API (`promptOverrides.title`), and frontend prompt types. The project settings dialog now includes a dedicated "Título" prompt editor alongside translation/refine/check.
+- Added `follow-global` toggle for per-project title model configuration: when enabled (default, `titleEnabled: null`) the project inherits the global title provider/model and shows the current global value in an info alert; when disabled, a distinct title provider/model can be configured per project with automatic cleanup of stale values on save.
+- Added `tencent/hy-mt2-1.8b` model to the OpenRouter provider catalog.
+
+### Fixes
+
+- Shortened the `check` job operation label to "Comprobando.." for a more compact jobs UI (`useJobHelpers`).
+
 ## [v0.20.0] - 2026-08-23
 
 ### What's new
@@ -149,7 +161,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.21.0...HEAD
+[v0.21.0]: https://github.com/mfloresz/yara/compare/v0.20.0...v0.21.0
 [v0.20.0]: https://github.com/mfloresz/yara/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/mfloresz/yara/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/mfloresz/yara/compare/v0.17.1...v0.18.0
