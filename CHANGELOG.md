@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.20.0] - 2026-08-23
+
+### What's new
+
+- Added `requiresBrowser` field to novels (API, domain, and downloader) with per-parser `RequiresBrowser()` detection for Cloudflare and JavaScript-rendered sites; the flag is now selectable via the novel list API (`select=requiresBrowser`).
+- Overhauled the Operations page with search, refined filters (updates/active), a bulk action toolbar, and a sticky selection bar.
+
+### Fixes
+
+- Routed `check` jobs through the download queue instead of the translate queue so source-site checks no longer get blocked behind long-running AI translate/refine jobs.
+
+### Housekeeping
+
+- Replaced the centralized `BrowserRequiredSites` map (`browser_required.go`) with per-parser `RequiresBrowser()` implementations on every parser.
+- Updated integration and worker documentation (`AGENTS.md`, `docs/CODEMAPS/`) to reflect the new parser pattern and queue routing.
+
 ## [v0.19.0] - 2026-08-23
 
 ### What's new
@@ -133,7 +149,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.20.0...HEAD
+[v0.20.0]: https://github.com/mfloresz/yara/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/mfloresz/yara/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/mfloresz/yara/compare/v0.17.1...v0.18.0
 [v0.17.1]: https://github.com/mfloresz/yara/compare/v0.17.0...v0.17.1
