@@ -379,8 +379,8 @@ async function loadWorkerTokens() {
   workerTokensLoading.value = true;
   try {
     workerTokens.value = await api.workerTokens.list();
-  } catch (err) {
-    console.error("Failed to load worker tokens:", err);
+  } catch {
+    // list stays empty; user can retry
   } finally {
     workerTokensLoading.value = false;
   }

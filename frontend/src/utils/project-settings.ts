@@ -22,7 +22,7 @@ function promptRecordsToSettings(
   return normalizePromptSettings(next);
 }
 
-function ensureGlossaryIds(
+export function ensureGlossaryIds(
   glossary: unknown,
 ): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
   if (!Array.isArray(glossary)) return [];

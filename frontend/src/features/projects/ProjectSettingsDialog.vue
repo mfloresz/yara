@@ -857,6 +857,7 @@ import { normalizeTranslationOptions, type GlossaryGenerationOptions } from "@/d
 import { useAppServices } from "@/app/services";
 import { emitJobChanged } from "@/utils/job-events";
 import { safeUuid } from "@/utils/safe-uuid";
+import { ensureGlossaryIds } from "@/utils/project-settings";
 import { LANGUAGES } from "@/config/languages";
 import type { RedownloadFromUrlResult } from "@/api/types";
 
@@ -1101,11 +1102,11 @@ watch(
     if (!open) return;
     try {
       const s = await api.settings.get();
-      globalTitleEnabled.value = Boolean((s as unknown as Record<string, unknown>).titleProvider);
-      const tp = (s as unknown as Record<string, unknown>).titleProvider as string | undefined;
-      const tm = (s as unknown as Record<string, unknown>).titleModel as string | undefined;
+      globalTitleEnabled.value = Boolean(s.titleProvider);
+      const tp = s.titleProvider || undefined;
+      const tm = s.titleModel || undefined;
       if (tp) {
-        const m = tm || (s as unknown as { ai?: { model?: string } }).ai?.model || "";
+        const m = tm || s.ai.model || "";
         globalTitleInfo.value = m ? `${tp} / ${m}` : tp;
       } else {
         globalTitleInfo.value = "";
@@ -1209,22 +1210,6 @@ const filteredGlossary = computed(() => {
 });
 
 const draftInitialized = ref(false);
-
-function ensureGlossaryIds(
-  glossary: unknown,
-): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
-  if (!Array.isArray(glossary)) return [];
-  return glossary.map((entry) => {
-    const e = entry as Record<string, unknown>;
-    return {
-      id: (typeof e.id === "string" && e.id) || safeUuid(),
-      source: typeof e.source === "string" ? e.source : "",
-      target: typeof e.target === "string" ? e.target : "",
-      context: typeof e.context === "string" ? e.context : undefined,
-      enabled: typeof e.enabled === "boolean" ? e.enabled : true,
-    };
-  });
-}
 
 const savedSnapshot = ref("");
 

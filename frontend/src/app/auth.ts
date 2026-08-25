@@ -6,9 +6,7 @@ import {
   pixeoThemeOverrides,
   pixeoDarkThemeOverrides,
 } from "@/theme/naive-theme";
-
-const THEME_KEY = "theme";
-const AUTH_USER_KEY = "yara.auth.user";
+import { STORAGE_KEYS } from "@/app/storage-keys";
 
 const user = ref<AuthUser | null>(null);
 const ready = ref(false);
@@ -36,7 +34,7 @@ export const authState = {
 
 export function getStoredTheme(): "light" | "dark" | "system" {
   return (
-    (localStorage.getItem(THEME_KEY) as "light" | "dark" | "system" | null) ||
+    (localStorage.getItem(STORAGE_KEYS.theme) as "light" | "dark" | "system" | null) ||
     "system"
   );
 }
@@ -50,7 +48,7 @@ export function applyTheme(theme: "light" | "dark" | "system") {
   root.classList.toggle("dark", effective === "dark");
   root.style.colorScheme = effective;
   _currentTheme.value = effective;
-  localStorage.setItem(THEME_KEY, theme);
+  localStorage.setItem(STORAGE_KEYS.theme, theme);
 
   if (!systemThemeListenerAttached) {
     media.addEventListener("change", () => {
@@ -63,17 +61,17 @@ export function applyTheme(theme: "light" | "dark" | "system") {
 
 export function setAuth(result: AuthResponse) {
   user.value = result.user;
-  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(result.user));
+  localStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(result.user));
   applyTheme(result.user.theme || "system");
 }
 
 export function restoreStoredUser(): AuthUser | null {
   try {
-    const raw = localStorage.getItem(AUTH_USER_KEY);
+    const raw = localStorage.getItem(STORAGE_KEYS.authUser);
     if (!raw) return null;
     return JSON.parse(raw) as AuthUser;
   } catch {
-    localStorage.removeItem(AUTH_USER_KEY);
+    localStorage.removeItem(STORAGE_KEYS.authUser);
     return null;
   }
 }
@@ -84,6 +82,6 @@ export function setAuthReady() {
 
 export function clearAuth() {
   user.value = null;
-  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(STORAGE_KEYS.authUser);
   applyTheme(getStoredTheme());
 }

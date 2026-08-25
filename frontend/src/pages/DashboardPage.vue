@@ -312,12 +312,13 @@ import {
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
-import LibrarySkeleton from "@/components/LibrarySkeleton.vue";
+import LibrarySkeleton from "@/pages/LibrarySkeleton.vue";
 import { useNovels } from "@/composables/useNovels";
 import { useOfflineCache } from "@/composables/useOfflineCache";
 import { LANGUAGES } from "@/config/languages";
 import { getNovelDisplayTitle, getNovelDisplayAuthor, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 import { useAppServices } from "@/app/services";
+import { dashboardPrefsKey } from "@/app/storage-keys";
 import ImportUrlDialog from "@/features/novels/ImportUrlDialog.vue";
 import ImportUrlConfirmDialog from "@/features/novels/ImportUrlConfirmDialog.vue";
 import type { PreviewUrlResult } from "@/api/types";
@@ -338,7 +339,7 @@ const preferenceKey = ref<string | null>(null);
 
 function restorePreferences(userId?: string) {
   if (!userId) return;
-  preferenceKey.value = `dashboard-preferences:v1:${userId}`;
+  preferenceKey.value = dashboardPrefsKey(userId);
   try {
     const raw = localStorage.getItem(preferenceKey.value);
     if (!raw) return;

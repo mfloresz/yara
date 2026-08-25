@@ -160,8 +160,8 @@ async function cancel(job: TranslationJob) {
   cancellingId.value = job.id;
   try {
     await cancelJob(job.id);
-  } catch (err) {
-    console.error("Failed to cancel job:", err);
+  } catch {
+    // UI keeps the job in the list; user can retry
   } finally {
     cancellingId.value = null;
   }

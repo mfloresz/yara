@@ -153,8 +153,8 @@ export function useNovels() {
       if (!lastSelect || lastSelect.length === 0) {
         markNovelsFull(result.items);
       }
-    } catch (err) {
-      console.error("searchNovels error:", err);
+    } catch {
+      // ignore search errors; the UI keeps the current list
     } finally {
       loadingMore.value = false;
     }

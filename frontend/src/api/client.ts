@@ -45,24 +45,7 @@ import {
   type GlossaryGenerationOptions,
 } from "@/domain/project-settings";
 import { getApiBaseUrl } from "@/utils/api-base-url";
-import { safeUuid } from "@/utils/safe-uuid";
-
-/** Ensure every glossary entry has a unique id (backend entries may lack one). */
-function ensureGlossaryIds(
-  glossary: unknown[],
-): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
-  if (!Array.isArray(glossary)) return [];
-  return glossary.map((entry) => {
-    const e = entry as Record<string, unknown>;
-    return {
-      id: (typeof e.id === "string" && e.id) || safeUuid(),
-      source: typeof e.source === "string" ? e.source : "",
-      target: typeof e.target === "string" ? e.target : "",
-      context: typeof e.context === "string" ? e.context : undefined,
-      enabled: typeof e.enabled === "boolean" ? e.enabled : true,
-    };
-  });
-}
+import { ensureGlossaryIds } from "@/utils/project-settings";
 
 function normalizeNovel(
   novel: Novel,
@@ -112,7 +95,7 @@ function normalizeNovel(
     customCommands:
       typeof novel.customCommands === "string" ? novel.customCommands : "",
     canUpdate: Boolean(novel.canUpdate),
-    requiresBrowser: Boolean((novel as unknown as Record<string, unknown>).requiresBrowser),
+    requiresBrowser: Boolean(novel.requiresBrowser),
     status:
       novel.status === "completed" ||
       novel.status === "hiatus" ||

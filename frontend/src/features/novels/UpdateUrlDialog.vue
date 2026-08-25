@@ -154,7 +154,7 @@ async function handleUpdate() {
       input.endChapter = endChapter.value;
     }
     const result = await api.novels.updateFromUrl(props.novelId, input);
-    const pending = (result as any).pendingChapters ?? result.chaptersAdded;
+    const pending = result.pendingChapters ?? result.chaptersAdded;
     if (pending > 0) {
       message.success(
         `${pending} capítulos nuevos se están descargando en segundo plano.`,

@@ -228,6 +228,7 @@ import {
 } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
+import { STORAGE_KEYS } from "@/app/storage-keys";
 import { useNovels } from "@/composables/useNovels";
 import { getNovelDisplayTitle, type Chapter, type Novel } from "@/domain";
 import { markdownToHtml } from "@/utils/markdown";
@@ -241,11 +242,9 @@ const novelId = computed(() => String(route.params.novelId || ""));
 const { getNovel } = useNovels();
 const { getCachedNovel } = useOfflineCache(novelId);
 
-const READER_STORAGE_KEY = "reader-settings";
-
 function loadReaderSettings() {
   try {
-    const raw = localStorage.getItem(READER_STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEYS.readerSettings);
     if (raw) return JSON.parse(raw) as { fontSize?: number; lineHeight?: number; contentWidth?: number; variant?: "translated" | "original" };
   } catch { /* ignore */ }
   return null;
@@ -253,7 +252,7 @@ function loadReaderSettings() {
 
 function saveReaderSettings() {
   try {
-    localStorage.setItem(READER_STORAGE_KEY, JSON.stringify({
+    localStorage.setItem(STORAGE_KEYS.readerSettings, JSON.stringify({
       fontSize: fontSize.value,
       lineHeight: lineHeight.value,
       contentWidth: contentWidth.value,

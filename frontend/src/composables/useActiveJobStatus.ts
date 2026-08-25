@@ -1,53 +1,16 @@
-import { computed, onScopeDispose, ref } from "vue";
+import { computed, onScopeDispose, ref, watch } from "vue";
 import type { ApiClient } from "@/api/client";
 import { useAppServices } from "@/app/services";
 import { onJobChanged } from "@/utils/job-events";
+import { createPoller } from "@/utils/poller";
 
 const hasActiveState = ref(false);
 const loading = ref(false);
-let intervalId: number | null = null;
-let inflight = false;
-let listeners = 0;
+
 let apiClient: ApiClient | null = null;
 let unsubscribeJobChanged: (() => void) | null = null;
-
-function stopPolling() {
-  if (intervalId !== null) {
-    window.clearInterval(intervalId);
-    intervalId = null;
-  }
-}
-
-function startPolling() {
-  stopPolling();
-  intervalId = window.setInterval(() => {
-    void refresh();
-  }, 2000);
-}
-
-function syncPolling() {
-  if (hasActiveState.value) {
-    if (intervalId === null) startPolling();
-    return;
-  }
-  stopPolling();
-}
-
-async function refresh() {
-  if (!apiClient || inflight) return;
-  inflight = true;
-  loading.value = true;
-  try {
-    const result = await apiClient.jobs.status();
-    hasActiveState.value = result.hasActive;
-  } catch {
-    // ignore network errors while polling
-  } finally {
-    loading.value = false;
-    inflight = false;
-    syncPolling();
-  }
-}
+let listeners = 0;
+let poller: ReturnType<typeof createPoller<{ hasActive: boolean }>> | null = null;
 
 export function useActiveJobStatus() {
   const { api } = useAppServices();
@@ -55,19 +18,26 @@ export function useActiveJobStatus() {
 
   listeners++;
   if (listeners === 1) {
-    unsubscribeJobChanged = onJobChanged(() => {
-      void refresh();
+    poller = createPoller<{ hasActive: boolean }>({
+      fetcher: () => apiClient!.jobs.status(),
+      shouldPoll: (latest) => latest?.hasActive ?? false,
     });
-    void refresh();
+    watch(poller.data, (latest) => {
+      hasActiveState.value = latest?.hasActive ?? false;
+    });
+    watch(poller.loading, (v) => (loading.value = v));
+    unsubscribeJobChanged = onJobChanged(() => {
+      void poller!.refresh();
+    });
   }
 
   onScopeDispose(() => {
     listeners = Math.max(0, listeners - 1);
     if (listeners === 0) {
-      stopPolling();
+      poller = null;
+      apiClient = null;
       unsubscribeJobChanged?.();
       unsubscribeJobChanged = null;
-      apiClient = null;
       hasActiveState.value = false;
       loading.value = false;
     }
@@ -76,6 +46,6 @@ export function useActiveJobStatus() {
   return {
     hasActive: computed(() => hasActiveState.value),
     loading,
-    refreshStatus: refresh,
+    refreshStatus: () => poller?.refresh() ?? Promise.resolve(),
   };
 }
