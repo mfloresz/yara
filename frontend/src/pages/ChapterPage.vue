@@ -135,6 +135,7 @@ import AppLayout from "@/components/AppLayout.vue";
 import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useAppServices } from "@/app/services";
+import { chapterStatusLabel, chapterTagType } from "@/composables/useChapterStatus";
 import { type Chapter, type Novel } from "@/domain";
 import { emitJobChanged } from "@/utils/job-events";
 import { markdownToHtml } from "@/utils/markdown";
@@ -264,28 +265,6 @@ watch(hasActive, (active, previous) => {
   if (!previous || active || chapter.value?.status !== "processing") return;
   void loadChapter({ replaceOriginalFields: false });
 });
-
-function chapterStatusLabel(status: Chapter["status"]) {
-  return {
-    pending: "Pendiente",
-    processing: "Procesando",
-    translated: "Traducido",
-    refined: "Refinado",
-    done: "Completado",
-    failed: "Error",
-  }[status] || status;
-}
-
-function chapterTagType(status: Chapter["status"]) {
-  return ({
-    pending: "default",
-    processing: "warning",
-    translated: "success",
-    refined: "info",
-    done: "success",
-    failed: "error",
-  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
-}
 
 async function handleSave() {
   if (!chapter.value) return;

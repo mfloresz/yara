@@ -152,7 +152,7 @@ import {
   DocumentTextOutline,
 } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
-import type { Chapter } from "@/domain";
+import { chapterStatusLabel, chapterTagType, resolvedChapterStatus as resolvedStatus } from "@/composables/useChapterStatus";
 
 const props = defineProps<{
   chapters: ChapterSummary[];
@@ -215,33 +215,6 @@ const mergedItems = computed<MergedItem[]>(() => {
 
   return items;
 });
-
-function resolvedStatus(chapter: ChapterSummary): Chapter["status"] {
-  if (chapter.status === "processing") return "processing";
-  return chapter.status;
-}
-
-function chapterStatusLabel(status: Chapter["status"]) {
-  return {
-    pending: "Pendiente",
-    processing: "Procesando",
-    translated: "Traducido",
-    refined: "Refinado",
-    done: "Completado",
-    failed: "Error",
-  }[status] || status;
-}
-
-function chapterTagType(status: Chapter["status"]) {
-  return ({
-    pending: "default",
-    processing: "warning",
-    translated: "success",
-    refined: "info",
-    done: "success",
-    failed: "error",
-  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
-}
 
 function isSelected(chapter: ChapterSummary) {
   return selectedIds.value.has(chapter.id);
