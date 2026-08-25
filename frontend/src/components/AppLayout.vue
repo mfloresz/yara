@@ -46,22 +46,27 @@
             </template>
           </n-button>
 
-          <n-button
-            quaternary
-            circle
-            size="small"
-            class="touch-target"
-            :aria-label="`Cambiar tema (actual: ${themeLabel})`"
-            @click="cycleTheme"
+          <n-dropdown
+            trigger="click"
+            :options="themeMenuOptions"
+            @select="handleThemeMenuSelect"
           >
-            <template #icon>
-              <n-icon>
-                <DesktopOutline v-if="theme === 'system'" />
-                <SunnyOutline v-else-if="theme === 'light'" />
-                <MoonOutline v-else />
-              </n-icon>
-            </template>
-          </n-button>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              class="touch-target"
+              :aria-label="`Cambiar tema (actual: ${themeLabel})`"
+            >
+              <template #icon>
+                <n-icon>
+                  <DesktopOutline v-if="theme === 'system'" />
+                  <SunnyOutline v-else-if="theme === 'light'" />
+                  <MoonOutline v-else />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
 
           <n-dropdown
             trigger="click"
@@ -123,7 +128,7 @@
               <MoonOutline v-else />
             </n-icon>
           </template>
-          <span>Tema: {{ themeLabel }}</span>
+          <span>Tema: {{ themeLabel }} (toca para cambiar)</span>
         </n-button>
         <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/settings'))">
           <template #icon><n-icon :size="20"><SettingsOutline /></n-icon></template>
@@ -178,17 +183,32 @@ const { auth, logout } = useAppServices();
 const jobsOpen = ref(false);
 const mobileNavOpen = ref(false);
 
-const theme = ref<"light" | "dark" | "system">(getStoredTheme());
+type ThemeMode = "light" | "dark" | "system";
 
-const themeCycle: Array<"light" | "dark" | "system"> = ["system", "light", "dark"];
+const theme = ref<ThemeMode>(getStoredTheme());
 
-const themeLabels: Record<"light" | "dark" | "system", string> = {
+const themeLabels: Record<ThemeMode, string> = {
   system: "Sistema",
   light: "Claro",
   dark: "Oscuro",
 };
 
 const themeLabel = computed(() => themeLabels[theme.value]);
+
+const themeMenuOptions = computed(() => {
+  const icon = (mode: ThemeMode) => () => h(NIcon, null, {
+    default: () => {
+      if (mode === "system") return h(DesktopOutline);
+      if (mode === "light") return h(SunnyOutline);
+      return h(MoonOutline);
+    },
+  });
+  return (Object.keys(themeLabels) as ThemeMode[]).map((mode) => ({
+    label: `${themeLabels[mode]}${mode === theme.value ? "  ✓" : ""}`,
+    key: mode,
+    icon: icon(mode),
+  }));
+});
 
 const userMenuDropdownItems = computed(() => [
   { label: auth.user.value?.email ?? "", key: "email", disabled: true },
@@ -202,9 +222,15 @@ function handleUserMenuSelect(key: string) {
   else if (key === "logout") doLogout();
 }
 
+function handleThemeMenuSelect(key: string) {
+  if (key !== "light" && key !== "dark" && key !== "system") return;
+  theme.value = key;
+  applyTheme(theme.value);
+}
+
 function cycleTheme() {
-  const nextIndex = (themeCycle.indexOf(theme.value) + 1) % themeCycle.length;
-  theme.value = themeCycle[nextIndex];
+  const order: ThemeMode[] = ["system", "light", "dark"];
+  theme.value = order[(order.indexOf(theme.value) + 1) % order.length];
   applyTheme(theme.value);
 }
 

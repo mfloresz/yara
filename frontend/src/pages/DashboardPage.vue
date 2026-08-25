@@ -3,72 +3,40 @@
     <div class="stack-lg">
       <header class="page-header">
         <div class="page-context">
-          <p class="muted small">
+          <h1 class="page-title">Biblioteca</h1>
+          <p class="muted small" aria-live="polite">
             {{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}
             <span v-if="searchQuery.trim() && loadingMore" class="search-hint">&nbsp;· buscando…</span>
             <span v-else-if="searchQuery.trim()" class="search-hint">&nbsp;· filtrado</span>
           </p>
         </div>
         <div class="page-actions">
-          <n-button class="mobile-search-button" quaternary circle aria-label="Buscar novelas" @click="openMobileSearch">
-            <template #icon><n-icon><SearchOutline /></n-icon></template>
-          </n-button>
           <n-input
-            ref="searchInputRef"
             v-model:value="searchQuery"
             placeholder="Buscar novela..."
             clearable
             class="search-input"
-            :class="{ 'mobile-search-open': mobileSearchOpen }"
-            @clear="closeMobileSearch"
+            :class="{ 'is-loading': searchQuery.trim() && loadingMore }"
+            :input-props="{ type: 'search', inputmode: 'search', enterkeyhint: 'search' }"
+            aria-label="Buscar novelas"
           >
             <template #prefix><n-icon><SearchOutline /></n-icon></template>
           </n-input>
-          <div class="sort-controls">
-            <n-select
-              v-model:value="sortField"
-              :options="sortOptions"
-              class="sort-select"
-              placeholder="Ordenar por"
-              @update:value="onSortChange"
-            />
-            <n-button
-              quaternary
-              circle
-              size="small"
-              class="sort-direction"
-              :aria-label="sortOrder === 'asc' ? 'Cambiar a orden descendente' : 'Cambiar a orden ascendente'"
-              @click="toggleSortOrder"
-            >
-              <template #icon><n-icon><ArrowUpOutline v-if="sortOrder === 'asc'" /><ArrowDownOutline v-else /></n-icon></template>
-            </n-button>
-          </div>
-          <n-button
-            :secondary="!groupBySeries"
-            :type="groupBySeries ? 'primary' : 'default'"
-            quaternary
-            circle
-            size="small"
-            class="group-toggle"
-            :aria-label="groupBySeries ? 'Desagrupar por serie' : 'Agrupar por serie'"
-            @click="toggleGroupBySeries"
+          <n-dropdown
+            trigger="click"
+            :options="viewMenuOptions"
+            class="view-menu"
+            @select="handleViewMenuSelect"
           >
-            <template #icon><n-icon><PricetagsOutline v-if="groupBySeries" /><PricetagOutline v-else /></n-icon></template>
-          </n-button>
+            <n-button secondary size="small" class="view-menu-button" aria-label="Opciones de vista">
+              <template #icon><n-icon><OptionsOutline /></n-icon></template>
+              Ver como
+            </n-button>
+          </n-dropdown>
           <n-dropdown trigger="click" :options="novelCreationOptions" @select="handleNovelCreationSelect">
             <n-button type="primary" class="create-menu-button">
               <template #icon><n-icon><AddOutline /></n-icon></template>
               Nueva novela
-            </n-button>
-          </n-dropdown>
-          <n-dropdown trigger="click" :options="novelCreationOptions" @select="handleNovelCreationSelect">
-            <n-button
-              type="primary"
-              circle
-              class="create-menu-button-mobile"
-              aria-label="Nueva novela"
-            >
-              <template #icon><n-icon><AddOutline /></n-icon></template>
             </n-button>
           </n-dropdown>
         </div>
@@ -78,8 +46,29 @@
         <LibrarySkeleton />
       </div>
 
-      <n-card v-else-if="sortedNovels.length === 0">
-        <div class="empty-state">
+      <n-card v-else-if="sortedNovels.length === 0" role="status">
+        <div v-if="searchQuery.trim()" class="empty-state">
+          <div class="empty-state-icon">
+            <n-icon :size="40"><SearchOutline /></n-icon>
+          </div>
+          <div>
+            <h2 class="empty-state-title">Sin coincidencias</h2>
+            <p class="muted empty-state-body">
+              No se encontraron novelas para «{{ searchQuery.trim() }}». Prueba con otro término o importa una nueva.
+            </p>
+          </div>
+          <div class="empty-state-actions">
+            <n-button secondary @click="clearSearch">
+              <template #icon><n-icon><CloseOutline /></n-icon></template>
+              Limpiar búsqueda
+            </n-button>
+            <n-button type="primary" @click="createOpen = true">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              Nueva novela
+            </n-button>
+          </div>
+        </div>
+        <div v-else class="empty-state">
           <div class="empty-state-icon">
             <n-icon :size="40"><BookOutline /></n-icon>
           </div>
@@ -157,11 +146,17 @@
 
     <n-dropdown
       trigger="click"
-      :options="novelMenuDropdownItems"
-      :disabled="!selectedNovel"
-      @select="handleNovelMenuSelect"
+      :options="novelCreationOptions"
+      @select="handleNovelCreationSelect"
+      placement="top-end"
     >
-      <span ref="novelMenuAnchor" />
+      <button
+        type="button"
+        class="create-fab"
+        aria-label="Nueva novela"
+      >
+        <n-icon :size="22"><AddOutline /></n-icon>
+      </button>
     </n-dropdown>
 
     <n-modal v-model:show="createOpen" preset="card" title="Nueva novela" style="width: min(620px, 96vw)">
@@ -288,7 +283,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, h, watch } from "vue";
+import { computed, onMounted, reactive, ref, h, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   NSelect,
@@ -310,12 +305,10 @@ import {
   GlobeOutline,
   AddOutline,
   BookOutline,
-  CreateOutline,
-  TrashOutline,
-  CopyOutline,
   SearchOutline,
-  ShareSocialOutline,
   ArchiveOutline,
+  CloseOutline,
+  OptionsOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
@@ -341,8 +334,6 @@ const sortField = ref<SortField>("title");
 const sortOrder = ref<"asc" | "desc">("asc");
 const groupBySeries = ref(false);
 const searchQuery = ref("");
-const mobileSearchOpen = ref(false);
-const searchInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const preferenceKey = ref<string | null>(null);
 
 function restorePreferences(userId?: string) {
@@ -419,13 +410,8 @@ function toggleGroupBySeries() {
   savePreferences();
 }
 
-function openMobileSearch() {
-  mobileSearchOpen.value = true;
-  void nextTick(() => searchInputRef.value?.focus());
-}
-
-function closeMobileSearch() {
-  if (!searchQuery.value.trim()) mobileSearchOpen.value = false;
+function clearSearch() {
+  searchQuery.value = "";
 }
 
 
@@ -533,7 +519,6 @@ const {
   createNovel,
   importNovelFromEpub,
   importNovelFromZip,
-  deleteNovel,
   hydrateCachedNovels,
 } = useNovels();
 const offlineCache = useOfflineCache(ref(""));
@@ -556,8 +541,6 @@ const importingZip = ref(false);
 const importZipError = ref<string | null>(null);
 const importZipFile = ref<File | null>(null);
 const importPreview = ref<{ title: string; author: string; description: string; language: string; chapterCount: number } | null>(null);
-const novelMenuAnchor = ref<HTMLElement | null>(null);
-const selectedNovel = ref<Novel | null>(null);
 
 const form = reactive({
   sourceTitle: "",
@@ -578,6 +561,37 @@ const novelCreationOptions = [
   { label: "Desde URL", key: "import-url", icon: () => h(NIcon, null, { default: () => h(GlobeOutline) }) },
 ];
 
+const viewMenuOptions = computed(() => [
+  { type: "group", label: "Ordenar por", key: "sort-group", children: sortOptions.map((option) => ({
+    label: `${option.label}${option.value === sortField.value ? "  ✓" : ""}`,
+    key: `sort:${option.value}`,
+  })) },
+  { type: "divider", key: "d1" },
+  {
+    label: sortOrder.value === "asc" ? "Ascendente" : "Descendente",
+    key: "toggle-order",
+    icon: () => h(NIcon, null, { default: () => sortOrder.value === "asc" ? h(ArrowUpOutline) : h(ArrowDownOutline) }),
+  },
+  {
+    label: `${groupBySeries.value ? "Agrupado por serie" : "Agrupar por serie"}${groupBySeries.value ? "  ✓" : ""}`,
+    key: "toggle-group",
+    icon: () => h(NIcon, null, { default: () => h(groupBySeries.value ? PricetagsOutline : PricetagOutline) }),
+  },
+]);
+
+function handleViewMenuSelect(key: string) {
+  if (typeof key === "string" && key.startsWith("sort:")) {
+    const value = key.slice("sort:".length) as SortField;
+    if (value !== sortField.value) {
+      sortField.value = value;
+      onSortChange();
+    }
+    return;
+  }
+  if (key === "toggle-order") toggleSortOrder();
+  else if (key === "toggle-group") toggleGroupBySeries();
+}
+
 function handleNovelCreationSelect(key: string) {
   if (key === "create") createOpen.value = true;
   else if (key === "import-epub") importOpen.value = true;
@@ -587,33 +601,6 @@ function handleNovelCreationSelect(key: string) {
 
 function isSharedNovel(novel: Novel) {
   return novel.ownerId !== auth.user.value?.id;
-}
-
-const novelMenuDropdownItems = computed(() => {
-  const novel = selectedNovel.value;
-  if (!novel) return [];
-  const isOwner = novel.ownerId === auth.user.value?.id;
-  const items: Array<{ label: string; key: string; icon?: () => any }> = [
-    { label: "Leer", key: "read" },
-  ];
-  if (isOwner) {
-    items.push(
-      { label: "Editar", key: "edit" },
-      { label: "Eliminar", key: "delete" },
-    );
-  } else {
-    items.push({ label: "Copiar a mi biblioteca", key: "copy" });
-  }
-  return items;
-});
-
-function handleNovelMenuSelect(key: string) {
-  const novel = selectedNovel.value;
-  if (!novel) return;
-  if (key === "read") router.push(`/novels/${novel.id}/read`);
-  else if (key === "edit") router.push(`/novels/${novel.id}`);
-  else if (key === "delete") askDeleteNovel(novel);
-  else if (key === "copy") copyNovel(novel.id);
 }
 
 onMounted(() => {
@@ -755,27 +742,6 @@ async function copyNovel(novelId: string) {
   }
 }
 
-function openNovelMenu(event: Event, novel: Novel) {
-  selectedNovel.value = novel;
-}
-
-function askDeleteNovel(novel: Novel) {
-  selectedNovel.value = novel;
-}
-
-onMounted(() => {
-  // Handle delete via selectedNovel watcher if needed
-});
-
-async function deleteNovelAction(novel: Novel) {
-  try {
-    await deleteNovel(novel.id);
-    message.success("Novela eliminada");
-  } catch (err) {
-    message.error("Error al eliminar: " + (err instanceof Error ? err.message : String(err)));
-  }
-}
-
 function onUrlPreviewed(preview: PreviewUrlResult) {
   urlPreview.value = preview;
   importUrlOpen.value = false;
@@ -835,28 +801,14 @@ function onBackToUrlDialog() {
   white-space: nowrap;
 }
 
-.create-menu-button-mobile {
-  display: none;
-}
-
-.mobile-search-button {
-  display: none;
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.sort-select {
-  width: clamp(8rem, 17vw, 11rem);
-  min-width: 0;
-}
-
 .search-input {
   width: clamp(12rem, 22vw, 17rem);
+  transition: border-color 0.15s ease;
+}
+
+.search-input.is-loading :deep(.n-input__border),
+.search-input.is-loading :deep(.n-input__state-border) {
+  border-color: var(--accent-link);
 }
 
 .search-hint {
@@ -864,8 +816,52 @@ function onBackToUrlDialog() {
   font-style: italic;
 }
 
-.mobile-only {
+.view-menu-button {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.create-fab {
   display: none;
+}
+
+@media (max-width: 640px) {
+  .create-fab {
+    position: fixed;
+    right: 1rem;
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.25rem;
+    height: 3.25rem;
+    padding: 0;
+    border: 1px solid var(--divide);
+    border-radius: 999px;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-fg);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+}
+
+.create-fab:hover,
+.create-fab:focus-visible {
+  background: var(--btn-primary-hover-bg, #292524);
+}
+
+.create-fab:focus-visible {
+  outline: 2.5px solid var(--accent-link);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .create-fab,
+  .search-input {
+    transition: none;
+  }
 }
 
 .load-more-container {
@@ -961,55 +957,30 @@ function onBackToUrlDialog() {
 
 @media (max-width: 640px) {
   .page-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "search sort direction"
-      "create create group";
-    align-items: center;
-    justify-content: stretch;
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
-  }
-
-  .mobile-search-button {
-    display: inline-flex;
-    grid-area: search;
-    justify-self: start;
+    align-items: center;
   }
 
   .search-input {
-    display: none;
+    flex: 1 1 100%;
+    min-width: 0;
     width: 100%;
-    min-width: 0;
-    grid-area: search;
-  }
-
-  .search-input.mobile-search-open {
-    display: flex;
-  }
-
-  .sort-controls {
-    grid-area: sort;
-    min-width: 0;
-  }
-
-  .sort-select {
-    width: clamp(7rem, 30vw, 9rem);
-  }
-
-  .sort-direction {
-    grid-area: direction;
-  }
-
-  .group-toggle {
-    grid-area: group;
-    justify-self: end;
+    order: 1;
   }
 
   .create-menu-button {
-    grid-area: create;
-    width: 100%;
-    justify-self: stretch;
+    display: none;
+  }
+
+  .view-menu {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .view-menu-button {
+    padding-inline: 0.625rem;
   }
 
   .page-title {
@@ -1023,27 +994,6 @@ function onBackToUrlDialog() {
 }
 
 @media (max-width: 380px) {
-  .page-actions {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "create search group direction"
-      "sort sort sort sort";
-  }
-
-  .create-menu-button {
-    display: none;
-  }
-
-  .create-menu-button-mobile {
-    display: inline-flex;
-    grid-area: create;
-    justify-self: start;
-  }
-
-  .sort-select {
-    width: 100%;
-  }
-
   .library-grid {
     grid-template-columns: repeat(2, 1fr);
   }
