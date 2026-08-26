@@ -89,7 +89,7 @@ async function keepAlive() {
 function handleTabUpdate(tabId, changeInfo, tab) {
   if (changeInfo.status !== 'complete') return;
   const url = tab.url || '';
-  const match = url.match(/\/api\/worker-auth\/callback\?token=([^&]+)&user=([^&]+)/);
+  const match = url.match(/\/api\/v1\/worker-auth\/callback\?token=([^&]+)&user=([^&]+)/);
   if (!match) return;
 
   const token = decodeURIComponent(match[1]);
