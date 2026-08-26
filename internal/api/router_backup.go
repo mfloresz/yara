@@ -13,10 +13,6 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerBackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/backup/download", backupDownload(s))
-}
-
 func registerV1BackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	// POST is correct here: the server is generating and returning a fresh
 	// archive every time, so the action is not safe/idempotent in the GET

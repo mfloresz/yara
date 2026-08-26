@@ -12,15 +12,14 @@ import (
 )
 
 // sharedNovelHandlers exposes the novel resource operations as plain handler
-// funcs so both /api/db/novels (legacy) and /api/v1/novels (canonical) can
-// register them. Each funcs takes the *Server and returns the core handler.
+// funcs so the canonical /api/v1/novels routes can register them. Each funcs
+// takes the *Server and returns the core handler.
 type sharedNovelHandlers struct{}
 
 var sharedNovels = sharedNovelHandlers{}
 
 // listNovels: GET /novels. Supports ?q, ?sort, ?order, ?limit, ?offset (and
-// ?page&per_page on v1). The ?select= legacy param is accepted as an alias
-// for ?fields= on v1.
+// ?page&per_page on v1). The ?select= param is accepted as an alias for ?fields=.
 func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		q := e.Request.URL.Query()
@@ -74,15 +73,12 @@ func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 				items = append(items, s.novelResponse(&list[i]))
 			}
 		}
-		if isV1Request(e) {
-			// v1 uses page/per_page; convert offset-based hasMore to page count.
-			total := offset + len(items)
-			if hasMore {
-				total = offset + len(items) + 1
-			}
-			return v1RespondList(e, http.StatusOK, items, page, perPage, total, hasMore, e.Request.URL.Path)
+		// v1 uses page/per_page; convert offset-based hasMore to page count.
+		total := offset + len(items)
+		if hasMore {
+			total = offset + len(items) + 1
 		}
-		return e.JSON(http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
+		return v1RespondList(e, http.StatusOK, items, page, perPage, total, hasMore, e.Request.URL.Path)
 	}
 }
 
@@ -155,11 +151,8 @@ func (sharedNovelHandlers) create(s *Server) func(*core.RequestEvent) error {
 		if err := s.Store.CreateNovel(e.Auth.Id, novel); err != nil {
 			return e.InternalServerError("failed to create novel", err)
 		}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
-			return v1Respond(e, http.StatusCreated, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusCreated, s.novelResponse(novel))
+		e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
+		return v1Respond(e, http.StatusCreated, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -174,7 +167,7 @@ func (sharedNovelHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if fieldsParam == "" {
 			fieldsParam = firstQuery(q, "select")
 		}
-		if isV1Request(e) && fieldsParam != "" {
+		if fieldsParam != "" {
 			fields := strings.Split(fieldsParam, ",")
 			item := parseJSONFieldsSubset(novel, fields)
 			if containsField(fields, "canUpdate") {
@@ -185,10 +178,7 @@ func (sharedNovelHandlers) get(s *Server) func(*core.RequestEvent) error {
 			}
 			return v1Respond(e, http.StatusOK, item, nil, nil)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusOK, s.novelResponse(novel))
+		return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -202,10 +192,7 @@ func (sharedNovelHandlers) patch(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusOK, s.novelResponse(novel))
+		return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -214,10 +201,7 @@ func (sharedNovelHandlers) delete(s *Server) func(*core.RequestEvent) error {
 		if err := s.Store.DeleteNovel(e.Auth.Id, e.Request.PathValue("id")); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return e.NoContent(http.StatusNoContent)
-		}
-		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+		return e.NoContent(http.StatusNoContent)
 	}
 }
 
@@ -227,11 +211,8 @@ func (sharedNovelHandlers) copyNovel(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
-			return v1Respond(e, http.StatusCreated, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusCreated, s.novelResponse(novel))
+		e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
+		return v1Respond(e, http.StatusCreated, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -248,10 +229,7 @@ func (sharedNovelHandlers) recalculateStats(s *Server) func(*core.RequestEvent) 
 		if err != nil {
 			return e.InternalServerError("failed to reload novel", err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, s.novelResponse(reloaded), nil, nil)
-		}
-		return e.JSON(http.StatusOK, s.novelResponse(reloaded))
+		return v1Respond(e, http.StatusOK, s.novelResponse(reloaded), nil, nil)
 	}
 }
 
@@ -267,10 +245,7 @@ func (sharedNovelHandlers) setVisibility(s *Server) func(*core.RequestEvent) err
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusOK, s.novelResponse(novel))
+		return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -296,10 +271,7 @@ func (sharedNovelHandlers) cover(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
-		}
-		return e.JSON(http.StatusOK, s.novelResponse(novel))
+		return v1Respond(e, http.StatusOK, s.novelResponse(novel), nil, nil)
 	}
 }
 
@@ -313,19 +285,10 @@ func (sharedNovelHandlers) full(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		// /full is heavy: always return a paginated, sparse-friendly shape on
-		// v1. The legacy path keeps the {novel,chapters} composite because the
-		// frontend offline cache uses it as-is.
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, map[string]any{
-				"novel":    s.novelResponse(novel),
-				"chapters": chapterRecords(chapters),
-			}, nil, nil)
-		}
-		return e.JSON(http.StatusOK, map[string]any{
+		return v1Respond(e, http.StatusOK, map[string]any{
 			"novel":    s.novelResponse(novel),
 			"chapters": chapterRecords(chapters),
-		})
+		}, nil, nil)
 	}
 }
 
@@ -337,10 +300,7 @@ func (sharedNovelHandlers) tagSuggestions(s *Server) func(*core.RequestEvent) er
 		if err != nil {
 			return e.InternalServerError("failed to list tag suggestions", err)
 		}
-		if isV1Request(e) {
-			return v1RespondList(e, http.StatusOK, tags, 1, len(tags), len(tags), false, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, map[string]any{"items": tags})
+		return v1RespondList(e, http.StatusOK, tags, 1, len(tags), len(tags), false, e.Request.URL.Path)
 	}
 }
 
@@ -352,10 +312,7 @@ func (sharedNovelHandlers) seriesSuggestions(s *Server) func(*core.RequestEvent)
 		if err != nil {
 			return e.InternalServerError("failed to list series suggestions", err)
 		}
-		if isV1Request(e) {
-			return v1RespondList(e, http.StatusOK, series, 1, len(series), len(series), false, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, map[string]any{"items": series})
+		return v1RespondList(e, http.StatusOK, series, 1, len(series), len(series), false, e.Request.URL.Path)
 	}
 }
 
@@ -368,40 +325,17 @@ func containsField(fields []string, target string) bool {
 	return false
 }
 
-func registerNovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/db/novels", sharedNovels.list(s))
-	api.POST("/db/novels", sharedNovels.create(s))
-	api.GET("/db/novels/tags/suggestions", sharedNovels.tagSuggestions(s))
-	api.GET("/db/novels/series/suggestions", sharedNovels.seriesSuggestions(s))
-	api.GET("/db/novels/{id}", sharedNovels.get(s))
-	// POST /db/novels/{id}/recalculate-stats becomes POST /api/v1/novels/{id}:recalculateStats
-	api.POST("/db/novels/{id}/recalculate-stats", sharedNovels.recalculateStats(s))
-	api.PATCH("/db/novels/{id}", sharedNovels.patch(s))
-	api.POST("/db/novels/{id}/cover", sharedNovels.cover(s))
-	api.DELETE("/db/novels/{id}", sharedNovels.delete(s))
-	api.POST("/db/novels/{id}/copy", sharedNovels.copyNovel(s))
-	api.PATCH("/db/novels/{id}/visibility", sharedNovels.setVisibility(s))
-	api.GET("/db/novels/{id}/full", sharedNovels.full(s))
-}
-
 func registerV1NovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/novels", sharedNovels.list(s))
 	api.POST("/novels", sharedNovels.create(s))
 	api.GET("/novels/tags/suggestions", sharedNovels.tagSuggestions(s))
 	api.GET("/novels/series/suggestions", sharedNovels.seriesSuggestions(s))
 	api.GET("/novels/{id}", sharedNovels.get(s))
-	// Action sub-routes (Google AIP RPC verbs) — modeled as sub-resources
-	// because PocketBase's router only allows {name} wildcards, not the
-	// colon-separated {resource}:{action} syntax. The endpoints stay
-	// distinct from /novels/{id} so the resource is unambiguously the
-	// parent collection.
 	api.POST("/novels/{id}/recalculate-stats", sharedNovels.recalculateStats(s))
 	api.PATCH("/novels/{id}", sharedNovels.patch(s))
 	api.POST("/novels/{id}/cover", sharedNovels.cover(s))
 	api.DELETE("/novels/{id}", sharedNovels.delete(s))
 	api.POST("/novels/{id}/clone", sharedNovels.copyNovel(s))
-	// Visibility is a partial update; modeled as PATCH (lighter, idempotent)
-	// rather than POST :setVisibility. Matches the PATCH /novels/{id} shape.
 	api.PATCH("/novels/{id}/visibility", sharedNovels.setVisibility(s))
 	api.GET("/novels/{id}/full", sharedNovels.full(s))
 }

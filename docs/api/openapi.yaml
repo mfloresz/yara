@@ -4,12 +4,10 @@ info:
   version: 1.0.0
   summary: Canonical REST API for the Yara translator-server.
   description: |
-    The canonical API surface is mounted under `/api/v1`. Legacy aliases under
-    `/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`,
-    `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`,
-    `/api/translation-jobs/*` are **deprecated** and will be removed on
-    **Wed, 01 Jan 2026** (the `Sunset` header is set on every legacy response).
-    New clients must use `/api/v1`.
+    The canonical API surface is mounted under `/api/v1`. There are no legacy
+    aliases — the previous `/api/db/*`, `/api/user/*`, `/api/epubs/*`,
+    `/api/backup/*`, `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`,
+    and `/api/translation-jobs/*` paths were removed in the api-refactor.
 
     When the running server and this document diverge, the running server is the
     source of truth.
@@ -22,8 +20,6 @@ info:
 servers:
   - url: /api/v1
     description: Canonical v1 surface
-  - url: /
-    description: Server root (legacy aliases live directly under /api/...)
 
 security:
   - bearerAuth: []
@@ -906,7 +902,7 @@ paths:
   /epubs:
     post:
       tags: [Epubs]
-      summary: Flat upload (legacy path mirrored under v1).
+      summary: Flat upload (no novel in path).
       requestBody:
         required: true
         content:

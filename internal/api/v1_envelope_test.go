@@ -9,25 +9,11 @@ import (
 
 // TestV1NovelListEnvelope verifies the v1 list response shape:
 //   {data: [...], meta: {total, page, per_page, has_more}, links: {self, next}}
-// vs. the legacy {items: [...], hasMore: bool} shape.
 func TestV1NovelListEnvelope(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-v1-envelope@example.com", "secret123", "Alice")
 	createNovel(t, env.handler, alice.Token, "Envolvente", "es", "en")
 
-	// Legacy shape.
-	legacyResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels", alice.Token, nil)
-	assertStatus(t, legacyResp, http.StatusOK)
-	var legacy struct {
-		Items   []map[string]any `json:"items"`
-		HasMore bool             `json:"hasMore"`
-	}
-	decodeResponse(t, legacyResp, &legacy)
-	if len(legacy.Items) != 1 {
-		t.Fatalf("legacy list expected 1 item, got %d", len(legacy.Items))
-	}
-
-	// v1 shape.
 	v1Resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
 	assertStatus(t, v1Resp, http.StatusOK)
 	var v1 struct {
@@ -35,7 +21,7 @@ func TestV1NovelListEnvelope(t *testing.T) {
 		Meta  *v1Meta          `json:"meta"`
 		Links *v1Links         `json:"links"`
 	}
-	decodeResponse(t, v1Resp, &v1)
+	decodeRaw(t, v1Resp, &v1)
 	if v1.Data == nil || len(v1.Data) != 1 {
 		t.Fatalf("v1 list expected data[1], got %+v", v1.Data)
 	}
@@ -71,8 +57,7 @@ func TestV1NovelCreateReturns201AndLocation(t *testing.T) {
 	}
 }
 
-// TestV1NovelDeleteReturns204 verifies v1 DELETE returns 204 with no body,
-// while legacy DELETE keeps the {ok:true} 200 response for backward compat.
+// TestV1NovelDeleteReturns204 verifies v1 DELETE returns 204 with no body.
 func TestV1NovelDeleteReturns204(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-v1-delete@example.com", "secret123", "Alice")
@@ -97,7 +82,7 @@ func TestV1NovelFieldsSparseFieldsets(t *testing.T) {
 	var v1 struct {
 		Data []map[string]any `json:"data"`
 	}
-	decodeResponse(t, resp, &v1)
+	decodeRaw(t, resp, &v1)
 	if len(v1.Data) != 1 {
 		t.Fatalf("expected 1 novel, got %d", len(v1.Data))
 	}
@@ -134,7 +119,7 @@ func TestV1ChapterSummariesPagination(t *testing.T) {
 		Meta  *v1Meta          `json:"meta"`
 		Links *v1Links         `json:"links"`
 	}
-	decodeResponse(t, resp, &v1)
+	decodeRaw(t, resp, &v1)
 	if len(v1.Data) != 2 {
 		t.Fatalf("expected 2 chapters in page, got %d", len(v1.Data))
 	}
@@ -149,31 +134,16 @@ func TestV1ChapterSummariesPagination(t *testing.T) {
 	}
 }
 
-// TestV1DeprecationHeaders verifies the legacy /api/db/* responses carry the
-// Deprecation / Sunset / Link trio so clients can migrate at their own pace.
-func TestV1DeprecationHeaders(t *testing.T) {
+// TestV1HeaderOnV1Routes verifies the X-API-Version header is set on
+// /api/v1/* responses.
+func TestV1HeaderOnV1Routes(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-deprecation@example.com", "secret123", "Alice")
-
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels", alice.Token, nil)
-	assertStatus(t, resp, http.StatusOK)
-	if got := resp.Header().Get("Deprecation"); got != "true" {
-		t.Fatalf("expected Deprecation=true on legacy route, got %q", got)
-	}
-	if got := resp.Header().Get("Sunset"); got == "" {
-		t.Fatal("expected Sunset header on legacy route")
-	}
-	if got := resp.Header().Get("Link"); got == "" {
-		t.Fatal("expected Link successor-version on legacy route")
-	}
+	alice := registerUser(t, env.handler, "alice-v1-header@example.com", "secret123", "Alice")
 
 	v1Resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
 	assertStatus(t, v1Resp, http.StatusOK)
 	if got := v1Resp.Header().Get("X-API-Version"); got != "v1" {
 		t.Fatalf("expected X-API-Version=v1 on v1 route, got %q", got)
-	}
-	if got := v1Resp.Header().Get("Deprecation"); got != "" {
-		t.Fatalf("v1 route should not carry Deprecation header, got %q", got)
 	}
 }
 
@@ -193,23 +163,19 @@ func TestV1JobCancelAndRetryEndpoints(t *testing.T) {
 
 	cancelResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+job.ID+"/cancel", alice.Token, nil)
 	assertStatus(t, cancelResp, http.StatusOK)
-	var cancelled struct {
-		Data map[string]any `json:"data"`
-	}
+	var cancelled map[string]any
 	decodeResponse(t, cancelResp, &cancelled)
-	if cancelled.Data["status"] != "cancelled" {
-		t.Fatalf("expected job status=cancelled, got %v", cancelled.Data["status"])
+	if cancelled["status"] != "cancelled" {
+		t.Fatalf("expected job status=cancelled, got %v", cancelled["status"])
 	}
 
 	// retry: failed -> pending and re-queued.
 	retryResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+job.ID+"/retry", alice.Token, nil)
 	assertStatus(t, retryResp, http.StatusOK)
-	var retried struct {
-		Data map[string]any `json:"data"`
-	}
+	var retried map[string]any
 	decodeResponse(t, retryResp, &retried)
-	if retried.Data["status"] != "pending" {
-		t.Fatalf("expected job status=pending after retry, got %v", retried.Data["status"])
+	if retried["status"] != "pending" {
+		t.Fatalf("expected job status=pending after retry, got %v", retried["status"])
 	}
 
 	// retry on already-active job -> 409 conflict.

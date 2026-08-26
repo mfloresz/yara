@@ -2,11 +2,7 @@
 
 This is the canonical reference for the **Yara** translator-server HTTP API.
 
-> The API has two parallel surfaces:
-> - **Canonical (this document)**: `/api/v1/*` — REST-shaped, envelope-wrapped, semantically correct status codes.
-> - **Legacy (deprecated)**: `/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`, `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`, `/api/translation-jobs/*`.
->
-> Legacy aliases are deprecated and will be removed on **Wed, 01 Jan 2026** (the `Sunset` header is set on every legacy response). New clients must use `/api/v1`.
+The API has a single surface: `/api/v1/*` — REST-shaped, envelope-wrapped, semantically correct status codes. There are no legacy aliases.
 
 The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). When the two diverge, the running server is the source of truth.
 
@@ -42,7 +38,7 @@ The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). Whe
 | Direct (Go binary) | `http://127.0.0.1:5176/api/v1` |
 | Android / Termux | same binary, configurable via `--addr` |
 
-Every v1 response carries `X-API-Version: v1`. Every legacy response carries `Deprecation: true`, `Sunset: Wed, 01 Jan 2026 00:00:00 GMT`, and `Link: </api/v1>; rel="successor-version"`.
+Every v1 response carries `X-API-Version: v1`.
 
 ## Authentication
 
@@ -295,7 +291,7 @@ v1 errors return `Content-Type: application/problem+json`:
 |---|---|---|
 | `GET` | `/api/v1/novels/{id}/epubs` | List EPUBs for a novel. |
 | `POST` | `/api/v1/novels/{id}/epubs` | Upload an EPUB file. Returns 201 + `Location`. |
-| `POST` | `/api/v1/epubs` | Flat upload (legacy compat). |
+| `POST` | `/api/v1/epubs` | Flat upload (no novel in path). |
 | `GET` | `/api/v1/epubs/{id}/download` | Download the EPUB binary. `Cache-Control: no-store`. |
 | `POST` | `/api/v1/epubs/preview` | Parse an EPUB without persisting it. |
 | `POST` | `/api/v1/epubs/build` | Build an EPUB from a novel's existing chapters. Body `{ "novelId": "...", "source": "original"\|"translated"\|"refined" }`. Returns 201. |
@@ -433,7 +429,7 @@ v1 errors return `Content-Type: application/problem+json`:
 |---|---|---|
 | `POST` | `/api/v1/backups/export` | Stream a `backup-YYYYMMDD-HHMMSS.zip` of the entire `data-dir`. `Content-Type: application/zip`. |
 
-The legacy path `/api/backup/download` (GET) is preserved but `POST /api/v1/backups/export` is the canonical: generating a fresh archive is not idempotent in the GET sense.
+`POST` (not `GET`) because generating a fresh archive is not idempotent in the GET sense.
 
 ### Browser workers & proxy
 

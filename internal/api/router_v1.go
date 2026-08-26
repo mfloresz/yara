@@ -8,15 +8,8 @@ import (
 
 // registerV1Routes mounts the canonical /api/v1/* API. Each v1 route delegates
 // to a shared handler in the corresponding router_*.go file so the underlying
-// logic (store calls, queueing, etc.) is not duplicated. The only per-route
-// changes are: response envelope (legacy uses {items,hasMore} or bare arrays;
-// v1 uses {data,meta,links}) and status code (legacy returns 200 for deletes,
-// v1 returns 204).
-//
-// Legacy paths under /api/db/*, /api/user/*, /api/epubs/*, /api/backup/*,
-// /api/browser-workers, /api/proxy/*, /api/defaults continue to work and
-// receive Deprecation / Sunset / Link headers via v1HeaderMiddleware so
-// clients can migrate at their own pace.
+// logic (store calls, queueing, etc.) is not duplicated. All responses use the
+// {data,meta,links} v1 envelope; deletes return 204 No Content.
 func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	v1 := router.Group("/api/v1")
 

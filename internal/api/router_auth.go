@@ -4,10 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
-	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/store"
 )
 
@@ -62,8 +60,7 @@ func loadAuthFromCookie() *hook.Handler[*core.RequestEvent] {
 	}
 }
 
-// Shared auth handler functions. Both /api/auth/* and /api/v1/auth/* mount
-// these directly — the response shapes match (AuthResult, status 201/200).
+// Shared auth handler functions. Mounted under /api/v1/auth/*.
 func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {
@@ -127,17 +124,4 @@ func handleAuthLogout(s *Server) func(*core.RequestEvent) error {
 		clearAuthCookie(e)
 		return e.NoContent(http.StatusNoContent)
 	}
-}
-
-func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
-	auth := router.Group("/api/auth")
-	auth.POST("/register", handleAuthRegister(s))
-	auth.POST("/login", handleAuthLogin(s))
-
-	protected := auth.Group("")
-	protected.Bind(loadAuthFromCookie())
-	protected.Bind(apis.RequireAuth())
-	protected.GET("/me", handleAuthMe(s))
-	protected.POST("/refresh", handleAuthRefresh(s))
-	protected.POST("/logout", handleAuthLogout(s))
 }

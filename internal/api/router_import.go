@@ -51,7 +51,6 @@ type sharedImportHandlers struct{}
 var sharedImports = sharedImportHandlers{}
 
 // importEpub: POST /novels:importEpub — multipart upload of an EPUB file.
-// Legacy: /api/db/novels/import-epub. Both routes share this handler.
 func (sharedImportHandlers) importEpub(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(64 << 20); err != nil {
@@ -94,11 +93,8 @@ func (sharedImportHandlers) importEpub(s *Server) func(*core.RequestEvent) error
 			return e.InternalServerError("failed to import epub", err)
 		}
 		body := map[string]any{"novel": s.novelResponse(&result.Novel), "epub": epubRecord(result.Epub), "chaptersImported": result.ChaptersImported}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+result.Novel.ID)
-			return v1Respond(e, http.StatusCreated, body, nil, nil)
-		}
-		return e.JSON(http.StatusCreated, body)
+		e.Response.Header().Set("Location", "/api/v1/novels/"+result.Novel.ID)
+		return v1Respond(e, http.StatusCreated, body, nil, nil)
 	}
 }
 
@@ -238,16 +234,13 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 			return e.InternalServerError("failed to import zip novel", err)
 		}
 		body := map[string]any{"novel": s.novelResponse(&result.Novel), "chaptersImported": result.ChaptersImported}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+result.Novel.ID)
-			return v1Respond(e, http.StatusCreated, body, nil, nil)
-		}
-		return e.JSON(http.StatusCreated, body)
+		e.Response.Header().Set("Location", "/api/v1/novels/"+result.Novel.ID)
+		return v1Respond(e, http.StatusCreated, body, nil, nil)
 	}
 }
 
 // previewFromURL: POST /novels:previewFromUrl — fetch the chapter list without
-// creating a novel. Legacy: /api/db/novels/preview-from-url.
+// creating a novel.
 func (sharedImportHandlers) previewFromURL(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {
@@ -286,10 +279,7 @@ func (sharedImportHandlers) previewFromURL(s *Server) func(*core.RequestEvent) e
 			"totalChapters": len(info.Chapters),
 			"sourceURL":     info.SourceURL,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusOK, body2, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body2)
 	}
 }
 
@@ -464,11 +454,8 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 				"totalChapters": len(remainingChapters),
 			}
 		}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
-			return v1Respond(e, http.StatusCreated, resp, nil, nil)
-		}
-		return e.JSON(http.StatusCreated, resp)
+		e.Response.Header().Set("Location", "/api/v1/novels/"+novel.ID)
+		return v1Respond(e, http.StatusCreated, resp, nil, nil)
 	}
 }
 
@@ -550,10 +537,7 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 			"firstNewChapter": firstNew,
 			"lastNewChapter":  lastNew,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusOK, body, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body)
 	}
 }
 
@@ -627,10 +611,7 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		}
 		if len(sourceToDownload) == 0 {
 			resp := map[string]any{"chaptersAdded": 0, "chapters": []map[string]any{}, "totalChapters": len(chapters), "message": "No hay capítulos nuevos. La novela ya está al día."}
-			if isV1Request(e) {
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
-			}
-			return e.JSON(http.StatusOK, resp)
 		}
 		downloadChapters := make([]store.DownloadChapterInfo, 0, len(sourceToDownload))
 		for _, srcIdx := range sourceToDownload {
@@ -682,10 +663,7 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			"downloadJobId":   job.ID,
 			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se están descargando en segundo plano.", len(downloadChapters)),
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -762,10 +740,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 				"pendingChapters": 0,
 				"message":         "No se encontraron capítulos para re-descargar. Verifica que la novela tenga capítulos o que el rango sea válido.",
 			}
-			if isV1Request(e) {
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
-			}
-			return e.JSON(http.StatusOK, resp)
 		}
 		if !body.Confirm && len(plan.mismatches) > 0 {
 			// Cache the fresh list so the confirmed request does not re-scrape.
@@ -787,10 +762,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 				"needsConfirmation": true,
 				"chapters":          plan.mismatches,
 			}
-			if isV1Request(e) {
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
-			}
-			return e.JSON(http.StatusOK, resp)
 		}
 
 		// Serialize check + create + enqueue per novel so two concurrent
@@ -834,10 +806,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 			"downloadJobId":   job.ID,
 			"message":         fmt.Sprintf("Re-descarga iniciada. %d capítulos se actualizarán en segundo plano conservando sus traducciones.", len(plan.chapters)),
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -852,10 +821,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				Results: []store.BatchCheckNovelResult{},
 				Checked: 0, WithUpdates: 0, Errors: 0,
 			}
-			if isV1Request(e) {
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
-			}
-			return e.JSON(http.StatusOK, resp)
 		}
 		dl := s.DownloaderFactory(e.Auth.Id)
 		supported := make([]store.Novel, 0, len(novels))
@@ -869,10 +835,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				Results: []store.BatchCheckNovelResult{},
 				Checked: 0, WithUpdates: 0, Errors: 0,
 			}
-			if isV1Request(e) {
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
-			}
-			return e.JSON(http.StatusOK, resp)
 		}
 		results := make([]store.BatchCheckNovelResult, 0, len(supported))
 		checked := 0
@@ -982,10 +945,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 			Results: results, Checked: checked,
 			WithUpdates: withUpdates, Errors: errCount,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusOK, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -1075,10 +1035,7 @@ func (sharedImportHandlers) batchUpdate(s *Server) func(*core.RequestEvent) erro
 		resp := store.BatchUpdateResponse{
 			Jobs: jobs, TotalPending: totalPending,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -1117,10 +1074,7 @@ func (sharedImportHandlers) batchTranslatePreview(s *Server) func(*core.RequestE
 			TotalNovels: len(results),
 			WithPending: withPending,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusOK, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -1192,10 +1146,7 @@ func (sharedImportHandlers) batchTranslate(s *Server) func(*core.RequestEvent) e
 		resp := store.BatchTranslateStartResponse{
 			Jobs: jobs, TotalPending: totalPending,
 		}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
 }
 
@@ -1241,26 +1192,8 @@ func (sharedImportHandlers) batchCheck(s *Server) func(*core.RequestEvent) error
 			results = append(results, result)
 		}
 		resp := map[string]any{"jobs": results}
-		if isV1Request(e) {
 			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
 	}
-}
-
-func registerImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/import-epub", sharedImports.importEpub(s))
-	api.POST("/db/novels/import-from-zip", sharedImports.importZip(s))
-	api.POST("/db/novels/preview-from-url", sharedImports.previewFromURL(s))
-	api.POST("/db/novels/import-from-url", sharedImports.importFromURL(s))
-	api.GET("/db/novels/{id}/update-preview", sharedImports.checkPreview(s))
-	api.POST("/db/novels/{id}/update-from-url", sharedImports.updateFromURL(s))
-	api.POST("/db/novels/{id}/redownload-from-url", sharedImports.redownloadFromURL(s))
-	api.GET("/db/novels/check-batch-updates", sharedImports.checkBatchUpdates(s))
-	api.POST("/db/novels/batch-update-from-url", sharedImports.batchUpdate(s))
-	api.GET("/db/novels/batch-translate-preview", sharedImports.batchTranslatePreview(s))
-	api.POST("/db/novels/batch-translate", sharedImports.batchTranslate(s))
-	api.POST("/db/novels/batch-check", sharedImports.batchCheck(s))
 }
 
 func registerV1ImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {

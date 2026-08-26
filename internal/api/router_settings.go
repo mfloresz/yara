@@ -8,12 +8,6 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/defaults", getDefaults(s))
-	api.GET("/user/settings", getSettings(s))
-	api.PUT("/user/settings", putSettings(s))
-}
-
 func registerV1SettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/defaults", getDefaults(s))
 	api.GET("/settings", getSettings(s))
@@ -24,10 +18,7 @@ func getDefaults(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		defaults := store.DefaultTranslationDefaults
 		body := map[string]any{"translation": defaults}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body)
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
 }
 
@@ -49,10 +40,7 @@ func getSettings(s *Server) func(*core.RequestEvent) error {
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
+		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
 
@@ -94,9 +82,6 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
+		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }

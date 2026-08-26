@@ -12,10 +12,6 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerEpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/epubs/build", buildEpubHandler(s))
-}
-
 func registerV1EpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/epubs/build", buildEpubHandler(s))
 }
@@ -97,11 +93,8 @@ func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
 			return notFoundOrForbidden(e, err)
 		}
 
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
-			return v1Respond(e, http.StatusCreated, epubRecord(*item), nil, nil)
-		}
-		return e.JSON(http.StatusCreated, epubRecord(*item))
+		e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
+		return v1Respond(e, http.StatusCreated, epubRecord(*item), nil, nil)
 	}
 }
 

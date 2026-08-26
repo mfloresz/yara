@@ -15,7 +15,7 @@ This project uses the `impeccable` skill for frontend work. Before touching UI i
 Layout:
 
 - `cmd/server/main.go` — entrypoint. Wires config → encryptor → PocketBase → `store.Store` → `api.Server` → `http.ListenAndServe`.
-- `internal/api/` — HTTP layer. `router.go` mounts legacy `/api/db/*`, `/api/user/*`, `/api/epubs/*` etc.; `router_v1.go` mounts the canonical `/api/v1/*`; `v1_envelope.go` defines the v1 envelope/pagination/error helpers; per-domain files (`router_auth.go`, `router_novels.go`, `router_chapters.go`, `router_jobs.go`, `router_epubs.go`, `router_epub_export.go`, `router_import.go`, `router_settings.go`, `router_providers.go`, `router_prompts.go`, `router_glossary.go`, `router_reading_progress.go`, `router_backup.go`, `router_proxy.go`, `router_worker_auth.go`, `router_responses.go`, `router_helpers.go`). Each `router_*.go` defines both `register<Thing>Routes` (legacy) and `registerV1<Thing>Routes` (v1), usually backed by shared `shared<Thing>Handlers` funcs. `runtime_*.go` contains the in-process job worker and per-job translate/refine/config logic.
+- `internal/api/` — HTTP layer. `router.go` mounts public + auth + worker-auth routes; `router_v1.go` mounts the canonical `/api/v1/*`; `v1_envelope.go` defines the v1 envelope/pagination/error helpers; per-domain files (`router_auth.go`, `router_novels.go`, `router_chapters.go`, `router_jobs.go`, `router_epubs.go`, `router_epub_export.go`, `router_import.go`, `router_settings.go`, `router_providers.go`, `router_prompts.go`, `router_glossary.go`, `router_reading_progress.go`, `router_backup.go`, `router_proxy.go`, `router_worker_auth.go`, `router_responses.go`, `router_helpers.go`). Each `router_*.go` exposes a `registerV1<Thing>Routes` function wired from `registerV1Routes` in `router_v1.go`. `runtime_*.go` contains the in-process job worker and per-job translate/refine/config logic. **Legacy `/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`, `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`, `/api/translation-jobs/*` were removed in the api-refactor; only `/api/v1/*` remains.**
 - `internal/store/` — PocketBase-backed persistence. `store.go` defines collection name constants; per-domain files (`store_novels.go`, `store_chapters.go`, `store_jobs.go`, `store_epubs.go`, `store_providers.go`, `store_settings.go`, `store_auth.go`, `store_helpers.go`, `store_mapping.go`, `store_schema.go`, `store_db_migrations.go`). All collections are created/seeded by `Store.EnsureSchema()`.
 - `internal/ai/` — `Provider` interface plus a single `OpenAIProvider` implementation backed by `github.com/zendev-sh/goai`. The provider catalog lives in `registry.go` (currently: `venice`, `opencode-go`).
 - `internal/secure/encryption.go` — AES-GCM encryptor for provider API keys. Key comes from `APP_ENCRYPTION_KEY` (base64 or hex, must decode to 32 bytes) or is auto-generated to `<data-dir>/app.key`.
@@ -174,10 +174,10 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 
 ## Operational gotchas
 
-- PocketBase is in-process. There is no external PB process, no separate admin port, and no `_/` admin UI exposed by this binary. The HTTP server only serves `/healthz`, `/ws/browser-worker` (unauthenticated WS), `/api/...` (legacy aliases plus `/api/v1/*`, including PocketBase's own `/api/collections/...` routes that the embedded app registers), plus the SPA fallback. The legacy `/api/...` paths receive `Deprecation` / `Sunset` / `Link` headers; the canonical `/api/v1/*` paths carry `X-API-Version: v1` (see `## API versioning & conventions`).
+- PocketBase is in-process. There is no external PB process, no separate admin port, and no `_/` admin UI exposed by this binary. The HTTP server only serves `/healthz`, `/ws/browser-worker` (unauthenticated WS), `/api/v1/*` plus the small set of public routes (`/api/auth/*`, `/api/worker-auth/*`, PocketBase's own `/api/collections/...` routes that the embedded app registers), plus the SPA fallback. Every `/api/v1/*` response carries `X-API-Version: v1` (see `## API versioning & conventions`).
 - The embedded `frontend/dist` is only used when `STATIC_DIR` env / `--static-dir` is empty. Set `STATIC_DIR` in dev only if you want the Go binary to serve files from disk instead of the embed; the normal Vite dev workflow does not need it.
 - API keys for AI providers are stored encrypted with AES-GCM. The encryptor prefers `APP_ENCRYPTION_KEY` (base64 or hex, exactly 32 bytes decoded). If unset, it generates a random key at `<data-dir>/app.key` on first start. To rotate, set the env var; existing data encrypted with a previous key will be unreadable.
-- API keys are write-only: the UI sends them to `PUT /api/user/providers/{key}/key`; `GET /api/user/providers` returns an `apiKeyConfigured` flag and never the secret. Tests assert on that flag, not the value.
+- API keys are write-only: the UI sends them to `PUT /api/v1/providers/{key}/key`; `GET /api/v1/providers` returns an `apiKeyConfigured` flag and never the secret. Tests assert on that flag, not the value.
 - The server refuses to start if it detects a legacy novel schema. If you see `legacy novel schema/data detected; run ./translator-server --migrate-db before starting the server`, run the binary once with `--migrate-db`, then restart normally.
 - `EnsureSchema()` no longer backfills chapter char counts or novel stats on boot. Those are kept current per-operation via `RecalculateNovelStats`, called after translate/refine/download jobs, chapter upsert/delete/bulk-delete, import, and copy (see `internal/store/store_chapters.go`, `internal/api/runtime_worker.go`). Don't reintroduce a boot-time full-table backfill; it made startup time scale with total library size instead of with what changed.
 - `--data-dir` is resolved to an absolute path at startup. Pass an absolute path (or one relative to the binary's CWD) — the binary does not chdir.
@@ -186,7 +186,7 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 
 ## Code conventions worth knowing
 
-- HTTP handlers live in `internal/api` and follow one-file-per-resource. Add a new resource by creating `router_<thing>.go` with a `register<Thing>Routes(api, s)` function (legacy `/api/db/*`, `/api/user/*`, `/api/epubs/*` paths), then mirror it under `/api/v1/*` via a `registerV1<Thing>Routes` function wired from `registerV1Routes` in `router_v1.go`. Public (unauthenticated) routes go via `registerAuthRoutes` or `registerV1AuthRoutes`. Both legacy and v1 share the same `shared*Handlers` funcs — only the per-route shape and status code differ. See `## API versioning & conventions`.
+- HTTP handlers live in `internal/api` and follow one-file-per-resource. Add a new resource by creating `router_<thing>.go` with a `registerV1<Thing>Routes(api, s)` function wired from `registerV1Routes` in `router_v1.go`. Public (unauthenticated) routes go via `registerAuthRoutes` or `registerV1AuthRoutes`. See `## API versioning & conventions`.
 - Store layer returns `store.ErrNotFound` / `store.ErrForbidden` for permission/missing cases. Map them in handlers with `notFoundOrForbidden(e, err)` (in `router_helpers.go`) — don't inline the switch.
 - Response shaping is bespoke: handlers return `map[string]any` or call small `*Record(...)` helpers (e.g. `novelRecord`, `jobRecord`, `epubRecord`, `parseJSONFields`) instead of serializing structs directly. The frontend expects this exact shape. Tests in `router_integration_test.go` assert on field names, so changing them is a breaking change. All shapers live in `internal/api/router_responses.go`. v1 envelope wrapping helpers (`v1Respond`, `v1RespondList`, `writeV1Error`) live in `internal/api/v1_envelope.go`. Example pattern:
 
@@ -201,7 +201,7 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
   }
 
   // handler — never serialize store structs directly
-  api.GET("/db/epubs/{id}", func(e *core.RequestEvent) error {
+  v1.GET("/epubs/{id}", func(e *core.RequestEvent) error {
       epub, err := s.Store.GetEpubAccessible(e.Auth.Id, e.Request.PathValue("id"))
       if err != nil {
           return notFoundOrForbidden(e, err)
@@ -210,7 +210,7 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
   })
   ```
 
-  Key rules: (a) store layer stores JSON as strings; shapers call `json.Unmarshal` to return parsed objects to the frontend (`parseJSONFields`). (b) legacy list endpoints wrap items in `{"items": [...], "hasMore": bool}` or return plain arrays; v1 endpoints return `{data, meta, links}` (envelope). (c) composite responses combine multiple shapers in one map (e.g. `{"novel": parseJSONFields(...), "epub": epubRecord(...), "chaptersImported": n}`). (d) v1 handlers must always go through `v1Respond` / `v1RespondList` — never `e.JSON` on a `/api/v1/*` route.
+  Key rules: (a) store layer stores JSON as strings; shapers call `json.Unmarshal` to return parsed objects to the frontend (`parseJSONFields`). (b) v1 endpoints return `{data, meta, links}` (envelope). (c) composite responses combine multiple shapers in one map (e.g. `{"novel": parseJSONFields(...), "epub": epubRecord(...), "chaptersImported": n}`). (d) v1 handlers must always go through `v1Respond` / `v1RespondList` — never `e.JSON` on a `/api/v1/*` route.
 - All PocketBase collections are defined in code (see `store_schema.go`) and seeded in `EnsureSchema`. There are no JSON migration files. If you add a field, add it to the relevant `ensure*Collection` and use `ensureField` for idempotent migration.
 - The `translatorserver` import alias in `internal/api/router.go` and `static.go` is the **module-name alias** for the `translator-server` module — its only job is to expose the `FrontendFS` embed declared in `frontend_embed.go`. The package name on that file is `translatorserver` (single word), which is why the alias matches.
 - Frontend uses `vue-router` and the `appServicesKey` provide/inject pattern (`frontend/src/app/services.ts`) for cross-page state. New composables live in `frontend/src/composables/`; new pages in `frontend/src/pages/`. The dev proxy in `frontend/vite.config.ts` proxies `/api` and `/ai` to the Go backend — both are required because some routes are mounted at the root level by PocketBase.
@@ -280,15 +280,14 @@ All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA 
 
 ## API versioning & conventions
 
-The HTTP API has two parallel surfaces. **Canonical = `/api/v1/*`** (REST-shaped, envelope-wrapped, semantically correct status codes). **Legacy = `/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`, `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`, `/api/translation-jobs/*`** (kept for backward compatibility).
+The HTTP API has one surface: **canonical `/api/v1/*`** (REST-shaped, envelope-wrapped, semantically correct status codes). Every `/api/v1/*` response carries `X-API-Version: v1`. There are no legacy aliases.
 
-- **Sunset for legacy aliases**: `Wed, 01 Jan 2026 00:00:00 GMT` (set by `v1HeaderMiddleware` in `router.go`). Legacy responses carry `Deprecation: true`, `Sunset`, and `Link: </api/v1>; rel="successor-version"`. v1 responses carry `X-API-Version: v1`.
-- New clients must use `/api/v1/*`. New server work goes in the v1 surface; the legacy handler is kept as a thin alias and may be removed after Sunset.
+- New clients and server work go in the v1 surface. The small set of unauthenticated public routes (`/api/auth/*`, `/api/worker-auth/*`, `/healthz`, `/ws/browser-worker`) is mounted outside `/api/v1/` because they are the OAuth/login entry points and the WebSocket endpoint.
 - Machine-readable spec: `docs/api/openapi.yaml` (OpenAPI 3.1). Human overview: `docs/api/README.md`.
 
 ### Envelope shapes
 
-v1 always uses one of these shapes. Legacy paths return the original bespoke shapes (`{"items": [...], "hasMore": bool}`, bare arrays, `{ok: true}`, etc.) so the existing frontend keeps working unchanged.
+v1 always uses one of these shapes.
 
 **Single resource** — wrapped in `{data: ...}`:
 
@@ -357,21 +356,21 @@ v1 handlers use `v1Respond` / `v1RespondList` from `internal/api/v1_envelope.go`
 
 ### Frontend expectations
 
-- `frontend/src/api/client.ts` is the single API client. The legacy endpoints are used today; the v1 migration is owned by the frontend agent. Keep response keys stable: tests in `router_integration_test.go` and `v1_envelope_test.go` lock the v1 shape.
+- `frontend/src/api/client.ts` is the single API client. All endpoints are under `/api/v1`. Keep response keys stable: tests in `router_integration_test.go` and `v1_envelope_test.go` lock the v1 shape.
 - `frontend/src/app/services.ts` exposes `useAppServices()` (provide/inject) with `api`, `auth`, `defaults`, `providers`, etc. New composables in `frontend/src/composables/` and new pages in `frontend/src/pages/` are the only places allowed to call `api.*`.
 - The dev proxy in `frontend/vite.config.ts` forwards `/api` and `/ai` to `127.0.0.1:5176` (Go backend). Both prefixes are required because some routes are mounted at the root level by PocketBase.
 
 ### Adding a new endpoint — checklist
 
-1. Add the `register<Resource>Routes` (legacy, under `/api/db|/api/user|/api/epubs`) **and** the `registerV1<Resource>Routes` (canonical, under `/api/v1`). Both can share a `shared<Resource>Handlers` struct.
+1. Add a `registerV1<Resource>Routes` function (canonical, under `/api/v1`).
 2. In the v1 handler, route through `v1Respond` / `v1RespondList`. For async creates, set `e.Response.Header().Set("Location", ...)` before responding with 201 (or 202 for fire-and-forget).
-3. For deletes, return `e.NoContent(http.StatusNoContent)` on v1, `{ok: true}` on legacy.
+3. For deletes, return `e.NoContent(http.StatusNoContent)`.
 4. For errors, return `writeV1Error(e, status, code, message, ...details)` so v1 responses use the `application/problem+json` content type.
 5. Update `docs/api/openapi.yaml` and `docs/api/README.md` with the new path.
 
 ## Where to look first when changing X
 
-- New HTTP route → `internal/api/router.go` (legacy wire-in) + `internal/api/router_v1.go` (v1 wire-in) + a `router_*.go` file (handler). See `## API versioning & conventions`.
+- New HTTP route → `internal/api/router_v1.go` (wire-in via `registerV1Routes`) + a `router_*.go` file (handler). Public/unauthenticated routes go in `router.go` via `registerAuthRoutes` or `registerV1AuthRoutes`. See `## API versioning & conventions`.
 - New persistence field → `internal/store/store_schema.go` (collection def) + relevant `store_*.go` (record mapping in `store_mapping.go` and persistence) + `internal/store/settings.go` (struct type if it's a domain object).
 - New AI provider → `internal/ai/registry.go` (catalog entry; sets `GoAIOptions` like `useResponsesAPI` and `strictJsonSchema`) and verify `internal/ai/openai.go` honors those options.
 - New job operation → extend the switch in `internal/api/runtime_worker.go` (`enqueueJob`) and add a `runtime_*.go` workflow file. Status transitions live in `store_jobs.go`; the worker respects `cancelled` / `done` / `failed` short-circuits.
@@ -426,10 +425,10 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 
 ### Adding a new API route
 
-1. Create `internal/api/router_<resource>.go` with a `register<Resource>Routes(...)` (legacy paths under `/api/db/*`, `/api/user/*`, `/api/epubs/*`) and a matching `registerV1<Resource>Routes(...)` (canonical paths under `/api/v1/*`).
-2. Wire the legacy function into `registerProtectedRoutes` in `router.go` (or `registerAuthRoutes` for public routes) and the v1 function into `registerV1Routes` in `router_v1.go`. Both can delegate to the same `shared<Resource>Handlers` funcs.
+1. Create `internal/api/router_<resource>.go` with a `registerV1<Resource>Routes(...)` (canonical paths under `/api/v1/*`).
+2. Wire the v1 function into `registerV1Routes` in `router_v1.go` (or `registerAuthRoutes` / `registerV1AuthRoutes` for public routes in `router.go`).
 3. In the handler, call the store layer and use `notFoundOrForbidden(e, err)` for error mapping — never inline the switch.
-4. Shape responses with helpers from `router_responses.go` (`*Record(...)` or `parseJSONFields`). Never serialize store structs directly. For v1 routes, wrap the result with `v1Respond` / `v1RespondList` (see `## API versioning & conventions`).
+4. Shape responses with helpers from `router_responses.go` (`*Record(...)` or `parseJSONFields`). Never serialize store structs directly. Wrap the result with `v1Respond` / `v1RespondList` (see `## API versioning & conventions`).
 5. Write integration tests in `internal/api/router_integration_test.go` using the `newAPITestEnv` helper. Add at least one test per v1 route to lock the envelope shape, status code, and `Location` header (for creates).
 
 ### Adding a new AI provider

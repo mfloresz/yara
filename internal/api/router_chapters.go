@@ -56,18 +56,11 @@ func (sharedChapterHandlers) cleanPreview(s *Server) func(*core.RequestEvent) er
 			UseRegex:      body.UseRegex,
 		})
 
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, CleanPreviewResult{
-				ChapterTitle: chapter.Title,
-				Changes:      diffLines(result.Original, result.Cleaned),
-				CleanResult:  result,
-			}, nil, nil)
-		}
-		return e.JSON(http.StatusOK, CleanPreviewResult{
+		return v1Respond(e, http.StatusOK, CleanPreviewResult{
 			ChapterTitle: chapter.Title,
 			Changes:      diffLines(result.Original, result.Cleaned),
 			CleanResult:  result,
-		})
+		}, nil, nil)
 	}
 }
 
@@ -133,10 +126,7 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			"total":   len(body.ChapterIDs),
 			"changed": len(items),
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body2, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body2)
+		return v1Respond(e, http.StatusOK, body2, nil, nil)
 	}
 }
 
@@ -257,54 +247,41 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 			"notFound": notFound,
 			"failed":   failed,
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, summary, nil, nil)
-		}
-		return e.JSON(http.StatusOK, summary)
+		return v1Respond(e, http.StatusOK, summary, nil, nil)
 	}
 }
 
-// listChapters: GET /novels/{novelId}/chapters — legacy returns bare array; v1
-// returns {data,meta,links}. To keep the page small, v1 also honors
-// ?includeContent=false (default false on v1 — only summaries) and ?summary=true
-// (always returns chapterSummaryRecord). The legacy /chapters path keeps
-// returning the full chapter array so the offline cache keeps working.
+// listChapters: GET /novels/{novelId}/chapters — v1 honors
+// ?includeContent=true (default false — only summaries) and uses the
+// {data,meta,links} envelope.
 func (sharedChapterHandlers) list(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		// Legacy behavior: full chapters, no content filter, bare array.
 		chapters, err := s.Store.ListAllChapterSummariesAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			q := e.Request.URL.Query()
-			includeContent := firstQuery(q, "includeContent") == "true"
-			page, perPage, limit, offset := parsePagination(q)
-			_ = page
-			_ = perPage
-			_ = limit
-			_ = offset
-			out := make([]map[string]any, 0, len(chapters))
-			if includeContent {
-				full, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
-				if err != nil {
-					return notFoundOrForbidden(e, err)
-				}
-				for _, ch := range full {
-					out = append(out, chapterRecord(ch))
-				}
-			} else {
-				for _, ch := range chapters {
-					out = append(out, chapterSummaryRecord(ch))
-				}
-			}
-			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
-		}
+		q := e.Request.URL.Query()
+		includeContent := firstQuery(q, "includeContent") == "true"
+		page, perPage, limit, offset := parsePagination(q)
+		_ = page
+		_ = perPage
+		_ = limit
+		_ = offset
 		out := make([]map[string]any, 0, len(chapters))
-		for _, ch := range chapters {
-			out = append(out, chapterSummaryRecord(ch))
+		if includeContent {
+			full, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
+			if err != nil {
+				return notFoundOrForbidden(e, err)
+			}
+			for _, ch := range full {
+				out = append(out, chapterRecord(ch))
+			}
+		} else {
+			for _, ch := range chapters {
+				out = append(out, chapterSummaryRecord(ch))
+			}
 		}
-		return e.JSON(http.StatusOK, out)
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
 	}
 }
 
@@ -322,26 +299,7 @@ func (sharedChapterHandlers) eligible(s *Server) func(*core.RequestEvent) error 
 		for _, ch := range chapters {
 			out = append(out, chapterSummaryRecord(ch))
 		}
-		if isV1Request(e) {
-			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, out)
-	}
-}
-
-// chaptersFull: legacy GET /db/novels/{novelId}/chapters/full — returns full
-// chapter array (no v1 equivalent; v1 uses ?includeContent=true on /chapters).
-func (sharedChapterHandlers) full(s *Server) func(*core.RequestEvent) error {
-	return func(e *core.RequestEvent) error {
-		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
-		if err != nil {
-			return notFoundOrForbidden(e, err)
-		}
-		out := make([]map[string]any, 0, len(chapters))
-		for _, ch := range chapters {
-			out = append(out, chapterRecord(ch))
-		}
-		return e.JSON(http.StatusOK, out)
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
 	}
 }
 
@@ -357,11 +315,8 @@ func (sharedChapterHandlers) chapterSummaries(s *Server) func(*core.RequestEvent
 		for _, ch := range items {
 			out = append(out, chapterSummaryRecord(ch))
 		}
-		if isV1Request(e) {
-			hasMore := offset+len(items) < total
-			return v1RespondList(e, http.StatusOK, out, page, perPage, total, hasMore, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, map[string]any{"items": out, "total": total, "limit": limit, "offset": offset})
+		hasMore := offset+len(items) < total
+		return v1RespondList(e, http.StatusOK, out, page, perPage, total, hasMore, e.Request.URL.Path)
 	}
 }
 
@@ -371,10 +326,7 @@ func (sharedChapterHandlers) chapterStats(s *Server) func(*core.RequestEvent) er
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, chapterStatsRecord(stats), nil, nil)
-		}
-		return e.JSON(http.StatusOK, chapterStatsRecord(stats))
+		return v1Respond(e, http.StatusOK, chapterStatsRecord(stats), nil, nil)
 	}
 }
 
@@ -384,10 +336,7 @@ func (sharedChapterHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
-		}
-		return e.JSON(http.StatusOK, chapterRecord(*chapter))
+		return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
 	}
 }
 
@@ -401,11 +350,8 @@ func (sharedChapterHandlers) upsert(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/novels/"+e.Request.PathValue("novelId")+"/chapters/"+chapter.ID)
-			return v1Respond(e, http.StatusCreated, chapterRecord(*chapter), nil, nil)
-		}
-		return e.JSON(http.StatusCreated, chapterRecord(*chapter))
+		e.Response.Header().Set("Location", "/api/v1/novels/"+e.Request.PathValue("novelId")+"/chapters/"+chapter.ID)
+		return v1Respond(e, http.StatusCreated, chapterRecord(*chapter), nil, nil)
 	}
 }
 
@@ -414,10 +360,7 @@ func (sharedChapterHandlers) delete(s *Server) func(*core.RequestEvent) error {
 		if err := s.Store.DeleteChapter(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId")); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return e.NoContent(http.StatusNoContent)
-		}
-		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+		return e.NoContent(http.StatusNoContent)
 	}
 }
 
@@ -434,18 +377,10 @@ func (sharedChapterHandlers) bulkDelete(s *Server) func(*core.RequestEvent) erro
 			return notFoundOrForbidden(e, err)
 		}
 		summary := map[string]any{"deleted": deleted, "requested": len(body.IDs)}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, summary, nil, nil)
-		}
-		return e.JSON(http.StatusOK, summary)
+		return v1Respond(e, http.StatusOK, summary, nil, nil)
 	}
 }
 
-// patchStatus: PATCH /novels/{novelId}/chapters/{chapterId}/status — legacy
-// only. On v1 the equivalent is POST /novels/{novelId}/chapters/{chapterId}:reset
-// for "pending" or a separate PATCH for translation status. To avoid splitting
-// the logic, v1 also routes this through patchStatus but with stricter
-// validation.
 func (sharedChapterHandlers) patchStatus(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {
@@ -462,10 +397,7 @@ func (sharedChapterHandlers) patchStatus(s *Server) func(*core.RequestEvent) err
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
-		}
-		return e.JSON(http.StatusOK, chapterRecord(*chapter))
+		return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
 	}
 }
 
@@ -480,28 +412,8 @@ func (sharedChapterHandlers) gaps(s *Server) func(*core.RequestEvent) error {
 			return e.InternalServerError("failed to get chapter gaps", err)
 		}
 		body := map[string]any{"gaps": gaps}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body)
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
-}
-
-func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/{novelId}/chapters/clean-preview", sharedChapters.cleanPreview(s))
-	api.POST("/db/novels/{novelId}/chapters/clean-preview-bulk", sharedChapters.cleanPreviewBulk(s))
-	api.POST("/db/novels/{novelId}/chapters/clean", sharedChapters.clean(s))
-	api.GET("/db/novels/{novelId}/chapters", sharedChapters.list(s))
-	api.GET("/db/novels/{novelId}/chapters/eligible", sharedChapters.eligible(s))
-	api.GET("/db/novels/{novelId}/chapters/full", sharedChapters.full(s))
-	api.GET("/db/novels/{novelId}/chapter-summaries", sharedChapters.chapterSummaries(s))
-	api.GET("/db/novels/{novelId}/chapter-stats", sharedChapters.chapterStats(s))
-	api.GET("/db/novels/{novelId}/chapters/{chapterId}", sharedChapters.get(s))
-	api.POST("/db/novels/{novelId}/chapters", sharedChapters.upsert(s))
-	api.DELETE("/db/novels/{novelId}/chapters/{chapterId}", sharedChapters.delete(s))
-	api.POST("/db/novels/{novelId}/chapters/bulk-delete", sharedChapters.bulkDelete(s))
-	api.PATCH("/db/novels/{novelId}/chapters/{chapterId}/status", sharedChapters.patchStatus(s))
-	api.GET("/db/novels/{novelId}/chapters/gaps", sharedChapters.gaps(s))
 }
 
 func registerV1ChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {

@@ -29,18 +29,12 @@ func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int, userID string
 	}, nil
 }
 
-// registerProxyRoutes registers the raw HTML proxy endpoint plus the
+// registerV1ProxyRoutes registers the raw HTML proxy endpoint plus the
 // browser-worker status endpoints. All routes here are mounted on the
-// authenticated /api group: proxy fetches drive a connected browser worker to
-// load arbitrary URLs (carrying the user's live browser session), so they must
-// not be reachable anonymously, and the status endpoints must not leak the set
-// of connected workers to unauthenticated callers.
-func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/browser-workers", listBrowserWorkers(s))
-	api.GET("/proxy/status", proxyStatus(s))
-	api.POST("/proxy/fetch", proxyFetch(s))
-}
-
+// authenticated /api/v1 group: proxy fetches drive a connected browser worker
+// to load arbitrary URLs (carrying the user's live browser session), so they
+// must not be reachable anonymously, and the status endpoints must not leak
+// the set of connected workers to unauthenticated callers.
 func registerV1ProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/browser-workers", listBrowserWorkers(s))
 	api.POST("/proxy/fetch", proxyFetch(s))
@@ -70,37 +64,7 @@ func listBrowserWorkers(s *Server) func(*core.RequestEvent) error {
 			"count":   len(workers),
 			"workers": workers,
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body)
-	}
-}
-
-func proxyStatus(s *Server) func(*core.RequestEvent) error {
-	return func(e *core.RequestEvent) error {
-		browserWorkersMu.RLock()
-		workers := make([]map[string]any, 0, len(browserWorkers))
-		for _, w := range browserWorkers {
-			w.mu.Lock()
-			if w.UserID == e.Auth.Id {
-				workers = append(workers, map[string]any{
-					"id":          w.ID,
-					"browser":     w.Browser,
-					"state":       w.State,
-					"connectedAt": w.ConnectedAt,
-				})
-			}
-			w.mu.Unlock()
-		}
-		browserWorkersMu.RUnlock()
-		body := map[string]any{
-			"connected": len(workers) > 0,
-			"count":     len(workers),
-			"workers":   workers,
-		}
-		// /proxy/status has no v1 equivalent — clients use /browser-workers.
-		return e.JSON(http.StatusOK, body)
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
 }
 
@@ -145,10 +109,7 @@ func proxyFetch(s *Server) func(*core.RequestEvent) error {
 			"text":   result.Text,
 			"status": result.Status,
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, resp, nil, nil)
-		}
-		return e.JSON(http.StatusOK, resp)
+		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
 

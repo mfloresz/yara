@@ -322,12 +322,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           order?: "asc" | "desc";
         } = {},
       ): Promise<PaginatedResult<Novel>> {
-        // v1 takes page+per_page (clamped at 200 server-side). offset/limit
-        // still work as aliases; the backend converts to page internally.
-        // For list views we pass a sparse fieldset to keep payloads small;
-        // callers that need a full novel fetch by id.
-        const useSparseFields = !params.fields && !params.select;
-        const fields = params.fields ?? (useSparseFields ? NOVEL_LIST_FIELDS : undefined);
+        // List views pass a sparse fieldset to keep payloads small; callers
+        // that need a full novel fetch by id. `select` is a frontend-only
+        // signal consumed by useNovels.ts to control field-level merging;
+        // it does not affect the wire query.
+        const fields = params.fields ?? (params.select ? undefined : NOVEL_LIST_FIELDS);
         const query = buildQuery({
           limit: params.limit,
           offset: params.offset,
@@ -354,9 +353,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         return novel ? withDefaults(novel) : null;
       },
       async getFull(novelId: string): Promise<{ novel: Novel; chapters: Chapter[] } | null> {
-        // v1 /full returns the {novel,chapters} composite enveloped as
-        // {data: {novel,chapters}}. http unwraps the envelope; we just need
-        // to surface the composite shape to callers.
+        // /full returns the {novel,chapters} composite in a single envelope;
+        // http auto-unwraps to the inner object.
         const result = await http.get<{ novel: Novel; chapters: Chapter[] } | null>(
           `/api/v1/novels/${novelId}/full`,
         );
@@ -499,9 +497,6 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           limit: params.limit,
           offset: params.offset,
         });
-        // v1 returns the list envelope; we manually unwrap to the legacy
-        // {items,total,limit,offset} shape so existing pagination code
-        // keeps working without changes.
         return http
           .get<unknown>(`/api/v1/novels/${novelId}/chapter-summaries${suffix}`)
           .then((result) => {
@@ -514,14 +509,10 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           });
       },
       async gaps(novelId: string): Promise<{ gaps: Array<{ from: number; to: number; count: number }> }> {
-        const result = await http.get<unknown>(
+        const result = await http.get<{ gaps: Array<{ from: number; to: number; count: number }> }>(
           `/api/v1/novels/${novelId}/chapters/gaps`,
         );
-        // v1 returns {data: {gaps: [...]}}; if gaps is somehow missing,
-        // surface an empty list.
-        const gaps = (result as { gaps?: Array<{ from: number; to: number; count: number }> }).gaps;
-        if (Array.isArray(gaps)) return { gaps };
-        return { gaps: [] };
+        return { gaps: Array.isArray(result?.gaps) ? result.gaps : [] };
       },
 
       get(novelId: string, chapterId: string) {
@@ -542,14 +533,14 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         );
       },
       async bulkRemove(novelId: string, ids: string[]) {
-        const result = await http.post<unknown>(
+        const result = await http.post<{ deleted?: number; requested?: number }>(
           `/api/v1/novels/${novelId}/chapters/bulk-delete`,
           { ids },
         );
-        // v1 returns {data: {deleted, requested}} after unwrap; legacy
-        // returned the bare object. Defensive cast covers both.
-        const obj = (result ?? {}) as { deleted?: number; requested?: number };
-        return { deleted: obj.deleted ?? 0, requested: obj.requested ?? ids.length };
+        return {
+          deleted: result?.deleted ?? 0,
+          requested: result?.requested ?? ids.length,
+        };
       },
       clean(
         novelId: string,
@@ -650,30 +641,23 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         const { data } = unwrapCollection<TranslationJob[]>(result);
         return Array.isArray(data) ? data : [];
       },
-      // v1: hasActive is folded into the /jobs/active response body. We keep
-      // the legacy {hasActive} shape so useActiveJobStatus can still poll
-      // without changes.
+      // v1 returns hasActive alongside the active jobs list, so a single
+      // /jobs/active fetch powers both `status` and `listActive` callers.
       async status(): Promise<{ hasActive: boolean }> {
-        const result = await http.get<unknown>("/api/v1/jobs/active");
-        const obj = (result ?? {}) as { hasActive?: boolean; data?: { hasActive?: boolean } };
-        const hasActive = obj.hasActive ?? obj.data?.hasActive ?? false;
-        return { hasActive: Boolean(hasActive) };
+        const result = await http.get<{ data?: { hasActive?: boolean } }>(
+          "/api/v1/jobs/active",
+        );
+        return { hasActive: Boolean(result.data?.hasActive) };
       },
       async listActive(): Promise<TranslationJob[]> {
-        const result = await http.get<unknown>("/api/v1/jobs/active");
-        // /jobs/active returns {data: {jobs: [...], hasActive}} — see
-        // router_jobs.go. unwrapCollection pulls out the data field (the
-        // inner {jobs,hasActive} object), so we still need to dive one
-        // level for the jobs array.
-        const inner = (result ?? {}) as { jobs?: TranslationJob[]; data?: { jobs?: TranslationJob[] } };
-        const jobs = inner.jobs ?? inner.data?.jobs ?? [];
-        return Array.isArray(jobs) ? jobs : [];
+        const result = await http.get<{ data?: { jobs?: TranslationJob[] } }>(
+          "/api/v1/jobs/active",
+        );
+        return Array.isArray(result.data?.jobs) ? result.data.jobs : [];
       },
       async update(jobId: string, patch: Partial<TranslationJob>): Promise<TranslationJob> {
-        // v1: PATCH /jobs/{jobId} is gone. Cancel and retry are explicit
-        // sub-routes. status="cancelled" -> POST /:cancel; status="pending"
-        // (retry) -> POST /:retry. Any other fields fall back to the legacy
-        // PATCH so we don't break callers that include metadata.
+        // v1 split PATCH /jobs/{jobId} into two explicit sub-routes: cancel
+        // and retry. Any other status is a no-op; we just refetch the job.
         const status = (patch as { status?: string }).status;
         if (status === "cancelled") {
           return http.post<TranslationJob>(`/api/v1/jobs/${jobId}/cancel`);
@@ -681,7 +665,6 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         if (status === "pending") {
           return http.post<TranslationJob>(`/api/v1/jobs/${jobId}/retry`);
         }
-        // No remaining fields to send on v1; surface the unchanged job.
         return http.get<TranslationJob>(`/api/v1/jobs/${jobId}`);
       },
     },
@@ -772,9 +755,10 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
     },
     workerTokens: {
       async list(): Promise<WorkerToken[]> {
-        const result = await http.get<unknown>("/api/v1/worker-auth/tokens");
-        const obj = (result ?? {}) as { tokens?: WorkerToken[] };
-        return Array.isArray(obj.tokens) ? obj.tokens : [];
+        const result = await http.get<{ tokens?: WorkerToken[] }>(
+          "/api/v1/worker-auth/tokens",
+        );
+        return Array.isArray(result?.tokens) ? result.tokens : [];
       },
       async revoke(tokenId: string): Promise<void> {
         await http.post<void>(`/api/v1/worker-auth/revoke/${tokenId}`);

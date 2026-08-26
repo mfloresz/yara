@@ -8,11 +8,6 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerPromptRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/user/prompts", listPrompts(s))
-	api.PUT("/user/prompts/{key}", upsertPrompt(s))
-}
-
 func registerV1PromptRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/prompts", listPrompts(s))
 	api.PUT("/prompts/{key}", upsertPrompt(s))
@@ -25,10 +20,7 @@ func listPrompts(s *Server) func(*core.RequestEvent) error {
 			return e.InternalServerError("failed to load prompts", err)
 		}
 		out := promptsToResponse(prompts)
-		if isV1Request(e) {
-			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, out)
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
 	}
 }
 
@@ -56,9 +48,6 @@ func upsertPrompt(s *Server) func(*core.RequestEvent) error {
 			return e.InternalServerError("failed to update prompt", err)
 		}
 		out := promptToResponse(prompt)
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, out, nil, nil)
-		}
-		return e.JSON(http.StatusOK, out)
+		return v1Respond(e, http.StatusOK, out, nil, nil)
 	}
 }

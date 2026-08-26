@@ -7,11 +7,6 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/user/novels/{novelId}/reading-progress", getReadingProgress(s))
-	api.PUT("/user/novels/{novelId}/reading-progress", putReadingProgress(s))
-}
-
 func registerV1ReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.GET("/novels/{novelId}/reading-progress", getReadingProgress(s))
 	// PUT is fine for the user's own per-novel progress slot: it is the
@@ -31,15 +26,9 @@ func getReadingProgress(s *Server) func(*core.RequestEvent) error {
 		}
 		rp, err := s.Store.GetReadingProgress(e.Auth.Id, novelID)
 		if err != nil {
-			if isV1Request(e) {
-				return v1Respond(e, http.StatusOK, map[string]any{}, nil, nil)
-			}
-			return e.JSON(http.StatusOK, map[string]any{})
+			return v1Respond(e, http.StatusOK, map[string]any{}, nil, nil)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
-		}
-		return e.JSON(http.StatusOK, readingProgressRecord(*rp))
+		return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
 	}
 }
 
@@ -66,9 +55,6 @@ func putReadingProgress(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return e.InternalServerError("failed to save reading progress", err)
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
-		}
-		return e.JSON(http.StatusOK, readingProgressRecord(*rp))
+		return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
 	}
 }

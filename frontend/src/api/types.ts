@@ -31,9 +31,9 @@ export type V1Envelope = {
   error?: V1ErrorBody;
 };
 
-// Paginated result that maps the v1 list envelope to the legacy
-// {items,hasMore} contract consumers still expect. Construct it from
-// `{data,meta}` returned by `http.get` after unwrapping — see client.ts.
+// Paginated result. Constructed from the v1 list envelope after
+// `unwrapCollection` — `items` is the unwrapped data array, `hasMore` and
+// `total` come from `meta`.
 export type PaginatedResult<T> = {
   items: T[];
   hasMore?: boolean;
@@ -162,10 +162,6 @@ export type ApiErrorPayload = {
     code?: string;
     message?: string;
   };
-  // Legacy PocketBase shape: {message, code, data}
-  message?: string;
-  code?: number;
-  data?: Record<string, unknown>;
 };
 
 export type ImportUrlResult = {

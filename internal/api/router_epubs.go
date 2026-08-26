@@ -15,7 +15,7 @@ type sharedEpubHandlers struct{}
 var sharedEpubs = sharedEpubHandlers{}
 
 // previewEpub: POST /epubs:preview — parse the uploaded file and return its
-// metadata + chapter titles; do not persist. Same on legacy and v1.
+// metadata + chapter titles; do not persist.
 func (sharedEpubHandlers) preview(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(64 << 20); err != nil {
@@ -43,10 +43,7 @@ func (sharedEpubHandlers) preview(s *Server) func(*core.RequestEvent) error {
 			"language": parsed.Language, "series": parsed.Series, "number": parsed.Number,
 			"chapters": chapters,
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body)
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
 }
 
@@ -61,10 +58,7 @@ func (sharedEpubHandlers) list(s *Server) func(*core.RequestEvent) error {
 		for _, item := range items {
 			out = append(out, epubRecord(item))
 		}
-		if isV1Request(e) {
-			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
-		}
-		return e.JSON(http.StatusOK, out)
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
 	}
 }
 
@@ -88,11 +82,8 @@ func (sharedEpubHandlers) create(s *Server) func(*core.RequestEvent) error {
 			return notFoundOrForbidden(e, err)
 		}
 		body := epubRecord(*item)
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
-			return v1Respond(e, http.StatusCreated, body, nil, nil)
-		}
-		return e.JSON(http.StatusCreated, body)
+		e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
+		return v1Respond(e, http.StatusCreated, body, nil, nil)
 	}
 }
 
@@ -117,25 +108,11 @@ func (sharedEpubHandlers) download(s *Server) func(*core.RequestEvent) error {
 	}
 }
 
-func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/epubs/preview", sharedEpubs.preview(s))
-	api.GET("/epubs", sharedEpubs.list(s))
-	api.POST("/epubs", sharedEpubs.create(s))
-	api.GET("/epubs/{id}/download", sharedEpubs.download(s))
-}
-
 func registerV1EpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/epubs/preview", sharedEpubs.preview(s))
 	api.GET("/epubs", sharedEpubs.list(s))
-	// List under /novels/{id}/epubs is the canonical collection path. The
-	// flat /epubs list is kept as a query filter (the legacy frontend still
-	// calls it without a novelId).
-	api.GET("/novels/{id}/epubs", func(e *core.RequestEvent) error {
-		// Restrict the novelId query value to the path param so the response
-		// is always bounded by a single novel.
-		_ = e
-		return sharedEpubs.list(s)(e)
-	})
+	// /novels/{id}/epubs is the canonical collection path.
+	api.GET("/novels/{id}/epubs", sharedEpubs.list(s))
 	api.POST("/novels/{id}/epubs", sharedEpubs.create(s))
 	api.POST("/epubs", sharedEpubs.create(s))
 	api.GET("/epubs/{id}/download", sharedEpubs.download(s))

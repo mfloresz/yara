@@ -10,11 +10,6 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/{novelId}/generate-glossary", generateGlossaryHandler(s))
-	api.GET("/db/novels/{novelId}/estimate-glossary-tokens", estimateGlossaryTokensHandler(s))
-}
-
 func registerV1GlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/novels/{novelId}/glossary/generate", generateGlossaryHandler(s))
 	api.GET("/novels/{novelId}/glossary/estimate-tokens", estimateGlossaryTokensHandler(s))
@@ -120,15 +115,12 @@ func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
 			"status":    job.Status,
 			"operation": job.Operation,
 		}
-		if isV1Request(e) {
-			e.Response.Header().Set("Location", "/api/v1/jobs/"+job.ID)
-			return v1Respond(e, http.StatusAccepted, body2, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body2)
+		e.Response.Header().Set("Location", "/api/v1/jobs/"+job.ID)
+		return v1Respond(e, http.StatusAccepted, body2, nil, nil)
 	}
 }
 
-// GET /db/novels/{novelId}/estimate-glossary-tokens?from=N&to=M
+// GET /novels/{novelId}/glossary/estimate-tokens?from=N&to=M
 // Returns estimated token count for a chapter range so the frontend can
 // show the user an estimate before generating the glossary.
 func estimateGlossaryTokensHandler(s *Server) func(*core.RequestEvent) error {
@@ -178,9 +170,6 @@ func estimateGlossaryTokensHandler(s *Server) func(*core.RequestEvent) error {
 			"totalTokens":  totalTokens,
 			"chapterCount": chapterCount,
 		}
-		if isV1Request(e) {
-			return v1Respond(e, http.StatusOK, body2, nil, nil)
-		}
-		return e.JSON(http.StatusOK, body2)
+		return v1Respond(e, http.StatusOK, body2, nil, nil)
 	}
 }

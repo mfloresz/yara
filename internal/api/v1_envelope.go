@@ -10,7 +10,7 @@ import (
 // v1Envelope: canonical REST envelope for v1 responses. Single resources use
 // {data: <resource>}. Collections use {data, meta, links} with optional cursor
 // pagination; offset pagination (page/per_page) is also supported and emitted
-// in meta. Legacy routes are kept verbatim — only /api/v1/* paths use this shape.
+// in meta.
 type v1Envelope struct {
 	Data  any         `json:"data"`
 	Meta  *v1Meta     `json:"meta,omitempty"`
@@ -165,12 +165,4 @@ func writeV1Error(e *core.RequestEvent, status int, code, message string, detail
 
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-
-// isV1Request reports whether the current request targets a /api/v1/* route.
-// Handlers branch on this to pick the canonical envelope shape; legacy
-// /api/db/* /api/user/* /api/epubs/* paths return the original {items,hasMore}
-// or bare-array shape so the existing frontend keeps working unchanged.
-func isV1Request(e *core.RequestEvent) bool {
-	return hasPrefix(e.Request.URL.Path, "/api/v1/")
 }
