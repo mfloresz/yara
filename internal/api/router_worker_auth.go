@@ -190,6 +190,103 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 	})
 }
 
+// registerV1WorkerAuthRoutes mirrors the legacy /api/worker-auth/* paths under
+// /api/v1/worker-auth/*. The /authorize, /validate, /callback flows use HTML
+// or token-only responses and are not in the JSON envelope shape — they stay
+// identical between legacy and v1. The protected routes (approve, revoke,
+// delete, tokens) return JSON: v1 wraps them in the standard envelope.
+func registerV1WorkerAuthRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	authGroup := api.Group("/worker-auth")
+	authGroup.Bind(apis.RequireAuth())
+
+	authGroup.POST("/approve", func(e *core.RequestEvent) error {
+		state := e.Request.FormValue("state")
+		if state == "" {
+			return e.BadRequestError("state is required", nil)
+		}
+
+		pendingAuthsMu.Lock()
+		pending, exists := pendingAuths[state]
+		if exists {
+			delete(pendingAuths, state)
+		}
+		pendingAuthsMu.Unlock()
+
+		if !exists || time.Since(pending.CreatedAt) > 10*time.Minute {
+			return e.BadRequestError("invalid or expired authorization request", nil)
+		}
+
+		if e.Auth == nil {
+			return e.BadRequestError("authentication required", nil)
+		}
+
+		shortID := pending.ExtensionID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		label := fmt.Sprintf("Browser Extension (%s)", shortID)
+		_, plaintext, err := s.Store.CreateWorkerToken(e.Auth.Id, pending.ExtensionID, label)
+		if err != nil {
+			return e.InternalServerError("failed to create token", err)
+		}
+
+		callbackURL := fmt.Sprintf("/api/worker-auth/callback?token=%s&user=%s", plaintext, e.Auth.Id)
+		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		e.Response.WriteHeader(http.StatusOK)
+		page := approvalSuccessHTML(label, callbackURL)
+		e.Response.Write([]byte(page))
+		return nil
+	})
+
+	authGroup.POST("/revoke/{id}", func(e *core.RequestEvent) error {
+		if e.Auth == nil {
+			return e.BadRequestError("authentication required", nil)
+		}
+		tokenID := e.Request.PathValue("id")
+		if err := s.Store.RevokeWorkerToken(e.Auth.Id, tokenID); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		CloseWorkerByTokenID(tokenID)
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, map[string]any{"ok": true}, nil, nil)
+		}
+		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+
+	authGroup.POST("/delete/{id}", func(e *core.RequestEvent) error {
+		if e.Auth == nil {
+			return e.BadRequestError("authentication required", nil)
+		}
+		tokenID := e.Request.PathValue("id")
+		if err := s.Store.DeleteWorkerToken(e.Auth.Id, tokenID); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		CloseWorkerByTokenID(tokenID)
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, map[string]any{"ok": true}, nil, nil)
+		}
+		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+
+	authGroup.GET("/tokens", func(e *core.RequestEvent) error {
+		if e.Auth == nil {
+			return e.BadRequestError("authentication required", nil)
+		}
+		tokens, err := s.Store.ListWorkerTokens(e.Auth.Id)
+		if err != nil {
+			return e.InternalServerError("failed to list tokens", err)
+		}
+		body := map[string]any{
+			"tokens": tokens,
+			"count":  len(tokens),
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body)
+	})
+}
+
 var consentPageTmpl = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
 <html lang="es">
 <head>

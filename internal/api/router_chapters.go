@@ -2,15 +2,19 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/store"
 )
 
-func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/{novelId}/chapters/clean-preview", func(e *core.RequestEvent) error {
+type sharedChapterHandlers struct{}
+
+var sharedChapters = sharedChapterHandlers{}
+
+// cleanPreview: POST /novels/{novelId}/chapters:cleanPreview
+func (sharedChapterHandlers) cleanPreview(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			ChapterID     string `json:"chapterId"`
 			Mode          string `json:"mode"`
@@ -52,13 +56,23 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 			UseRegex:      body.UseRegex,
 		})
 
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, CleanPreviewResult{
+				ChapterTitle: chapter.Title,
+				Changes:      diffLines(result.Original, result.Cleaned),
+				CleanResult:  result,
+			}, nil, nil)
+		}
 		return e.JSON(http.StatusOK, CleanPreviewResult{
 			ChapterTitle: chapter.Title,
 			Changes:      diffLines(result.Original, result.Cleaned),
 			CleanResult:  result,
 		})
-	})
-	api.POST("/db/novels/{novelId}/chapters/clean-preview-bulk", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			ChapterIDs    []string `json:"chapterIds"`
 			Mode          string   `json:"mode"`
@@ -114,13 +128,20 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 			})
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
+		body2 := map[string]any{
 			"items":   items,
 			"total":   len(body.ChapterIDs),
 			"changed": len(items),
-		})
-	})
-	api.POST("/db/novels/{novelId}/chapters/clean", func(e *core.RequestEvent) error {
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body2, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body2)
+	}
+}
+
+func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			ChapterIDs    []string `json:"chapterIds"`
 			Mode          string   `json:"mode"`
@@ -229,26 +250,66 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 			}
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
+		summary := map[string]any{
 			"modified": modified,
 			"total":    len(body.ChapterIDs),
 			"skipped":  skipped,
 			"notFound": notFound,
 			"failed":   failed,
-		})
-	})
-	api.GET("/db/novels/{novelId}/chapters", func(e *core.RequestEvent) error {
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, summary, nil, nil)
+		}
+		return e.JSON(http.StatusOK, summary)
+	}
+}
+
+// listChapters: GET /novels/{novelId}/chapters — legacy returns bare array; v1
+// returns {data,meta,links}. To keep the page small, v1 also honors
+// ?includeContent=false (default false on v1 — only summaries) and ?summary=true
+// (always returns chapterSummaryRecord). The legacy /chapters path keeps
+// returning the full chapter array so the offline cache keeps working.
+func (sharedChapterHandlers) list(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		// Legacy behavior: full chapters, no content filter, bare array.
 		chapters, err := s.Store.ListAllChapterSummariesAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
+		}
+		if isV1Request(e) {
+			q := e.Request.URL.Query()
+			includeContent := firstQuery(q, "includeContent") == "true"
+			page, perPage, limit, offset := parsePagination(q)
+			_ = page
+			_ = perPage
+			_ = limit
+			_ = offset
+			out := make([]map[string]any, 0, len(chapters))
+			if includeContent {
+				full, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
+				if err != nil {
+					return notFoundOrForbidden(e, err)
+				}
+				for _, ch := range full {
+					out = append(out, chapterRecord(ch))
+				}
+			} else {
+				for _, ch := range chapters {
+					out = append(out, chapterSummaryRecord(ch))
+				}
+			}
+			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
 		}
 		out := make([]map[string]any, 0, len(chapters))
 		for _, ch := range chapters {
 			out = append(out, chapterSummaryRecord(ch))
 		}
 		return e.JSON(http.StatusOK, out)
-	})
-	api.GET("/db/novels/{novelId}/chapters/eligible", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) eligible(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		operation := e.Request.URL.Query().Get("operation")
 		if operation != "translate" && operation != "refine" {
 			operation = "translate"
@@ -261,9 +322,17 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		for _, ch := range chapters {
 			out = append(out, chapterSummaryRecord(ch))
 		}
+		if isV1Request(e) {
+			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
+		}
 		return e.JSON(http.StatusOK, out)
-	})
-	api.GET("/db/novels/{novelId}/chapters/full", func(e *core.RequestEvent) error {
+	}
+}
+
+// chaptersFull: legacy GET /db/novels/{novelId}/chapters/full — returns full
+// chapter array (no v1 equivalent; v1 uses ?includeContent=true on /chapters).
+func (sharedChapterHandlers) full(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
@@ -273,10 +342,13 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 			out = append(out, chapterRecord(ch))
 		}
 		return e.JSON(http.StatusOK, out)
-	})
-	api.GET("/db/novels/{novelId}/chapter-summaries", func(e *core.RequestEvent) error {
-		limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-		offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
+	}
+}
+
+func (sharedChapterHandlers) chapterSummaries(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		q := e.Request.URL.Query()
+		page, perPage, limit, offset := parsePagination(q)
 		items, total, err := s.Store.ListChapterSummariesAccessible(e.Auth.Id, e.Request.PathValue("novelId"), limit, offset)
 		if err != nil {
 			return notFoundOrForbidden(e, err)
@@ -285,23 +357,42 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		for _, ch := range items {
 			out = append(out, chapterSummaryRecord(ch))
 		}
+		if isV1Request(e) {
+			hasMore := offset+len(items) < total
+			return v1RespondList(e, http.StatusOK, out, page, perPage, total, hasMore, e.Request.URL.Path)
+		}
 		return e.JSON(http.StatusOK, map[string]any{"items": out, "total": total, "limit": limit, "offset": offset})
-	})
-	api.GET("/db/novels/{novelId}/chapter-stats", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) chapterStats(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		stats, err := s.Store.GetChapterStatsAccessible(e.Auth.Id, e.Request.PathValue("novelId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, chapterStatsRecord(stats), nil, nil)
+		}
 		return e.JSON(http.StatusOK, chapterStatsRecord(stats))
-	})
-	api.GET("/db/novels/{novelId}/chapters/{chapterId}", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) get(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
+		}
 		return e.JSON(http.StatusOK, chapterRecord(*chapter))
-	})
-	api.POST("/db/novels/{novelId}/chapters", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) upsert(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := store.Chapter{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -310,15 +401,28 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		if isV1Request(e) {
+			e.Response.Header().Set("Location", "/api/v1/novels/"+e.Request.PathValue("novelId")+"/chapters/"+chapter.ID)
+			return v1Respond(e, http.StatusCreated, chapterRecord(*chapter), nil, nil)
+		}
 		return e.JSON(http.StatusCreated, chapterRecord(*chapter))
-	})
-	api.DELETE("/db/novels/{novelId}/chapters/{chapterId}", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) delete(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		if err := s.Store.DeleteChapter(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId")); err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		if isV1Request(e) {
+			return e.NoContent(http.StatusNoContent)
+		}
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
-	})
-	api.POST("/db/novels/{novelId}/chapters/bulk-delete", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) bulkDelete(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			IDs []string `json:"ids"`
 		}{}
@@ -329,9 +433,21 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusOK, map[string]any{"deleted": deleted, "requested": len(body.IDs)})
-	})
-	api.PATCH("/db/novels/{novelId}/chapters/{chapterId}/status", func(e *core.RequestEvent) error {
+		summary := map[string]any{"deleted": deleted, "requested": len(body.IDs)}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, summary, nil, nil)
+		}
+		return e.JSON(http.StatusOK, summary)
+	}
+}
+
+// patchStatus: PATCH /novels/{novelId}/chapters/{chapterId}/status — legacy
+// only. On v1 the equivalent is POST /novels/{novelId}/chapters/{chapterId}:reset
+// for "pending" or a separate PATCH for translation status. To avoid splitting
+// the logic, v1 also routes this through patchStatus but with stricter
+// validation.
+func (sharedChapterHandlers) patchStatus(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			Status       string `json:"status"`
 			ErrorMessage string `json:"errorMessage"`
@@ -346,9 +462,15 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
+		}
 		return e.JSON(http.StatusOK, chapterRecord(*chapter))
-	})
-	api.GET("/db/novels/{novelId}/chapters/gaps", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedChapterHandlers) gaps(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		if _, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID); err != nil {
 			return notFoundOrForbidden(e, err)
@@ -357,8 +479,43 @@ func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 		if err != nil {
 			return e.InternalServerError("failed to get chapter gaps", err)
 		}
-		return e.JSON(http.StatusOK, map[string]any{
-			"gaps": gaps,
-		})
-	})
+		body := map[string]any{"gaps": gaps}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body)
+	}
+}
+
+func registerChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/db/novels/{novelId}/chapters/clean-preview", sharedChapters.cleanPreview(s))
+	api.POST("/db/novels/{novelId}/chapters/clean-preview-bulk", sharedChapters.cleanPreviewBulk(s))
+	api.POST("/db/novels/{novelId}/chapters/clean", sharedChapters.clean(s))
+	api.GET("/db/novels/{novelId}/chapters", sharedChapters.list(s))
+	api.GET("/db/novels/{novelId}/chapters/eligible", sharedChapters.eligible(s))
+	api.GET("/db/novels/{novelId}/chapters/full", sharedChapters.full(s))
+	api.GET("/db/novels/{novelId}/chapter-summaries", sharedChapters.chapterSummaries(s))
+	api.GET("/db/novels/{novelId}/chapter-stats", sharedChapters.chapterStats(s))
+	api.GET("/db/novels/{novelId}/chapters/{chapterId}", sharedChapters.get(s))
+	api.POST("/db/novels/{novelId}/chapters", sharedChapters.upsert(s))
+	api.DELETE("/db/novels/{novelId}/chapters/{chapterId}", sharedChapters.delete(s))
+	api.POST("/db/novels/{novelId}/chapters/bulk-delete", sharedChapters.bulkDelete(s))
+	api.PATCH("/db/novels/{novelId}/chapters/{chapterId}/status", sharedChapters.patchStatus(s))
+	api.GET("/db/novels/{novelId}/chapters/gaps", sharedChapters.gaps(s))
+}
+
+func registerV1ChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/novels/{novelId}/chapters/clean-preview", sharedChapters.cleanPreview(s))
+	api.POST("/novels/{novelId}/chapters/clean-preview-bulk", sharedChapters.cleanPreviewBulk(s))
+	api.POST("/novels/{novelId}/chapters/clean", sharedChapters.clean(s))
+	api.GET("/novels/{novelId}/chapters", sharedChapters.list(s))
+	api.GET("/novels/{novelId}/chapters/eligible", sharedChapters.eligible(s))
+	api.GET("/novels/{novelId}/chapter-summaries", sharedChapters.chapterSummaries(s))
+	api.GET("/novels/{novelId}/chapter-stats", sharedChapters.chapterStats(s))
+	api.GET("/novels/{novelId}/chapters/{chapterId}", sharedChapters.get(s))
+	api.POST("/novels/{novelId}/chapters", sharedChapters.upsert(s))
+	api.DELETE("/novels/{novelId}/chapters/{chapterId}", sharedChapters.delete(s))
+	api.POST("/novels/{novelId}/chapters/bulk-delete", sharedChapters.bulkDelete(s))
+	api.PATCH("/novels/{novelId}/chapters/{chapterId}/status", sharedChapters.patchStatus(s))
+	api.GET("/novels/{novelId}/chapters/gaps", sharedChapters.gaps(s))
 }

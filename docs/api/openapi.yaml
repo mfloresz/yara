@@ -1,0 +1,2464 @@
+openapi: 3.1.0
+info:
+  title: translator-server API
+  version: 1.0.0
+  summary: Canonical REST API for the Yara translator-server.
+  description: |
+    The canonical API surface is mounted under `/api/v1`. Legacy aliases under
+    `/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`,
+    `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`,
+    `/api/translation-jobs/*` are **deprecated** and will be removed on
+    **Wed, 01 Jan 2026** (the `Sunset` header is set on every legacy response).
+    New clients must use `/api/v1`.
+
+    When the running server and this document diverge, the running server is the
+    source of truth.
+  contact:
+    name: Yara
+    url: https://github.com/mfloresz/yara
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: /api/v1
+    description: Canonical v1 surface
+  - url: /
+    description: Server root (legacy aliases live directly under /api/...)
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+tags:
+  - name: Auth
+  - name: Novels
+  - name: Chapters
+  - name: Jobs
+  - name: Epubs
+  - name: Glossary
+  - name: Prompts
+  - name: Providers
+  - name: Settings
+  - name: Reading progress
+  - name: Imports
+  - name: Backup
+  - name: Browser workers
+  - name: Worker auth
+  - name: WebSocket
+
+paths:
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created. Sets the `auth.token` cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`auth.token=<jwt>; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange email + password for a token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login succeeded. Sets the `auth.token` cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Return the authenticated user.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh the current token.
+      responses:
+        '200':
+          description: New token issued. Cookie is refreshed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Clear the auth cookie.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+
+  # ---------------------------------------------------------------------------
+  # Novels
+  # ---------------------------------------------------------------------------
+  /novels:
+    get:
+      tags: [Novels]
+      summary: List the user's novels.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - $ref: '#/components/parameters/SelectParam'
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Novel' }
+    post:
+      tags: [Novels]
+      summary: Create a novel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovelCreate' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+              description: Canonical URL of the new resource, e.g. `/api/v1/novels/<id>`.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /novels/tags/suggestions:
+    get:
+      tags: [Novels]
+      summary: Distinct tag values for autocomplete.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { type: string }
+
+  /novels/series/suggestions:
+    get:
+      tags: [Novels]
+      summary: Distinct series values for autocomplete.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { type: string }
+
+  /novels/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Novels]
+      summary: Get one novel.
+      parameters:
+        - $ref: '#/components/parameters/FieldsParam'
+        - $ref: '#/components/parameters/SelectParam'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Novels]
+      summary: Partial update.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovelPatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Novels]
+      summary: Delete the novel and all its chapters.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /novels/{id}/clone:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Novels]
+      summary: Duplicate a novel.
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+
+  /novels/{id}/visibility:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    patch:
+      tags: [Novels]
+      summary: Toggle public visibility.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isPublic]
+              properties:
+                isPublic: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+
+  /novels/{id}/cover:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Novels]
+      summary: Upload a cover image.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [cover]
+              properties:
+                cover:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+
+  /novels/{id}/recalculate-stats:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Novels]
+      summary: Recompute chapter counts and char counts.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Novel' }
+
+  /novels/{id}/full:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Novels]
+      summary: Return the novel plus all its chapters (heavy).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          novel: { $ref: '#/components/schemas/Novel' }
+                          chapters:
+                            type: array
+                            items: { $ref: '#/components/schemas/Chapter' }
+
+  # ---------------------------------------------------------------------------
+  # Chapters
+  # ---------------------------------------------------------------------------
+  /novels/{novelId}/chapters:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: List chapters (summaries by default; full when `?includeContent=true`).
+      parameters:
+        - name: includeContent
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          oneOf:
+                            - $ref: '#/components/schemas/ChapterSummary'
+                            - $ref: '#/components/schemas/Chapter'
+    post:
+      tags: [Chapters]
+      summary: Upsert a chapter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChapterUpsert' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Chapter' }
+
+  /novels/{novelId}/chapters/eligible:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: Summaries eligible for the given operation.
+      parameters:
+        - name: operation
+          in: query
+          schema: { type: string, enum: [translate, refine], default: translate }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChapterSummary' }
+
+  /novels/{novelId}/chapter-summaries:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: Lightweight, paginated chapter summaries.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChapterSummary' }
+
+  /novels/{novelId}/chapter-stats:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: Aggregate char counts.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ChapterStats' }
+
+  /novels/{novelId}/chapters/gaps:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: Detect missing chapter numbers in the sequence.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          gaps:
+                            type: array
+                            items: { type: integer, format: int32 }
+
+  /novels/{novelId}/chapters/{chapterId}:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+      - $ref: '#/components/parameters/ChapterIdParam'
+    get:
+      tags: [Chapters]
+      summary: Get one chapter (full record).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Chapter' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Chapters]
+      summary: Delete a chapter.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /novels/{novelId}/chapters/{chapterId}/status:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+      - $ref: '#/components/parameters/ChapterIdParam'
+    patch:
+      tags: [Chapters]
+      summary: Update a chapter's translation status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [pending, processing, completed, failed, skipped]
+                errorMessage:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Chapter' }
+
+  /novels/{novelId}/chapters/bulk-delete:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Chapters]
+      summary: Delete many chapters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted: { type: integer }
+                          requested: { type: integer }
+
+  /novels/{novelId}/chapters/clean:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Chapters]
+      summary: Apply cleaning rules to a list of chapters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CleanRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CleanSummary' }
+
+  /novels/{novelId}/chapters/clean-preview:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Chapters]
+      summary: Preview a clean operation without persisting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CleanRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CleanPreview' }
+
+  /novels/{novelId}/chapters/clean-preview-bulk:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Chapters]
+      summary: Bulk preview a clean operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CleanRequest'
+                - type: object
+                  properties:
+                    chapterIds:
+                      type: array
+                      items: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # ---------------------------------------------------------------------------
+  # Jobs
+  # ---------------------------------------------------------------------------
+  /novels/{novelId}/jobs:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Jobs]
+      summary: List jobs for a novel.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: failedOnly
+          in: query
+          schema: { type: integer, enum: [0, 1] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Job' }
+    post:
+      tags: [Jobs]
+      summary: Create a translation / refine / download job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobCreate' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+              description: '`/api/v1/jobs/<jobId>`'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Job' }
+        '503':
+          description: Job queue full
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /jobs/active:
+    get:
+      tags: [Jobs]
+      summary: List the user's currently active jobs.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          jobs:
+                            type: array
+                            items: { $ref: '#/components/schemas/Job' }
+                          hasActive: { type: boolean }
+
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    get:
+      tags: [Jobs]
+      summary: Get one job.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{jobId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    post:
+      tags: [Jobs]
+      summary: Cancel a running or pending job.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Job' }
+
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    post:
+      tags: [Jobs]
+      summary: Re-queue a failed or cancelled job.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Job' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503':
+          description: Job queue full
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  # ---------------------------------------------------------------------------
+  # Epubs
+  # ---------------------------------------------------------------------------
+  /novels/{id}/epubs:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Epubs]
+      summary: List EPUBs for a novel.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Epub' }
+    post:
+      tags: [Epubs]
+      summary: Upload an EPUB.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, novelId]
+              properties:
+                file: { type: string, format: binary }
+                novelId: { type: string }
+                fileKind: { type: string }
+                sourceVariant: { type: string }
+                label: { type: string }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+              description: '`/api/v1/epubs/<id>/download`'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Epub' }
+
+  /epubs:
+    post:
+      tags: [Epubs]
+      summary: Flat upload (legacy path mirrored under v1).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, novelId]
+              properties:
+                file: { type: string, format: binary }
+                novelId: { type: string }
+                fileKind: { type: string }
+                sourceVariant: { type: string }
+                label: { type: string }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Epub' }
+
+  /epubs/{id}/download:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Epubs]
+      summary: Download the EPUB binary.
+      responses:
+        '200':
+          description: OK
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/epub+zip:
+              schema: { type: string, format: binary }
+
+  /epubs/preview:
+    post:
+      tags: [Epubs]
+      summary: Parse an EPUB without persisting it.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/EpubPreview' }
+
+  /epubs/build:
+    post:
+      tags: [Epubs]
+      summary: Build an EPUB from a novel's existing chapters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [novelId, source]
+              properties:
+                novelId: { type: string }
+                source:
+                  type: string
+                  enum: [original, translated, refined]
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Epub' }
+
+  # ---------------------------------------------------------------------------
+  # Glossary
+  # ---------------------------------------------------------------------------
+  /novels/{novelId}/glossary/generate:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Glossary]
+      summary: Generate a glossary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GlossaryGenerateRequest' }
+      responses:
+        '202':
+          description: Accepted — async work started
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/JobKickoff' }
+        '503':
+          description: Job queue full
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /novels/{novelId}/glossary/estimate-tokens:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Glossary]
+      summary: Estimate token cost before generating.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: to
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/TokenEstimate' }
+
+  # ---------------------------------------------------------------------------
+  # Prompts
+  # ---------------------------------------------------------------------------
+  /prompts:
+    get:
+      tags: [Prompts]
+      summary: List the user's prompts.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Prompt' }
+
+  /prompts/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Prompts]
+      summary: Create or update a prompt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromptUpsert' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Prompt' }
+
+  # ---------------------------------------------------------------------------
+  # Providers
+  # ---------------------------------------------------------------------------
+  /providers:
+    get:
+      tags: [Providers]
+      summary: List the user's provider settings.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          providers:
+                            type: array
+                            items: { $ref: '#/components/schemas/ProviderSettings' }
+
+  /providers/{providerKey}:
+    parameters:
+      - name: providerKey
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Providers]
+      summary: Update model, baseUrl, timeoutMs, concurrency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSettings' }
+
+  /providers/{providerKey}/key:
+    parameters:
+      - name: providerKey
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Providers]
+      summary: Replace the API key (write-only, encrypted at rest).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [apiKey]
+              properties:
+                apiKey: { type: string, format: password }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSettings' }
+    delete:
+      tags: [Providers]
+      summary: Delete the stored API key.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+
+  # ---------------------------------------------------------------------------
+  # Settings
+  # ---------------------------------------------------------------------------
+  /defaults:
+    get:
+      tags: [Settings]
+      summary: Global default translation values.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Defaults' }
+
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Get the user's app settings.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AppSettings' }
+    put:
+      tags: [Settings]
+      summary: Update app settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppSettings' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AppSettings' }
+
+  # ---------------------------------------------------------------------------
+  # Reading progress
+  # ---------------------------------------------------------------------------
+  /novels/{novelId}/reading-progress:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Reading progress]
+      summary: Get the user's last-read chapter and scroll position.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ReadingProgress' }
+    put:
+      tags: [Reading progress]
+      summary: Save reading progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chapterId, scrollPercent]
+              properties:
+                chapterId: { type: string }
+                scrollPercent: { type: number, format: float, minimum: 0, maximum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ReadingProgress' }
+
+  # ---------------------------------------------------------------------------
+  # Imports / downloads
+  # ---------------------------------------------------------------------------
+  /novels/import-epub:
+    post:
+      tags: [Imports]
+      summary: Import an EPUB file.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, sourceLanguage, targetLanguage]
+              properties:
+                file: { type: string, format: binary }
+                sourceLanguage: { type: string }
+                targetLanguage: { type: string }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ImportEpubResult' }
+
+  /novels/import-zip:
+    post:
+      tags: [Imports]
+      summary: Import a project zip.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ImportZipResult' }
+
+  /novels/preview-from-url:
+    post:
+      tags: [Imports]
+      summary: Fetch a source URL and return novel metadata + chapter list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PreviewFromUrl' }
+
+  /novels/import-from-url:
+    post:
+      tags: [Imports]
+      summary: Create a novel + import the first chapter synchronously, enqueue the rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                sourceLanguage: { type: string, default: en }
+                targetLanguage: { type: string, default: es }
+                startChapter: { type: integer, minimum: 1, default: 1 }
+                endChapter: { type: integer, minimum: 1 }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ImportFromUrlResult' }
+
+  /novels/{id}/check-preview:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Imports]
+      summary: Re-fetch the source, count new chapters, update lastCheckedAt.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CheckPreviewResult' }
+
+  /novels/{id}/update-from-url:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Imports]
+      summary: Enqueue a download for new chapters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startChapter: { type: integer, default: 0 }
+                endChapter: { type: integer, default: 0 }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/UpdateFromUrlResult' }
+
+  /novels/{id}/redownload-from-url:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Imports]
+      summary: "Re-download chapters (two-step: plan with confirm=false, run with confirm=true)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startChapter: { type: integer, default: 0 }
+                endChapter: { type: integer, default: 0 }
+                confirm: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Plan returned (or nothing to do).
+        '202':
+          description: Job enqueued.
+        '409':
+          description: Another active job for the same novel.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /novels/batch-check:
+    post:
+      tags: [Imports]
+      summary: Enqueue a check job per novel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [novelIds]
+              properties:
+                novelIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        '202':
+          description: Accepted
+
+  /novels/batch-update:
+    post:
+      tags: [Imports]
+      summary: Batch enqueue download jobs for many novels.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchUpdateRequest' }
+      responses:
+        '202':
+          description: Accepted
+
+  /novels/batch-translate-preview:
+    post:
+      tags: [Imports]
+      summary: "Pre-flight: return the per-novel pending chapter count."
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BatchTranslatePreview' }
+
+  /novels/batch-translate:
+    post:
+      tags: [Imports]
+      summary: Enqueue translation jobs for many novels.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchTranslateRequest' }
+      responses:
+        '202':
+          description: Accepted
+
+  /novels/batch-check-scheduled:
+    post:
+      tags: [Imports]
+      summary: Schedule a check for each novel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [novelIds]
+              properties:
+                novelIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        '202':
+          description: Accepted
+
+  # ---------------------------------------------------------------------------
+  # Backup
+  # ---------------------------------------------------------------------------
+  /backups/export:
+    post:
+      tags: [Backup]
+      summary: Stream a fresh `backup-YYYYMMDD-HHMMSS.zip` of the data dir.
+      responses:
+        '200':
+          description: OK
+          headers:
+            Content-Type: { schema: { type: string, example: application/zip } }
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="backup-20260101-120000.zip"' }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------------------
+  # Browser workers & proxy
+  # ---------------------------------------------------------------------------
+  /browser-workers:
+    get:
+      tags: [Browser workers]
+      summary: List the user's connected browser workers.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BrowserWorkers' }
+
+  /proxy/fetch:
+    post:
+      tags: [Browser workers]
+      summary: Fetch a URL through the connected browser worker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                timeout: { type: integer, default: 120, maximum: 300 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ProxyFetchResult' }
+        '400':
+          description: 'No browser worker connected, or timeout.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  # ---------------------------------------------------------------------------
+  # Worker auth
+  # ---------------------------------------------------------------------------
+  /worker-auth/approve:
+    post:
+      tags: [Worker auth]
+      summary: Form submit on the consent page. Returns HTML, not JSON.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string }
+      responses:
+        '200':
+          description: HTML page with a one-time callback URL.
+          content:
+            text/html: {}
+
+  /worker-auth/tokens:
+    get:
+      tags: [Worker auth]
+      summary: List the user's worker tokens.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkerTokens' }
+
+  /worker-auth/revoke/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Worker auth]
+      summary: Revoke (disconnect, keep record).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ok: { type: boolean }
+
+  /worker-auth/delete/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Worker auth]
+      summary: Delete the record.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ok: { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # WebSocket (informational)
+  # ---------------------------------------------------------------------------
+  /ws/browser-worker:
+    get:
+      tags: [WebSocket]
+      summary: Browser-worker extension WebSocket.
+      description: |
+        Connect to `ws://host/ws/browser-worker`. The worker authenticates in-band
+        by sending a `register` message with its token. Unauthenticated workers
+        never receive jobs.
+      security: []
+      responses:
+        '101':
+          description: Switching Protocols.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: auth.token
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    NovelIdParam:
+      name: novelId
+      in: path
+      required: true
+      schema: { type: string }
+    ChapterIdParam:
+      name: chapterId
+      in: path
+      required: true
+      schema: { type: string }
+    JobIdParam:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPageParam:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    LimitParam:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200 }
+    OffsetParam:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    FieldsParam:
+      name: fields
+      in: query
+      description: Comma-separated list of allowed fields. Heavy fields (coverPath, glossary, tags, aiOptions, translationOptions, cleanupRules, sourceDescription, targetDescription, notes) are excluded unless requested.
+      schema: { type: string }
+    SelectParam:
+      name: select
+      in: query
+      description: Compat alias for `fields`.
+      schema: { type: string }
+
+  responses:
+    NoContent:
+      description: No Content.
+    BadRequest:
+      description: Bad request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Unauthorized.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Forbidden.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Conflict.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807 problem details. The envelope uses `error` instead of the standard top-level fields to keep the v1 envelope consistent.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [bad_request, unauthorized, forbidden, not_found, conflict, queue_full, internal_error]
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+                  code: { type: string }
+
+    SingleEnvelope:
+      type: object
+      description: Canonical v1 single-resource envelope.
+      required: [data]
+      properties:
+        data: {}
+
+    CollectionEnvelope:
+      type: object
+      description: Canonical v1 collection envelope.
+      required: [data, meta, links]
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          $ref: '#/components/schemas/Meta'
+        links:
+          $ref: '#/components/schemas/Links'
+
+    Meta:
+      type: object
+      required: [total, has_more]
+      properties:
+        total: { type: integer, format: int32 }
+        page: { type: integer, format: int32 }
+        per_page: { type: integer, format: int32 }
+        limit: { type: integer, format: int32 }
+        offset: { type: integer, format: int32 }
+        has_more: { type: boolean }
+        next_page: { type: [integer, 'null'], format: int32 }
+
+    Links:
+      type: object
+      required: [self]
+      properties:
+        self: { type: string }
+        next: { type: string }
+        prev: { type: string }
+        first: { type: string }
+        last: { type: string }
+
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string }
+        theme:
+          type: string
+          enum: [light, dark, system]
+          default: system
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    AuthResult:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string, description: PocketBase auth token. }
+        user: { $ref: '#/components/schemas/User' }
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password, minLength: 6 }
+        name: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+
+    Novel:
+      type: object
+      description: |
+        The full novel record. The list endpoint with `?fields=` returns a subset
+        of these properties. Heavy fields: coverPath, glossary, tags, aiOptions,
+        translationOptions, cleanupRules, sourceDescription, targetDescription,
+        notes.
+      required: [id, sourceTitle, status, sourceLanguage, targetLanguage]
+      properties:
+        id: { type: string }
+        ownerId: { type: string }
+        sourceLanguage: { type: string }
+        targetLanguage: { type: string }
+        sourceTitle: { type: string }
+        sourceAuthor: { type: string }
+        sourceDescription: { type: string }
+        sourceSeries: { type: string }
+        sourceNumber: { type: string }
+        targetTitle: { type: string }
+        targetAuthor: { type: string }
+        targetDescription: { type: string }
+        targetSeries: { type: string }
+        targetNumber: { type: string }
+        url: { type: string, format: uri }
+        customCommands: { type: string }
+        status:
+          type: string
+          enum: [ongoing, completed, hiatus, dropped]
+        coverPath: { type: string, description: Thumbnail path; falls back to the full cover. }
+        isPublic: { type: boolean }
+        chapterCount: { type: integer }
+        translatedCount: { type: integer }
+        completedCount: { type: integer }
+        originalCharCount: { type: integer }
+        translatedCharCount: { type: integer }
+        refinedCharCount: { type: integer }
+        totalCharCount: { type: integer }
+        maxChapterOrder: { type: integer }
+        lastCheckedAt: { type: [string, 'null'], format: date-time }
+        lastCheckNewChapters: { type: integer }
+        lastReadAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        glossary:
+          type: array
+          items: { type: object }
+        tags:
+          type: array
+          items: { type: string }
+        prompts: { type: object }
+        aiOptions: { type: object }
+        translationOptions: { type: object }
+        cleanupRules:
+          type: array
+          items: { type: object }
+        notes: { type: string }
+        canUpdate:
+          type: boolean
+          description: Whether the URL is in the parser catalog. Only set when explicitly requested via `?fields=canUpdate`.
+        requiresBrowser:
+          type: boolean
+          description: Whether the URL needs the browser-worker extension. Only set when explicitly requested via `?fields=requiresBrowser`.
+
+    NovelCreate:
+      type: object
+      required: [sourceTitle]
+      properties:
+        sourceLanguage: { type: string }
+        targetLanguage: { type: string }
+        sourceTitle: { type: string }
+        sourceAuthor: { type: string }
+        sourceDescription: { type: string }
+        sourceSeries: { type: string }
+        sourceNumber: { type: string }
+        targetTitle: { type: string }
+        targetAuthor: { type: string }
+        targetDescription: { type: string }
+        targetSeries: { type: string }
+        targetNumber: { type: string }
+        glossary: { type: array, items: { type: object } }
+        prompts: { type: object }
+        notes: { type: string }
+        aiOptions: { type: object }
+        translationOptions: { type: object }
+        cleanupRules: { type: array, items: { type: object } }
+        url: { type: string, format: uri }
+        customCommands: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    NovelPatch:
+      type: object
+      description: Any subset of Novel's writable fields.
+      additionalProperties: true
+
+    Chapter:
+      type: object
+      required: [id, novelId, chapterOrder]
+      properties:
+        id: { type: string }
+        novelId: { type: string }
+        chapterOrder: { type: integer }
+        title: { type: string }
+        translatedTitle: { type: string }
+        originalContent: { type: string }
+        translatedContent: { type: string }
+        refinedContent: { type: string }
+        status:
+          type: string
+          enum: [pending, processing, completed, failed, skipped]
+        errorMessage: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    ChapterSummary:
+      type: object
+      description: Lightweight chapter record (no content fields). Returned by default on chapter list endpoints.
+      required: [id, novelId, chapterOrder]
+      properties:
+        id: { type: string }
+        novelId: { type: string }
+        chapterOrder: { type: integer }
+        title: { type: string }
+        translatedTitle: { type: string }
+        status:
+          type: string
+          enum: [pending, processing, completed, failed, skipped]
+        errorMessage: { type: string }
+        hasOriginalContent: { type: boolean }
+        hasTranslatedContent: { type: boolean }
+        hasRefinedContent: { type: boolean }
+        originalChars: { type: integer }
+        translatedChars: { type: integer }
+        refinedChars: { type: integer }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    ChapterUpsert:
+      type: object
+      properties:
+        id:
+          type: string
+          description: If present and matches an existing chapter, the record is updated; otherwise a new chapter is created.
+        chapterOrder: { type: integer }
+        title: { type: string }
+        translatedTitle: { type: string }
+        originalContent: { type: string }
+        translatedContent: { type: string }
+        refinedContent: { type: string }
+        status: { type: string }
+        errorMessage: { type: string }
+
+    ChapterStats:
+      type: object
+      properties:
+        totalChapters: { type: integer }
+        completedChapters: { type: integer }
+        translatedChapters: { type: integer }
+        originalCharacters: { type: integer }
+        translatedCharacters: { type: integer }
+        refinedCharacters: { type: integer }
+        totalCharacters: { type: integer }
+        maxChapterOrder: { type: integer }
+
+    Job:
+      type: object
+      required: [id, novelId, status, operation]
+      properties:
+        id: { type: string }
+        novelId: { type: string }
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+        operation:
+          type: string
+          enum: [translate, refine, download, check, generate-glossary]
+        provider: { type: string }
+        model: { type: string }
+        totalChapters: { type: integer }
+        completedChapters: { type: integer }
+        failedChapters: { type: integer }
+        errorMessage: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        novelTitle: { type: string }
+        chapterIds:
+          type: array
+          items: { type: string }
+        autoSegmentEnabled: { type: boolean }
+        autoSegmentActive: { type: boolean }
+        autoSegmentCount: { type: integer }
+        autoSegmentCurrentIndex: { type: integer }
+        autoSegmentCompletedCount: { type: integer }
+        autoSegmentChapterId: { type: string }
+        autoSegmentChapterTitle: { type: string }
+        newChapters: { type: integer }
+
+    JobCreate:
+      type: object
+      required: [operation]
+      properties:
+        operation:
+          type: string
+          enum: [translate, refine]
+        chapterIds:
+          type: array
+          items: { type: string }
+        options:
+          type: object
+          description: Free-form options; commonly `provider`, `model`, `concurrency`, `autoSegment`, etc.
+
+    JobKickoff:
+      type: object
+      properties:
+        jobId: { type: string }
+        status: { type: string }
+        operation: { type: string }
+
+    Epub:
+      type: object
+      required: [id, novelId, fileKind]
+      properties:
+        id: { type: string }
+        novelId: { type: string }
+        fileKind:
+          type: string
+          enum: [original, translated]
+        sourceVariant:
+          type: string
+          enum: [original, translated, refined]
+        label: { type: string }
+        fileName: { type: string }
+        url:
+          type: string
+          description: Canonical download URL, e.g. `/api/v1/epubs/<id>/download`.
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    EpubPreview:
+      type: object
+      properties:
+        title: { type: string }
+        author: { type: string }
+        description: { type: string }
+        language: { type: string }
+        series: { type: string }
+        number: { type: string }
+        chapters:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              content: { type: string }
+
+    Prompt:
+      type: object
+      required: [id, key]
+      properties:
+        id: { type: string, description: Same as `key`. }
+        key: { type: string }
+        label: { type: string }
+        description: { type: string }
+        prompt:
+          type: object
+          properties:
+            systemPrompt: { type: string }
+            userPrompt: { type: string }
+        active: { type: boolean }
+        updatedAt: { type: string }
+
+    PromptUpsert:
+      type: object
+      properties:
+        label: { type: string }
+        description: { type: string }
+        prompt:
+          type: object
+          properties:
+            systemPrompt: { type: string }
+            userPrompt: { type: string }
+        active: { type: boolean }
+
+    ProviderSettings:
+      type: object
+      required: [key]
+      properties:
+        key: { type: string }
+        model: { type: string }
+        baseUrl: { type: string }
+        timeoutMs: { type: integer }
+        concurrency: { type: integer, minimum: 1, maximum: 10, default: 1 }
+        apiKeyConfigured: { type: boolean, description: True if a key is on file. The key itself is never returned. }
+
+    ProviderUpdate:
+      type: object
+      properties:
+        model: { type: string }
+        baseUrl: { type: string }
+        timeoutMs: { type: integer }
+        concurrency: { type: integer, minimum: 1, maximum: 10 }
+
+    Defaults:
+      type: object
+      properties:
+        translation: { $ref: '#/components/schemas/TranslationDefaults' }
+
+    AppSettings:
+      type: object
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        ai:
+          type: object
+          properties:
+            provider: { type: string }
+            model: { type: string }
+            concurrency: { type: integer }
+            timeoutMs: { type: integer }
+        titleProvider: { type: string }
+        titleModel: { type: string }
+        translation: { $ref: '#/components/schemas/TranslationDefaults' }
+
+    TranslationDefaults:
+      type: object
+      properties:
+        includePreviousTitleHints: { type: boolean }
+        includePreviousContentHints: { type: boolean }
+        autoSegment: { type: boolean }
+        glossaryMode: { type: string, enum: [together, batch] }
+        maxTokensPerBatch: { type: integer }
+
+    ReadingProgress:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        novelId: { type: string }
+        chapterId: { type: string }
+        scrollPercent: { type: number, format: float, minimum: 0, maximum: 1 }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    GlossaryGenerateRequest:
+      type: object
+      required: [chapterFrom]
+      properties:
+        chapterFrom: { type: integer, minimum: 1 }
+        chapterTo: { type: integer, minimum: 0, description: 0 means "all chapters from `chapterFrom` onward". }
+        mode:
+          type: string
+          enum: [together, batch]
+          default: together
+        maxTokensPerBatch: { type: integer, minimum: 0 }
+        provider: { type: string }
+        model: { type: string }
+        includeExisting: { type: boolean, default: true }
+
+    TokenEstimate:
+      type: object
+      properties:
+        totalTokens: { type: integer }
+        chapterCount: { type: integer }
+
+    ImportEpubResult:
+      type: object
+      properties:
+        novel: { $ref: '#/components/schemas/Novel' }
+        epub: { $ref: '#/components/schemas/Epub' }
+        chaptersImported: { type: integer }
+
+    ImportZipResult:
+      type: object
+      properties:
+        novel: { $ref: '#/components/schemas/Novel' }
+        chaptersImported: { type: integer }
+
+    PreviewFromUrl:
+      type: object
+      properties:
+        title: { type: string }
+        author: { type: string }
+        description: { type: string }
+        coverURL: { type: string, format: uri }
+        totalChapters: { type: integer }
+        sourceURL: { type: string, format: uri }
+
+    ImportFromUrlResult:
+      type: object
+      properties:
+        novel: { $ref: '#/components/schemas/Novel' }
+        chaptersImported: { type: integer }
+        totalChapters: { type: integer }
+        downloadJob:
+          type: object
+          properties:
+            id: { type: string }
+            totalChapters: { type: integer }
+
+    CheckPreviewResult:
+      type: object
+      properties:
+        title: { type: string }
+        author: { type: string }
+        description: { type: string }
+        coverURL: { type: string, format: uri }
+        sourceURL: { type: string, format: uri }
+        currentChapters: { type: integer }
+        totalChapters: { type: integer }
+        newChapters: { type: integer }
+        firstNewChapter: { type: integer }
+        lastNewChapter: { type: integer }
+
+    UpdateFromUrlResult:
+      type: object
+      properties:
+        chaptersAdded: { type: integer }
+        chapters:
+          type: array
+          items: { type: object }
+        totalChapters: { type: integer }
+        pendingChapters: { type: integer }
+        downloadJobId: { type: string }
+        message: { type: string }
+
+    BatchUpdateRequest:
+      type: object
+      required: [selections]
+      properties:
+        selections:
+          type: array
+          items:
+            type: object
+            required: [novelId]
+            properties:
+              novelId: { type: string }
+              startChapter: { type: integer }
+              endChapter: { type: integer }
+              startOrder: { type: integer }
+              newChapterInfo:
+                type: array
+                items: { type: object }
+
+    BatchTranslateRequest:
+      type: object
+      required: [selections]
+      properties:
+        selections:
+          type: array
+          items:
+            type: object
+            required: [novelId]
+            properties:
+              novelId: { type: string }
+              chapterIds:
+                type: array
+                items: { type: string }
+
+    BatchTranslatePreview:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              novelId: { type: string }
+              sourceTitle: { type: string }
+              sourceAuthor: { type: string }
+              coverURL: { type: string }
+              pendingChapters: { type: integer }
+              totalChapters: { type: integer }
+              translatedCount: { type: integer }
+              completedCount: { type: integer }
+              hasOriginalContent: { type: boolean }
+        totalNovels: { type: integer }
+        withPending: { type: integer }
+
+    CleanRequest:
+      type: object
+      required: [chapterIds, mode]
+      properties:
+        chapterIds:
+          type: array
+          items: { type: string }
+        mode:
+          type: string
+          enum: [remove-after, remove-duplicates, remove-line, remove-multiple-blanks, search-replace]
+        searchText: { type: string }
+        replaceText: { type: string }
+        caseSensitive: { type: boolean, default: false }
+        useRegex: { type: boolean, default: false }
+        applyTo:
+          type: string
+          enum: [original, translated, refined, all]
+          default: all
+
+    CleanSummary:
+      type: object
+      properties:
+        modified: { type: integer }
+        total: { type: integer }
+        skipped: { type: integer }
+        notFound: { type: integer }
+        failed: { type: integer }
+
+    CleanPreview:
+      type: object
+      properties:
+        chapterTitle: { type: string }
+        changes:
+          type: array
+          items: { type: object }
+        cleanResult: { type: object }
+
+    BrowserWorkers:
+      type: object
+      properties:
+        count: { type: integer }
+        workers:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              browser: { type: string }
+              version: { type: string }
+              state: { type: string, enum: [connected, busy, idle, disconnected] }
+              capabilities:
+                type: array
+                items: { type: string }
+              connectedAt: { type: string }
+              lastHeartbeat: { type: string }
+
+    ProxyFetchResult:
+      type: object
+      properties:
+        url: { type: string, format: uri }
+        title: { type: string }
+        html: { type: string }
+        text: { type: string }
+        status: { type: string, example: ok }
+
+    WorkerTokens:
+      type: object
+      properties:
+        tokens:
+          type: array
+          items: { type: object }
+        count: { type: integer }

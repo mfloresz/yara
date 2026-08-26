@@ -11,7 +11,17 @@ import (
 )
 
 func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/{novelId}/generate-glossary", func(e *core.RequestEvent) error {
+	api.POST("/db/novels/{novelId}/generate-glossary", generateGlossaryHandler(s))
+	api.GET("/db/novels/{novelId}/estimate-glossary-tokens", estimateGlossaryTokensHandler(s))
+}
+
+func registerV1GlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/novels/{novelId}/glossary/generate", generateGlossaryHandler(s))
+	api.GET("/novels/{novelId}/glossary/estimate-tokens", estimateGlossaryTokensHandler(s))
+}
+
+func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		userID := e.Auth.Id
 
@@ -105,17 +115,24 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
+		body2 := map[string]any{
 			"jobId":     job.ID,
 			"status":    job.Status,
 			"operation": job.Operation,
-		})
-	})
+		}
+		if isV1Request(e) {
+			e.Response.Header().Set("Location", "/api/v1/jobs/"+job.ID)
+			return v1Respond(e, http.StatusAccepted, body2, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body2)
+	}
+}
 
-	// GET /db/novels/{novelId}/estimate-glossary-tokens?from=N&to=M
-	// Returns estimated token count for a chapter range so the frontend can
-	// show the user an estimate before generating the glossary.
-	api.GET("/db/novels/{novelId}/estimate-glossary-tokens", func(e *core.RequestEvent) error {
+// GET /db/novels/{novelId}/estimate-glossary-tokens?from=N&to=M
+// Returns estimated token count for a chapter range so the frontend can
+// show the user an estimate before generating the glossary.
+func estimateGlossaryTokensHandler(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		userID := e.Auth.Id
 
@@ -157,9 +174,13 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			}
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
+		body2 := map[string]any{
 			"totalTokens":  totalTokens,
 			"chapterCount": chapterCount,
-		})
-	})
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body2, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body2)
+	}
 }

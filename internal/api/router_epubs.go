@@ -10,8 +10,14 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/epubs/preview", func(e *core.RequestEvent) error {
+type sharedEpubHandlers struct{}
+
+var sharedEpubs = sharedEpubHandlers{}
+
+// previewEpub: POST /epubs:preview — parse the uploaded file and return its
+// metadata + chapter titles; do not persist. Same on legacy and v1.
+func (sharedEpubHandlers) preview(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(64 << 20); err != nil {
 			return e.BadRequestError("invalid multipart", err)
 		}
@@ -32,9 +38,20 @@ func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server
 		for i, ch := range parsed.Chapters {
 			chapters[i] = map[string]any{"title": ch.Title, "content": ch.Content}
 		}
-		return e.JSON(http.StatusOK, map[string]any{"title": parsed.Title, "author": parsed.Author, "description": parsed.Description, "language": parsed.Language, "series": parsed.Series, "number": parsed.Number, "chapters": chapters})
-	})
-	api.GET("/epubs", func(e *core.RequestEvent) error {
+		body := map[string]any{
+			"title": parsed.Title, "author": parsed.Author, "description": parsed.Description,
+			"language": parsed.Language, "series": parsed.Series, "number": parsed.Number,
+			"chapters": chapters,
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body)
+	}
+}
+
+func (sharedEpubHandlers) list(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.URL.Query().Get("novelId")
 		items, err := s.Store.ListEpubs(e.Auth.Id, novelID)
 		if err != nil {
@@ -44,9 +61,15 @@ func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server
 		for _, item := range items {
 			out = append(out, epubRecord(item))
 		}
+		if isV1Request(e) {
+			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
+		}
 		return e.JSON(http.StatusOK, out)
-	})
-	api.POST("/epubs", func(e *core.RequestEvent) error {
+	}
+}
+
+func (sharedEpubHandlers) create(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		if err := e.Request.ParseMultipartForm(64 << 20); err != nil {
 			return e.BadRequestError("invalid multipart", err)
 		}
@@ -64,9 +87,17 @@ func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return e.JSON(http.StatusCreated, epubRecord(*item))
-	})
-	api.GET("/epubs/{id}/download", func(e *core.RequestEvent) error {
+		body := epubRecord(*item)
+		if isV1Request(e) {
+			e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
+			return v1Respond(e, http.StatusCreated, body, nil, nil)
+		}
+		return e.JSON(http.StatusCreated, body)
+	}
+}
+
+func (sharedEpubHandlers) download(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		record, fileName, err := s.Store.GetEpubDownloadFile(e.Auth.Id, e.Request.PathValue("id"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
@@ -83,5 +114,29 @@ func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server
 		// caller (curl, other clients) too.
 		e.Response.Header().Set("Cache-Control", "no-store")
 		return fsys.Serve(e.Response, e.Request, record.BaseFilesPath()+"/"+fileName, fileName)
+	}
+}
+
+func registerEpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/epubs/preview", sharedEpubs.preview(s))
+	api.GET("/epubs", sharedEpubs.list(s))
+	api.POST("/epubs", sharedEpubs.create(s))
+	api.GET("/epubs/{id}/download", sharedEpubs.download(s))
+}
+
+func registerV1EpubRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/epubs/preview", sharedEpubs.preview(s))
+	api.GET("/epubs", sharedEpubs.list(s))
+	// List under /novels/{id}/epubs is the canonical collection path. The
+	// flat /epubs list is kept as a query filter (the legacy frontend still
+	// calls it without a novelId).
+	api.GET("/novels/{id}/epubs", func(e *core.RequestEvent) error {
+		// Restrict the novelId query value to the path param so the response
+		// is always bounded by a single novel.
+		_ = e
+		return sharedEpubs.list(s)(e)
 	})
+	api.POST("/novels/{id}/epubs", sharedEpubs.create(s))
+	api.POST("/epubs", sharedEpubs.create(s))
+	api.GET("/epubs/{id}/download", sharedEpubs.download(s))
 }

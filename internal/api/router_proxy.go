@@ -36,7 +36,18 @@ func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int, userID string
 // not be reachable anonymously, and the status endpoints must not leak the set
 // of connected workers to unauthenticated callers.
 func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/browser-workers", func(e *core.RequestEvent) error {
+	api.GET("/browser-workers", listBrowserWorkers(s))
+	api.GET("/proxy/status", proxyStatus(s))
+	api.POST("/proxy/fetch", proxyFetch(s))
+}
+
+func registerV1ProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/browser-workers", listBrowserWorkers(s))
+	api.POST("/proxy/fetch", proxyFetch(s))
+}
+
+func listBrowserWorkers(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		browserWorkersMu.RLock()
 		workers := make([]map[string]any, 0, len(browserWorkers))
 		for _, w := range browserWorkers {
@@ -55,13 +66,19 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			w.mu.Unlock()
 		}
 		browserWorkersMu.RUnlock()
-		return e.JSON(http.StatusOK, map[string]any{
+		body := map[string]any{
 			"count":   len(workers),
 			"workers": workers,
-		})
-	})
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body)
+	}
+}
 
-	api.GET("/proxy/status", func(e *core.RequestEvent) error {
+func proxyStatus(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		browserWorkersMu.RLock()
 		workers := make([]map[string]any, 0, len(browserWorkers))
 		for _, w := range browserWorkers {
@@ -77,14 +94,18 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			w.mu.Unlock()
 		}
 		browserWorkersMu.RUnlock()
-		return e.JSON(http.StatusOK, map[string]any{
+		body := map[string]any{
 			"connected": len(workers) > 0,
 			"count":     len(workers),
 			"workers":   workers,
-		})
-	})
+		}
+		// /proxy/status has no v1 equivalent — clients use /browser-workers.
+		return e.JSON(http.StatusOK, body)
+	}
+}
 
-	api.POST("/proxy/fetch", func(e *core.RequestEvent) error {
+func proxyFetch(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			URL     string `json:"url"`
 			Timeout int    `json:"timeout"`
@@ -117,14 +138,18 @@ func registerProxyRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 			return e.InternalServerError("fetch failed", err)
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
+		resp := map[string]any{
 			"url":    result.URL,
 			"title":  result.Title,
 			"html":   result.HTML,
 			"text":   result.Text,
 			"status": result.Status,
-		})
-	})
+		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		}
+		return e.JSON(http.StatusOK, resp)
+	}
 }
 
 type ProxyFetchResult struct {

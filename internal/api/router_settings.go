@@ -9,12 +9,30 @@ import (
 )
 
 func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/defaults", func(e *core.RequestEvent) error {
-		defaults := store.DefaultTranslationDefaults
-		return e.JSON(http.StatusOK, map[string]any{"translation": defaults})
-	})
+	api.GET("/defaults", getDefaults(s))
+	api.GET("/user/settings", getSettings(s))
+	api.PUT("/user/settings", putSettings(s))
+}
 
-	api.GET("/user/settings", func(e *core.RequestEvent) error {
+func registerV1SettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/defaults", getDefaults(s))
+	api.GET("/settings", getSettings(s))
+	api.PUT("/settings", putSettings(s))
+}
+
+func getDefaults(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		defaults := store.DefaultTranslationDefaults
+		body := map[string]any{"translation": defaults}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, body, nil, nil)
+		}
+		return e.JSON(http.StatusOK, body)
+	}
+}
+
+func getSettings(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		settings, err := s.Store.GetAppSettings(e.Auth.Id)
 		if err != nil {
 			return e.InternalServerError("failed to load settings", err)
@@ -31,9 +49,15 @@ func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		}
 		return e.JSON(http.StatusOK, resp)
-	})
-	api.PUT("/user/settings", func(e *core.RequestEvent) error {
+	}
+}
+
+func putSettings(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			Theme         string                    `json:"theme"`
 			AI            store.AISettings          `json:"ai"`
@@ -70,6 +94,9 @@ func registerSettingsRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		}
 		return e.JSON(http.StatusOK, resp)
-	})
+	}
 }

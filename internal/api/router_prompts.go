@@ -9,14 +9,31 @@ import (
 )
 
 func registerPromptRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/user/prompts", func(e *core.RequestEvent) error {
+	api.GET("/user/prompts", listPrompts(s))
+	api.PUT("/user/prompts/{key}", upsertPrompt(s))
+}
+
+func registerV1PromptRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/prompts", listPrompts(s))
+	api.PUT("/prompts/{key}", upsertPrompt(s))
+}
+
+func listPrompts(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		prompts, err := s.Store.ListPrompts(e.Auth.Id)
 		if err != nil {
 			return e.InternalServerError("failed to load prompts", err)
 		}
-		return e.JSON(http.StatusOK, promptsToResponse(prompts))
-	})
-	api.PUT("/user/prompts/{key}", func(e *core.RequestEvent) error {
+		out := promptsToResponse(prompts)
+		if isV1Request(e) {
+			return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
+		}
+		return e.JSON(http.StatusOK, out)
+	}
+}
+
+func upsertPrompt(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		key := e.Request.PathValue("key")
 		body := struct {
 			Label       string `json:"label"`
@@ -38,6 +55,10 @@ func registerPromptRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		if err != nil {
 			return e.InternalServerError("failed to update prompt", err)
 		}
-		return e.JSON(http.StatusOK, promptToResponse(prompt))
-	})
+		out := promptToResponse(prompt)
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, out, nil, nil)
+		}
+		return e.JSON(http.StatusOK, out)
+	}
 }

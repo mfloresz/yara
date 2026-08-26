@@ -62,9 +62,10 @@ func loadAuthFromCookie() *hook.Handler[*core.RequestEvent] {
 	}
 }
 
-func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
-	auth := router.Group("/api/auth")
-	auth.POST("/register", func(e *core.RequestEvent) error {
+// Shared auth handler functions. Both /api/auth/* and /api/v1/auth/* mount
+// these directly — the response shapes match (AuthResult, status 201/200).
+func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -82,8 +83,11 @@ func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) 
 		}
 		setAuthCookie(e, result.Token)
 		return e.JSON(http.StatusCreated, result)
-	})
-	auth.POST("/login", func(e *core.RequestEvent) error {
+	}
+}
+
+func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -97,15 +101,17 @@ func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) 
 		}
 		setAuthCookie(e, result.Token)
 		return e.JSON(http.StatusOK, result)
-	})
+	}
+}
 
-	protected := auth.Group("")
-	protected.Bind(loadAuthFromCookie())
-	protected.Bind(apis.RequireAuth())
-	protected.GET("/me", func(e *core.RequestEvent) error {
+func handleAuthMe(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		return e.JSON(http.StatusOK, store.AuthResult{User: store.User{ID: e.Auth.Id, Email: e.Auth.Email(), Name: e.Auth.GetString("name"), Theme: defaultTheme(e.Auth.GetString("theme")), CreatedAt: e.Auth.GetString("created"), UpdatedAt: e.Auth.GetString("updated")}})
-	})
-	protected.POST("/refresh", func(e *core.RequestEvent) error {
+	}
+}
+
+func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		token := bearerToken(e.Request)
 		result, err := s.Store.RefreshAuth(token)
 		if err != nil {
@@ -113,9 +119,25 @@ func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) 
 		}
 		setAuthCookie(e, result.Token)
 		return e.JSON(http.StatusOK, result)
-	})
-	protected.POST("/logout", func(e *core.RequestEvent) error {
+	}
+}
+
+func handleAuthLogout(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		clearAuthCookie(e)
 		return e.NoContent(http.StatusNoContent)
-	})
+	}
+}
+
+func registerAuthRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	auth := router.Group("/api/auth")
+	auth.POST("/register", handleAuthRegister(s))
+	auth.POST("/login", handleAuthLogin(s))
+
+	protected := auth.Group("")
+	protected.Bind(loadAuthFromCookie())
+	protected.Bind(apis.RequireAuth())
+	protected.GET("/me", handleAuthMe(s))
+	protected.POST("/refresh", handleAuthRefresh(s))
+	protected.POST("/logout", handleAuthLogout(s))
 }

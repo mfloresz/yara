@@ -8,7 +8,20 @@ import (
 )
 
 func registerReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/user/novels/{novelId}/reading-progress", func(e *core.RequestEvent) error {
+	api.GET("/user/novels/{novelId}/reading-progress", getReadingProgress(s))
+	api.PUT("/user/novels/{novelId}/reading-progress", putReadingProgress(s))
+}
+
+func registerV1ReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/novels/{novelId}/reading-progress", getReadingProgress(s))
+	// PUT is fine for the user's own per-novel progress slot: it is the
+	// single canonical entrypoint and the body always represents the full
+	// desired state.
+	api.PUT("/novels/{novelId}/reading-progress", putReadingProgress(s))
+}
+
+func getReadingProgress(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		if novelID == "" {
 			return e.BadRequestError("novelId is required", nil)
@@ -18,12 +31,20 @@ func registerReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent]
 		}
 		rp, err := s.Store.GetReadingProgress(e.Auth.Id, novelID)
 		if err != nil {
+			if isV1Request(e) {
+				return v1Respond(e, http.StatusOK, map[string]any{}, nil, nil)
+			}
 			return e.JSON(http.StatusOK, map[string]any{})
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
+		}
 		return e.JSON(http.StatusOK, readingProgressRecord(*rp))
-	})
+	}
+}
 
-	api.PUT("/user/novels/{novelId}/reading-progress", func(e *core.RequestEvent) error {
+func putReadingProgress(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		if novelID == "" {
 			return e.BadRequestError("novelId is required", nil)
@@ -45,6 +66,9 @@ func registerReadingProgressRoutes(api *pbrouter.RouterGroup[*core.RequestEvent]
 		if err != nil {
 			return e.InternalServerError("failed to save reading progress", err)
 		}
+		if isV1Request(e) {
+			return v1Respond(e, http.StatusOK, readingProgressRecord(*rp), nil, nil)
+		}
 		return e.JSON(http.StatusOK, readingProgressRecord(*rp))
-	})
+	}
 }

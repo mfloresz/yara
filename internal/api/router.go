@@ -8,6 +8,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/ai"
 	"translator-server/internal/config"
@@ -148,6 +149,31 @@ func Router(s *Server) http.Handler {
 }
 
 func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	// Versioning middleware: adds X-API-Version on /api/v1/* responses and
+	// Deprecation/Sunset/Link headers on legacy /api/db/*, /api/user/*,
+	// /api/epubs/*, /api/backup/*, /api/proxy/*, /api/defaults so clients
+	// can migrate at their own pace. Must run before any handler.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "v1HeaderMiddleware",
+		Func: func(e *core.RequestEvent) error {
+			if err := e.Next(); err != nil {
+				return err
+			}
+			path := e.Request.URL.Path
+			switch {
+			case hasPrefix(path, "/api/v1/"):
+				e.Response.Header().Set("X-API-Version", "v1")
+			case hasPrefix(path, "/api/db/"), hasPrefix(path, "/api/user/"), path == "/api/epubs" || hasPrefix(path, "/api/epubs/"),
+				hasPrefix(path, "/api/backup/"), hasPrefix(path, "/api/browser-workers"), hasPrefix(path, "/api/proxy/"),
+				path == "/api/defaults", hasPrefix(path, "/api/translation-jobs"):
+				e.Response.Header().Set("Deprecation", "true")
+				e.Response.Header().Set("Sunset", "Wed, 01 Jan 2026 00:00:00 GMT")
+				e.Response.Header().Set("Link", `</api/v1>; rel="successor-version"`)
+			}
+			return nil
+		},
+	})
+
 	router.GET("/healthz", func(e *core.RequestEvent) error {
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
@@ -167,6 +193,7 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	registerAuthRoutes(router, s)
 	registerWorkerAuthPublicRoutes(router, s)
 	registerProtectedRoutes(router, s)
+	registerV1Routes(router, s)
 	registerStaticHandler(router, s.Cfg.StaticDir)
 }
 

@@ -13,7 +13,15 @@ import (
 )
 
 func registerEpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/epubs/build", func(e *core.RequestEvent) error {
+	api.POST("/epubs/build", buildEpubHandler(s))
+}
+
+func registerV1EpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/epubs/build", buildEpubHandler(s))
+}
+
+func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		body := struct {
 			NovelID string `json:"novelId"`
 			Source  string `json:"source"`
@@ -89,8 +97,12 @@ func registerEpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *
 			return notFoundOrForbidden(e, err)
 		}
 
+		if isV1Request(e) {
+			e.Response.Header().Set("Location", "/api/v1/epubs/"+item.ID+"/download")
+			return v1Respond(e, http.StatusCreated, epubRecord(*item), nil, nil)
+		}
 		return e.JSON(http.StatusCreated, epubRecord(*item))
-	})
+	}
 }
 
 func buildEpubMeta(novel *store.Novel, source string) epubexport.EpubMetadata {
