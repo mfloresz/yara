@@ -94,9 +94,9 @@ export function useNovels() {
       hasMore.value = result.hasMore ?? false;
       currentOffset = result.items.length;
       loadedListSignatures.add(signature);
-      if (!select || select.length === 0) {
-        markNovelsFull(result.items);
-      }
+      // The list endpoint now always uses a sparse fieldset (NOVEL_LIST_FIELDS);
+      // do not mark these as full — getNovel(novelId) will refetch the
+      // complete record when a component needs the heavy fields.
       return novels.value;
     } finally {
       loading.value = false;
@@ -118,9 +118,8 @@ export function useNovels() {
       novels.value = [...novels.value, ...merged];
       hasMore.value = result.hasMore ?? false;
       currentOffset += result.items.length;
-      if (!lastSelect || lastSelect.length === 0) {
-        markNovelsFull(result.items);
-      }
+      // List responses are sparse; getNovel() will refetch the full record
+      // when a component actually needs the heavy fields.
     } finally {
       loadingMore.value = false;
     }
@@ -150,9 +149,7 @@ export function useNovels() {
         const merged = mergeNovelList(newItems, lastSelect);
         novels.value = [...novels.value, ...merged];
       }
-      if (!lastSelect || lastSelect.length === 0) {
-        markNovelsFull(result.items);
-      }
+      // List responses are sparse; getNovel() will refetch the full record.
     } catch {
       // ignore search errors; the UI keeps the current list
     } finally {

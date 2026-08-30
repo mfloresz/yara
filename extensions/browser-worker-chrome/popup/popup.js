@@ -127,7 +127,7 @@ btnAuth.addEventListener('click', async () => {
   await setConfig({ serverAddr: addr });
   
   const extId = chrome.runtime.id;
-  const authURL = browserWorkerHTTPURL(addr) + `/api/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
+  const authURL = browserWorkerHTTPURL(addr) + `/api/v1/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
   chrome.tabs.create({ url: authURL });
 });
 

@@ -170,7 +170,7 @@
               <div style="font-weight: 600">Descargar backup</div>
               <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
             </div>
-            <a href="/api/backup/download" target="_blank" rel="noopener" style="text-decoration: none">
+            <a href="#" @click.prevent="downloadBackup" style="text-decoration: none">
               <n-button secondary>
                 <template #icon><n-icon><DownloadOutline /></n-icon></template>
                 Descargar
@@ -409,6 +409,36 @@ async function deleteToken(tokenId: string) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     deletingTokenId.value = null;
+  }
+}
+
+// v1 backup endpoint accepts POST only (the body is non-deterministic and
+// the response is a streamed zip). POST and stream the response into a
+// blob the browser can save.
+async function downloadBackup() {
+  try {
+    const response = await fetch("/api/v1/backups/export", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    const fallbackName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+    const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+    const match = contentDisposition.match(/filename="?([^";]+)"?/);
+    anchor.download = match?.[1] ?? fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    message.success("Backup descargado");
+  } catch (err) {
+    message.error(`Error al descargar backup: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -13,8 +13,15 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerBackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/backup/download", func(e *core.RequestEvent) error {
+func registerV1BackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	// POST is correct here: the server is generating and returning a fresh
+	// archive every time, so the action is not safe/idempotent in the GET
+	// sense (the body is non-deterministic with respect to disk state).
+	api.POST("/backups/export", backupDownload(s))
+}
+
+func backupDownload(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		dataDir := s.Cfg.DataDir
 
 		pr, pw := io.Pipe()
@@ -35,7 +42,7 @@ func registerBackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Serv
 		}
 
 		return nil
-	})
+	}
 }
 
 func writeBackupZip(pw *io.PipeWriter, dataDir string) error {

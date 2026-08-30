@@ -97,7 +97,7 @@ func setupRedownloadFixture(t *testing.T, withChapters bool) *redownloadFixture 
 
 	alice := registerUser(t, env.handler, "alice-redownload@example.com", "secret123", "Alice")
 
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
 		"sourceTitle":    "Mock Test Novel",
 		"sourceLanguage": "en",
 		"targetLanguage": "es",
@@ -143,19 +143,19 @@ type testChapter struct {
 
 func listFullChapters(t *testing.T, env *apiTestEnv, alice authPayload, novelID string) []testChapter {
 	t.Helper()
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novelID+"/chapters/full", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novelID+"/chapters?includeContent=true", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
 	var out []testChapter
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	return out
 }
 
 func listChapterSummaries(t *testing.T, env *apiTestEnv, alice authPayload, novelID string) []testChapter {
 	t.Helper()
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novelID+"/chapters", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novelID+"/chapters", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
 	var out []testChapter
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	return out
 }
 
@@ -197,13 +197,13 @@ func TestRedownloadFromUrlPreservesTranslations(t *testing.T) {
 	// The source site fixes its chapter content.
 	fx.setBody("It was a bright sunny morning.")
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
-	assertStatus(t, resp, http.StatusOK)
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	assertStatus(t, resp, http.StatusAccepted)
 	var out struct {
 		PendingChapters int    `json:"pendingChapters"`
 		DownloadJobID   string `json:"downloadJobId"`
 	}
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	if out.PendingChapters != 3 {
 		t.Fatalf("expected 3 pending chapters, got %d", out.PendingChapters)
 	}
@@ -261,7 +261,7 @@ func TestRedownloadFromUrlPreservesTranslations(t *testing.T) {
 		}
 	}
 
-	statsResp := doJSONRequest(t, fx.env.handler, http.MethodGet, "/api/db/novels/"+fx.novelID+"/chapter-stats", fx.alice.Token, nil)
+	statsResp := doJSONRequest(t, fx.env.handler, http.MethodGet, "/api/v1/novels/"+fx.novelID+"/chapter-stats", fx.alice.Token, nil)
 	assertStatus(t, statsResp, http.StatusOK)
 	var stats struct {
 		TranslatedCharacters int `json:"translatedCharacters"`
@@ -285,16 +285,16 @@ func TestRedownloadFromUrlRangeFilter(t *testing.T) {
 	fx := setupRedownloadFixture(t, true)
 	fx.setBody("It was a bright sunny morning.")
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{
 		"startChapter": 2,
 		"endChapter":   2,
 	})
-	assertStatus(t, resp, http.StatusOK)
+	assertStatus(t, resp, http.StatusAccepted)
 	var out struct {
 		PendingChapters int    `json:"pendingChapters"`
 		DownloadJobID   string `json:"downloadJobId"`
 	}
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	if out.PendingChapters != 1 {
 		t.Fatalf("expected 1 pending chapter, got %d", out.PendingChapters)
 	}
@@ -316,17 +316,17 @@ func TestRedownloadFromUrlRequiresSourceURL(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-redownload-no-url@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Sin URL", "es", "en")
 
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/redownload-from-url", alice.Token, map[string]any{})
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/redownload-from-url", alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestRedownloadFromUrlNoMatchingChapters(t *testing.T) {
 	fx := setupRedownloadFixture(t, false)
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusOK)
 	var out map[string]any
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	if pending, _ := out["pendingChapters"].(float64); pending != 0 {
 		t.Errorf("expected pendingChapters 0, got %v", out["pendingChapters"])
 	}
@@ -345,7 +345,7 @@ func TestRedownloadFromUrlTitleMismatchRequiresConfirmation(t *testing.T) {
 		"Chapter 3: The Return",
 	})
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusOK)
 	var preview struct {
 		PendingChapters   int    `json:"pendingChapters"`
@@ -390,13 +390,13 @@ func TestRedownloadFromUrlTitleMismatchRequiresConfirmation(t *testing.T) {
 
 	// The user confirms; the job is created and the chapters are refreshed.
 	fx.setBody("It was a bright sunny morning.")
-	resp = doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
-	assertStatus(t, resp, http.StatusOK)
+	resp = doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
+	assertStatus(t, resp, http.StatusAccepted)
 	var out struct {
 		PendingChapters int    `json:"pendingChapters"`
 		DownloadJobID   string `json:"downloadJobId"`
 	}
-	decodeResponse(t, resp, &out)
+	decodeData(t, resp, &out)
 	if out.PendingChapters != 3 || out.DownloadJobID == "" {
 		t.Fatalf("unexpected confirm response: %+v", out)
 	}
@@ -411,7 +411,7 @@ func TestRedownloadFromUrlTitleMismatchRequiresConfirmation(t *testing.T) {
 func TestRedownloadFromUrlRejectsInvertedRange(t *testing.T) {
 	fx := setupRedownloadFixture(t, true)
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{
 		"startChapter": 3,
 		"endChapter":   1,
 	})
@@ -440,7 +440,7 @@ func TestRedownloadFromUrlRejectsActiveDownloadJob(t *testing.T) {
 		t.Fatalf("create download job: %v", err)
 	}
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusConflict)
 }
 
@@ -459,15 +459,15 @@ func TestRedownloadFromUrlConcurrentRequestsConflict(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
+			resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
 			codes[i] = resp.Code
 		}(i)
 	}
 	wg.Wait()
 
 	sort.Ints(codes)
-	if codes[0] != http.StatusOK || codes[1] != http.StatusConflict {
-		t.Fatalf("expected one 200 and one 409, got %v", codes)
+	if codes[0] != http.StatusAccepted || codes[1] != http.StatusConflict {
+		t.Fatalf("expected one 202 and one 409, got %v", codes)
 	}
 }
 
@@ -487,7 +487,7 @@ func TestRedownloadFromUrlRejectsActiveTranslationJob(t *testing.T) {
 		t.Fatalf("create translate job: %v", err)
 	}
 
-	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
+	resp := doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusConflict)
 
 	// No download job was created, only the translate one remains.
@@ -500,6 +500,6 @@ func TestRedownloadFromUrlRejectsActiveTranslationJob(t *testing.T) {
 	}
 
 	// The confirmed request is refused the same way.
-	resp = doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/db/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
+	resp = doJSONRequest(t, fx.env.handler, http.MethodPost, "/api/v1/novels/"+fx.novelID+"/redownload-from-url", fx.alice.Token, map[string]any{"confirm": true})
 	assertStatus(t, resp, http.StatusConflict)
 }

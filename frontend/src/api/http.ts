@@ -1,4 +1,4 @@
-import type { ApiErrorPayload } from "@/api/types";
+import type { ApiErrorPayload, V1CollectionMeta, V1Envelope } from "@/api/types";
 import { clearAuth } from "@/app/auth";
 
 export class ApiError extends Error {
@@ -16,6 +16,43 @@ export class ApiError extends Error {
 export type HttpClientConfig = {
   baseUrl: string;
 };
+
+// v1 wraps every response in {data, meta?, links?}. Single resources are
+// {data: <resource>}; collections add meta/links on top. Both helpers below
+// assume the envelope is always present; callers that fetch a collection
+// (and need meta/links) call `unwrapCollection`, while single-resource
+// fetches let the request function auto-unwrap to `data`.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isV1Envelope(value: unknown): value is V1Envelope {
+  if (!isPlainObject(value)) return false;
+  if ("error" in value) return true;
+  return "data" in value;
+}
+
+export function unwrapEnvelope<T>(body: unknown): T {
+  if (isV1Envelope(body)) {
+    return body.data as T;
+  }
+  return body as T;
+}
+
+export function unwrapCollection<T>(body: unknown): {
+  data: T;
+  meta: V1CollectionMeta | null;
+  links: { self?: string; next?: string; prev?: string } | null;
+} {
+  if (isV1Envelope(body)) {
+    return {
+      data: body.data as T,
+      meta: body.meta ?? null,
+      links: body.links ?? null,
+    };
+  }
+  return { data: body as T, meta: null, links: null };
+}
 
 export function createHttpClient(config: HttpClientConfig) {
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -41,7 +78,7 @@ export function createHttpClient(config: HttpClientConfig) {
         clearAuth();
       }
       throw new ApiError(
-        payload.error?.message || payload.message || `HTTP ${response.status}`,
+        payload.error?.message ?? `HTTP ${response.status}`,
         response.status,
         payload.error?.code,
       );
@@ -51,7 +88,14 @@ export function createHttpClient(config: HttpClientConfig) {
       return undefined as T;
     }
 
-    return (await response.json()) as T;
+    const body = (await response.json()) as unknown;
+    // Collections come back as {data, meta, links} — keep the full envelope
+    // so callers can pass it to `unwrapCollection` and read meta. Single
+    // resources come back as {data: <resource>} — strip to `data`.
+    if (isPlainObject(body) && "data" in body && "meta" in body) {
+      return body as T;
+    }
+    return unwrapEnvelope<T>(body);
   }
 
   async function downloadBlob(path: string): Promise<Blob> {

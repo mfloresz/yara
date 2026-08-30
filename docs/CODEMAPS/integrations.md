@@ -121,7 +121,7 @@ Module: `internal/epubexport/` (5+ files)
 ## Data flow
 
 ```
-Provider UI → PUT /api/user/providers/{key}/key → store (encrypted)
+Provider UI → PUT /api/v1/providers/{key}/key → store (encrypted)
                                                     ↓
 Job → resolveJobConfig() → aiOptions.provider + model
   → registry.ProviderByID() → baseURL, goai options

@@ -1,8 +1,45 @@
 import type { Novel, Chapter, TranslationJob } from "@/domain";
 
+export type V1CollectionMeta = {
+  total?: number;
+  page?: number;
+  per_page?: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
+  next_page?: number;
+};
+
+export type V1Links = {
+  self?: string;
+  next?: string;
+  prev?: string;
+  first?: string;
+  last?: string;
+};
+
+export type V1ErrorBody = {
+  code: string;
+  message: string;
+  details?: Array<{ field?: string; message: string; code?: string }>;
+};
+
+export type V1Envelope = {
+  data?: unknown;
+  meta?: V1CollectionMeta;
+  links?: V1Links;
+  error?: V1ErrorBody;
+};
+
+// Paginated result. Constructed from the v1 list envelope after
+// `unwrapCollection` — `items` is the unwrapped data array, `hasMore` and
+// `total` come from `meta`.
 export type PaginatedResult<T> = {
   items: T[];
   hasMore?: boolean;
+  total?: number;
+  page?: number;
+  perPage?: number;
 };
 
 export type AuthUser = {
@@ -120,11 +157,11 @@ export type ProvidersResponse = {
 };
 
 export type ApiErrorPayload = {
+  // v1 envelope error shape: {error: {code, message, details?}}
   error?: {
     code?: string;
     message?: string;
   };
-  message?: string;
 };
 
 export type ImportUrlResult = {

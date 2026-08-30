@@ -94,7 +94,7 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-import-url@example.com", "secret123", "Alice")
 
 	novelURL := "https://novelfire.net/book/test-novel"
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/import-from-url", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/import-from-url", alice.Token, map[string]any{
 		"url":            novelURL,
 		"sourceLanguage": "en",
 		"targetLanguage": "es",
@@ -114,9 +114,7 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		} `json:"novel"`
 		ChaptersImported int `json:"chaptersImported"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &importResp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	decodeData(t, resp, &importResp)
 	if importResp.Novel.ID == "" {
 		t.Fatal("expected non-empty novel id")
 	}
@@ -142,18 +140,14 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		t.Errorf("expected chapter endpoint hit 1 time, got %d", chapterHits)
 	}
 
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels", alice.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
 	if listResp.Code != http.StatusOK {
 		t.Fatalf("list failed: %d: %s", listResp.Code, listResp.Body.String())
 	}
-	var list struct {
-		Items []map[string]any `json:"items"`
-	}
-	if err := json.Unmarshal(listResp.Body.Bytes(), &list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
+	var list []map[string]any
+	decodeData(t, listResp, &list)
 	found := false
-	for _, n := range list.Items {
+	for _, n := range list {
 		if id, _ := n["id"].(string); id == importResp.Novel.ID {
 			found = true
 			if cp, _ := n["coverPath"].(string); cp == "" {
@@ -217,7 +211,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-preview-url@example.com", "secret123", "Alice")
 
 	novelURL := "https://novelfire.net/book/test-novel"
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/preview-from-url", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
 		"url": novelURL,
 	})
 	if resp.Code != http.StatusOK {
@@ -232,9 +226,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 		TotalChapters int    `json:"totalChapters"`
 		SourceURL     string `json:"sourceURL"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &preview); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	decodeData(t, resp, &preview)
 	if preview.Title != "Mock Test Novel" {
 		t.Errorf("title: %q", preview.Title)
 	}
@@ -259,7 +251,7 @@ func TestPreviewUrlNovelRejectsUnsupportedHost(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-preview-bad@example.com", "secret123", "Alice")
 
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/preview-from-url", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
 		"url": "https://example.com/novel/foo",
 	})
 	if resp.Code != http.StatusBadRequest {
@@ -271,7 +263,7 @@ func TestPreviewUrlNovelRejectsEmptyURL(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-preview-empty@example.com", "secret123", "Alice")
 
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/preview-from-url", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
 		"url": "",
 	})
 	if resp.Code != http.StatusBadRequest {
@@ -310,7 +302,7 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-update-preview@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -318,7 +310,7 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 	createChapter(t, env.handler, alice.Token, novel.ID, 1)
 	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "Chapter 2: The Journey")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
@@ -334,9 +326,7 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 		FirstNewChapter int    `json:"firstNewChapter"`
 		LastNewChapter  int    `json:"lastNewChapter"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &preview); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	decodeData(t, resp, &preview)
 	if preview.Title != "Mock Test Novel" {
 		t.Errorf("title: got %q, want %q", preview.Title, "Mock Test Novel")
 	}
@@ -391,7 +381,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-update-ok@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -399,7 +389,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "Chapter 1: First Steps")
 	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "Chapter 2: The Journey")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
@@ -411,9 +401,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 		FirstNewChapter int `json:"firstNewChapter"`
 		LastNewChapter  int `json:"lastNewChapter"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &preview); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	decodeData(t, resp, &preview)
 	if preview.NewChapters != 0 {
 		t.Errorf("newChapters: got %d, want 0", preview.NewChapters)
 	}
@@ -470,7 +458,7 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-part-titles@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -481,7 +469,7 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "A Long Journey")
 	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "The Gate Opens")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
@@ -493,9 +481,7 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 		FirstNewChapter int `json:"firstNewChapter"`
 		LastNewChapter  int `json:"lastNewChapter"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &preview); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	decodeData(t, resp, &preview)
 	if preview.TotalChapters != 6 {
 		t.Errorf("totalChapters: got %d, want 6", preview.TotalChapters)
 	}
@@ -508,9 +494,9 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 
 	// The download path applies the same filter: with the preview cache hot it
 	// must schedule exactly episodes 4-6 instead of reporting "up to date".
-	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
-	if updateResp.Code != http.StatusOK {
-		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusAccepted {
+		t.Fatalf("update: expected 202, got %d: %s", updateResp.Code, updateResp.Body.String())
 	}
 	var update struct {
 		PendingChapters int `json:"pendingChapters"`
@@ -578,7 +564,7 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-decimal-chapters@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/decimal-test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -590,7 +576,7 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 		createChapterWithTitle(t, env.handler, alice.Token, novel.ID, n, fmt.Sprintf("Chapter %d: Filler", n-1))
 	}
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("preview: expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
@@ -611,9 +597,9 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 		t.Errorf("first/last new chapter: got %d/%d, want 93/94", preview.FirstNewChapter, preview.LastNewChapter)
 	}
 
-	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
-	if updateResp.Code != http.StatusOK {
-		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusAccepted {
+		t.Fatalf("update: expected 202, got %d: %s", updateResp.Code, updateResp.Body.String())
 	}
 	var update struct {
 		PendingChapters int `json:"pendingChapters"`
@@ -700,7 +686,7 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-update-range@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -719,9 +705,9 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 		{"range 10-12", map[string]any{"startChapter": 10, "endChapter": 12}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, tc.input)
-			if resp.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+			resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, tc.input)
+			if resp.Code != http.StatusAccepted {
+				t.Fatalf("expected 202, got %d: %s", resp.Code, resp.Body.String())
 			}
 			t.Logf("%s response: %s", tc.name, resp.Body.String())
 			var result struct {
@@ -757,12 +743,12 @@ func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-update-queue@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
 
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
 	assertStatus(t, resp, http.StatusServiceUnavailable)
 
 	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
@@ -785,7 +771,7 @@ func TestUpdateUrlPreviewRejectsNovelWithoutURL(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-update-nourl@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
 	}
@@ -827,7 +813,7 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-cache-test@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -836,7 +822,7 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 
 	novelInfoRequests = 0
 
-	previewResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/update-preview", alice.Token, nil)
+	previewResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
 	if previewResp.Code != http.StatusOK {
 		t.Fatalf("preview: expected 200, got %d: %s", previewResp.Code, previewResp.Body.String())
 	}
@@ -844,9 +830,9 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 		t.Fatalf("after preview: expected 1 novel info request, got %d", novelInfoRequests)
 	}
 
-	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
-	if updateResp.Code != http.StatusOK {
-		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusAccepted {
+		t.Fatalf("update: expected 202, got %d: %s", updateResp.Code, updateResp.Body.String())
 	}
 	if novelInfoRequests != 1 {
 		t.Errorf("after update: expected still 1 novel info request (cache hit), got %d", novelInfoRequests)
@@ -897,7 +883,7 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice-fallback-test@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
-	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID, alice.Token, map[string]any{
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
 		"url": "https://novelfire.net/book/test-novel",
 	})
 	assertStatus(t, patchResp, http.StatusOK)
@@ -906,9 +892,9 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 
 	novelInfoRequests = 0
 
-	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
-	if updateResp.Code != http.StatusOK {
-		t.Fatalf("update: expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusAccepted {
+		t.Fatalf("update: expected 202, got %d: %s", updateResp.Code, updateResp.Body.String())
 	}
 	if novelInfoRequests != 1 {
 		t.Errorf("without preview: expected 1 novel info request (fallback scrape), got %d", novelInfoRequests)
@@ -917,7 +903,7 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 
 func createChapterWithTitle(t *testing.T, handler http.Handler, token, novelID string, order int, title string) {
 	t.Helper()
-	resp := doJSONRequest(t, handler, http.MethodPost, "/api/db/novels/"+novelID+"/chapters", token, map[string]any{
+	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/novels/"+novelID+"/chapters", token, map[string]any{
 		"chapterOrder":    order,
 		"title":           title,
 		"originalContent": "Texto original",
@@ -972,7 +958,7 @@ func TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent(t *testing.
 
 	// 3 chapters: chapter 1 is imported synchronously; chapters 2-3 become a
 	// background download job (chapter 2 saved first, then a 5s sleep before 3).
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/import-from-url", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/import-from-url", alice.Token, map[string]any{
 		"url":            "https://novelfire.net/book/cancel-test",
 		"sourceLanguage": "en",
 		"targetLanguage": "es",
@@ -989,9 +975,7 @@ func TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent(t *testing.
 			ID string `json:"id"`
 		} `json:"downloadJob"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &importResp); err != nil {
-		t.Fatalf("decode import response: %v", err)
-	}
+	decodeData(t, resp, &importResp)
 	if importResp.Novel.ID == "" || importResp.DownloadJob.ID == "" {
 		t.Fatalf("expected novel and download job ids, got %s", resp.Body.String())
 	}
