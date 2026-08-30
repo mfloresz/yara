@@ -263,4 +263,8 @@ Los tests de integración en `internal/api/` bloquean la forma del envelope v1, 
 
 ## Licencia
 
-Sin licencia publicada todavía. Asume todos los derechos reservados hasta que se añada una.
+Copyright © 2026 Misael Flores.
+
+Yara es software libre: puedes redistribuirlo y/o modificarlo bajo los términos de la **GNU Affero General Public License** publicada por la Free Software Foundation, ya sea la versión 3 de la licencia, o (a tu criterio) cualquier versión posterior. Consulta el archivo [`LICENSE`](LICENSE) para el texto completo.
+
+Al estar licenciado bajo AGPL-3.0, cualquier versión modificada que pongas a disposición de terceros a través de una red (incluido como servicio hospedado) deberá distribuirse también bajo AGPL-3.0 con el código fuente accesible para esos usuarios.

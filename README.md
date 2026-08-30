@@ -258,3 +258,13 @@ The integration tests in `internal/api/` lock the v1 envelope shape, status code
 - The job worker is in-process: two buffered queues (capacity 128) with one goroutine each. Per-provider concurrency (1–10, default 1) is wired through `errgroup.SetLimit`.
 - `EnsureSchema()` does not backfill stats at boot; novel stats are recalculated after each chapter/job/import mutation.
 - Debugging sites behind Cloudflare: run `go run ./cmd/debug-proxy` on `:5177`, connect a `browser-worker-*-debug` extension, and relay fetches through `POST :5177/api/proxy/fetch`.
+
+---
+
+## License
+
+Copyright © 2026 Misael Flores.
+
+Yara is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See the [`LICENSE`](LICENSE) file for the full text.
+
+Because Yara is licensed under AGPL-3.0, any modified version that you make available to other users over a network (including as a hosted service) must also be made available under AGPL-3.0 with its source code accessible to those users.
