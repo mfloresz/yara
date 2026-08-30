@@ -72,16 +72,16 @@ func TestAuthRegisterAndFetchMe(t *testing.T) {
 	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/auth/me", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var me authPayload
+	var me store.User
 	decodeResponse(t, resp, &me)
-	if me.User.ID == "" {
+	if me.ID == "" {
 		t.Fatalf("expected user id in /me response")
 	}
-	if me.User.Email != "alice@example.com" {
-		t.Fatalf("expected email alice@example.com, got %q", me.User.Email)
+	if me.Email != "alice@example.com" {
+		t.Fatalf("expected email alice@example.com, got %q", me.Email)
 	}
-	if me.User.Theme != "system" {
-		t.Fatalf("expected default theme system, got %q", me.User.Theme)
+	if me.Theme != "system" {
+		t.Fatalf("expected default theme system, got %q", me.Theme)
 	}
 }
 
@@ -653,7 +653,7 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 		t.Fatal("expected hasActive=true when user has a pending job")
 	}
 
-	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/" + novel.ID + "/jobs", alice.Token, map[string]any{
+	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
 		"chapterIds": []string{chapter.ID},
 		"operation":  "translate",
 		"options": map[string]any{
@@ -682,7 +682,7 @@ func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
-	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/" + novel.ID + "/jobs", alice.Token, map[string]any{
+	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
 		"chapterIds": []string{chapter.ID},
 		"operation":  "translate",
 		"options":    map[string]any{},
@@ -723,7 +723,7 @@ func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) 
 
 	// No chapterIds: the job covers the whole novel, so the handler marks every
 	// chapter processing before the queue rejects it.
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/" + novel.ID + "/jobs", alice.Token, map[string]any{
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
 		"operation": "translate",
 		"options":   map[string]any{},
 	})

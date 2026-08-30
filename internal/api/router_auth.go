@@ -103,7 +103,7 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 
 func handleAuthMe(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		return e.JSON(http.StatusOK, store.AuthResult{User: store.User{ID: e.Auth.Id, Email: e.Auth.Email(), Name: e.Auth.GetString("name"), Theme: defaultTheme(e.Auth.GetString("theme")), CreatedAt: e.Auth.GetString("created"), UpdatedAt: e.Auth.GetString("updated")}})
+		return v1Respond(e, http.StatusOK, store.User{ID: e.Auth.Id, Email: e.Auth.Email(), Name: e.Auth.GetString("name"), Theme: defaultTheme(e.Auth.GetString("theme")), CreatedAt: e.Auth.GetString("created"), UpdatedAt: e.Auth.GetString("updated")}, nil, nil)
 	}
 }
 

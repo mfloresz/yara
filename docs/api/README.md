@@ -172,6 +172,12 @@ v1 errors return `Content-Type: application/problem+json`:
 | `POST` | `/api/v1/auth/refresh` | Refresh the current token. Returns a new `AuthResult` + sets cookie. |
 | `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. |
 
+`GET /api/v1/auth/me` returns the standard single-resource envelope:
+
+```json
+{ "data": { "id": "...", "email": "alice@example.com", "name": "Alice", "theme": "system" } }
+```
+
 ```json
 // POST /api/v1/auth/register
 // request
