@@ -31,7 +31,16 @@ type CleanResult struct {
 }
 
 type CleanPreviewResult struct {
-	ChapterTitle string `json:"chapterTitle"`
+	ChapterTitle string          `json:"chapterTitle"`
+	Changes      []CleanDiffHunk `json:"changes"`
+	CleanResult
+}
+
+type CleanPreviewBulkItem struct {
+	ChapterID    string          `json:"chapterId"`
+	ChapterOrder int             `json:"chapterOrder"`
+	ChapterTitle string          `json:"chapterTitle"`
+	Changes      []CleanDiffHunk `json:"changes"`
 	CleanResult
 }
 
@@ -254,4 +263,100 @@ func trimBlankEdges(lines []string) []string {
 		return lines
 	}
 	return lines[start:end]
+}
+
+// ---------------------------------------------------------------------------
+// Line diff: hunks of removed/added lines for previewing affected lines
+// ---------------------------------------------------------------------------
+
+// CleanDiffHunk groups the lines removed by a clean operation (Before) with the
+// lines that replaced them (After). An empty After means the lines were simply
+// removed; an empty Before means the lines were added.
+type CleanDiffHunk struct {
+	Before []string `json:"before"`
+	After  []string `json:"after"`
+}
+
+// diffLines computes a coarse line-level diff between the original and cleaned
+// text. Line endings are normalized first so CRLF-only differences are not
+// reported as changes. The result is a list of hunks of removed/added lines.
+func diffLines(original, cleaned string) []CleanDiffHunk {
+	a := splitLinesNormalized(original)
+	b := splitLinesNormalized(cleaned)
+
+	var hunks []CleanDiffHunk
+	cur := CleanDiffHunk{Before: []string{}, After: []string{}}
+
+	flush := func() {
+		if len(cur.Before) > 0 || len(cur.After) > 0 {
+			hunks = append(hunks, cur)
+			cur = CleanDiffHunk{Before: []string{}, After: []string{}}
+		}
+	}
+
+	// Look-ahead used to resync after a run of differing lines so adjacent
+	// removals/additions group into a single hunk instead of one hunk per line.
+	const resyncWindow = 16
+
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i] == b[j] {
+			flush()
+			i++
+			j++
+			continue
+		}
+
+		found := indexWithin(a, b[j], i, resyncWindow)
+		if found > i {
+			cur.Before = append(cur.Before, a[i:found]...)
+			i = found
+			continue
+		}
+
+		found = indexWithin(b, a[i], j, resyncWindow)
+		if found > j {
+			cur.After = append(cur.After, b[j:found]...)
+			j = found
+			continue
+		}
+
+		// No resync within the window: treat as a removal plus an addition.
+		cur.Before = append(cur.Before, a[i])
+		cur.After = append(cur.After, b[j])
+		i++
+		j++
+	}
+	if i < len(a) {
+		cur.Before = append(cur.Before, a[i:]...)
+	}
+	if j < len(b) {
+		cur.After = append(cur.After, b[j:]...)
+	}
+	flush()
+	return hunks
+}
+
+// indexWithin returns the first index k in [start, start+window) where lines[k]
+// equals needle, or start if not found. The window is clamped to the slice.
+func indexWithin(lines []string, needle string, start, window int) int {
+	end := start + window
+	if end > len(lines) {
+		end = len(lines)
+	}
+	for k := start; k < end; k++ {
+		if lines[k] == needle {
+			return k
+		}
+	}
+	return start
+}
+
+func splitLinesNormalized(text string) []string {
+	if text == "" {
+		return nil
+	}
+	working := strings.ReplaceAll(text, "\r\n", "\n")
+	working = strings.ReplaceAll(working, "\r", "\n")
+	return strings.Split(working, "\n")
 }

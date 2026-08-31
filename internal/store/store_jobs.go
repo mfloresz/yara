@@ -116,6 +116,38 @@ func (s *Store) ListActiveJobs(userID string) ([]Job, error) {
 	return out, nil
 }
 
+// ListActiveTranslationJobs returns pending or running translate/refine jobs
+// for a novel. Callers use it to refuse operations (e.g. a re-download) that
+// would race an in-flight translation or refinement of the same chapters.
+func (s *Store) ListActiveTranslationJobs(novelID string) ([]Job, error) {
+	records, err := s.App.FindRecordsByFilter(JobsCollection,
+		"novel = {:novel} && (status = 'pending' || status = 'running') && (operation = 'translate' || operation = 'refine')",
+		"", 200, 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(records))
+	for _, record := range records {
+		out = append(out, jobFromRecord(record))
+	}
+	return out, nil
+}
+
+// ListActiveNovelJobs returns every pending or running job for a novel.
+func (s *Store) ListActiveNovelJobs(novelID string) ([]Job, error) {
+	records, err := s.App.FindRecordsByFilter(JobsCollection,
+		"novel = {:novel} && (status = 'pending' || status = 'running')",
+		"", 200, 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(records))
+	for _, record := range records {
+		out = append(out, jobFromRecord(record))
+	}
+	return out, nil
+}
+
 func (s *Store) HasActiveJobs(userID string) (bool, error) {
 	records, err := s.App.FindRecordsByFilter(JobsCollection, "owner = {:owner} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"owner": userID})
 	if err != nil {

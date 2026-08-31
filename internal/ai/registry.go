@@ -8,6 +8,25 @@ type ProviderInfo struct {
 	DefaultModel string         `json:"defaultModel"`
 	OpenAICompat bool           `json:"openaiCompat"`
 	GoAIOptions  map[string]any `json:"goaiOptions,omitempty"`
+	// ModelOptions holds per-model overrides merged over GoAIOptions for
+	// requests targeting that model.
+	ModelOptions map[string]map[string]any `json:"modelOptions,omitempty"`
+}
+
+// OptionsForModel merges GoAIOptions with any per-model overrides.
+func (p ProviderInfo) OptionsForModel(model string) map[string]any {
+	overrides, ok := p.ModelOptions[model]
+	if !ok || len(overrides) == 0 {
+		return p.GoAIOptions
+	}
+	out := make(map[string]any, len(p.GoAIOptions)+len(overrides))
+	for k, v := range p.GoAIOptions {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
 }
 
 var knownProviders = []ProviderInfo{
@@ -15,7 +34,7 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"e2ee-deepseek-v4-flash", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
+		Models:       []string{"e2ee-deepseek-v4-flash", "deepseek-v4-flash-0731", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
 		DefaultModel: "e2ee-deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
@@ -28,15 +47,82 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
-		ID:           "opencode-go",
-		Name:         "OpenCode Go",
-		BaseURL:      "https://opencode.ai/zen/go/v1",
-		Models:       []string{"mimo-v2.5", "deepseek-v4-flash"},
-		DefaultModel: "mimo-v2.5",
+		ID:      "openrouter",
+		Name:    "OpenRouter",
+		BaseURL: "https://openrouter.ai/api/v1",
+		Models: []string{
+			"openai/gpt-5.6-luna (reasoning: none)",
+			"openai/gpt-5.6-luna (reasoning: low)",
+			"openai/gpt-5.6-luna (reasoning: medium)",
+			"deepseek/deepseek-v4-flash-0731",
+			"google/gemini-3.5-flash-lite",
+			"tencent/hy-mt2-30b-a3b",
+			"tencent/hy-mt2-1.8b",
+		},
+		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
+		},
+	},
+
+	{
+		ID:           "meta",
+		Name:         "Meta",
+		BaseURL:      "https://api.meta.ai/v1",
+		Models:       []string{"muse-spark-1.2-contributor"},
+		DefaultModel: "muse-spark-1.2-contributor",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
+		ID:      "opencode-go",
+		Name:    "OpenCode Go",
+		BaseURL: "https://opencode.ai/zen/go/v1",
+		Models: []string{
+			"openai/gpt-5.6-luna (reasoning: none)",
+			"openai/gpt-5.6-luna (reasoning: low)",
+			"openai/gpt-5.6-luna (reasoning: medium)",
+			"mimo-v2.5",
+			"deepseek-v4-flash",
+			"muse-spark-1.2-contributor",
+			"ox-alpha-free",
+		},
+		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+		ModelOptions: map[string]map[string]any{
+			// muse-spark speaks the OpenAI Responses API, not chat completions.
+			"muse-spark-1.2-contributor": {"useResponsesAPI": true},
+		},
+	},
+
+	{
+		ID:      "opencode-zen",
+		Name:    "OpenCode Zen",
+		BaseURL: "https://opencode.ai/zen/v1",
+		Models: []string{
+			"x-preview-f-free",
+			"mimo-v2.5-free",
+			"muse-spark-1.2-contributor-free",
+		},
+		DefaultModel: "x-preview-f-free",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+		ModelOptions: map[string]map[string]any{
+			// muse-spark speaks the OpenAI Responses API, not chat completions.
+			"muse-spark-1.2-contributor-free": {"useResponsesAPI": true},
 		},
 	},
 

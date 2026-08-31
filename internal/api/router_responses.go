@@ -47,6 +47,18 @@ func parseJSONFields(n *store.Novel) map[string]any {
 	return m
 }
 
+// novelResponse shapes a novel for the frontend and adds whether it can be
+// updated from its source URL. The check is server-authoritative: it uses the
+// same parser catalog that backs the check/redownload jobs, so the frontend
+// does not need to duplicate the list of supported domains.
+func (s *Server) novelResponse(n *store.Novel) map[string]any {
+	m := parseJSONFields(n)
+	dl := s.DownloaderFactory(n.OwnerID)
+	m["canUpdate"] = dl.IsSupportedURL(n.URL)
+	m["requiresBrowser"] = dl.RequiresBrowser(n.URL)
+	return m
+}
+
 func parseJSONFieldsSubset(n *store.Novel, fields []string) map[string]any {
 	m := make(map[string]any, len(fields))
 	for _, f := range fields {

@@ -67,6 +67,9 @@ func (s *Store) ListProviderSettings(userID string) ([]ProviderSetting, error) {
 			item.APIKeyConfigured = setting.GetBool("api_key_configured")
 			item.APIKeyUpdatedAt = setting.GetString("api_key_updated_at")
 			item.TimeoutMs = setting.GetInt("timeout_ms")
+			item.Concurrency = NormalizeProviderConcurrency(asInt(setting.GetFloat("concurrency"), DefaultAISettings.Concurrency))
+		} else {
+			item.Concurrency = DefaultAISettings.Concurrency
 		}
 		out = append(out, item)
 	}
@@ -74,6 +77,19 @@ func (s *Store) ListProviderSettings(userID string) ([]ProviderSetting, error) {
 }
 
 func (s *Store) UpsertProviderSettings(userID, providerKey, model, baseURL string, timeoutMs ...int) (ProviderSetting, error) {
+	// Backward-compatible wrapper: timeoutMs[0] = timeout, timeoutMs[1] = concurrency
+	timeout := 0
+	concurrency := 0
+	if len(timeoutMs) > 0 {
+		timeout = timeoutMs[0]
+	}
+	if len(timeoutMs) > 1 {
+		concurrency = timeoutMs[1]
+	}
+	return s.UpsertProviderSettingsWithConcurrency(userID, providerKey, model, baseURL, timeout, concurrency)
+}
+
+func (s *Store) UpsertProviderSettingsWithConcurrency(userID, providerKey, model, baseURL string, timeoutMs int, concurrency int) (ProviderSetting, error) {
 	providerRecord, err := s.getProviderByKey(providerKey)
 	if err != nil {
 		return ProviderSetting{}, err
@@ -90,10 +106,18 @@ func (s *Store) UpsertProviderSettings(userID, providerKey, model, baseURL strin
 	}
 	record.Set("model", strings.TrimSpace(model))
 	record.Set("base_url", strings.TrimSpace(baseURL))
-	if len(timeoutMs) > 0 && timeoutMs[0] > 0 {
-		record.Set("timeout_ms", timeoutMs[0])
+	if timeoutMs > 0 {
+		record.Set("timeout_ms", timeoutMs)
 	} else {
 		record.Set("timeout_ms", nil)
+	}
+	if concurrency > 0 {
+		record.Set("concurrency", NormalizeProviderConcurrency(concurrency))
+	} else if record.IsNew() {
+		record.Set("concurrency", DefaultAISettings.Concurrency)
+	} else {
+		// preserve existing concurrency when not provided (0)
+		// if already nil, List will fallback to default
 	}
 	if err := s.App.Save(record); err != nil {
 		return ProviderSetting{}, err
@@ -178,10 +202,7 @@ func (s *Store) ResolveProviderAISettings(userID, providerKey string) (AISetting
 		if timeoutMs <= 0 {
 			timeoutMs = DefaultAISettings.TimeoutMs
 		}
-		concurrency := item.Concurrency
-		if concurrency <= 0 {
-			concurrency = DefaultAISettings.Concurrency
-		}
+		concurrency := NormalizeProviderConcurrency(item.Concurrency)
 		return AISettings{
 			Provider:    providerKey,
 			APIKey:      apiKey,

@@ -52,50 +52,20 @@
     </div>
 
     <div v-else class="novel-detail-layout">
-      <aside class="novel-sidebar">
-        <div class="novel-cover-large">
-          <img v-if="novel.coverPath" :src="novel.coverPath" :alt="`Portada de ${getNovelDisplayTitle(novel)}`" loading="lazy" />
-          <div v-else class="novel-cover-placeholder-large">
-            <n-icon :size="40"><ImageOutline /></n-icon>
-          </div>
-        </div>
-
-        <div class="novel-sidebar-actions">
-          <n-button type="primary" block @click="router.push(`/novels/${novel.id}/read`)">
-            <template #icon><n-icon><BookOutline /></n-icon></template>
-            Leer
-          </n-button>
-          <n-button v-if="isOwner" secondary block @click="settingsOpen = true">
-            <template #icon><n-icon><SettingsOutline /></n-icon></template>
-            Configuración
-          </n-button>
-          <n-button v-else secondary block @click="copyCurrentNovel">
-            <template #icon><n-icon><CopyOutline /></n-icon></template>
-            Copiar novela
-          </n-button>
-          <n-button v-if="isOwner" secondary block @click="toggleVisibility">
-            <template #icon><n-icon><GlobeOutline /></n-icon></template>
-            {{ novel.isPublic ? 'Compartiendo' : 'Compartir' }}
-          </n-button>
-          <n-button v-if="isOwner && novel.url" secondary block @click="updateUrlOpen = true">
-            <template #icon><n-icon><RefreshOutline /></n-icon></template>
-            Actualizar
-          </n-button>
-          <n-button secondary block :loading="downloadingOffline" @click="handleToggleOfflineCache">
-            <template #icon>
-              <n-icon><CloudDoneOutline v-if="isNovelCached" /><CloudDownloadOutline v-else /></n-icon>
-            </template>
-            {{ isNovelCached ? 'Guardado Offline' : 'Guardar Offline' }}
-          </n-button>
-        </div>
-
-        <div class="novel-sidebar-tags">
-          <n-tag :type="novelStatusType(novel.status)" size="small" round>{{ novelStatusLabel(novel.status) }}</n-tag>
-          <n-tag size="small" round>{{ chapterStats.totalChapters }} capítulos</n-tag>
-          <n-tag size="small" round>{{ completedChapters }} traducidos</n-tag>
-          <n-tag type="success" size="small" round>{{ novel.sourceLanguage }} → {{ novel.targetLanguage }}</n-tag>
-        </div>
-      </aside>
+      <NovelSidebar
+        :novel="novel"
+        :is-owner="isOwner"
+        :is-novel-cached="isNovelCached"
+        :downloading-offline="downloadingOffline"
+        :total-chapters="chapterStats.totalChapters"
+        :translated-chapters="chapterStats.translatedChapters"
+        @read="onRead"
+        @open-settings="settingsOpen = true"
+        @copy-novel="copyCurrentNovel"
+        @toggle-visibility="toggleVisibility"
+        @open-update-url="updateUrlOpen = true"
+        @toggle-offline="handleToggleOfflineCache"
+      />
 
       <div class="novel-main">
         <header class="novel-main-header">
@@ -109,26 +79,10 @@
               <span v-if="getNovelDisplayNumber(novel)">#{{ getNovelDisplayNumber(novel) }}</span>
             </span>
           </div>
-          <div v-if="getNovelDisplayDescription(novel)" class="novel-description-wrapper">
-            <div
-              ref="descriptionEl"
-              class="markdown-preview muted small novel-description"
-              :class="{ 'novel-description--collapsed': !descriptionExpanded }"
-              v-html="markdownToHtml(getNovelDisplayDescription(novel))"
-            />
-            <n-button
-              v-if="descriptionOverflow || descriptionExpanded"
-              text
-              size="small"
-              class="novel-description-toggle"
-              @click="descriptionExpanded = !descriptionExpanded"
-            >
-              {{ descriptionExpanded ? 'Mostrar menos' : 'Mostrar más' }}
-              <template #icon>
-                <n-icon :size="12"><ChevronUpOutline v-if="descriptionExpanded" /><ChevronDownOutline v-else /></n-icon>
-              </template>
-            </n-button>
-          </div>
+          <DescriptionBlock
+            :description="getNovelDisplayDescription(novel)"
+            :reset-key="novel.id"
+          />
           <div v-if="novel.tags.length > 0" class="novel-description-tags">
             <n-tag v-for="tagItem in novel.tags" :key="tagItem" type="info" size="small">{{ tagItem }}</n-tag>
           </div>
@@ -140,296 +94,98 @@
           </n-tab>
         </n-tabs>
 
-      <section v-if="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
-        <h2 id="tab-chapters" class="sr-only">Capítulos</h2>
-        <div v-if="isOwner" class="row-wrap" style="justify-content: flex-end">
-          <n-button
-            size="small"
-            secondary
-            :disabled="chapterSummaryTotal === 0"
-            :loading="chapterSummariesLoading"
-            @click="openReorder"
-          >
-            <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
-            Reordenar
-          </n-button>
-        </div>
-        <ChapterList
-          :chapters="chapterSummaries"
-          :total="chapterSummaryTotal"
-          :loading="chapterSummariesLoading"
-          :page="chapterPage"
-          :page-size="chapterPageSize"
-          v-model:selected="selectedChapters"
-          :is-owner="isOwner"
-          :gaps="chapterGaps"
-          @delete="onDeleteChapter"
-          @bulk-delete="onBulkDeleteChapters"
-          @create="openCreateChapter"
-          @import="bulkImportOpen = true"
-          @update:page="chapterPage = $event"
-        />
-        <div v-if="excludedChapters.length > 0" class="stack-sm">
-          <h3 class="small muted" style="margin: 0">Capítulos excluidos ({{ excludedChapters.length }})</h3>
-          <n-card size="small">
-            <div
-              v-for="chapter in excludedChapters"
-              :key="chapter.id"
-              style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
+        <div v-show="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
+          <div v-if="isOwner" class="row-wrap" style="justify-content: flex-end">
+            <n-button
+              size="small"
+              secondary
+              :disabled="chapterSummaryTotal === 0"
+              :loading="chapterSummariesLoading"
+              @click="openReorder"
             >
-              <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
-              <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
-              <n-button size="tiny" secondary @click="restoreChapter(chapter)">
-                <template #icon><n-icon><RefreshOutline /></n-icon></template>
-                Restaurar
-              </n-button>
-            </div>
-          </n-card>
-        </div>
-      </section>
-
-      <section v-else-if="activeTab === 'translate'" class="stack-md tab-panel" aria-labelledby="tab-translate">
-        <h2 id="tab-translate" class="sr-only">{{ translateOperation === 'translate' ? 'Traducción' : 'Refinamiento' }}</h2>
-        <n-card :title="translateOperation === 'translate' ? 'Traducción automática' : 'Refinamiento'">
-            <div v-if="allSummariesLoading || (translateShowAll && translateAllLoading)" class="stack-md">
-              <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
-              <n-skeleton width="100%" height="14rem" style="border-radius: 12px" />
-            </div>
-            <div v-else class="stack-md">
-              <div class="row-between">
-                <div class="row-wrap" style="gap: 0.5rem">
-                  <n-button-group size="small">
-                    <n-button :type="translateOperation === 'translate' ? 'primary' : 'default'" @click="translateOperation = 'translate'">Traducir</n-button>
-                    <n-button :type="translateOperation === 'refine' ? 'primary' : 'default'" @click="translateOperation = 'refine'">Refinar</n-button>
-                  </n-button-group>
-                  <n-button-group size="small">
-                    <n-button :type="!translateShowAll ? 'primary' : 'default'" @click="translateShowAll = false">Solo elegibles</n-button>
-                    <n-button :type="translateShowAll ? 'primary' : 'default'" @click="translateShowAll = true">Listar Todos</n-button>
-                  </n-button-group>
-                </div>
-                <div class="row-wrap">
-                  <n-button type="primary" :loading="translateSubmitting" :disabled="translateSelectedIds.size === 0 || translateSubmitting" @click="startTranslationJob">
-                    <template #icon><n-icon><PlayOutline /></n-icon></template>
-                    Iniciar ({{ translateSelectedIds.size }})
-                  </n-button>
-                </div>
-              </div>
-
-              <div class="row-wrap small muted">
-                <n-button size="small" text @click="translateSelectedIds = new Set(eligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
-                <n-button size="small" text @click="translateSelectedIds = new Set()">Ninguno</n-button>
-                <span>{{ eligibleChapters.length }} capítulos elegibles</span>
-                <span v-if="translateShowAll"> · {{ translateAllSummaries.length }} totales</span>
-              </div>
-
-              <div v-if="!translateShowAll && eligibleChapters.length === 0" class="muted small">Todos los capítulos ya fueron {{ translateOperation === 'translate' ? 'traducidos' : 'refinados' }}.</div>
-              <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 420px">
-                <div v-for="chapter in translateShowAll ? translateSourceSummaries : eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
-                  <n-checkbox :checked="translateSelectedIds.has(chapter.id)" :disabled="translateSubmitting || !eligibleChapterIds.has(chapter.id)" @update:checked="toggleTranslateChapter(chapter.id, $event)" />
-                  <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
-                  <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
-                  <n-tag :type="chapterTagType(resolvedChapterStatus(chapter))" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
-                </div>
-              </div>
-            </div>
-        </n-card>
-      </section>
-
-      <section v-else-if="activeTab === 'clean'" class="stack-md tab-panel" aria-labelledby="tab-clean">
-        <h2 id="tab-clean" class="sr-only">Limpieza de texto</h2>
-        <n-card title="Limpieza de texto">
-            <div v-if="allSummariesLoading" class="stack-md">
-              <n-skeleton width="100%" height="8rem" style="border-radius: 12px" />
-              <n-skeleton width="100%" height="12rem" style="border-radius: 12px" />
-            </div>
-            <div v-else class="stack-md">
-              <div class="row-wrap">
-                <div style="min-width: 240px; flex: 1">
-                  <label class="small muted">Modo de limpieza</label>
-                  <n-select v-model:value="cleanMode" :options="cleanModeOptions" />
-                  <div class="small muted" style="margin-top: 0.4rem">{{ cleanModeDescription }}</div>
-                </div>
-                <div style="min-width: 220px; flex: 1">
-                  <label class="small muted">Aplicar a</label>
-                  <n-select v-model:value="cleanApplyTo" :options="cleanApplyOptions" />
-                </div>
-              </div>
-
-              <div class="row-wrap">
-                <div style="min-width: 240px; flex: 1">
-                  <label class="small muted">Buscar</label>
-                  <n-input v-model:value="cleanSearchText" :disabled="cleanMode === 'remove_multiple_blanks'" />
-                </div>
-                <div v-if="cleanMode === 'search_replace'" style="min-width: 240px; flex: 1">
-                  <label class="small muted">Reemplazar con</label>
-                  <n-input v-model:value="cleanReplaceText" />
-                </div>
-              </div>
-
-              <div class="row-wrap">
-                <div style="display: flex; align-items: center; gap: 0.5rem">
-                  <n-switch v-model:value="cleanCaseSensitive" />
-                  <span class="small muted">Distinguir mayúsculas</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.5rem">
-                  <n-switch v-model:value="cleanUseRegex" />
-                  <span class="small muted">Usar regex</span>
-                </div>
-              </div>
-            </div>
-        </n-card>
-
-        <n-card title="Capítulos a limpiar">
-            <div class="stack-md">
-              <div class="row-between">
-                <div class="row-wrap small muted">
-                  <n-button size="small" text @click="cleanSelectedIds = new Set(cleanEligibleChapters.map((chapter) => chapter.id))">Todos</n-button>
-                  <n-button size="small" text @click="cleanSelectedIds = new Set()">Ninguno</n-button>
-                </div>
-                <n-button type="primary" :loading="cleanApplying" :disabled="cleanSelectedIds.size === 0" @click="applyCleaningToSelected">
-                  <template #icon><n-icon><SaveOutline /></n-icon></template>
-                  Aplicar a {{ cleanSelectedIds.size }} capítulos
+              <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
+              Reordenar
+            </n-button>
+          </div>
+          <ChaptersTab
+            :active="true"
+            :chapters="chapterSummaries"
+            :total="chapterSummaryTotal"
+            :loading="chapterSummariesLoading"
+            :page="chapterPage"
+            :page-size="chapterPageSize"
+            v-model:selected="selectedChapters"
+            :is-owner="isOwner"
+            :gaps="chapterGaps"
+            @delete="onDeleteChapter"
+            @bulk-delete="onBulkDeleteChapters"
+            @create="openCreateChapter"
+            @import="bulkImportOpen = true"
+            @update:page="chapterPage = $event"
+          />
+          <div v-if="excludedChapters.length > 0" class="stack-sm">
+            <h3 class="small muted" style="margin: 0">Capítulos excluidos ({{ excludedChapters.length }})</h3>
+            <n-card size="small">
+              <div
+                v-for="chapter in excludedChapters"
+                :key="chapter.id"
+                style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
+              >
+                <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
+                <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
+                <n-button size="tiny" secondary @click="restoreChapter(chapter)">
+                  <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                  Restaurar
                 </n-button>
               </div>
+            </n-card>
+          </div>
+        </div>
 
-              <n-alert v-if="cleanFeedback" type="success">{{ cleanFeedback }}</n-alert>
+        <TranslateTab
+          v-show="activeTab === 'translate'"
+          :novel-id="novelId"
+          :operation="translateOperation"
+          :all-summaries="allSummaries"
+          :all-summaries-loading="allSummariesLoading"
+          :translate-all-summaries="translateAllSummaries"
+          :translate-all-loading="translateAllLoading"
+          :create-job="createTranslateJob"
+          :mark-failed-jobs-dirty="markFailedJobsDirty"
+          :on-patch-status="patchTranslateStatus"
+          @operation-change="onTranslateOperationChange"
+          @show-all-change="onTranslateShowAllChange"
+        />
 
-              <div v-if="cleanEligibleChapters.length === 0" class="muted small">Selecciona primero el tipo de limpieza arriba para ver capítulos disponibles.</div>
-              <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 320px">
-                <div v-for="chapter in cleanEligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
-                  <n-checkbox :checked="cleanSelectedIds.has(chapter.id)" @update:checked="toggleCleanChapter(chapter.id, $event)" />
-                  <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
-                  <span style="flex: 1">{{ chapter.title }}</span>
-                  <n-button size="small" secondary @click="previewCleaning(chapter)">Previsualizar</n-button>
-                </div>
-              </div>
+        <CleanTab
+          v-show="activeTab === 'clean'"
+          :novel-id="novelId"
+          :clean-all-summaries="cleanAllSummaries"
+          :clean-all-summaries-loading="cleanAllSummariesLoading"
+        />
 
-              <n-card v-if="cleanPreview" :title="`Vista previa · ${cleanPreview.chapterTitle}`">
-                  <div class="row-wrap">
-                    <div style="flex: 1; min-width: 280px">
-                      <label class="small muted">Original</label>
-                      <n-input type="textarea" :value="cleanPreview.result.original" :autosize="{ minRows: 12 }" readonly class="mono" />
-                    </div>
-                    <div style="flex: 1; min-width: 280px">
-                      <label class="small muted">Limpio</label>
-                      <n-input type="textarea" :value="cleanPreview.result.cleaned" :autosize="{ minRows: 12 }" readonly class="mono" />
-                    </div>
-                  </div>
-              </n-card>
-            </div>
-        </n-card>
-      </section>
+        <ExportTab
+          v-show="activeTab === 'export'"
+          :novel="novel"
+        />
 
-      <section v-else-if="activeTab === 'export'" class="stack-md tab-panel" aria-labelledby="tab-export">
-        <h2 id="tab-export" class="sr-only">Exportar</h2>
-        <n-card title="Exportar a EPUB">
-            <div class="stack-md">
-              <div style="min-width: 220px; max-width: 320px">
-                <label class="small muted">Fuente del contenido</label>
-                <n-select v-model:value="exportSource" :options="exportSourceOptions" />
-              </div>
-
-              <n-progress v-if="exportBuilding" :percentage="exportProgress" :show-indicator="true" />
-              <n-alert v-if="exportFeedback" :type="exportFeedback.startsWith('Error:') ? 'error' : 'success'">{{ exportFeedback }}</n-alert>
-              <n-button type="primary" :loading="exportBuilding" :disabled="exportBuilding" @click="buildAndDownloadEpub">
-                <template #icon><n-icon><DownloadOutline /></n-icon></template>
-                Descargar EPUB
-              </n-button>
-            </div>
-        </n-card>
-      </section>
-
-      <section v-else class="stack-md tab-panel" aria-labelledby="tab-errors">
-        <h2 id="tab-errors" class="sr-only">Historial de errores</h2>
-        <n-card v-if="failedJobs.length === 0">
-            <div class="stack-md" style="align-items: center; text-align: center; padding: 2rem 1rem">
-              <n-icon :size="40" color="var(--text-tertiary)"><TimeOutline /></n-icon>
-              <div>
-                <h3 style="margin: 0 0 0.5rem">Aún no hay errores</h3>
-                <p class="muted">Cuando un trabajo falle, verás los detalles aquí.</p>
-              </div>
-            </div>
-        </n-card>
-        <n-card v-for="job in failedJobs" :key="job.id">
-            <div class="stack-md">
-              <div class="row-between">
-                <div>
-                  <div style="font-weight: 600">{{ job.completedChapters }}/{{ job.totalChapters }} completados · {{ job.failedChapters }} fallidos</div>
-                  <div class="small muted">{{ job.provider || 'provider por defecto' }} · {{ job.model || 'model por defecto' }} · {{ formatDate(job.createdAt) }}</div>
-                </div>
-                <div class="row-wrap">
-                  <n-tag :type="jobTagType(job.status)" size="small" round>{{ jobStatusLabel(job) }}</n-tag>
-                  <n-button v-if="job.status === 'running' || job.status === 'pending'" size="small" type="error" secondary @click="cancelFailedHistoryJob(job.id)">Cancelar</n-button>
-                </div>
-              </div>
-              <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="true" />
-              <n-progress v-else :show-indicator="false" :status="'info'" :percentage="100" />
-              <div v-if="jobCurrentActivityLabel(job)" class="small muted">
-                {{ jobCurrentActivityLabel(job) }}
-              </div>
-              <n-alert v-if="job.errorMessage?.trim()" :type="job.status === 'failed' ? 'error' : 'warning'" :closable="false">
-                <div class="stack-sm" style="gap: 0.25rem">
-                  <strong>{{ job.status === 'failed' ? 'Motivo del fallo del trabajo' : 'Aviso del trabajo' }}</strong>
-                  <span class="mono small" style="white-space: pre-wrap; word-break: break-word">{{ job.errorMessage }}</span>
-                </div>
-              </n-alert>
-              <div v-if="jobFailedChapters(job).length > 0" class="job-failed-chapters">
-                <div class="row-between" @click="toggleJobFailedChapters(job.id)" style="cursor: pointer; user-select: none">
-                  <div class="row-wrap">
-                    <n-icon :size="14"><ChevronDownOutline v-if="expandedJobId === job.id" /><ChevronForwardOutline v-else /></n-icon>
-                    <strong>Capítulos fallidos ({{ jobFailedChapters(job).length }})</strong>
-                  </div>
-                  <span class="small muted">{{ expandedJobId === job.id ? 'Ocultar' : 'Ver' }} detalles</span>
-                </div>
-                <div v-if="expandedJobId === job.id" class="stack-sm" style="margin-top: 0.5rem">
-                  <div v-for="chapter in jobFailedChapters(job)" :key="chapter.id" class="job-failed-chapter-item">
-                    <div class="row-between" style="align-items: flex-start; gap: 0.75rem">
-                      <div style="min-width: 0; flex: 1">
-                        <div class="row-wrap">
-                          <span class="mono small muted">#{{ chapter.chapterOrder }}</span>
-                          <n-button text style="padding: 0; text-align: left" @click="router.push(`/novels/${chapter.novelId}/chapters/${chapter.id}`)">
-                            {{ chapter.title }}
-                          </n-button>
-                        </div>
-                        <div v-if="chapter.errorMessage?.trim()" class="small job-failed-chapter-error mono">
-                          {{ chapter.errorMessage }}
-                        </div>
-                        <div v-else class="small muted" style="font-style: italic">
-                          Sin detalles disponibles para este error.
-                        </div>
-                      </div>
-                      <n-tag type="error" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-        </n-card>
-      </section>
+        <JobsTab
+          v-show="activeTab === 'jobs'"
+          :jobs="failedJobs"
+          :all-summaries="allSummaries"
+          @cancel-job="cancelFailedHistoryJob"
+        />
       </div>
     </div>
 
-    <n-modal v-model:show="chapterDialogOpen" preset="card" :title="editingChapter ? 'Editar capítulo' : 'Nuevo capítulo'" :style="{ width: 'min(720px, 96vw)' }">
-      <div class="stack-md">
-        <div class="row-wrap">
-          <FieldNumber v-model="chapterDraft.chapterOrder" label="N° capítulo" :min="1" wrapper-style="flex: 1; min-width: 160px" />
-          <div style="flex: 2; min-width: 240px">
-            <label class="small muted">Título</label>
-            <n-input v-model:value="chapterDraft.title" />
-          </div>
-        </div>
-        <div>
-          <label class="small muted">Contenido original (markdown)</label>
-          <n-input v-model:value="chapterDraft.originalContent" type="textarea" :autosize="{ minRows: 12 }" class="mono" />
-        </div>
-      </div>
-      <template #action>
-        <n-button secondary @click="chapterDialogOpen = false">Cancelar</n-button>
-        <n-button type="primary" :loading="chapterSaving" :disabled="!chapterDraft.title.trim()" @click="saveChapter">
-          {{ editingChapter ? 'Guardar cambios' : 'Crear capítulo' }}
-        </n-button>
-      </template>
-    </n-modal>
+    <NovelChapterDialog
+      :open="chapterDialogOpen"
+      :editing-chapter="editingChapter"
+      :next-chapter-order="nextChapterOrder"
+      :saving="chapterSaving"
+      @update:open="chapterDialogOpen = $event"
+      @save="saveChapter"
+    />
 
     <BulkImportDialog
       :open="bulkImportOpen"
@@ -511,57 +267,30 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMessage, useDialog } from "naive-ui";
 import AppLayout from "@/components/AppLayout.vue";
-import ChapterList from "@/components/ChapterList.vue";
-import FieldNumber from "@/components/FieldNumber.vue";
 import BulkImportDialog from "@/features/novels/BulkImportDialog.vue";
 import UpdateUrlDialog from "@/features/novels/UpdateUrlDialog.vue";
 import ProjectSettingsDialog from "@/features/projects/ProjectSettingsDialog.vue";
-import {
-  NButton,
-  NButtonGroup,
-  NCard,
-  NCheckbox,
-  NModal,
-  NInput,
-  NAlert,
-  NProgress,
-  NSelect,
-  NSkeleton,
-  NTag,
-  NSwitch,
-  NIcon,
-  NTabs,
-  NTab,
-} from "naive-ui";
+import NovelSidebar from "@/features/novels/NovelSidebar.vue";
+import NovelChapterDialog from "@/features/novels/NovelChapterDialog.vue";
+import DescriptionBlock from "@/features/novels/DescriptionBlock.vue";
+import ChaptersTab from "@/features/novels/tabs/ChaptersTab.vue";
+import TranslateTab from "@/features/novels/tabs/TranslateTab.vue";
+import CleanTab from "@/features/novels/tabs/CleanTab.vue";
+import ExportTab from "@/features/novels/tabs/ExportTab.vue";
+import JobsTab from "@/features/novels/tabs/JobsTab.vue";
+import { NAlert, NButton, NCard, NIcon, NModal, NSkeleton, NTab, NTag, NTabs } from "naive-ui";
 import {
   ArrowBackOutline,
-  PlayOutline,
-  DocumentTextOutline,
-  CreateOutline,
-  TrashOutline,
-  SaveOutline,
-  GlobeOutline,
-  RefreshOutline,
-  CopyOutline,
-  SettingsOutline,
-  BookOutline,
-  TimeOutline,
-  ChevronDownOutline,
-  ChevronForwardOutline,
-  ChevronUpOutline,
-  SwapVerticalOutline,
-  DownloadOutline,
-  ImageOutline,
   BookmarkOutline,
-  CheckmarkCircleOutline,
-  CloudDownloadOutline,
-  CloudDoneOutline,
+  ChevronDownOutline,
+  ChevronUpOutline,
+  RefreshOutline,
+  SwapVerticalOutline,
 } from "@vicons/ionicons5";
-import { markdownToHtml } from "@/utils/markdown";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
 import { useChapters } from "@/composables/useChapters";
@@ -569,30 +298,19 @@ import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useTranslationJobs } from "@/composables/useTranslationJobs";
 import { useOfflineCache } from "@/composables/useOfflineCache";
+import { useChapterSummaries } from "@/composables/useChapterSummaries";
 import {
-  jobStatusLabel,
-  jobTagType,
-  jobFinishedChapterCount,
-  jobHasStartedWork,
-  jobShowsCompletedProgress,
-  jobProgress,
-  jobCurrentActivityLabel,
-} from "@/composables/useJobHelpers";
-import {
+  chapterPosition,
   getNovelDisplayAuthor,
   getNovelDisplayDescription,
   getNovelDisplayNumber,
   getNovelDisplaySeries,
   getNovelDisplayTitle,
-  chapterPosition,
   type Chapter,
   type ChapterUpsertInput,
   type CreateNovelInput,
   type Novel,
-  type NovelStatus,
-  type TranslationJob,
 } from "@/domain";
-import { CLEAN_MODE_DESCRIPTIONS, CLEAN_MODE_LABELS, type CleanMode } from "@/utils/cleaner";
 
 const router = useRouter();
 const route = useRoute();
@@ -601,10 +319,37 @@ const dialog = useDialog();
 const { api, auth } = useAppServices();
 const { getNovel, updateNovel, replaceNovelInList } = useNovels();
 const novelId = computed(() => String(route.params.novelId || ""));
-const { chapters, loading: chaptersLoading, listChapters, createChapter, updateChapter, bulkCreateChapters, deleteChapter, bulkDeleteChapters } = useChapters(novelId, { autoLoad: false });
+const { listChapters, createChapter, updateChapter, bulkCreateChapters, deleteChapter, bulkDeleteChapters } = useChapters(novelId, { autoLoad: false });
 const { hasActive } = useActiveJobStatus();
 const { jobs: failedJobs, listJobs: listFailedJobs, createJob, updateJob } = useTranslationJobs(novelId, { failedOnly: true, autoLoad: false });
-const { isOnline, isNovelCached, downloadNovelForOffline, removeCachedNovel, syncPendingChanges, syncStatus, getCachedNovel } = useOfflineCache(novelId);
+const { isOnline, isNovelCached, getCachedNovel, downloadNovelForOffline, removeCachedNovel } = useOfflineCache(novelId);
+
+const chapterPage = ref(0);
+const chapterPageSize = 50;
+const failedJobsLoaded = ref(false);
+const failedJobsDirty = ref(false);
+const selectedChapters = ref<ChapterSummary[]>([]);
+
+const {
+  chapterSummaries,
+  chapterSummaryTotal,
+  chapterSummariesLoading,
+  chapterGaps,
+  allSummaries,
+  allSummariesLoading,
+  cleanAllSummaries,
+  cleanAllSummariesLoading,
+  translateAllSummaries,
+  translateAllLoading,
+  fullChaptersLoaded,
+  loadChapterSummaries,
+  loadAllSummaries,
+  loadCleanAllSummaries,
+  loadTranslateAll,
+  ensureFullChaptersLoaded,
+  patchSummaryStatus,
+  markAllSummariesDirty,
+} = useChapterSummaries(novelId, chapterPage, chapterPageSize, { isOnline, getCachedNovel });
 
 const tabs = [
   { value: "chapters", label: "Capítulos" },
@@ -618,307 +363,19 @@ const activeTab = ref("chapters");
 const settingsOpen = ref(false);
 const bulkImportOpen = ref(false);
 const updateUrlOpen = ref(false);
-const chapterPageSize = 50;
-const chapterPage = ref(0);
-const chapterSummaries = ref<ChapterSummary[]>([]);
-const chapterSummaryTotal = ref(0);
-const chapterSummariesLoading = ref(false);
-const allSummaries = ref<ChapterSummary[]>([]);
-const allSummariesLoading = ref(false);
-const allSummariesLoaded = ref(false);
-const allSummariesDirty = ref(false);
-const failedJobsLoaded = ref(false);
-const failedJobsDirty = ref(false);
-const fullChaptersLoaded = ref(false);
-const selectedChapters = ref<ChapterSummary[]>([]);
 const chapterDialogOpen = ref(false);
 const chapterSaving = ref(false);
 const editingChapter = ref<Chapter | null>(null);
 const pendingDeleteChapterId = ref<string | null>(null);
-const deletingChapter = ref(false);
 const bulkDeleting = ref(false);
-const chapterDraft = reactive<{ id?: string; chapterOrder: number; title: string; originalContent: string }>({
-  chapterOrder: 1,
-  title: "",
-  originalContent: "",
-});
 
-const translateOperation = ref<"translate" | "refine">("translate");
-const translateShowAll = ref(false);
-const translateAllSummaries = ref<ChapterSummary[]>([]);
-const translateAllLoaded = ref(false);
-const translateAllLoading = ref(false);
-const translateSelectedIds = ref<Set<string>>(new Set());
-const translateSubmitting = ref(false);
-let userTouchedTranslateSelection = false;
-const expandedJobId = ref<string | null>(null);
+const downloadingOffline = ref(false);
 
-const cleanMode = ref<CleanMode>("search_replace");
-const cleanApplyTo = ref<"original" | "translated" | "refined" | "all">("translated");
-const cleanSearchText = ref("");
-const cleanReplaceText = ref("");
-const cleanCaseSensitive = ref(true);
-const cleanUseRegex = ref(false);
-const cleanSelectedIds = ref<Set<string>>(new Set());
-const cleanApplying = ref(false);
-const cleanFeedback = ref<string | null>(null);
-const cleanPreview = ref<{ chapterTitle: string; result: { original: string; cleaned: string; changed: boolean; removedLines: number } } | null>(null);
-
-const exportSource = ref<"refined" | "translated" | "original">("refined");
-const exportBuilding = ref(false);
-const exportProgress = ref(0);
-const exportFeedback = ref<string | null>(null);
-
-const chapterGaps = ref<Array<{ from: number; to: number; count: number }>>([]);
 const excludedChapters = ref<ChapterSummary[]>([]);
 const reorderOpen = ref(false);
 const reorderSaving = ref(false);
 const reorderItems = ref<ChapterSummary[]>([]);
 
-const descriptionEl = ref<HTMLElement | null>(null);
-const descriptionExpanded = ref(false);
-const descriptionOverflow = ref(false);
-
-// Estados para caché offline
-const downloadingOffline = ref(false);
-const offlineSyncing = ref(false);
-
-const novelLoading = ref(true);
-const novel = ref<Novel | null>(null);
-const isOwner = computed(() => novel.value?.ownerId === auth.user.value?.id);
-const visibleTabs = computed(() => isOwner.value ? tabs : tabs.filter((tab) => tab.value === 'chapters'));
-const chapterStats = computed(() => ({
-  totalChapters: novel.value?.chapterCount ?? 0,
-  translatedChapters: novel.value?.translatedCount ?? 0,
-  completedChapters: novel.value?.completedCount ?? 0,
-  maxChapterOrder: novel.value?.maxChapterOrder ?? 0,
-}));
-const completedChapters = computed(() => chapterStats.value.translatedChapters);
-const nextChapterOrder = computed(() => chapterStats.value.maxChapterOrder + 1);
-
-function novelStatusLabel(status: NovelStatus) {
-  switch (status) {
-    case "completed":
-      return "Completada";
-    case "hiatus":
-      return "Hiatus";
-    case "cancelled":
-      return "Cancelada";
-    default:
-      return "En curso";
-  }
-}
-
-function novelStatusType(status: NovelStatus) {
-  switch (status) {
-    case "completed":
-      return "info";
-    case "hiatus":
-      return "warning";
-    case "cancelled":
-      return "error";
-    default:
-      return "success";
-  }
-}
-
-function resolvedChapterStatus(chapter: Chapter | ChapterSummary): Chapter["status"] {
-  if (chapter.status === "processing") return "processing";
-  return chapter.status;
-}
-
-const translateOperationOptions = [
-  { label: "Traducir", value: "translate" },
-  { label: "Refinar", value: "refine" },
-];
-const eligibleChapters = computed(() => {
-  const source = translateShowAll.value ? translateAllSummaries.value : allSummaries.value;
-  return source.filter((chapter) => {
-    const status = resolvedChapterStatus(chapter);
-    if (translateOperation.value === "translate") {
-      return chapter.hasOriginalContent && (status === "pending" || status === "failed");
-    }
-    return chapter.hasTranslatedContent && (status === "translated" || status === "failed");
-  });
-});
-const eligibleChapterIds = computed(() => new Set(eligibleChapters.value.map((c) => c.id)));
-const translateSourceSummaries = computed(() => translateShowAll.value ? translateAllSummaries.value : allSummaries.value);
-const cleanModeOptions = Object.entries(CLEAN_MODE_LABELS).map(([value, label]) => ({ value, label }));
-const cleanModeDescription = computed(() => CLEAN_MODE_DESCRIPTIONS[cleanMode.value]);
-const cleanApplyOptions = [
-  { value: "translated", label: "Traducción" },
-  { value: "original", label: "Original" },
-  { value: "refined", label: "Refinado" },
-  { value: "all", label: "Todos (prioriza refinado)" },
-];
-const cleanEligibleChapters = computed(() => allSummaries.value.filter((chapter) => {
-  if (cleanApplyTo.value === "all") return chapter.hasOriginalContent || chapter.hasTranslatedContent || chapter.hasRefinedContent;
-  if (cleanApplyTo.value === "original") return chapter.hasOriginalContent;
-  if (cleanApplyTo.value === "translated") return chapter.hasTranslatedContent;
-  return chapter.hasRefinedContent;
-}));
-const exportSourceOptions = [
-  { value: "refined", label: "Refinados" },
-  { value: "translated", label: "Traducidos" },
-  { value: "original", label: "Originales" },
-];
-
-onMounted(() => {
-  void refreshNovelAndChapterMeta();
-  checkDescriptionOverflow();
-});
-
-watch(novel, (current, prev) => {
-  if (!current) return;
-  if (!prev || prev.id !== current.id) {
-    descriptionExpanded.value = false;
-  }
-  nextTick(checkDescriptionOverflow);
-});
-
-function checkDescriptionOverflow() {
-  const el = descriptionEl.value;
-  if (!el) {
-    descriptionOverflow.value = false;
-    return;
-  }
-  if (descriptionExpanded.value) return;
-  descriptionOverflow.value = el.scrollHeight > el.clientHeight + 1;
-}
-
-let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-function debouncedCheckOverflow() {
-  if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(checkDescriptionOverflow, 150);
-}
-window.addEventListener("resize", debouncedCheckOverflow);
-
-function tabNeedsFullChapters(_tab: string) {
-  return false;
-}
-
-function tabNeedsAllSummaries(tab: string) {
-  return tab === "clean" || tab === "translate" || tab === "jobs";
-}
-
-function patchSummaryStatus(
-  items: ChapterSummary[],
-  chapterIds: string[],
-  status: Chapter["status"],
-  errorMessage = "",
-) {
-  if (items.length === 0 || chapterIds.length === 0) return items;
-  const idSet = new Set(chapterIds);
-  let mutated = false;
-  const next = items.map((chapter) => {
-    if (!idSet.has(chapter.id)) return chapter;
-    if (chapter.status === status && (chapter.errorMessage || "") === errorMessage) return chapter;
-    mutated = true;
-    return { ...chapter, status, errorMessage };
-  });
-  return mutated ? next : items;
-}
-
-function markAllSummariesDirty() {
-  allSummariesDirty.value = true;
-}
-
-function markFailedJobsDirty() {
-  failedJobsDirty.value = true;
-}
-
-async function ensureFailedJobsLoaded(force = false) {
-  if (!novelId.value) {
-    failedJobsLoaded.value = false;
-    failedJobsDirty.value = false;
-    return [];
-  }
-  if (!force && failedJobsLoaded.value && !failedJobsDirty.value) {
-    return failedJobs.value;
-  }
-  const items = await listFailedJobs();
-  failedJobsLoaded.value = true;
-  failedJobsDirty.value = false;
-  return items;
-}
-
-async function loadCurrentNovel() {
-  if (!novelId.value) return;
-  novelLoading.value = true;
-  try {
-    let current: Novel | null = null;
-    
-    // Si no hay conexión, intentar cargar desde caché offline
-    if (!isOnline.value) {
-      const cached = await getCachedNovel(novelId.value);
-      if (cached) {
-        current = cached.novel;
-      }
-    }
-    
-    // Si hay conexión o no se encontró en caché, intentar desde API
-    if (!current) {
-      current = await getNovel(novelId.value);
-    }
-    
-    if (!current) {
-      novel.value = null;
-      return;
-    }
-    novel.value = current;
-    replaceNovelInList(current);
-  } finally {
-    novelLoading.value = false;
-  }
-}
-
-function shallowSummaryEquals(a: ChapterSummary, b: ChapterSummary): boolean {
-  return (
-    a.id === b.id &&
-    a.novelId === b.novelId &&
-    a.chapterOrder === b.chapterOrder &&
-    a.position === b.position &&
-    a.excluded === b.excluded &&
-    a.title === b.title &&
-    a.translatedTitle === b.translatedTitle &&
-    a.status === b.status &&
-    a.errorMessage === b.errorMessage &&
-    a.hasOriginalContent === b.hasOriginalContent &&
-    a.hasTranslatedContent === b.hasTranslatedContent &&
-    a.hasRefinedContent === b.hasRefinedContent &&
-    a.originalChars === b.originalChars &&
-    a.translatedChars === b.translatedChars &&
-    a.refinedChars === b.refinedChars &&
-    a.createdAt === b.createdAt &&
-    a.updatedAt === b.updatedAt
-  );
-}
-
-function mergeChapterSummaries(fresh: ChapterSummary[]) {
-  const current = chapterSummaries.value;
-  if (current.length === 0) {
-    chapterSummaries.value = fresh;
-    return;
-  }
-  const currentById = new Map(current.map((item) => [item.id, item]));
-  const next: ChapterSummary[] = [];
-  let mutated = false;
-  for (const item of fresh) {
-    const existing = currentById.get(item.id);
-    if (existing && shallowSummaryEquals(existing, item)) {
-      next.push(existing);
-    } else {
-      next.push(item);
-      mutated = true;
-    }
-  }
-  if (next.length !== current.length) mutated = true;
-  if (mutated) {
-    chapterSummaries.value = next;
-  }
-}
-
-// Convertir Chapter a ChapterSummary para usar en la lista
 function chapterToSummary(chapter: Chapter): ChapterSummary {
   return {
     id: chapter.id,
@@ -941,160 +398,74 @@ function chapterToSummary(chapter: Chapter): ChapterSummary {
   };
 }
 
-async function loadChapterSummaries() {
+const novelLoading = ref(true);
+const novel = ref<Novel | null>(null);
+const isOwner = computed(() => novel.value?.ownerId === auth.user.value?.id);
+const visibleTabs = computed(() => (isOwner.value ? tabs : tabs.filter((tab) => tab.value === "chapters")));
+const chapterStats = computed(() => ({
+  totalChapters: novel.value?.chapterCount ?? 0,
+  translatedChapters: novel.value?.translatedCount ?? 0,
+  completedChapters: novel.value?.completedCount ?? 0,
+  maxChapterOrder: novel.value?.maxChapterOrder ?? 0,
+}));
+const nextChapterOrder = computed(() => chapterStats.value.maxChapterOrder + 1);
+
+// Owned by the page (as before the refactor) so the operation persists across
+// tab switches and novel navigation; the tab mutates it via `operation-change`.
+const translateOperation = ref<"translate" | "refine">("translate");
+
+function tabNeedsAllSummaries(tab: string) {
+  return tab === "translate" || tab === "jobs";
+}
+
+function tabNeedsCleanSummaries(tab: string) {
+  return tab === "clean";
+}
+
+function tabNeedsFullChapters(_tab: string) {
+  return false;
+}
+
+function markFailedJobsDirty() {
+  failedJobsDirty.value = true;
+}
+
+async function ensureFailedJobsLoaded(force = false) {
   if (!novelId.value) {
-    chapterSummaries.value = [];
-    chapterSummaryTotal.value = 0;
-    chapterGaps.value = [];
-    return;
+    failedJobsLoaded.value = false;
+    failedJobsDirty.value = false;
+    return [] as typeof failedJobs.value;
   }
-  chapterSummariesLoading.value = true;
-  try {
-    let result: { items: ChapterSummary[]; total: number } | null = null;
-    let gapsResult: { gaps: Array<{ from: number; to: number; count: number }> } | null = null;
-
-    // Si no hay conexión, intentar cargar desde caché offline
-    if (!isOnline.value) {
-      const cached = await getCachedNovel(novelId.value);
-      if (cached) {
-        // Excluded chapters stay hidden from the visible list, but their source
-        // orders are still occupied: they must not be reported as missing.
-        const visible = cached.chapters.filter((c) => !c.excluded);
-        const summaries = visible.map(chapterToSummary);
-        result = { items: summaries, total: summaries.length };
-        // Calcular gaps manualmente para datos offline (sobre todos los capítulos,
-        // incluidos los excluidos, para no generar falsos huecos).
-        const sortedChapters = [...cached.chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
-        const gaps: Array<{ from: number; to: number; count: number }> = [];
-        if (sortedChapters.length > 0) {
-          let expectedOrder = 1;
-          let gapStart: number | null = null;
-          for (const ch of sortedChapters) {
-            if (ch.chapterOrder > expectedOrder) {
-              if (gapStart === null) gapStart = expectedOrder;
-            } else if (gapStart !== null && ch.chapterOrder === expectedOrder) {
-              gaps.push({ from: gapStart, to: expectedOrder - 1, count: expectedOrder - gapStart });
-              gapStart = null;
-            }
-            expectedOrder = ch.chapterOrder + 1;
-          }
-          if (gapStart !== null) {
-            gaps.push({ from: gapStart, to: expectedOrder - 1, count: expectedOrder - gapStart });
-          }
-        }
-        gapsResult = {
-          gaps,
-        };
-      }
-    }
-
-    // Si no se cargó desde caché o hay conexión, cargar desde API
-    if (!result || !gapsResult) {
-      const [apiResult, apiGapsResult] = await Promise.all([
-        api.chapters.listSummaries(novelId.value, {
-          limit: chapterPageSize,
-          offset: chapterPage.value * chapterPageSize,
-        }),
-        api.chapters.gaps(novelId.value),
-      ]);
-      result = apiResult;
-      gapsResult = apiGapsResult;
-    }
-
-    chapterSummaryTotal.value = result.total;
-    mergeChapterSummaries(result.items);
-    chapterGaps.value = gapsResult.gaps;
-    selectedChapters.value = selectedChapters.value.filter((selected) =>
-      result.items.some((item) => item.id === selected.id),
-    );
-  } finally {
-    chapterSummariesLoading.value = false;
+  if (!force && failedJobsLoaded.value && !failedJobsDirty.value) {
+    return failedJobs.value;
   }
-}
-
-async function loadAllSummaries(force = false) {
-  if (!novelId.value) {
-    allSummaries.value = [];
-    allSummariesLoaded.value = false;
-    allSummariesDirty.value = false;
-    return;
-  }
-  if (!force && allSummariesLoaded.value && !allSummariesDirty.value) {
-    return;
-  }
-  allSummariesLoading.value = true;
-  try {
-    let summaries: ChapterSummary[] = [];
-    
-    // Si no hay conexión, intentar cargar desde caché
-    if (!isOnline.value) {
-      const cached = await getCachedNovel(novelId.value);
-      if (cached) {
-        summaries = cached.chapters.filter((c) => !c.excluded).map(chapterToSummary);
-      }
-    }
-    
-    // Si hay conexión o no se encontró en caché
-    if (summaries.length === 0 || isOnline.value) {
-      summaries = await api.chapters.listEligible(novelId.value, translateOperation.value);
-    }
-    
-    allSummaries.value = summaries;
-    allSummariesLoaded.value = true;
-    allSummariesDirty.value = false;
-  } finally {
-    allSummariesLoading.value = false;
-  }
-}
-
-async function loadTranslateAll(force = false) {
-  if (!novelId.value) return;
-  if (!force && translateAllLoaded.value) return;
-  translateAllLoading.value = true;
-  try {
-    let summaries: ChapterSummary[] = [];
-    
-    // Si no hay conexión, intentar cargar desde caché
-    if (!isOnline.value) {
-      const cached = await getCachedNovel(novelId.value);
-      if (cached) {
-        summaries = cached.chapters.filter((c) => !c.excluded).map(chapterToSummary);
-      }
-    }
-    
-    // Si hay conexión o no se encontró en caché
-    if (summaries.length === 0 || isOnline.value) {
-      summaries = await api.chapters.list(novelId.value);
-    }
-    
-    translateAllSummaries.value = summaries;
-    translateAllLoaded.value = true;
-  } finally {
-    translateAllLoading.value = false;
-  }
-}
-
-async function ensureFullChaptersLoaded(force = false) {
-  if (!novelId.value) return [];
-  if (fullChaptersLoaded.value && !force) return chapters.value;
-  
-  let items: Chapter[] = [];
-  
-  // Si no hay conexión, intentar cargar desde caché
-  if (!isOnline.value) {
-    const cached = await getCachedNovel(novelId.value);
-    if (cached) {
-      items = cached.chapters;
-    }
-  }
-  
-  // Si hay conexión o no se encontró en caché
-  if (items.length === 0 || isOnline.value) {
-    items = await listChapters();
-  }
-  
-  fullChaptersLoaded.value = true;
+  const items = await listFailedJobs();
+  failedJobsLoaded.value = true;
+  failedJobsDirty.value = false;
   return items;
+}
+
+async function loadCurrentNovel() {
+  if (!novelId.value) return;
+  novelLoading.value = true;
+  try {
+    let current: Novel | null = null;
+    if (!isOnline.value) {
+      const cached = await getCachedNovel(novelId.value);
+      if (cached) current = cached.novel;
+    }
+    if (!current) {
+      current = await getNovel(novelId.value);
+    }
+    if (!current) {
+      novel.value = null;
+      return;
+    }
+    novel.value = current;
+    replaceNovelInList(current);
+  } finally {
+    novelLoading.value = false;
+  }
 }
 
 async function refreshNovelAndChapterMeta() {
@@ -1104,19 +475,25 @@ async function refreshNovelAndChapterMeta() {
 async function refreshChapterViews() {
   await refreshNovelAndChapterMeta();
   if (tabNeedsAllSummaries(activeTab.value)) {
-    await loadAllSummaries(true);
+    await loadAllSummaries(true, translateOperation.value);
+  }
+  if (tabNeedsCleanSummaries(activeTab.value)) {
+    await loadCleanAllSummaries(true);
   }
   if (fullChaptersLoaded.value || tabNeedsFullChapters(activeTab.value)) {
-    await ensureFullChaptersLoaded(true);
+    await ensureFullChaptersLoaded(true, listChapters);
   }
 }
 
 watch(activeTab, (tab) => {
   if (tabNeedsFullChapters(tab)) {
-    void ensureFullChaptersLoaded();
+    void ensureFullChaptersLoaded(false, listChapters);
   }
   if (tabNeedsAllSummaries(tab)) {
-    void loadAllSummaries();
+    void loadAllSummaries(false, translateOperation.value);
+  }
+  if (tabNeedsCleanSummaries(tab)) {
+    void loadCleanAllSummaries();
   }
   if (tab === "jobs") {
     void ensureFailedJobsLoaded();
@@ -1124,18 +501,10 @@ watch(activeTab, (tab) => {
 });
 
 watch(novelId, () => {
-  chapterPage.value = 0;
-  fullChaptersLoaded.value = false;
   selectedChapters.value = [];
-  translateSubmitting.value = false;
-  translateShowAll.value = false;
-  translateAllSummaries.value = [];
-  translateAllLoaded.value = false;
-  allSummaries.value = [];
-  allSummariesLoaded.value = false;
-  allSummariesDirty.value = false;
   failedJobsLoaded.value = false;
   failedJobsDirty.value = false;
+  chapterPage.value = 0;
   void refreshNovelAndChapterMeta();
 });
 
@@ -1143,30 +512,11 @@ watch(chapterPage, () => {
   void loadChapterSummaries();
 });
 
-watch(eligibleChapters, (items) => {
-  if (userTouchedTranslateSelection) return;
-  translateSelectedIds.value = new Set(items.map((chapter) => chapter.id));
-}, { immediate: true });
-
-watch(translateOperation, () => {
-  userTouchedTranslateSelection = false;
-  translateShowAll.value = false;
-  translateAllSummaries.value = [];
-  translateAllLoaded.value = false;
-  void loadAllSummaries(true);
-  translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
-});
-
-watch(translateShowAll, (showAll) => {
-  userTouchedTranslateSelection = false;
-  if (showAll) {
-    void loadTranslateAll(true).then(() => {
-      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
-    });
-  } else {
-    void loadAllSummaries(true).then(() => {
-      translateSelectedIds.value = new Set(eligibleChapters.value.map((chapter) => chapter.id));
-    });
+watch(chapterSummaries, (items) => {
+  const validIds = new Set(items.map((item) => item.id));
+  const pruned = selectedChapters.value.filter((selected) => validIds.has(selected.id));
+  if (pruned.length !== selectedChapters.value.length) {
+    selectedChapters.value = pruned;
   }
 });
 
@@ -1180,16 +530,16 @@ watch(hasActive, (active, previous) => {
   void refreshChapterViews();
 });
 
-onBeforeUnmount(() => {
-  if (resizeTimer) clearTimeout(resizeTimer);
-  window.removeEventListener("resize", debouncedCheckOverflow);
-});
+async function onRead() {
+  if (!novel.value) return;
+  await router.push(`/novels/${novel.value.id}/read`);
+}
 
 async function copyCurrentNovel() {
   if (!novel.value) return;
   const copy = await api.novels.copy(novel.value.id);
   replaceNovelInList(copy);
-  message.success('Novela copiada', { duration: 2500 });
+  message.success("Novela copiada", { duration: 2500 });
   await router.push(`/novels/${copy.id}`);
 }
 
@@ -1199,7 +549,7 @@ async function toggleVisibility() {
   await api.novels.updateVisibility(novel.value.id, !novel.value.isPublic);
   novel.value = { ...novel.value, isPublic: !novel.value.isPublic };
   replaceNovelInList(novel.value);
-  message.success(wasPublic ? 'Novela despublicada' : 'Novela publicada', { duration: 2500 });
+  message.success(wasPublic ? "Novela despublicada" : "Novela publicada", { duration: 2500 });
 }
 
 async function onUrlUpdated(pending?: number) {
@@ -1212,75 +562,24 @@ async function onUrlUpdated(pending?: number) {
     await refreshChapterViews();
   }
   if (!pending || pending <= 0) {
-    message.success('Novela actualizada desde internet', { duration: 2500 });
+    message.success("Novela actualizada desde internet", { duration: 2500 });
   }
-}
-
-function chapterStatusLabel(status: Chapter["status"]) {
-  return {
-    pending: "Pendiente",
-    processing: "Procesando",
-    translated: "Traducido",
-    refined: "Refinado",
-    done: "Completado",
-    failed: "Error",
-  }[status] || status;
-}
-
-function chapterTagType(status: Chapter["status"]) {
-  return ({
-    pending: "default",
-    processing: "warning",
-    translated: "success",
-    refined: "info",
-    done: "success",
-    failed: "error",
-  }[status] || "default") as "default" | "info" | "warning" | "success" | "error";
-}
-
-function charsLabel(value?: string) {
-  if (!value) return "-";
-  return `${value.length.toLocaleString()} chars`;
-}
-
-function jobFailedChapters(job: TranslationJob) {
-  if (!job.chapterIds || job.chapterIds.length === 0) return [];
-  const idSet = new Set(job.chapterIds);
-  return allSummaries.value
-    .filter((chapter) => idSet.has(chapter.id) && chapter.status === "failed")
-    .sort((a, b) => chapterPosition(a) - chapterPosition(b));
-}
-
-function toggleJobFailedChapters(jobId: string) {
-  expandedJobId.value = expandedJobId.value === jobId ? null : jobId;
 }
 
 function openCreateChapter() {
   editingChapter.value = null;
-  chapterDraft.id = undefined;
-  chapterDraft.chapterOrder = nextChapterOrder.value;
-  chapterDraft.title = "";
-  chapterDraft.originalContent = "";
   chapterDialogOpen.value = true;
 }
 
-async function saveChapter() {
+async function saveChapter(payload: ChapterUpsertInput & { id?: string }) {
   chapterSaving.value = true;
   try {
-    if (editingChapter.value) {
-      await updateChapter({
-        id: editingChapter.value.id,
-        chapterOrder: chapterDraft.chapterOrder,
-        title: chapterDraft.title,
-        originalContent: chapterDraft.originalContent || undefined,
-      });
+    if (payload.id) {
+      await updateChapter(payload);
     } else {
-      await createChapter({
-        chapterOrder: chapterDraft.chapterOrder,
-        title: chapterDraft.title,
-        originalContent: chapterDraft.originalContent || undefined,
-        status: "pending",
-      });
+      const { id: _id, ...rest } = payload;
+      void _id;
+      await createChapter({ ...rest, status: "pending" });
     }
     markAllSummariesDirty();
     chapterDialogOpen.value = false;
@@ -1295,7 +594,6 @@ async function saveChapter() {
 async function confirmDeleteChapter() {
   const id = pendingDeleteChapterId.value;
   if (!id) return;
-  deletingChapter.value = true;
   try {
     await deleteChapter(id);
     markAllSummariesDirty();
@@ -1303,7 +601,6 @@ async function confirmDeleteChapter() {
   } catch (err) {
     message.error(`Error al excluir capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
-    deletingChapter.value = false;
     pendingDeleteChapterId.value = null;
   }
 }
@@ -1313,24 +610,7 @@ function onDeleteChapter({ chapter }: { event: Event; chapter: ChapterSummary })
   void confirmDeleteChapter();
 }
 
-function askDeleteChapter(event: Event, id: string) {
-  dialog.warning({
-    title: "¿Excluir este capítulo?",
-    content: "El capítulo se conservará oculto y podrás restaurarlo cuando quieras.",
-    positiveText: "Excluir",
-    negativeText: "Cancelar",
-    onPositiveClick: () => {
-      pendingDeleteChapterId.value = id;
-      void confirmDeleteChapter();
-    },
-  });
-}
-
-function cancelDeleteChapter() {
-  pendingDeleteChapterId.value = null;
-}
-
-function onBulkDeleteChapters(event: Event) {
+function onBulkDeleteChapters(_event: Event) {
   if (selectedChapters.value.length <= 1) return;
   const count = selectedChapters.value.length;
   dialog.warning({
@@ -1340,21 +620,6 @@ function onBulkDeleteChapters(event: Event) {
     negativeText: "Cancelar",
     onPositiveClick: () => void confirmBulkDeleteChapters(),
   });
-}
-
-function askBulkDeleteChapters(event: Event) {
-  if (selectedChapters.value.length <= 1) return;
-  const count = selectedChapters.value.length;
-  dialog.warning({
-    title: `¿Excluir ${count} capítulos?`,
-    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
-    positiveText: `Excluir ${count}`,
-    negativeText: "Cancelar",
-    onPositiveClick: () => void confirmBulkDeleteChapters(),
-  });
-}
-
-function cancelBulkDeleteChapters() {
 }
 
 async function confirmBulkDeleteChapters() {
@@ -1417,9 +682,6 @@ async function openReorder() {
       api.chapters.listFull(novelId.value),
       api.chapters.listExcluded(novelId.value),
     ]);
-    // The reorder endpoint requires a complete permutation of every chapter of
-    // the novel. Excluded chapters are appended (kept at the end) until
-    // restored.
     reorderItems.value = [...visible.map(chapterToSummary), ...excluded];
     reorderOpen.value = true;
   } catch (err) {
@@ -1499,126 +761,58 @@ function onCoverUpdated(updated: Novel) {
   replaceNovelInList(updated);
 }
 
-function toggleTranslateChapter(id: string, checked: boolean) {
-  userTouchedTranslateSelection = true;
-  const next = new Set(translateSelectedIds.value);
-  if (checked) next.add(id); else next.delete(id);
-  translateSelectedIds.value = next;
-}
-
-async function startTranslationJob() {
+async function handleToggleOfflineCache() {
   if (!novel.value) return;
-  const target = translateSourceSummaries.value.filter((chapter) => translateSelectedIds.value.has(chapter.id));
-  if (target.length === 0) return;
-  translateSubmitting.value = true;
-  try {
-    const targetIds = target.map((chapter) => chapter.id);
-    await createJob(targetIds, {
-      operation: translateOperation.value,
-      provider: novel.value.aiOptions.provider || undefined,
-      model: novel.value.aiOptions.model || undefined,
-    });
-    allSummaries.value = patchSummaryStatus(allSummaries.value, targetIds, "processing");
-    if (translateShowAll.value) {
-      translateAllSummaries.value = patchSummaryStatus(translateAllSummaries.value, targetIds, "processing");
+  if (isNovelCached.value) {
+    try {
+      await removeCachedNovel(novel.value.id);
+      message.success("Novela eliminada de caché offline", { duration: 2500 });
+    } catch (err) {
+      message.error(`Error al eliminar de caché: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
     }
-    chapterSummaries.value = patchSummaryStatus(chapterSummaries.value, targetIds, "processing");
-    translateSelectedIds.value = new Set(
-      Array.from(translateSelectedIds.value).filter((id) => !targetIds.includes(id)),
-    );
-    markFailedJobsDirty();
-  } catch (err) {
-    message.error(`Error al iniciar trabajo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
-  } finally {
-    translateSubmitting.value = false;
+    return;
   }
-}
-
-async function previewCleaning(chapter: ChapterSummary) {
+  downloadingOffline.value = true;
   try {
-    const res = await api.chapters.cleanPreview(novelId.value, {
-      chapterId: chapter.id,
-      mode: cleanMode.value,
-      searchText: cleanSearchText.value,
-      replaceText: cleanReplaceText.value,
-      caseSensitive: cleanCaseSensitive.value,
-      useRegex: cleanUseRegex.value,
-      applyTo: cleanApplyTo.value,
-    });
-    cleanPreview.value = { chapterTitle: res.chapterTitle, result: res };
-  } catch (err) {
-    message.error(`Error al previsualizar: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
-  }
-}
-
-function toggleCleanChapter(id: string, checked: boolean) {
-  const next = new Set(cleanSelectedIds.value);
-  if (checked) next.add(id); else next.delete(id);
-  cleanSelectedIds.value = next;
-}
-
-async function applyCleaningToSelected() {
-  cleanApplying.value = true;
-  cleanFeedback.value = null;
-  try {
-    const chapterIds = Array.from(cleanSelectedIds.value);
-    const result = await api.chapters.clean(novelId.value, {
-      chapterIds,
-      mode: cleanMode.value,
-      searchText: cleanSearchText.value,
-      replaceText: cleanReplaceText.value,
-      caseSensitive: cleanCaseSensitive.value,
-      useRegex: cleanUseRegex.value,
-      applyTo: cleanApplyTo.value,
-    });
-    markAllSummariesDirty();
-    await Promise.all([loadAllSummaries(true), loadChapterSummaries()]);
-    cleanFeedback.value = `Limpieza aplicada a ${result.modified} capítulos.`;
-    const issues: string[] = [];
-    if (result.skipped) issues.push(`${result.skipped} sin contenido aplicable`);
-    if (result.notFound) issues.push(`${result.notFound} no encontrados`);
-    if (result.failed) issues.push(`${result.failed} fallaron al guardar`);
-    if (issues.length > 0) {
-      message.warning(issues.join(", ") + ".", { duration: 5000 });
+    const result = await downloadNovelForOffline(novel.value.id);
+    if (result) {
+      message.success("Novela guardada para lectura offline", { duration: 2500 });
+    } else {
+      throw new Error("No se pudo descargar la novela");
     }
   } catch (err) {
-    cleanFeedback.value = null;
-    message.error(`Error al aplicar limpieza: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+    message.error(`Error al guardar offline: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
-    cleanApplying.value = false;
+    downloadingOffline.value = false;
   }
 }
 
-async function buildAndDownloadEpub() {
+async function createTranslateJob(targetIds: string[]) {
   if (!novel.value) return;
-  exportBuilding.value = true;
-  exportFeedback.value = null;
-  exportProgress.value = 10;
-  try {
-    const result = await api.epubs.build({
-      novelId: novel.value.id,
-      source: exportSource.value,
-    });
-    exportProgress.value = 80;
-    const blob = await api.epubs.download(result.id, result.updatedAt);
-    const fileName = result.fileName || `${novel.value.sourceTitle || "libro"}.epub`;
-    const anchor = document.createElement("a");
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(anchor.href);
-    exportProgress.value = 100;
-    exportFeedback.value = `EPUB generado y guardado en el servidor.`;
-  } catch (err) {
-    exportFeedback.value = `Error: ${err instanceof Error ? err.message : String(err)}`;
-  } finally {
-    exportBuilding.value = false;
-    window.setTimeout(() => {
-      exportProgress.value = 0;
-    }, 1500);
+  await createJob(targetIds, {
+    operation: translateOperation.value,
+    provider: novel.value.aiOptions.provider || undefined,
+    model: novel.value.aiOptions.model || undefined,
+  });
+}
+
+function onTranslateOperationChange(operation: "translate" | "refine") {
+  translateOperation.value = operation;
+  void loadAllSummaries(true, operation);
+}
+
+function onTranslateShowAllChange(showAll: boolean) {
+  if (showAll) {
+    void loadTranslateAll(true);
+  } else {
+    void loadAllSummaries(true, translateOperation.value);
   }
+}
+
+function patchTranslateStatus(targetIds: string[]) {
+  allSummaries.value = patchSummaryStatus(allSummaries.value, targetIds, "processing");
+  translateAllSummaries.value = patchSummaryStatus(translateAllSummaries.value, targetIds, "processing");
+  chapterSummaries.value = patchSummaryStatus(chapterSummaries.value, targetIds, "processing");
 }
 
 async function cancelFailedHistoryJob(jobId: string) {
@@ -1631,56 +825,7 @@ async function cancelFailedHistoryJob(jobId: string) {
   }
 }
 
-// Funciones para manejar la caché offline
-async function handleToggleOfflineCache() {
-  if (!novel.value) return;
-  
-  if (isNovelCached.value) {
-    // Eliminar de caché
-    try {
-      await removeCachedNovel(novel.value.id);
-      message.success('Novela eliminada de caché offline', { duration: 2500 });
-    } catch (err) {
-      message.error(`Error al eliminar de caché: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
-    }
-  } else {
-    // Descargar y guardar
-    downloadingOffline.value = true;
-    try {
-      const result = await downloadNovelForOffline(novel.value.id);
-      if (result) {
-        message.success('Novela guardada para lectura offline', { duration: 2500 });
-      } else {
-        throw new Error('No se pudo descargar la novela');
-      }
-    } catch (err) {
-      message.error(`Error al guardar offline: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
-    } finally {
-      downloadingOffline.value = false;
-    }
-  }
-}
-
-async function handleSyncOfflineChanges() {
-  if (!isOnline.value) {
-    message.warning('No tienes conexión a internet', { duration: 2500 });
-    return;
-  }
-  
-  offlineSyncing.value = true;
-  try {
-    await syncPendingChanges();
-    message.success('Cambios sincronizados', { duration: 2500 });
-  } catch (err) {
-    message.error(`Error al sincronizar: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
-  } finally {
-    offlineSyncing.value = false;
-  }
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleString();
-}
+void refreshNovelAndChapterMeta();
 </script>
 
 <style scoped>
@@ -1689,49 +834,6 @@ function formatDate(value: string) {
   grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
-}
-
-.novel-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.875rem;
-}
-
-.novel-cover-large {
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  border: 1px solid var(--divide);
-  background: var(--surface-muted);
-}
-
-.novel-cover-large img {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  object-fit: cover;
-  display: block;
-}
-
-.novel-cover-placeholder-large {
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-  font-size: 2.5rem;
-}
-
-.novel-sidebar-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.novel-sidebar-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
 }
 
 .novel-main {
@@ -1763,35 +865,6 @@ function formatDate(value: string) {
   font-size: 0.875rem;
 }
 
-.novel-description-wrapper {
-  margin: 0.375rem 0 0;
-  position: relative;
-}
-
-.novel-description {
-  font-size: 0.875rem;
-  line-height: 1.3;
-}
-
-.novel-description--collapsed {
-  max-height: calc(0.875rem * 1.3 * 5);
-  overflow: hidden;
-  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
-}
-
-.novel-description :deep(p) {
-  margin: 0 0 0.5rem;
-}
-
-.novel-description :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.novel-description-toggle {
-  align-self: flex-start;
-}
-
 .novel-description-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1816,33 +889,24 @@ function formatDate(value: string) {
   color: var(--accent-link);
 }
 
-.job-failed-chapters {
-  border: 1px solid var(--divide);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  background: color-mix(in oklab, var(--text-primary) 4%, transparent);
+/* Skeleton sidebar styles — kept here so the loading state mirrors the
+   NovelSidebar layout without instantiating the component. */
+.novel-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
 }
 
-.job-failed-chapter-item {
-  padding: 0.65rem 0;
-  border-bottom: 1px solid var(--divide);
+.novel-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.job-failed-chapter-item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.job-failed-chapter-error {
-  margin-top: 0.35rem;
-  padding: 0.5rem 0.65rem;
-  background: color-mix(in oklab, #dc2626 10%, transparent);
-  border-left: 3px solid #dc2626;
-  border-radius: var(--radius-sm);
-  color: #7f1d1d;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.875rem;
+.novel-sidebar-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 @media (max-width: 768px) {
@@ -1858,10 +922,6 @@ function formatDate(value: string) {
     align-items: start;
   }
 
-  .novel-cover-large {
-    max-width: 100px;
-  }
-
   .novel-sidebar-actions {
     gap: 0.375rem;
   }
@@ -1872,10 +932,6 @@ function formatDate(value: string) {
 
   .novel-title {
     font-size: 1.375rem;
-  }
-
-  .novel-description {
-    font-size: 0.8125rem;
   }
 }
 </style>

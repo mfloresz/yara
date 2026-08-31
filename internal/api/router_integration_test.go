@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -9,8 +10,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"translator-server/internal/config"
@@ -68,19 +71,19 @@ func TestAuthRegisterAndFetchMe(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/auth/me", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/auth/me", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var me authPayload
+	var me store.User
 	decodeResponse(t, resp, &me)
-	if me.User.ID == "" {
+	if me.ID == "" {
 		t.Fatalf("expected user id in /me response")
 	}
-	if me.User.Email != "alice@example.com" {
-		t.Fatalf("expected email alice@example.com, got %q", me.User.Email)
+	if me.Email != "alice@example.com" {
+		t.Fatalf("expected email alice@example.com, got %q", me.Email)
 	}
-	if me.User.Theme != "system" {
-		t.Fatalf("expected default theme system, got %q", me.User.Theme)
+	if me.Theme != "system" {
+		t.Fatalf("expected default theme system, got %q", me.Theme)
 	}
 }
 
@@ -89,7 +92,7 @@ func TestNovelResponseIncludesOwnerIDAndChapterStatusRequiresOwnership(t *testin
 	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
 	bob := registerUser(t, env.handler, "bob@example.com", "secret123", "Bob")
 
-	novelResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels", alice.Token, map[string]any{
+	novelResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
 		"sourceTitle":    "Mi novela",
 		"sourceLanguage": "es",
 		"targetLanguage": "en",
@@ -102,7 +105,7 @@ func TestNovelResponseIncludesOwnerIDAndChapterStatusRequiresOwnership(t *testin
 		t.Fatalf("expected ownerId %q, got %q", alice.User.ID, novel.OwnerID)
 	}
 
-	chapterResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+	chapterResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
 		"chapterOrder":    1,
 		"title":           "Capítulo 1",
 		"originalContent": "Hola mundo",
@@ -112,13 +115,13 @@ func TestNovelResponseIncludesOwnerIDAndChapterStatusRequiresOwnership(t *testin
 	var chapter chapterPayload
 	decodeResponse(t, chapterResp, &chapter)
 
-	forbiddenResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", bob.Token, map[string]any{
+	forbiddenResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", bob.Token, map[string]any{
 		"status":       "failed",
 		"errorMessage": "intrusion",
 	})
 	assertStatus(t, forbiddenResp, http.StatusForbidden)
 
-	okResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
+	okResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
 		"status":       "processing",
 		"errorMessage": "",
 	})
@@ -137,13 +140,13 @@ func TestChapterUpsertPreservesStatusWhenOmitted(t *testing.T) {
 	novel := createNovel(t, env.handler, alice.Token, "Estado", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
-	statusResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
+	statusResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
 		"status":       "translated",
 		"errorMessage": "",
 	})
 	assertStatus(t, statusResp, http.StatusOK)
 
-	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
 		"id":                chapter.ID,
 		"chapterOrder":      1,
 		"title":             "Capítulo 1 editado",
@@ -187,7 +190,7 @@ func TestImportEpubPersistsCoverFile(t *testing.T) {
 		t.Fatalf("close writer: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/db/novels/import-epub", &body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/novels/import-epub", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+alice.Token)
 
@@ -224,21 +227,270 @@ func TestImportEpubPersistsCoverFile(t *testing.T) {
 	}
 }
 
+func TestImportZipIgnoresEmptyTranslatedFiles(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-zip-empty@example.com", "secret123", "Alice")
+
+	var zipBuf bytes.Buffer
+	zipWriter := zip.NewWriter(&zipBuf)
+	addZipEntry := func(name, content string) {
+		w, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+	addZipEntry("metadata.json", `{"sourceTitle":"Zipped Novel","sourceLanguage":"en","targetLanguage":"es"}`)
+	addZipEntry("originals/chapter-002.md", "Chapter 2: Situation\nOriginal body text.")
+	// 0-byte placeholder: must not produce a translated title or content.
+	addZipEntry("translated/chapter-002.md", "")
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, err := writer.CreateFormFile("file", "novel.zip")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fileWriter.Write(zipBuf.Bytes()); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/novels/import-zip", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+alice.Token)
+
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var importResp struct {
+		Novel            map[string]any `json:"novel"`
+		ChaptersImported int            `json:"chaptersImported"`
+	}
+	decodeData(t, rec, &importResp)
+	if importResp.ChaptersImported != 1 {
+		t.Fatalf("expected 1 chapter imported, got %d", importResp.ChaptersImported)
+	}
+
+	chaptersResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+importResp.Novel["id"].(string)+"/chapters", alice.Token, nil)
+	assertStatus(t, chaptersResp, http.StatusOK)
+
+	var chaptersFromAPI []chapterPayload
+	decodeResponse(t, chaptersResp, &chaptersFromAPI)
+	if len(chaptersFromAPI) != 1 {
+		t.Fatalf("expected 1 chapter, got %d", len(chaptersFromAPI))
+	}
+	chapter := chaptersFromAPI[0]
+	if chapter.Title != "Chapter 2: Situation" {
+		t.Fatalf("expected original title %q, got %q", "Chapter 2: Situation", chapter.Title)
+	}
+	if chapter.TranslatedTitle != "" {
+		t.Fatalf("expected empty translated title for empty translated file, got %q", chapter.TranslatedTitle)
+	}
+	if chapter.TranslatedContent != "" {
+		t.Fatalf("expected empty translated content, got %q", chapter.TranslatedContent)
+	}
+	if chapter.Status != "pending" {
+		t.Fatalf("expected chapter status pending, got %q", chapter.Status)
+	}
+}
+
 func TestListNovelsSortByCreatedSucceeds(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice-sort@example.com", "secret123", "Alice")
 	createNovel(t, env.handler, alice.Token, "Ordenable", "en", "es")
 
-	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels", alice.Token, nil)
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var listResp struct {
-		Items []map[string]any `json:"items"`
-	}
+	var listResp []map[string]any
 	decodeResponse(t, resp, &listResp)
-	if len(listResp.Items) != 1 {
-		t.Fatalf("expected 1 novel in list, got %d", len(listResp.Items))
+	if len(listResp) != 1 {
+		t.Fatalf("expected 1 novel in list, got %d", len(listResp))
 	}
+}
+
+func TestNovelCanUpdateFlag(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-canupdate@example.com", "secret123", "Alice")
+
+	// Novel without a source URL is never updatable.
+	noURL := createNovel(t, env.handler, alice.Token, "Sin URL", "en", "es")
+
+	// Novel with a parser-supported URL is updatable.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+		"sourceTitle":    "Desde URL",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"url":            "https://www.novelfire.net/novel/123",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var withURL novelPayload
+	decodeResponse(t, resp, &withURL)
+
+	// Novel with a URL from an unsupported domain is not updatable.
+	resp = doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+		"sourceTitle":    "Sitio desconocido",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"url":            "https://example.com/novel/123",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var unknownURL novelPayload
+	decodeResponse(t, resp, &unknownURL)
+
+	getCanUpdate := func(id string) bool {
+		t.Helper()
+		resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+id, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var n struct {
+			CanUpdate bool `json:"canUpdate"`
+		}
+		decodeResponse(t, resp, &n)
+		return n.CanUpdate
+	}
+
+	if getCanUpdate(noURL.ID) {
+		t.Fatalf("expected canUpdate=false for novel without URL")
+	}
+	if !getCanUpdate(withURL.ID) {
+		t.Fatalf("expected canUpdate=true for novelfire.net novel")
+	}
+	if getCanUpdate(unknownURL.ID) {
+		t.Fatalf("expected canUpdate=false for unsupported domain")
+	}
+}
+
+func TestListNovelsSorting(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-sorting@example.com", "secret123", "Alice")
+
+	createNovelFull := func(sourceTitle, targetTitle string) novelPayload {
+		t.Helper()
+		body := map[string]any{
+			"sourceTitle":    sourceTitle,
+			"sourceLanguage": "en",
+			"targetLanguage": "es",
+		}
+		if targetTitle != "" {
+			body["targetTitle"] = targetTitle
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, body)
+		assertStatus(t, resp, http.StatusCreated)
+		var n novelPayload
+		decodeResponse(t, resp, &n)
+		return n
+	}
+
+	bravo := createNovelFull("Bravo", "")
+	time.Sleep(20 * time.Millisecond)
+	alpha := createNovelFull("Alpha", "")
+	time.Sleep(20 * time.Millisecond)
+	// Zulu displays as "Charlie" (target title preferred), so title-sorted order is
+	// Alpha, Bravo, Charlie while creation order is Bravo, Alpha, Zulu.
+	zulu := createNovelFull("Zulu", "Charlie")
+
+	listSorted := func(query string) (items []map[string]any, hasMore bool) {
+		t.Helper()
+		path := "/api/v1/novels"
+		if query != "" {
+			path += "?" + query
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodGet, path, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var envelope struct {
+			Data []map[string]any `json:"data"`
+			Meta *v1Meta          `json:"meta"`
+		}
+		decodeRaw(t, resp, &envelope)
+		return envelope.Data, envelope.Meta != nil && envelope.Meta.HasMore
+	}
+
+	ids := func(items []map[string]any) []string {
+		out := make([]string, 0, len(items))
+		for _, it := range items {
+			out = append(out, it["id"].(string))
+		}
+		return out
+	}
+
+	assertIDs := func(name string, got, want []string) {
+		t.Helper()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s = %v, want %v", name, got, want)
+		}
+	}
+
+	// Default sort is title ascending, preferring target titles.
+	def, _ := listSorted("")
+	assertIDs("default sort (title asc)", ids(def), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// Explicit title sort both directions.
+	asc, _ := listSorted("sort=title&order=asc")
+	assertIDs("title asc", ids(asc), []string{alpha.ID, bravo.ID, zulu.ID})
+	desc, _ := listSorted("sort=title&order=desc")
+	assertIDs("title desc", ids(desc), []string{zulu.ID, bravo.ID, alpha.ID})
+
+	// created follows the UI convention: asc = most-recent first (Zulu created
+	// last), desc = oldest first (Bravo created first).
+	createdAsc, _ := listSorted("sort=created&order=asc")
+	assertIDs("created asc", ids(createdAsc), []string{zulu.ID, alpha.ID, bravo.ID})
+	createdDesc, _ := listSorted("sort=created&order=desc")
+	assertIDs("created desc", ids(createdDesc), []string{bravo.ID, alpha.ID, zulu.ID})
+
+	// Invalid sort/order values fall back to the defaults (title asc).
+	fallback, _ := listSorted("sort=bogus&order=sideways")
+	assertIDs("invalid sort/order fallback", ids(fallback), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// lastRead requires reading progress: bravo read first, then zulu; alpha unread.
+	// Like created, asc = most-recently-read first; unread (alpha) stays last.
+	chBravo := createChapter(t, env.handler, alice.Token, bravo.ID, 1)
+	time.Sleep(20 * time.Millisecond)
+	chZulu := createChapter(t, env.handler, alice.Token, zulu.ID, 1)
+
+	progressResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/novels/"+bravo.ID+"/reading-progress", alice.Token, map[string]any{
+		"chapterId": chBravo.ID, "scrollPercent": 0,
+	})
+	assertStatus(t, progressResp, http.StatusOK)
+	time.Sleep(20 * time.Millisecond)
+	progressResp = doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/novels/"+zulu.ID+"/reading-progress", alice.Token, map[string]any{
+		"chapterId": chZulu.ID, "scrollPercent": 0,
+	})
+	assertStatus(t, progressResp, http.StatusOK)
+
+	lastReadAsc, _ := listSorted("sort=lastRead&order=asc")
+	assertIDs("lastRead asc", ids(lastReadAsc), []string{zulu.ID, bravo.ID, alpha.ID})
+	lastReadDesc, _ := listSorted("sort=lastRead&order=desc")
+	assertIDs("lastRead desc", ids(lastReadDesc), []string{bravo.ID, zulu.ID, alpha.ID})
+
+	// Pagination stays globally consistent with the requested sort: page 1 + page 2
+	// reconstructs the full title-asc order with no duplicates.
+	page1, p1More := listSorted("sort=title&order=asc&limit=2&offset=0")
+	if len(page1) != 2 || !p1More {
+		t.Fatalf("expected 2 items with hasMore on page 1, got %d items hasMore=%v", len(page1), p1More)
+	}
+	page2, p2More := listSorted("sort=title&order=asc&limit=2&offset=2")
+	if len(page2) != 1 || p2More {
+		t.Fatalf("expected 1 item without hasMore on page 2, got %d items hasMore=%v", len(page2), p2More)
+	}
+	assertIDs("paged title asc", append(ids(page1), ids(page2)...), []string{alpha.ID, bravo.ID, zulu.ID})
+
+	// Search applies the same sort/order (query "a" matches Alpha, Bravo, Charlie).
+	searchDesc, _ := listSorted("q=a&sort=title&order=desc")
+	assertIDs("search title desc", ids(searchDesc), []string{zulu.ID, bravo.ID, alpha.ID})
+	searchFallback, _ := listSorted("q=a&sort=created&order=asc")
+	assertIDs("search created asc", ids(searchFallback), []string{zulu.ID, alpha.ID, bravo.ID})
 }
 
 func TestImportedCoverIsPubliclyFetchable(t *testing.T) {
@@ -270,7 +522,7 @@ func TestImportedCoverIsPubliclyFetchable(t *testing.T) {
 		t.Fatalf("close writer: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/db/novels/import-epub", &body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/novels/import-epub", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+alice.Token)
 
@@ -348,7 +600,7 @@ func TestImportEpubWithLongDescriptionSucceeds(t *testing.T) {
 		t.Fatalf("close writer: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/db/novels/import-epub", &body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/novels/import-epub", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+alice.Token)
 
@@ -394,7 +646,7 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 		t.Fatalf("create active job: %v", err)
 	}
 
-	statusResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/translation-jobs/active/status", alice.Token, nil)
+	statusResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/jobs/active", alice.Token, nil)
 	assertStatus(t, statusResp, http.StatusOK)
 
 	var activeStatus activeJobStatusPayload
@@ -403,7 +655,7 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 		t.Fatal("expected hasActive=true when user has a pending job")
 	}
 
-	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/translation-jobs", alice.Token, map[string]any{
+	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
 		"chapterIds": []string{chapter.ID},
 		"operation":  "translate",
 		"options": map[string]any{
@@ -413,13 +665,191 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 	})
 	assertStatus(t, jobResp, http.StatusCreated)
 
-	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
 	assertStatus(t, chapterResp, http.StatusOK)
 
 	var updatedChapter chapterPayload
 	decodeResponse(t, chapterResp, &updatedChapter)
 	if updatedChapter.Status != "processing" {
 		t.Fatalf("expected job creation to mark chapter processing, got %q", updatedChapter.Status)
+	}
+}
+
+func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+
+	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
+		"chapterIds": []string{chapter.ID},
+		"operation":  "translate",
+		"options":    map[string]any{},
+	})
+	assertStatus(t, jobResp, http.StatusServiceUnavailable)
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected exactly one job, got %d", len(jobs))
+	}
+	if jobs[0].Status != "failed" {
+		t.Fatalf("expected rejected job to be failed, got %q", jobs[0].Status)
+	}
+	if jobs[0].ErrorMessage != jobQueueFullMessage {
+		t.Fatalf("expected queue-full error message, got %q", jobs[0].ErrorMessage)
+	}
+
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	var updatedChapter chapterPayload
+	decodeResponse(t, chapterResp, &updatedChapter)
+	if updatedChapter.Status != "pending" {
+		t.Fatalf("expected rejected job chapter to reset to pending, got %q", updatedChapter.Status)
+	}
+}
+
+func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-novel-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
+	first := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	second := createChapter(t, env.handler, alice.Token, novel.ID, 2)
+
+	// No chapterIds: the job covers the whole novel, so the handler marks every
+	// chapter processing before the queue rejects it.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
+		"operation": "translate",
+		"options":   map[string]any{},
+	})
+	assertStatus(t, resp, http.StatusServiceUnavailable)
+
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != "failed" {
+		t.Fatalf("expected one failed job, got %+v", jobs)
+	}
+
+	for _, id := range []string{first.ID, second.ID} {
+		chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+id, alice.Token, nil)
+		assertStatus(t, chapterResp, http.StatusOK)
+		var updated chapterPayload
+		decodeResponse(t, chapterResp, &updated)
+		if updated.Status != "pending" {
+			t.Fatalf("expected chapter %s to reset to pending, got %q", id, updated.Status)
+		}
+	}
+}
+
+func TestJobPatchStatusTransitions(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-transitions@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Transiciones", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	ids, _ := json.Marshal([]string{chapter.ID})
+
+	newJob := func(status string) string {
+		t.Helper()
+		job := &store.Job{
+			NovelID:       novel.ID,
+			Status:        status,
+			Operation:     "translate",
+			ChapterIDs:    string(ids),
+			TotalChapters: 1,
+		}
+		if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+			t.Fatalf("create job: %v", err)
+		}
+		return job.ID
+	}
+	patchStatus := func(jobID string, status string) *httptest.ResponseRecorder {
+		t.Helper()
+		// v1 split PATCH /jobs/{id} into POST /jobs/{id}/cancel and
+		// /jobs/{id}/retry. Other status values are not accepted on v1.
+		switch status {
+		case "cancelled":
+			return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+jobID+"/cancel", alice.Token, nil)
+		case "pending":
+			return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+jobID+"/retry", alice.Token, nil)
+		default:
+			return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+jobID+"/retry", alice.Token, map[string]any{"status": status})
+		}
+	}
+
+	pendingID := newJob("pending")
+	assertStatus(t, patchStatus(pendingID, "pending"), http.StatusConflict)
+
+	runningID := newJob("running")
+	assertStatus(t, patchStatus(runningID, "pending"), http.StatusConflict)
+
+	failedID := newJob("failed")
+	// On v1, PATCH /jobs/{id} is replaced by POST /jobs/{id}/cancel and
+	// /jobs/{id}/retry. There is no generic status endpoint, so an
+	// arbitrary status value no longer returns 400 — it just maps to /retry
+	// (which sets status to "pending"). The 200 here is intentional.
+	assertStatus(t, patchStatus(failedID, "pending"), http.StatusOK)
+
+	assertStatus(t, patchStatus(runningID, "cancelled"), http.StatusOK)
+}
+
+func TestBatchTranslateQueueRejectionMarkedInResponse(t *testing.T) {
+	env := newAPITestEnv(t)
+	oldQueue := env.server.translateQueue
+	env.server.translateQueue = make(chan string)
+	close(oldQueue)
+	alice := registerUser(t, env.handler, "alice-batch-queue@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Lote", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/batch-translate", alice.Token, map[string]any{
+		"selections": []map[string]any{
+			{"novelId": novel.ID, "chapterIds": []string{chapter.ID}},
+		},
+	})
+	assertStatus(t, resp, http.StatusAccepted)
+
+	var result struct {
+		Jobs []struct {
+			NovelID       string `json:"novelId"`
+			JobID         string `json:"jobId"`
+			EnqueueFailed bool   `json:"enqueueFailed"`
+		} `json:"jobs"`
+		TotalPending int `json:"totalPending"`
+	}
+	decodeResponse(t, resp, &result)
+	if len(result.Jobs) != 1 {
+		t.Fatalf("expected one job entry, got %+v", result.Jobs)
+	}
+	if !result.Jobs[0].EnqueueFailed {
+		t.Fatalf("expected enqueueFailed on rejected job entry: %+v", result.Jobs[0])
+	}
+	if result.TotalPending != 0 {
+		t.Fatalf("expected totalPending 0 for rejected job, got %d", result.TotalPending)
+	}
+
+	storedJob, err := env.store.GetJob(result.Jobs[0].JobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if storedJob.Status != "failed" {
+		t.Fatalf("expected rejected job to be failed, got %q", storedJob.Status)
+	}
+
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	var updated chapterPayload
+	decodeResponse(t, chapterResp, &updated)
+	if updated.Status != "pending" {
+		t.Fatalf("expected rejected batch chapter to reset to pending, got %q", updated.Status)
 	}
 }
 
@@ -431,41 +861,39 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
-	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/translation-jobs", alice.Token, map[string]any{
-		"chapterIds": []string{chapter.ID},
-		"operation":  "translate",
-		"options": map[string]any{
-			"provider": "venice",
-			"model":    "deepseek-v4-flash",
-		},
-	})
-	assertStatus(t, jobResp, http.StatusCreated)
+	// Create the job directly: a job created through the HTTP endpoint would be
+	// picked up by the live translation worker and race the PATCH assertions.
+	ids, _ := json.Marshal([]string{chapter.ID})
+	job := &store.Job{
+		NovelID:       novel.ID,
+		Status:        "pending",
+		Operation:     "translate",
+		ChapterIDs:    string(ids),
+		TotalChapters: 1,
+	}
+	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
 
-	var job jobPayload
-	decodeResponse(t, jobResp, &job)
-
-	forbiddenResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/translation-jobs/"+job.ID, bob.Token, map[string]any{
-		"status": "cancelled",
-	})
+	forbiddenResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+job.ID+"/cancel", bob.Token, nil)
 	assertStatus(t, forbiddenResp, http.StatusForbidden)
 
-	processingResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
+	processingResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID+"/status", alice.Token, map[string]any{
 		"status":       "processing",
 		"errorMessage": "",
 	})
 	assertStatus(t, processingResp, http.StatusOK)
 
-	okResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/translation-jobs/"+job.ID, alice.Token, map[string]any{
-		"status": "cancelled",
-	})
+	okResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/jobs/"+job.ID+"/cancel", alice.Token, nil)
 	assertStatus(t, okResp, http.StatusOK)
 
-	decodeResponse(t, okResp, &job)
-	if job.Status != "cancelled" {
-		t.Fatalf("expected job status cancelled, got %q", job.Status)
+	var patched jobPayload
+	decodeResponse(t, okResp, &patched)
+	if patched.Status != "cancelled" {
+		t.Fatalf("expected job status cancelled, got %q", patched.Status)
 	}
 
-	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
 	assertStatus(t, chapterResp, http.StatusOK)
 
 	var updatedChapter chapterPayload
@@ -475,91 +903,6 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 	}
 }
 
-func TestExcludeChapterPreservesRecordAndUpdatesStats(t *testing.T) {
-	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-exclude-chapter@example.com", "secret123", "Alice")
-
-	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
-	chapter1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
-	chapter2 := createChapter(t, env.handler, alice.Token, novel.ID, 2)
-
-	chapterIDsJSON, err := json.Marshal([]string{chapter1.ID, chapter2.ID})
-	if err != nil {
-		t.Fatalf("marshal chapter ids: %v", err)
-	}
-	job := &store.Job{
-		NovelID:                 novel.ID,
-		Status:                  "done",
-		Operation:               "translate",
-		ChapterIDs:              string(chapterIDsJSON),
-		TotalChapters:           2,
-		AutoSegmentChapterID:    chapter1.ID,
-		AutoSegmentChapterTitle: "Capítulo",
-	}
-	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
-		t.Fatalf("create job: %v", err)
-	}
-
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+chapter1.ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
-
-	// Logical delete: the record still exists, keeps its ID/source order and is
-	// flagged as excluded.
-	excludedResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter1.ID, alice.Token, nil)
-	assertStatus(t, excludedResp, http.StatusOK)
-	var stored chapterPayload
-	decodeResponse(t, excludedResp, &stored)
-	if stored.ID != chapter1.ID || !stored.Excluded {
-		t.Fatalf("expected chapter to be retained with excluded=true, got %#v", stored)
-	}
-	if stored.ChapterOrder != 1 {
-		t.Fatalf("expected chapter_order to be preserved, got %d", stored.ChapterOrder)
-	}
-
-	// The excluded chapter is hidden from the normal list and visible in the
-	// excluded listing.
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, nil)
-	assertStatus(t, listResp, http.StatusOK)
-	var visible []map[string]any
-	decodeResponse(t, listResp, &visible)
-	for _, item := range visible {
-		if item["id"] == chapter1.ID {
-			t.Fatalf("excluded chapter must not appear in the normal chapter list")
-		}
-	}
-	excludedListResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/excluded", alice.Token, nil)
-	assertStatus(t, excludedListResp, http.StatusOK)
-	var excludedList []map[string]any
-	decodeResponse(t, excludedListResp, &excludedList)
-	if len(excludedList) != 1 || excludedList[0]["id"] != chapter1.ID {
-		t.Fatalf("expected the excluded listing to contain chapter1, got %#v", excludedList)
-	}
-
-	// Job references are preserved as history (the job is not active, and
-	// excluded chapters are filtered at job-load time).
-	updatedJob, err := env.store.GetOwnedJob(alice.User.ID, job.ID)
-	if err != nil {
-		t.Fatalf("get updated job: %v", err)
-	}
-	var updatedIDs []string
-	if err := json.Unmarshal([]byte(updatedJob.ChapterIDs), &updatedIDs); err != nil {
-		t.Fatalf("decode job chapter ids: %v", err)
-	}
-	if len(updatedIDs) != 2 {
-		t.Fatalf("expected job chapter ids to be preserved after exclusion, got %#v", updatedIDs)
-	}
-
-	stats, err := env.store.GetChapterStatsAccessible(alice.User.ID, novel.ID)
-	if err != nil {
-		t.Fatalf("get chapter stats: %v", err)
-	}
-	if stats.TotalChapters != 1 {
-		t.Fatalf("expected chapter_count=1 after exclusion, got %d", stats.TotalChapters)
-	}
-	if stats.MaxChapterOrder != 2 {
-		t.Fatalf("expected max_chapter_order=2 (source maximum, includes excluded), got %d", stats.MaxChapterOrder)
-	}
-}
 
 func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	env := newAPITestEnv(t)
@@ -600,10 +943,10 @@ func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 		t.Fatalf("create job: %v", err)
 	}
 
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+imported.Novel.ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+imported.Novel.ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
-	novelResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+imported.Novel.ID, alice.Token, nil)
+	novelResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+imported.Novel.ID, alice.Token, nil)
 	assertStatus(t, novelResp, http.StatusNotFound)
 
 	chapterRecords, err := env.store.App.FindRecordsByFilter(store.ChaptersCollection, "novel = {:novel}", "", 10, 0, map[string]any{"novel": imported.Novel.ID})
@@ -641,7 +984,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
 	secret := "super-secret-api-key"
 
-	replaceResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/user/providers/venice/key", alice.Token, map[string]any{
+	replaceResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/providers/venice/key", alice.Token, map[string]any{
 		"apiKey": secret,
 	})
 	assertStatus(t, replaceResp, http.StatusOK)
@@ -650,7 +993,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 		t.Fatalf("provider key leaked in replace response: %s", body)
 	}
 
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/user/providers", alice.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/providers", alice.Token, nil)
 	assertStatus(t, listResp, http.StatusOK)
 	listBody := readBody(t, listResp)
 	if strings.Contains(listBody, secret) {
@@ -658,7 +1001,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 	}
 
 	var providers providersPayload
-	decodeStringResponse(t, listBody, &providers)
+	decodeResponse(t, listResp, &providers)
 	venice := findProvider(t, providers.Providers, "venice")
 	if !venice.APIKeyConfigured {
 		t.Fatalf("expected venice api key to be marked configured")
@@ -667,7 +1010,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 		t.Fatalf("expected venice api key updated timestamp")
 	}
 
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/user/providers/venice/key", alice.Token, nil)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/providers/venice/key", alice.Token, nil)
 	assertStatus(t, deleteResp, http.StatusNoContent)
 
 	resolved, err := env.store.ResolveProviderAISettings(alice.User.ID, "venice")
@@ -678,7 +1021,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 		t.Fatalf("expected resolved api key to be empty after delete, got %q", resolved.APIKey)
 	}
 
-	finalResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/user/providers", alice.Token, nil)
+	finalResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/providers", alice.Token, nil)
 	assertStatus(t, finalResp, http.StatusOK)
 	var finalProviders providersPayload
 	decodeResponse(t, finalResp, &finalProviders)
@@ -692,7 +1035,7 @@ func TestProviderConfiguredTimeoutMsIsRespected(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
 
-	updateResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/user/providers/venice", alice.Token, map[string]any{
+	updateResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/providers/venice", alice.Token, map[string]any{
 		"model":     "deepseek-v4-flash",
 		"baseUrl":   "https://api.venice.ai/api/v1",
 		"timeoutMs": 600000,
@@ -707,7 +1050,7 @@ func TestProviderConfiguredTimeoutMsIsRespected(t *testing.T) {
 		t.Fatalf("expected resolved TimeoutMs=600000 (user-configured), got %d", resolved.TimeoutMs)
 	}
 
-	clearResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/user/providers/venice", alice.Token, map[string]any{
+	clearResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/providers/venice", alice.Token, map[string]any{
 		"model":     "deepseek-v4-flash",
 		"baseUrl":   "https://api.venice.ai/api/v1",
 		"timeoutMs": 0,
@@ -723,176 +1066,90 @@ func TestProviderConfiguredTimeoutMsIsRespected(t *testing.T) {
 	}
 }
 
-func newAPITestEnv(t *testing.T) *apiTestEnv {
-	t.Helper()
-
-	dataDir := t.TempDir()
-	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
-	if err := app.Bootstrap(); err != nil {
-		t.Fatalf("bootstrap pocketbase: %v", err)
-	}
-
-	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
-	if err != nil {
-		t.Fatalf("create encryptor: %v", err)
-	}
-
-	st := store.New(app, encryptor)
-	if err := st.EnsureSchema(); err != nil {
-		t.Fatalf("ensure schema: %v", err)
-	}
-
-	server := New(st, &config.Config{DataDir: dataDir})
-	return &apiTestEnv{handler: Router(server), store: st, server: server}
-}
-
-func registerUser(t *testing.T, handler http.Handler, email, password, name string) authPayload {
-	t.Helper()
-	resp := doJSONRequest(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
-		"email":    email,
-		"password": password,
-		"name":     name,
-	})
-	assertStatus(t, resp, http.StatusCreated)
-	var out authPayload
-	decodeResponse(t, resp, &out)
-	if out.Token == "" {
-		t.Fatalf("expected auth token for %s", email)
-	}
-	return out
-}
-
-func createNovel(t *testing.T, handler http.Handler, token, title, sourceLanguage, targetLanguage string) novelPayload {
-	t.Helper()
-	resp := doJSONRequest(t, handler, http.MethodPost, "/api/db/novels", token, map[string]any{
-		"sourceTitle":    title,
-		"sourceLanguage": sourceLanguage,
-		"targetLanguage": targetLanguage,
-	})
-	assertStatus(t, resp, http.StatusCreated)
-	var novel novelPayload
-	decodeResponse(t, resp, &novel)
-	return novel
-}
-
-func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
+func TestExcludeChapterPreservesRecordAndUpdatesStats(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-clean@example.com", "secret123", "Alice")
+	alice := registerUser(t, env.handler, "alice-exclude-chapter@example.com", "secret123", "Alice")
 
-	novel := createNovel(t, env.handler, alice.Token, "Limpieza", "es", "en")
-	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
-		"chapterOrder":      1,
-		"title":             "Título Original",
-		"translatedTitle":   "Translated Title",
-		"originalContent":   "línea uno\nlínea dos\nBORRAR DESPUÉS\nlínea tres",
-		"translatedContent": "translated one\ntranslated two\ntranslated three",
-		"refinedContent":    "refined one\nrefined two\nrefined three",
-	})
-	assertStatus(t, resp, http.StatusCreated)
-	var chapter chapterPayload
-	decodeResponse(t, resp, &chapter)
+	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
+	chapter1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	chapter2 := createChapter(t, env.handler, alice.Token, novel.ID, 2)
 
-	cleanResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters/clean", alice.Token, map[string]any{
-		"chapterIds": []string{chapter.ID},
-		"mode":       "remove_after",
-		"searchText": "BORRAR",
-		"applyTo":    "original",
-	})
-	assertStatus(t, cleanResp, http.StatusOK)
-
-	fetchResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
-	assertStatus(t, fetchResp, http.StatusOK)
-	var updated chapterPayload
-	decodeResponse(t, fetchResp, &updated)
-
-	if updated.OriginalContent != "línea uno\nlínea dos" {
-		t.Fatalf("original content not cleaned as expected, got %q", updated.OriginalContent)
+	chapterIDsJSON, err := json.Marshal([]string{chapter1.ID, chapter2.ID})
+	if err != nil {
+		t.Fatalf("marshal chapter ids: %v", err)
 	}
-	if updated.TranslatedContent != "translated one\ntranslated two\ntranslated three" {
-		t.Fatalf("translated content was overwritten, got %q", updated.TranslatedContent)
+	job := &store.Job{
+		NovelID:                 novel.ID,
+		Status:                  "done",
+		Operation:               "translate",
+		ChapterIDs:              string(chapterIDsJSON),
+		TotalChapters:           2,
+		AutoSegmentChapterID:    chapter1.ID,
+		AutoSegmentChapterTitle: "Capítulo",
 	}
-	if updated.RefinedContent != "refined one\nrefined two\nrefined three" {
-		t.Fatalf("refined content was overwritten, got %q", updated.RefinedContent)
+	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+		t.Fatalf("create job: %v", err)
 	}
-	if updated.Title != "Título Original" {
-		t.Fatalf("title was overwritten, got %q", updated.Title)
-	}
-	if updated.TranslatedTitle != "Translated Title" {
-		t.Fatalf("translated title was overwritten, got %q", updated.TranslatedTitle)
-	}
-}
 
-func createChapter(t *testing.T, handler http.Handler, token, novelID string, order int) chapterPayload {
-	t.Helper()
-	resp := doJSONRequest(t, handler, http.MethodPost, "/api/db/novels/"+novelID+"/chapters", token, map[string]any{
-		"chapterOrder":    order,
-		"title":           "Capítulo",
-		"originalContent": "Texto original",
-	})
-	assertStatus(t, resp, http.StatusCreated)
-	var chapter chapterPayload
-	decodeResponse(t, resp, &chapter)
-	return chapter
-}
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter1.ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
-func doJSONRequest(t *testing.T, handler http.Handler, method, path, token string, body any) *httptest.ResponseRecorder {
-	t.Helper()
+	// Logical delete: the record still exists, keeps its ID/source order and is
+	// flagged as excluded.
+	excludedResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter1.ID, alice.Token, nil)
+	assertStatus(t, excludedResp, http.StatusOK)
+	var stored chapterPayload
+	decodeResponse(t, excludedResp, &stored)
+	if stored.ID != chapter1.ID || !stored.Excluded {
+		t.Fatalf("expected chapter to be retained with excluded=true, got %#v", stored)
+	}
+	if stored.ChapterOrder != 1 {
+		t.Fatalf("expected chapter_order to be preserved, got %d", stored.ChapterOrder)
+	}
 
-	var payload []byte
-	if body != nil {
-		var err error
-		payload, err = json.Marshal(body)
-		if err != nil {
-			t.Fatalf("marshal request body: %v", err)
+	// The excluded chapter is hidden from the normal list and visible in the
+	// excluded listing.
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, nil)
+	assertStatus(t, listResp, http.StatusOK)
+	var visible []map[string]any
+	decodeResponse(t, listResp, &visible)
+	for _, item := range visible {
+		if item["id"] == chapter1.ID {
+			t.Fatalf("excluded chapter must not appear in the normal chapter list")
 		}
 	}
-
-	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	excludedListResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/excluded", alice.Token, nil)
+	assertStatus(t, excludedListResp, http.StatusOK)
+	var excludedList []map[string]any
+	decodeResponse(t, excludedListResp, &excludedList)
+	if len(excludedList) != 1 || excludedList[0]["id"] != chapter1.ID {
+		t.Fatalf("expected the excluded listing to contain chapter1, got %#v", excludedList)
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+
+	// Job references are preserved as history (the job is not active, and
+	// excluded chapters are filtered at job-load time).
+	updatedJob, err := env.store.GetOwnedJob(alice.User.ID, job.ID)
+	if err != nil {
+		t.Fatalf("get updated job: %v", err)
+	}
+	var updatedIDs []string
+	if err := json.Unmarshal([]byte(updatedJob.ChapterIDs), &updatedIDs); err != nil {
+		t.Fatalf("decode job chapter ids: %v", err)
+	}
+	if len(updatedIDs) != 2 {
+		t.Fatalf("expected job chapter ids to be preserved after exclusion, got %#v", updatedIDs)
 	}
 
-	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, req)
-	return resp
-}
-
-func assertStatus(t *testing.T, resp *httptest.ResponseRecorder, want int) {
-	t.Helper()
-	if resp.Code != want {
-		t.Fatalf("expected status %d, got %d: %s", want, resp.Code, resp.Body.String())
+	stats, err := env.store.GetChapterStatsAccessible(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("get chapter stats: %v", err)
 	}
-}
-
-func decodeResponse(t *testing.T, resp *httptest.ResponseRecorder, out any) {
-	t.Helper()
-	decodeStringResponse(t, resp.Body.String(), out)
-}
-
-func decodeStringResponse(t *testing.T, body string, out any) {
-	t.Helper()
-	if err := json.Unmarshal([]byte(body), out); err != nil {
-		t.Fatalf("decode response: %v\nbody: %s", err, body)
+	if stats.TotalChapters != 1 {
+		t.Fatalf("expected chapter_count=1 after exclusion, got %d", stats.TotalChapters)
 	}
-}
-
-func readBody(t *testing.T, resp *httptest.ResponseRecorder) string {
-	t.Helper()
-	return resp.Body.String()
-}
-
-func findProvider(t *testing.T, providers []store.ProviderSetting, key string) store.ProviderSetting {
-	t.Helper()
-	for _, provider := range providers {
-		if provider.Provider == key {
-			return provider
-		}
+	if stats.MaxChapterOrder != 2 {
+		t.Fatalf("expected max_chapter_order=2 (source maximum, includes excluded), got %d", stats.MaxChapterOrder)
 	}
-	t.Fatalf("provider %q not found in response", key)
-	return store.ProviderSetting{}
 }
 
 func TestReorderChaptersUpdatesPositionsAtomically(t *testing.T) {
@@ -907,7 +1164,7 @@ func TestReorderChaptersUpdatesPositionsAtomically(t *testing.T) {
 
 	// Complete permutation: reversed source order.
 	ids := []string{chapters[4].ID, chapters[3].ID, chapters[2].ID, chapters[1].ID, chapters[0].ID}
-	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": ids})
+	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": ids})
 	assertStatus(t, resp, http.StatusOK)
 
 	for i, id := range ids {
@@ -928,7 +1185,7 @@ func TestReorderChaptersUpdatesPositionsAtomically(t *testing.T) {
 	}
 
 	// The normal list now returns chapters in position order.
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, nil)
 	assertStatus(t, listResp, http.StatusOK)
 	var list []map[string]any
 	decodeResponse(t, listResp, &list)
@@ -953,7 +1210,7 @@ func TestReorderRejectsInvalidLists(t *testing.T) {
 	c2 := createChapter(t, env.handler, alice.Token, novel.ID, 2)
 	foreign := createChapter(t, env.handler, bob.Token, other.ID, 1)
 
-	base := "/api/db/novels/" + novel.ID + "/chapters/order"
+	base := "/api/v1/novels/" + novel.ID + "/chapters/order"
 
 	// Empty list.
 	resp := doJSONRequest(t, env.handler, http.MethodPatch, base, alice.Token, map[string]any{"chapterIds": []string{}})
@@ -993,7 +1250,7 @@ func TestReorderRejectedDuringActiveJobs(t *testing.T) {
 		t.Fatalf("create job: %v", err)
 	}
 
-	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": []string{c2.ID, c1.ID}})
+	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": []string{c2.ID, c1.ID}})
 	assertStatus(t, resp, http.StatusConflict)
 }
 
@@ -1007,17 +1264,17 @@ func TestExcludeAndRestoreChapter(t *testing.T) {
 	c2 := createChapter(t, env.handler, alice.Token, novel.ID, 2)
 
 	// Another user cannot change visibility.
-	del := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID, bob.Token, nil)
+	del := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID, bob.Token, nil)
 	assertStatus(t, del, http.StatusForbidden)
-	vis := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID+"/visibility", bob.Token, map[string]any{"excluded": true})
+	vis := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID+"/visibility", bob.Token, map[string]any{"excluded": true})
 	assertStatus(t, vis, http.StatusForbidden)
 
 	// Exclude via DELETE.
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
 	// Restore via the visibility endpoint.
-	restoreResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID+"/visibility", alice.Token, map[string]any{"excluded": false})
+	restoreResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID+"/visibility", alice.Token, map[string]any{"excluded": false})
 	assertStatus(t, restoreResp, http.StatusOK)
 	var restored chapterPayload
 	decodeResponse(t, restoreResp, &restored)
@@ -1028,7 +1285,7 @@ func TestExcludeAndRestoreChapter(t *testing.T) {
 		t.Fatalf("expected restore to keep the original position %d, got %d", c1.Position, restored.Position)
 	}
 
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, nil)
 	assertStatus(t, listResp, http.StatusOK)
 	var list []map[string]any
 	decodeResponse(t, listResp, &list)
@@ -1048,32 +1305,32 @@ func TestExcludedChaptersHiddenFromPublicReaders(t *testing.T) {
 	c2 := createChapter(t, env.handler, alice.Token, novel.ID, 2)
 
 	// Share the novel publicly, then exclude chapter 2.
-	visResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/visibility", alice.Token, map[string]any{"isPublic": true})
+	visResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/visibility", alice.Token, map[string]any{"isPublic": true})
 	assertStatus(t, visResp, http.StatusOK)
-	delResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
-	assertStatus(t, delResp, http.StatusOK)
+	delResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
+	assertStatus(t, delResp, http.StatusNoContent)
 
 	// Non-owners keep read access to non-excluded chapters.
-	ok := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID, bob.Token, nil)
+	ok := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID, bob.Token, nil)
 	assertStatus(t, ok, http.StatusOK)
 
 	// Excluded chapters are invisible to non-owners even by direct ID.
-	hidden := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+c2.ID, bob.Token, nil)
+	hidden := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+c2.ID, bob.Token, nil)
 	assertStatus(t, hidden, http.StatusNotFound)
 
 	// The excluded listing is owner-only.
-	ownerOnly := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/excluded", bob.Token, nil)
+	ownerOnly := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/excluded", bob.Token, nil)
 	assertStatus(t, ownerOnly, http.StatusForbidden)
 
 	// The owner can still inspect the excluded chapter and list it.
-	inspect := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
+	inspect := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
 	assertStatus(t, inspect, http.StatusOK)
 	var owned chapterPayload
 	decodeResponse(t, inspect, &owned)
 	if !owned.Excluded {
 		t.Fatalf("expected chapter to be marked excluded for the owner, got %#v", owned)
 	}
-	excludedResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/excluded", alice.Token, nil)
+	excludedResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/excluded", alice.Token, nil)
 	assertStatus(t, excludedResp, http.StatusOK)
 	var excluded []map[string]any
 	decodeResponse(t, excludedResp, &excluded)
@@ -1082,7 +1339,7 @@ func TestExcludedChaptersHiddenFromPublicReaders(t *testing.T) {
 	}
 
 	// The non-owner chapter list omits excluded chapters.
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters", bob.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters", bob.Token, nil)
 	assertStatus(t, listResp, http.StatusOK)
 	var list []map[string]any
 	decodeResponse(t, listResp, &list)
@@ -1103,7 +1360,7 @@ func TestPendingSelectionFollowsPositionOrder(t *testing.T) {
 
 	// Manual reorder [c3, c1, c2] assigns positions 1, 2, 3.
 	ids := []string{chapters[2].ID, chapters[0].ID, chapters[1].ID}
-	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": ids})
+	resp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/order", alice.Token, map[string]any{"chapterIds": ids})
 	assertStatus(t, resp, http.StatusOK)
 
 	pending, err := env.store.GetOwnedNovelChapterIDsByStatus(alice.User.ID, novel.ID)
@@ -1131,11 +1388,11 @@ func TestExcludedChapterNotReportedAsGapOrRecreated(t *testing.T) {
 	}
 
 	// Exclude chapter 3.
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+chapters[2].ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+chapters[2].ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
 	// Real source gaps: none, because order 3 still exists (excluded).
-	gapsResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/gaps", alice.Token, nil)
+	gapsResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/gaps", alice.Token, nil)
 	assertStatus(t, gapsResp, http.StatusOK)
 	var gapsPayload struct {
 		Gaps           []store.ChapterGap `json:"gaps"`
@@ -1176,11 +1433,11 @@ func TestExcludedChaptersExcludedFromJobsAndEligible(t *testing.T) {
 	c3 := createChapter(t, env.handler, alice.Token, novel.ID, 3)
 
 	// Exclude chapter 2.
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c2.ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
 	// Eligible list omits excluded chapters.
-	eligibleResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters/eligible?operation=translate", alice.Token, nil)
+	eligibleResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/eligible?operation=translate", alice.Token, nil)
 	assertStatus(t, eligibleResp, http.StatusOK)
 	var eligible []map[string]any
 	decodeResponse(t, eligibleResp, &eligible)
@@ -1245,13 +1502,13 @@ func TestExclusionRejectedDuringActiveJobs(t *testing.T) {
 		t.Fatalf("create job: %v", err)
 	}
 
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
 	assertStatus(t, deleteResp, http.StatusConflict)
-	bulkResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/db/novels/"+novel.ID+"/chapters/bulk-delete", alice.Token, map[string]any{"ids": []string{c1.ID}})
+	bulkResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/bulk-delete", alice.Token, map[string]any{"ids": []string{c1.ID}})
 	assertStatus(t, bulkResp, http.StatusConflict)
 
 	// The chapter is still visible after the rejected exclusion.
-	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/db/novels/"+novel.ID+"/chapters", alice.Token, nil)
+	listResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, nil)
 	assertStatus(t, listResp, http.StatusOK)
 	var list []map[string]any
 	decodeResponse(t, listResp, &list)
@@ -1269,7 +1526,7 @@ func TestChapterStatsExcludeExcludedChapters(t *testing.T) {
 	createChapter(t, env.handler, alice.Token, novel.ID, 2)
 
 	// Mark chapter 1 as translated so it contributes to translated counts.
-	statusResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID+"/status", alice.Token, map[string]any{"status": "translated", "errorMessage": ""})
+	statusResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID+"/status", alice.Token, map[string]any{"status": "translated", "errorMessage": ""})
 	assertStatus(t, statusResp, http.StatusOK)
 
 	before, err := env.store.GetChapterStatsAccessible(alice.User.ID, novel.ID)
@@ -1280,8 +1537,8 @@ func TestChapterStatsExcludeExcludedChapters(t *testing.T) {
 		t.Fatalf("unexpected baseline stats: %+v", before)
 	}
 
-	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/db/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
-	assertStatus(t, deleteResp, http.StatusOK)
+	deleteResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/chapters/"+c1.ID, alice.Token, nil)
+	assertStatus(t, deleteResp, http.StatusNoContent)
 
 	after, err := env.store.GetChapterStatsAccessible(alice.User.ID, novel.ID)
 	if err != nil {
@@ -1296,4 +1553,294 @@ func TestChapterStatsExcludeExcludedChapters(t *testing.T) {
 	if after.MaxChapterOrder != 2 {
 		t.Fatalf("expected maxChapterOrder=2 (includes excluded), got %d", after.MaxChapterOrder)
 	}
+}
+
+func newAPITestEnv(t *testing.T) *apiTestEnv {
+	t.Helper()
+
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+
+	st := store.New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	server := New(st, &config.Config{DataDir: dataDir})
+	return &apiTestEnv{handler: Router(server), store: st, server: server}
+}
+
+func registerUser(t *testing.T, handler http.Handler, email, password, name string) authPayload {
+	t.Helper()
+	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
+		"email":    email,
+		"password": password,
+		"name":     name,
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var out authPayload
+	decodeResponse(t, resp, &out)
+	if out.Token == "" {
+		t.Fatalf("expected auth token for %s", email)
+	}
+	return out
+}
+
+func createNovel(t *testing.T, handler http.Handler, token, title, sourceLanguage, targetLanguage string) novelPayload {
+	t.Helper()
+	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/novels", token, map[string]any{
+		"sourceTitle":    title,
+		"sourceLanguage": sourceLanguage,
+		"targetLanguage": targetLanguage,
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var novel novelPayload
+	decodeData(t, resp, &novel)
+	return novel
+}
+
+func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-clean@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Limpieza", "es", "en")
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":      1,
+		"title":             "Título Original",
+		"translatedTitle":   "Translated Title",
+		"originalContent":   "línea uno\nlínea dos\nBORRAR DESPUÉS\nlínea tres",
+		"translatedContent": "translated one\ntranslated two\ntranslated three",
+		"refinedContent":    "refined one\nrefined two\nrefined three",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var chapter chapterPayload
+	decodeResponse(t, resp, &chapter)
+
+	cleanResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean", alice.Token, map[string]any{
+		"chapterIds": []string{chapter.ID},
+		"mode":       "remove_after",
+		"searchText": "BORRAR",
+		"applyTo":    "original",
+	})
+	assertStatus(t, cleanResp, http.StatusOK)
+
+	fetchResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, fetchResp, http.StatusOK)
+	var updated chapterPayload
+	decodeResponse(t, fetchResp, &updated)
+
+	if updated.OriginalContent != "línea uno\nlínea dos" {
+		t.Fatalf("original content not cleaned as expected, got %q", updated.OriginalContent)
+	}
+	if updated.TranslatedContent != "translated one\ntranslated two\ntranslated three" {
+		t.Fatalf("translated content was overwritten, got %q", updated.TranslatedContent)
+	}
+	if updated.RefinedContent != "refined one\nrefined two\nrefined three" {
+		t.Fatalf("refined content was overwritten, got %q", updated.RefinedContent)
+	}
+	if updated.Title != "Título Original" {
+		t.Fatalf("title was overwritten, got %q", updated.Title)
+	}
+	if updated.TranslatedTitle != "Translated Title" {
+		t.Fatalf("translated title was overwritten, got %q", updated.TranslatedTitle)
+	}
+}
+
+func TestCleanPreviewBulkReturnsOnlyChangedChapters(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-preview@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Vista Previa", "es", "en")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo Uno",
+		"originalContent": "línea uno\nlínea dos\nBORRAR\nlínea tres",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var ch1 chapterPayload
+	decodeResponse(t, resp, &ch1)
+
+	resp = doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    2,
+		"title":           "Capítulo Dos",
+		"originalContent": "sin coincidencia alguna",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var ch2 chapterPayload
+	decodeResponse(t, resp, &ch2)
+
+	previewResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, map[string]any{
+		"chapterIds": []string{ch1.ID, ch2.ID},
+		"mode":       "remove_after",
+		"searchText": "BORRAR",
+		"applyTo":    "original",
+	})
+	assertStatus(t, previewResp, http.StatusOK)
+
+	var body struct {
+		Items   []CleanPreviewBulkItem `json:"items"`
+		Total   int                    `json:"total"`
+		Changed int                    `json:"changed"`
+	}
+	decodeResponse(t, previewResp, &body)
+
+	if body.Total != 2 {
+		t.Fatalf("expected total=2, got %d", body.Total)
+	}
+	if body.Changed != 1 {
+		t.Fatalf("expected changed=1, got %d", body.Changed)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	item := body.Items[0]
+	if item.ChapterID != ch1.ID {
+		t.Fatalf("expected chapter %q, got %q", ch1.ID, item.ChapterID)
+	}
+	if item.ChapterTitle != "Capítulo Uno" {
+		t.Fatalf("expected chapter title %q, got %q", "Capítulo Uno", item.ChapterTitle)
+	}
+	if item.Cleaned != "línea uno\nlínea dos" {
+		t.Fatalf("expected cleaned %q, got %q", "línea uno\nlínea dos", item.Cleaned)
+	}
+	if !item.Changed {
+		t.Fatal("expected changed=true on the affected chapter")
+	}
+	if len(item.Changes) == 0 {
+		t.Fatal("expected changes to be present on the affected chapter")
+	}
+	foundRemoval := false
+	for _, hunk := range item.Changes {
+		if len(hunk.Before) > 0 && len(hunk.After) == 0 {
+			foundRemoval = true
+		}
+	}
+	if !foundRemoval {
+		t.Fatalf("expected at least one pure-removal hunk, got %+v", item.Changes)
+	}
+
+	// Invalid mode is rejected.
+	badResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, map[string]any{
+		"chapterIds": []string{ch1.ID},
+		"mode":       "nope",
+		"applyTo":    "original",
+	})
+	assertStatus(t, badResp, http.StatusBadRequest)
+}
+
+func createChapter(t *testing.T, handler http.Handler, token, novelID string, order int) chapterPayload {
+	t.Helper()
+	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/novels/"+novelID+"/chapters", token, map[string]any{
+		"chapterOrder":    order,
+		"title":           "Capítulo",
+		"originalContent": "Texto original",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var chapter chapterPayload
+	decodeData(t, resp, &chapter)
+	return chapter
+}
+
+func doJSONRequest(t *testing.T, handler http.Handler, method, path, token string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var payload []byte
+	if body != nil {
+		var err error
+		payload, err = json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	return resp
+}
+
+func assertStatus(t *testing.T, resp *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if resp.Code != want {
+		t.Fatalf("expected status %d, got %d: %s", want, resp.Code, resp.Body.String())
+	}
+}
+
+func decodeResponse(t *testing.T, resp *httptest.ResponseRecorder, out any) {
+	t.Helper()
+	body := resp.Body.String()
+	// v1 envelope wraps payloads in {data, meta, links}. By default, transparently
+	// unwrap so existing test payloads (which target the inner resource) keep
+	// working. Tests that need the full envelope (e.g. asserting on
+	// meta/links) should call decodeRaw instead.
+	if strings.HasPrefix(strings.TrimSpace(body), "{") {
+		var probe struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(body), &probe); err == nil && len(probe.Data) > 0 && string(probe.Data) != "null" {
+			decodeStringResponse(t, string(probe.Data), out)
+			return
+		}
+	}
+	decodeStringResponse(t, body, out)
+}
+
+// decodeRaw decodes the response body as-is, without envelope unwrapping.
+func decodeRaw(t *testing.T, resp *httptest.ResponseRecorder, out any) {
+	t.Helper()
+	decodeStringResponse(t, resp.Body.String(), out)
+}
+
+// decodeData extracts the v1 envelope's `data` field and decodes it into out.
+// Useful when the test payload is the inner resource rather than the full
+// {data,meta,links} envelope.
+func decodeData(t *testing.T, resp *httptest.ResponseRecorder, out any) {
+	t.Helper()
+	body := resp.Body.String()
+	var probe struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &probe); err != nil || len(probe.Data) == 0 || string(probe.Data) == "null" {
+		t.Fatalf("response missing data envelope: %v\nbody: %s", err, body)
+	}
+	decodeStringResponse(t, string(probe.Data), out)
+}
+
+func decodeStringResponse(t *testing.T, body string, out any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(body), out); err != nil {
+		t.Fatalf("decode response: %v\nbody: %s", err, body)
+	}
+}
+
+func readBody(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+	return resp.Body.String()
+}
+
+func findProvider(t *testing.T, providers []store.ProviderSetting, key string) store.ProviderSetting {
+	t.Helper()
+	for _, provider := range providers {
+		if provider.Provider == key {
+			return provider
+		}
+	}
+	t.Fatalf("provider %q not found in response", key)
+	return store.ProviderSetting{}
 }

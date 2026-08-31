@@ -22,6 +22,9 @@ func NewFloraeGardenParser() *floraegardenParser {
 
 func (p *floraegardenParser) Name() string { return "floraegarden" }
 
+// RequiresBrowser: a Cloudflare managed challenge guards all HTML pages.
+func (p *floraegardenParser) RequiresBrowser() bool { return true }
+
 func (p *floraegardenParser) CanHandle(urlStr string) bool {
 	return strings.Contains(urlStr, "floraegarden.com")
 }

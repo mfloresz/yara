@@ -23,6 +23,10 @@ func New69ShubaParser() *sixtyNineShuba {
 
 func (s *sixtyNineShuba) Name() string { return "69shuba" }
 
+// RequiresBrowser: chapter pages are behind a Cloudflare challenge and the
+// catalog requires login.
+func (s *sixtyNineShuba) RequiresBrowser() bool { return true }
+
 func (s *sixtyNineShuba) CanHandle(u string) bool {
 	return strings.Contains(u, "69shuba.com")
 }

@@ -40,17 +40,33 @@ type fenrirGenreTag struct {
 	Slug string `json:"slug"`
 }
 
+// fenrirLockInfo maps the "locked" object attached to a chapter. A chapter is
+// premium when Price > 0: it sits behind the paywall and the API only returns
+// a short preview instead of the full content.
+type fenrirLockInfo struct {
+	Price      int    `json:"price"`
+	UnlockedAt string `json:"unlocked_at"`
+	IsReadOnly bool   `json:"is_read_only"`
+}
+
 // fenrirChapterItem maps one element of the array returned by
 // GET /api/new/v2/series/{slug}/chapters.
 type fenrirChapterItem struct {
-	ID       int    `json:"id"`
-	Slug     string `json:"slug"`
-	Name     string `json:"name"`
-	Title    string `json:"title"`
-	Number   int    `json:"number"`
-	Type     string `json:"type"`
-	Locked   map[string]interface{} `json:"locked,omitempty"`
-	Bought   map[string]interface{} `json:"bought,omitempty"`
+	ID     int                    `json:"id"`
+	Slug   string                 `json:"slug"`
+	Name   string                 `json:"name"`
+	Title  string                 `json:"title"`
+	Number int                    `json:"number"`
+	Type   string                 `json:"type"`
+	Locked fenrirLockInfo         `json:"locked"`
+	Bought map[string]interface{} `json:"bought,omitempty"`
+}
+
+// fenrirIsPremium reports whether a chapter is locked behind the paywall.
+// Premium chapters cannot be downloaded (the API returns only a preview), so
+// they are excluded from the chapter list.
+func fenrirIsPremium(ch fenrirChapterItem) bool {
+	return ch.Locked.Price > 0
 }
 
 // fenrirExtractSlug extracts the series slug from a fenrirealm.com series URL.
@@ -99,9 +115,13 @@ func (p *FenrirRealmParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 		return nil, fmt.Errorf("parsing chapter list: %w", err)
 	}
 
-	// 3. Build chapter URLs.
+	// 3. Build chapter URLs (premium chapters are skipped — they sit behind
+	// the paywall and the API returns only a preview for them).
 	chapters := make([]ChapterURL, 0, len(chapterItems))
 	for _, ch := range chapterItems {
+		if fenrirIsPremium(ch) {
+			continue
+		}
 		// Chapter URL: https://fenrirealm.com/series/{slug}/{chapterSlug}
 		chURL := fmt.Sprintf("https://fenrirealm.com/series/%s/%s", slug, ch.Slug)
 		title := ch.Name
@@ -156,8 +176,13 @@ func (p *FenrirRealmParser) GetChapterURLs(ctx context.Context, client HTTPClien
 		return nil, fmt.Errorf("parsing chapter list: %w", err)
 	}
 
+	// Premium chapters are skipped — they sit behind the paywall and the API
+	// returns only a preview for them.
 	chapters := make([]ChapterURL, 0, len(chapterItems))
 	for _, ch := range chapterItems {
+		if fenrirIsPremium(ch) {
+			continue
+		}
 		chURL := fmt.Sprintf("https://fenrirealm.com/series/%s/%s", slug, ch.Slug)
 		title := ch.Name
 		if title == "" {
@@ -171,5 +196,3 @@ func (p *FenrirRealmParser) GetChapterURLs(ctx context.Context, client HTTPClien
 
 	return chapters, nil
 }
-
-

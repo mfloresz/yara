@@ -33,7 +33,7 @@ export function useProjectSettings(novel: Ref<Novel | null | undefined>) {
         notes: "",
         glossary: [],
         prompts: {},
-        ai: { provider: "", model: "", titleEnabled: false, titleProvider: "", titleModel: "" },
+        ai: { provider: "", model: "", titleEnabled: null, titleProvider: "", titleModel: "" },
         translation: normalizeTranslationOptions(defaults.value?.translation),
         cleanupRules: [],
       };

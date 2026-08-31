@@ -151,6 +151,9 @@ func (s *Store) ensureUserProviderSettingsCollection(users, providers *core.Coll
 		if err := s.ensureField(existing, &core.NumberField{Name: "timeout_ms"}); err != nil {
 			return nil, err
 		}
+		if err := s.ensureField(existing, &core.NumberField{Name: "concurrency"}); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(UserProviderSettingsCollection)
@@ -168,6 +171,7 @@ func (s *Store) ensureUserProviderSettingsCollection(users, providers *core.Coll
 	c.Fields.Add(&core.BoolField{Name: "api_key_configured"})
 	c.Fields.Add(&core.DateField{Name: "api_key_updated_at"})
 	c.Fields.Add(&core.NumberField{Name: "timeout_ms"})
+	c.Fields.Add(&core.NumberField{Name: "concurrency"})
 	c.AddIndex("idx_user_provider_unique", true, "owner,provider", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
@@ -253,6 +257,8 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.TextField{Name: "glossary", Max: 10000000})
 	c.Fields.Add(&core.EditorField{Name: "translation_system_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "translation_user_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "title_system_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "title_user_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "refine_system_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "refine_user_prompt"})
 	c.Fields.Add(&core.EditorField{Name: "check_system_prompt"})
@@ -314,6 +320,8 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 		&core.NumberField{Name: "last_check_new_chapters"},
 		&core.EditorField{Name: "translation_system_prompt"},
 		&core.EditorField{Name: "translation_user_prompt"},
+		&core.EditorField{Name: "title_system_prompt"},
+		&core.EditorField{Name: "title_user_prompt"},
 		&core.EditorField{Name: "refine_system_prompt"},
 		&core.EditorField{Name: "refine_user_prompt"},
 		&core.EditorField{Name: "check_system_prompt"},

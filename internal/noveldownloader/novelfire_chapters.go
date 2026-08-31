@@ -84,6 +84,12 @@ func fetchNovelfireChaptersJSON(ctx context.Context, client HTTPClient, ajaxURL,
 		chapters = append(chapters, ChapterURL{
 			URL:   chURL,
 			Title: CleanTitle(ch.Title),
+			// n_sort is the sequential URL number — the site's canonical
+			// position. Titles carry the novel's own numbering ("Chapter
+			// 92.1"), which collides across decimal parts and lags the URL
+			// sequence whenever a prologue shifts it, so they cannot be
+			// used as the order.
+			Order: ch.NSort,
 		})
 	}
 	return chapters, nil
@@ -118,9 +124,14 @@ func (p *NovelfireParser) parseChapterListHTML(doc *goquery.Document, ctx contex
 			if title == "" {
 				title = strings.TrimSpace(s.Text())
 			}
+			// The URL number is the site's canonical position; titles use
+			// the novel's own numbering ("Chapter 92.1", "c-1: Prologue"),
+			// which collides across decimal parts and shifts whenever a
+			// prologue offsets the sequence.
 			chapters = append(chapters, ChapterURL{
 				URL:   fullURL,
 				Title: CleanTitle(title),
+				Order: chapterSortKey(fullURL),
 			})
 		})
 	}
@@ -155,7 +166,9 @@ func (p *NovelfireParser) parseChapterListHTML(doc *goquery.Document, ctx contex
 		})
 	}
 
-	sort.Slice(chapters, func(i, j int) bool {
+	// Stable so chapters whose URL has no numeric suffix keep their page
+	// order instead of being shuffled among the other key-0 ties.
+	sort.SliceStable(chapters, func(i, j int) bool {
 		return chapterSortKey(chapters[i].URL) < chapterSortKey(chapters[j].URL)
 	})
 

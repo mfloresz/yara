@@ -42,6 +42,10 @@ export type Novel = {
   url: string;
   customCommands: string;
   status: NovelStatus;
+  /** Whether the novel can be updated from its source URL (server-authoritative). */
+  canUpdate: boolean;
+  /** Whether the source site requires a browser worker (Cloudflare bypass). */
+  requiresBrowser: boolean;
   tags: string[];
   coverPath?: string;
   isPublic: boolean;

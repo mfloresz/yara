@@ -43,6 +43,11 @@ type glossaryJobOptions struct {
 	MaxTokensPerBatch int    `json:"maxTokensPerBatch"`
 	Provider          string `json:"provider"`
 	Model             string `json:"model"`
+	IncludeExisting   *bool  `json:"includeExisting,omitempty"`
+}
+
+func glossaryIncludeExisting(opts glossaryJobOptions) bool {
+	return opts.IncludeExisting == nil || *opts.IncludeExisting
 }
 
 // chapterInRangeWithContent reports whether a chapter falls within the requested
@@ -144,7 +149,10 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 	}
 
 	existingEntries := extractExistingGlossary(novel.Glossary)
-	existingTerms := extractExistingTerms(existingEntries)
+	var existingTerms []string
+	if glossaryIncludeExisting(opts) {
+		existingTerms = extractExistingTerms(existingEntries)
+	}
 
 	provider, err := s.resolveGlossaryProvider(job, novel)
 	if err != nil {
@@ -277,6 +285,9 @@ func extractExistingGlossary(glossaryJSON string) []glossaryEntry {
 func extractExistingTerms(entries []glossaryEntry) []string {
 	terms := make([]string, 0, len(entries))
 	for _, e := range entries {
+		if !glossaryEnabled(e) {
+			continue
+		}
 		if strings.TrimSpace(e.Source) != "" {
 			terms = append(terms, strings.TrimSpace(e.Source))
 		}
@@ -418,11 +429,13 @@ func mergeGlossary(existing []glossaryEntry, newEntries []ai.GlossaryEntry) []gl
 		if id == "" {
 			id = uuid.New().String()
 		}
+		enabled := e.Enabled
 		result = append(result, glossaryEntry{
 			ID:      id,
 			Source:  source,
 			Target:  strings.TrimSpace(e.Target),
 			Context: strings.TrimSpace(e.Context),
+			Enabled: enabled,
 		})
 	}
 
@@ -432,11 +445,13 @@ func mergeGlossary(existing []glossaryEntry, newEntries []ai.GlossaryEntry) []gl
 		if source == "" || target == "" {
 			continue
 		}
+		enabled := true
 		entry := glossaryEntry{
 			ID:      uuid.New().String(),
 			Source:  source,
 			Target:  target,
 			Context: strings.TrimSpace(e.Context),
+			Enabled: &enabled,
 		}
 		if idx, ok := indexBySource[source]; ok {
 			// Preserve existing approved translations (see DefaultGlossaryPrompt:

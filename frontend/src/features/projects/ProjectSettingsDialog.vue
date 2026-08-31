@@ -375,6 +375,13 @@
                     </div>
                   </div>
 
+                  <n-checkbox
+                    v-model:checked="glossaryGenOptions.includeExisting"
+                    size="small"
+                  >
+                    Incluir existentes (entradas habilitadas)
+                  </n-checkbox>
+
                   <div class="row-end">
                     <n-button
                       type="primary"
@@ -413,7 +420,8 @@
               {{ novelDraft.glossary.length === 0 ? 'Sin entradas de glosario.' : 'Sin coincidencias.' }}
             </div>
             <div v-else class="glossary-list">
-              <div class="glossary-list-header">
+              <div class="glossary-list-header glossary-list-header--with-check">
+                <span class="glossary-col-check" />
                 <span class="glossary-col-source">Origen</span>
                 <span class="glossary-col-target">Destino</span>
                 <span class="glossary-col-context">Contexto</span>
@@ -422,8 +430,15 @@
               <div
                 v-for="entry in filteredGlossary"
                 :key="entry.id"
-                class="glossary-list-row"
+                class="glossary-list-row glossary-list-row--with-check"
+                :class="{ 'glossary-row--disabled': entry.enabled === false }"
               >
+                <n-checkbox
+                  :checked="entry.enabled !== false"
+                  size="small"
+                  class="glossary-col-check"
+                  @update:checked="(v: boolean) => (entry.enabled = v)"
+                />
                 <n-input
                   v-model:value="entry.source"
                   placeholder="Origen"
@@ -470,6 +485,13 @@
               :global-value="globalSystemPrompt('translation')"
               :overridden="isOverridden('translation')"
               @update:model-value="setSystemPrompt('translation', $event)"
+            />
+            <PromptRoleEditor
+              title="Título"
+              :model-value="effectiveSystemPrompt('title')"
+              :global-value="globalSystemPrompt('title')"
+              :overridden="isOverridden('title')"
+              @update:model-value="setSystemPrompt('title', $event)"
             />
             <PromptRoleEditor
               title="Refinamiento"
@@ -541,47 +563,65 @@
             <div class="subpanel">
               <div class="switch-row">
                 <div>
-                  <div class="switch-title">Modelo distinto para títulos</div>
+                  <div class="switch-title">Seguir configuración global para títulos</div>
                   <div class="small muted">
-                    Modelo más pequeño para títulos. Si falla, usa el de contenido.
+                    Usa el ajuste de Configuración &gt; Modelo para títulos. Desactívalo para personalizar este proyecto.
                   </div>
                 </div>
-                <n-switch v-model:value="settingsDraft.ai.titleEnabled" />
+                <n-switch v-model:value="followGlobalTitle" />
               </div>
-              <div v-if="settingsDraft.ai.titleEnabled" class="field-grid-2" style="margin-top: 0.75rem">
-                <div class="form-group">
-                  <label class="lbl">Proveedor títulos</label>
-                  <n-select
-                    v-model:value="settingsDraft.ai.titleProvider"
-                    :options="providerOptions"
-                    :loading="providersLoading"
-                    :disabled="providersLoading"
-                    placeholder="Proveedor de contenido"
-                    clearable
-                    size="small"
-                    @update:value="onTitleProviderChange"
-                  />
+
+              <template v-if="!followGlobalTitle">
+                <div class="switch-row" style="margin-top: 0.5rem">
+                  <div>
+                    <div class="switch-title">Modelo distinto para títulos</div>
+                    <div class="small muted">
+                      Usa un modelo más pequeño y económico solo para títulos. Si falla, usa el de contenido.
+                    </div>
+                  </div>
+                  <n-switch v-model:value="localTitleDistinct" />
                 </div>
-                <div class="form-group">
-                  <label class="lbl">Modelo títulos</label>
-                  <n-select
-                    v-if="titleModelOptions.length > 1"
-                    v-model:value="settingsDraft.ai.titleModel"
-                    :options="titleModelOptions"
-                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                    placeholder="Modelo de contenido"
-                    clearable
-                    size="small"
-                  />
-                  <n-input
-                    v-else
-                    v-model:value="settingsDraft.ai.titleModel"
-                    :disabled="!settingsDraft.ai.titleProvider || providersLoading"
-                    placeholder="Ej: local-model"
-                    size="small"
-                  />
+                <div v-if="localTitleDistinct" class="field-grid-2" style="margin-top: 0.75rem">
+                  <div class="form-group">
+                    <label class="lbl">Proveedor títulos</label>
+                    <n-select
+                      v-model:value="settingsDraft.ai.titleProvider"
+                      :options="providerOptions"
+                      :loading="providersLoading"
+                      :disabled="providersLoading"
+                      placeholder="Proveedor de contenido"
+                      clearable
+                      size="small"
+                      @update:value="onTitleProviderChange"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label class="lbl">Modelo títulos</label>
+                    <n-select
+                      v-if="titleModelOptions.length > 1"
+                      v-model:value="settingsDraft.ai.titleModel"
+                      :options="titleModelOptions"
+                      :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                      placeholder="Modelo de contenido"
+                      clearable
+                      size="small"
+                    />
+                    <n-input
+                      v-else
+                      v-model:value="settingsDraft.ai.titleModel"
+                      :disabled="!settingsDraft.ai.titleProvider || providersLoading"
+                      placeholder="Ej: local-model"
+                      size="small"
+                    />
+                  </div>
                 </div>
-              </div>
+              </template>
+
+              <n-alert v-else type="info" :bordered="false" class="compact-alert" style="margin-top: 0.5rem">
+                Este proyecto seguirá la configuración global — actualmente:
+                <strong>{{ globalTitleEnabled ? `modelo distinto (${globalTitleInfo})` : "mismo modelo para títulos y contenido" }}</strong>.
+                Configurable en Ajustes &gt; Modelo para títulos.
+              </n-alert>
             </div>
           </div>
         </n-scrollbar>
@@ -655,7 +695,7 @@
         <!-- ========== AVANZADO ========== -->
         <n-scrollbar v-else class="pane-scroll">
           <div class="pane-pad stack-sm">
-            <n-collapse :default-expanded-names="['commands']">
+            <n-collapse :default-expanded-names="['commands', 'redownload']">
               <n-collapse-item title="Comandos personalizados" name="commands">
                 <n-input
                   id="novel-custom-commands"
@@ -666,6 +706,59 @@
                   class="mono"
                   placeholder="Comandos especiales de procesamiento"
                 />
+              </n-collapse-item>
+              <n-collapse-item name="redownload">
+                <template #header>
+                  <span>Redescargar capítulos</span>
+                </template>
+                <div class="stack-sm">
+                  <p class="small muted" style="margin: 0">
+                    Vuelve a descargar el contenido original desde la fuente y
+                    reemplaza el original de los capítulos del rango (vacío =
+                    todos). Las traducciones y refinamientos existentes se
+                    conservan.
+                  </p>
+                  <div class="field-grid-4">
+                    <div class="form-group">
+                      <label class="lbl">Cap. desde</label>
+                      <n-input-number
+                        v-model:value="reDownloadStart"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                        clearable
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="lbl">Cap. hasta</label>
+                      <n-input-number
+                        v-model:value="reDownloadEnd"
+                        :min="1"
+                        size="small"
+                        class="w-full"
+                        clearable
+                      />
+                    </div>
+                  </div>
+                  <div class="redownload-actions">
+                    <n-popconfirm :disabled="!props.novel.url" @positive-click="onReDownloadChapters">
+                      <template #trigger>
+                        <n-button size="small" :loading="reDownloading" :disabled="!props.novel.url">
+                          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                          Re-descargar capítulos
+                        </n-button>
+                      </template>
+                      <div style="max-width: 280px">
+                        Se reemplazará el <strong>contenido original</strong> de los
+                        capítulos seleccionados con el de la fuente. Las traducciones
+                        y refinamientos se conservan. Puede tardar varios minutos.
+                      </div>
+                    </n-popconfirm>
+                    <span v-if="!props.novel.url" class="small muted">
+                      La novela no tiene URL de origen.
+                    </span>
+                  </div>
+                </div>
               </n-collapse-item>
               <n-collapse-item name="danger">
                 <template #header>
@@ -714,7 +807,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from "vue";
+import { computed, h, ref, watch, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
 import {
   useMessage,
@@ -737,6 +830,8 @@ import {
   NCollapse,
   NCollapseItem,
   NTooltip,
+  NCheckbox,
+  useDialog,
 } from "naive-ui";
 import {
   AddOutline,
@@ -749,6 +844,7 @@ import {
   HardwareChipOutline,
   LanguageOutline,
   DocumentTextOutline,
+  RefreshOutline,
   SettingsOutline,
 } from "@vicons/ionicons5";
 import PromptRoleEditor from "@/components/PromptRoleEditor.vue";
@@ -761,7 +857,9 @@ import { normalizeTranslationOptions, type GlossaryGenerationOptions } from "@/d
 import { useAppServices } from "@/app/services";
 import { emitJobChanged } from "@/utils/job-events";
 import { safeUuid } from "@/utils/safe-uuid";
+import { ensureGlossaryIds } from "@/utils/project-settings";
 import { LANGUAGES } from "@/config/languages";
+import type { RedownloadFromUrlResult } from "@/api/types";
 
 const props = defineProps<{
   open: boolean;
@@ -777,6 +875,7 @@ const emit = defineEmits<{
 const { api, defaults } = useAppServices();
 const router = useRouter();
 const message = useMessage();
+const dialog = useDialog();
 const { deleteNovel } = useNovels();
 const novelRef = computed(() => props.novel);
 const { settings, globalPrompts, loading: settingsLoading } = useProjectSettings(novelRef);
@@ -800,8 +899,12 @@ const glossaryGenOptions = ref<GlossaryGenerationOptions>({
   maxTokensPerBatch: 90000,
   provider: "",
   model: "",
+  includeExisting: true,
 });
 const glossaryGenerating = ref(false);
+const reDownloadStart = ref<number | null>(null);
+const reDownloadEnd = ref<number | null>(null);
+const reDownloading = ref(false);
 const estimatedTokens = ref<number | null>(null);
 const estimatedTokensLoading = ref(false);
 let estimateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -964,6 +1067,57 @@ const titleModelOptions = computed(() => {
   return [];
 });
 
+const followGlobalTitle = computed({
+  get: () => settingsDraft.value.ai.titleEnabled == null,
+  set: (v: boolean) => {
+    if (v) {
+      settingsDraft.value.ai.titleEnabled = null;
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    } else {
+      settingsDraft.value.ai.titleEnabled = false;
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    }
+  },
+});
+
+const localTitleDistinct = computed({
+  get: () => settingsDraft.value.ai.titleEnabled === true,
+  set: (v: boolean) => {
+    settingsDraft.value.ai.titleEnabled = v;
+    if (!v) {
+      settingsDraft.value.ai.titleProvider = "";
+      settingsDraft.value.ai.titleModel = "";
+    }
+  },
+});
+
+const globalTitleEnabled = ref(false);
+const globalTitleInfo = ref("");
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (!open) return;
+    try {
+      const s = await api.settings.get();
+      globalTitleEnabled.value = Boolean(s.titleProvider);
+      const tp = s.titleProvider || undefined;
+      const tm = s.titleModel || undefined;
+      if (tp) {
+        const m = tm || s.ai.model || "";
+        globalTitleInfo.value = m ? `${tp} / ${m}` : tp;
+      } else {
+        globalTitleInfo.value = "";
+      }
+    } catch {
+      globalTitleEnabled.value = false;
+      globalTitleInfo.value = "";
+    }
+  },
+);
+
 function onProviderChange(value: string) {
   const info = byId.value.get(value);
   if (!info) return;
@@ -980,14 +1134,14 @@ function onTitleProviderChange(value: string) {
   }
 }
 
-type PromptRole = "translation" | "refine" | "check";
+type PromptRole = "translation" | "title" | "refine" | "check";
 
 const globalSystemPrompts = computed<Record<PromptRole, string | undefined>>(() => {
-  const map: Record<PromptRole, string | undefined> = { translation: undefined, refine: undefined, check: undefined };
+  const map: Record<PromptRole, string | undefined> = { translation: undefined, title: undefined, refine: undefined, check: undefined };
   for (const p of globalPrompts.value) {
     if (!p.active) continue;
-    if (p.key === "translation" || p.key === "refine" || p.key === "check") {
-      map[p.key] = p.prompt.systemPrompt;
+    if (p.key === "translation" || p.key === "title" || p.key === "refine" || p.key === "check") {
+      map[p.key as PromptRole] = p.prompt.systemPrompt;
     }
   }
   return map;
@@ -1056,21 +1210,6 @@ const filteredGlossary = computed(() => {
 });
 
 const draftInitialized = ref(false);
-
-function ensureGlossaryIds(
-  glossary: unknown,
-): Array<{ id: string; source: string; target: string; context?: string }> {
-  if (!Array.isArray(glossary)) return [];
-  return glossary.map((entry) => {
-    const e = entry as Record<string, unknown>;
-    return {
-      id: (typeof e.id === "string" && e.id) || safeUuid(),
-      source: typeof e.source === "string" ? e.source : "",
-      target: typeof e.target === "string" ? e.target : "",
-      context: typeof e.context === "string" ? e.context : undefined,
-    };
-  });
-}
 
 const savedSnapshot = ref("");
 
@@ -1192,7 +1331,7 @@ watch(
 function addGlossaryEntry() {
   novelDraft.value.glossary = [
     ...novelDraft.value.glossary,
-    { id: safeUuid(), source: "", target: "", context: "" },
+    { id: safeUuid(), source: "", target: "", context: "", enabled: true },
   ];
 }
 
@@ -1211,6 +1350,7 @@ async function generateGlossary() {
       maxTokensPerBatch: glossaryGenOptions.value.maxTokensPerBatch || 90000,
       provider: glossaryGenOptions.value.provider || "",
       model: glossaryGenOptions.value.model || "",
+      includeExisting: glossaryGenOptions.value.includeExisting !== false,
     };
     await api.novels.generateGlossary(props.novel.id, opts);
     emitJobChanged();
@@ -1223,12 +1363,84 @@ async function generateGlossary() {
   }
 }
 
+async function onReDownloadChapters() {
+  if (reDownloading.value) return;
+  reDownloading.value = true;
+  try {
+    const result = await api.novels.redownloadFromUrl(props.novel.id, {
+      startChapter: reDownloadStart.value ?? undefined,
+      endChapter: reDownloadEnd.value ?? undefined,
+    });
+    if (result.needsConfirmation && (result.titleMismatches ?? 0) > 0) {
+      askReDownloadConfirmation(result);
+      return;
+    }
+    reportReDownloadResult(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Error desconocido";
+    message.error(`Error al re-descargar capítulos: ${msg}`);
+  } finally {
+    reDownloading.value = false;
+  }
+}
+
+function askReDownloadConfirmation(result: RedownloadFromUrlResult) {
+  const mismatches = result.chapters ?? [];
+  const lines = mismatches
+    .slice(0, 8)
+    .map((m) => `Cap. ${m.order}: "${m.storedTitle}" → "${m.sourceTitle}"`);
+  const extra = mismatches.length > 8 ? `\n... y ${mismatches.length - 8} más` : "";
+  dialog.warning({
+    title: `${result.titleMismatches} capítulo(s) con título distinto en la fuente`,
+    content: () =>
+      h("div", { style: "white-space: pre-line" }, [
+        "Los títulos en la fuente ya no coinciden con los guardados; la fuente puede haber reordenado o renumerado sus capítulos. Revisa antes de continuar:\n\n",
+        lines.join("\n"),
+        extra,
+        "\n\nEl contenido original se reemplazará igualmente. ¿Continuar?",
+      ]),
+    positiveText: "Continuar",
+    negativeText: "Cancelar",
+    onPositiveClick: () => startReDownload(true),
+  });
+}
+
+async function startReDownload(confirm: boolean) {
+  reDownloading.value = true;
+  try {
+    const result = await api.novels.redownloadFromUrl(props.novel.id, {
+      startChapter: reDownloadStart.value ?? undefined,
+      endChapter: reDownloadEnd.value ?? undefined,
+      confirm,
+    });
+    reportReDownloadResult(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Error desconocido";
+    message.error(`Error al re-descargar capítulos: ${msg}`);
+  } finally {
+    reDownloading.value = false;
+  }
+}
+
+function reportReDownloadResult(result: RedownloadFromUrlResult) {
+  const pending = result.pendingChapters ?? 0;
+  if (pending > 0) {
+    emitJobChanged();
+    message.success(
+      `${pending} capítulos se re-descargarán en segundo plano conservando sus traducciones.`,
+      { duration: 4000 },
+    );
+  } else {
+    message.info(result.message ?? "No hay capítulos para re-descargar.");
+  }
+}
+
 function reset() {
   settingsDraft.value = {
     notes: "",
     glossary: [],
     prompts: {},
-    ai: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
+    ai: { provider: "", model: "", timeoutMs: undefined, titleEnabled: null, titleProvider: "", titleModel: "" },
     translation: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
   };
@@ -1238,7 +1450,7 @@ function reset() {
     glossary: [],
     prompts: {},
     notes: "",
-    aiOptions: { provider: "", model: "", timeoutMs: undefined, titleEnabled: false, titleProvider: "", titleModel: "" },
+    aiOptions: { provider: "", model: "", timeoutMs: undefined, titleEnabled: null, titleProvider: "", titleModel: "" },
     translationOptions: normalizeTranslationOptions(defaults.value?.translation),
     cleanupRules: [],
     url: "",
@@ -1250,9 +1462,13 @@ async function save() {
   saving.value = true;
   try {
     settingsDraft.value.ai.timeoutMs = timeoutSec.value != null ? timeoutSec.value * 1000 : undefined;
-    if (!settingsDraft.value.ai.titleEnabled) {
+    const te = settingsDraft.value.ai.titleEnabled;
+    if (te !== true) {
       settingsDraft.value.ai.titleProvider = "";
       settingsDraft.value.ai.titleModel = "";
+    }
+    if (te === undefined) {
+      settingsDraft.value.ai.titleEnabled = null;
     }
     await props.onSaveNovel({
       sourceLanguage: novelDraft.value.sourceLanguage,
@@ -1573,6 +1789,13 @@ async function save() {
   flex-wrap: wrap;
 }
 
+.redownload-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 /* Glossary */
 .glossary-toolbar {
   display: flex;
@@ -1606,6 +1829,10 @@ async function save() {
   z-index: 1;
 }
 
+.glossary-list-header--with-check {
+  grid-template-columns: 28px 1fr 1fr 1.4fr auto;
+}
+
 .glossary-list-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1.4fr auto;
@@ -1613,6 +1840,25 @@ async function save() {
   padding: 0.2rem 0.5rem;
   align-items: center;
   border-bottom: 1px solid var(--divide);
+}
+
+.glossary-list-row--with-check {
+  grid-template-columns: 28px 1fr 1fr 1.4fr auto;
+}
+
+.glossary-col-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.glossary-row--disabled {
+  opacity: 0.55;
+}
+
+.glossary-row--disabled .glossary-col-source :deep(input),
+.glossary-row--disabled .glossary-col-target :deep(input) {
+  text-decoration: line-through;
 }
 
 .glossary-list-row:last-child { border-bottom: none; }
@@ -1690,14 +1936,17 @@ async function save() {
 
   .span-2 { grid-column: span 1; }
 
-  .glossary-list-header { display: none; }
+  .glossary-list-header,
+  .glossary-list-header--with-check { display: none; }
 
-  .glossary-list-row {
+  .glossary-list-row,
+  .glossary-list-row--with-check {
     grid-template-columns: 1fr auto;
     gap: 0.25rem;
     padding: 0.4rem 0.5rem;
   }
 
+  .glossary-col-check { grid-column: 1; }
   .glossary-col-context { grid-column: 1 / -1; }
 }
 </style>

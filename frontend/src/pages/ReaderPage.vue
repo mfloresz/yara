@@ -228,6 +228,7 @@ import {
 } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
+import { STORAGE_KEYS } from "@/app/storage-keys";
 import { useNovels } from "@/composables/useNovels";
 import { getNovelDisplayTitle, type Chapter, type Novel } from "@/domain";
 import { markdownToHtml } from "@/utils/markdown";
@@ -241,11 +242,9 @@ const novelId = computed(() => String(route.params.novelId || ""));
 const { getNovel } = useNovels();
 const { getCachedNovel } = useOfflineCache(novelId);
 
-const READER_STORAGE_KEY = "reader-settings";
-
 function loadReaderSettings() {
   try {
-    const raw = localStorage.getItem(READER_STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEYS.readerSettings);
     if (raw) return JSON.parse(raw) as { fontSize?: number; lineHeight?: number; contentWidth?: number; variant?: "translated" | "original" };
   } catch { /* ignore */ }
   return null;
@@ -253,7 +252,7 @@ function loadReaderSettings() {
 
 function saveReaderSettings() {
   try {
-    localStorage.setItem(READER_STORAGE_KEY, JSON.stringify({
+    localStorage.setItem(STORAGE_KEYS.readerSettings, JSON.stringify({
       fontSize: fontSize.value,
       lineHeight: lineHeight.value,
       contentWidth: contentWidth.value,
@@ -915,16 +914,6 @@ function applyTypography() {
   widows: 3;
 }
 
-.reader-body :deep(p:first-of-type)::first-letter {
-  font-family: 'Playfair Display Variable', 'Playfair Display', serif;
-  font-size: 4.2em;
-  font-weight: 700;
-  color: var(--accent-link);
-  float: left;
-  line-height: 0.78;
-  margin: 0.08em 0.08em 0 0;
-  padding: 0;
-}
 
 .reader-body :deep(h1) {
   font-family: 'Playfair Display Variable', 'Playfair Display', serif;
@@ -1316,6 +1305,83 @@ function applyTypography() {
 .reader-chapter-nav:has(.reader-nav-prev:only-child),
 .reader-chapter-nav:has(.reader-nav-next:only-child) {
   justify-content: center;
+}
+
+/* ── Footnotes ── */
+.reader-body :deep(sup a[href^="#fnref:"]) {
+  display: inline-block;
+  font-size: 0.72em;
+  line-height: 1;
+  vertical-align: super;
+  color: var(--accent-link);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0 0.2em;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.reader-body :deep(sup a[href^="#fnref:"]:hover),
+.reader-body :deep(sup a[href^="#fnref:"]:focus-visible) {
+  background: color-mix(in oklab, var(--accent-link) 12%, transparent);
+  color: var(--foreground);
+  outline: none;
+}
+
+.reader-body :deep(sup a[href^="#fnref:"]:focus-visible) {
+  box-shadow: 0 0 0 2px var(--accent-link);
+}
+
+.reader-body :deep(.footnotes) {
+  counter-reset: footnote;
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--divide);
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  list-style: none;
+  padding-left: 0;
+}
+
+.reader-body :deep(.footnotes li) {
+  counter-increment: footnote;
+  padding: 0.25em 0;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+  position: relative;
+}
+
+.reader-body :deep(.footnotes li::before) {
+  content: counter(footnote);
+  position: absolute;
+  left: 0;
+  top: 0.25em;
+  font-size: 0.75em;
+  color: var(--accent-link);
+  font-weight: 600;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]) {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 0 0.2em;
+  border-radius: 2px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]:hover),
+.reader-body :deep(.footnotes a[href^="#fnref:"]:focus-visible) {
+  background: color-mix(in oklab, var(--accent-link) 10%, transparent);
+  color: var(--accent-link);
+  outline: none;
+}
+
+.reader-body :deep(.footnotes a[href^="#fnref:"]:focus-visible) {
+  box-shadow: 0 0 0 2px var(--accent-link);
 }
 
 @media (max-width: 480px) {

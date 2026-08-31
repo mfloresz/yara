@@ -22,9 +22,9 @@ function promptRecordsToSettings(
   return normalizePromptSettings(next);
 }
 
-function ensureGlossaryIds(
+export function ensureGlossaryIds(
   glossary: unknown,
-): Array<{ id: string; source: string; target: string; context?: string }> {
+): Array<{ id: string; source: string; target: string; context?: string; enabled?: boolean }> {
   if (!Array.isArray(glossary)) return [];
   return glossary.map((entry) => {
     const e = entry as Record<string, unknown>;
@@ -33,6 +33,7 @@ function ensureGlossaryIds(
       source: typeof e.source === "string" ? e.source : "",
       target: typeof e.target === "string" ? e.target : "",
       context: typeof e.context === "string" ? e.context : undefined,
+      enabled: typeof e.enabled === "boolean" ? e.enabled : true,
     };
   });
 }
@@ -57,7 +58,7 @@ export function buildProjectSettings(
       provider: novel?.aiOptions?.provider ?? "",
       model: novel?.aiOptions?.model ?? "",
       timeoutMs: novel?.aiOptions?.timeoutMs ?? undefined,
-      titleEnabled: novel?.aiOptions?.titleEnabled ?? false,
+      titleEnabled: (novel?.aiOptions?.titleEnabled ?? null) as boolean | null,
       titleProvider: novel?.aiOptions?.titleProvider ?? "",
       titleModel: novel?.aiOptions?.titleModel ?? "",
     },

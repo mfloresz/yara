@@ -198,6 +198,9 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 }
 
 func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
+	if s.NewAIProvider != nil {
+		return s.NewAIProvider(settings)
+	}
 	provider := strings.TrimSpace(settings.Provider)
 	if provider == "" {
 		provider = store.DefaultAISettings.Provider
@@ -219,7 +222,7 @@ func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
 		if info.ID == "google" {
 			return &ai.GoogleProvider{APIKey: apiKey, Model: model, Timeout: timeout}, nil
 		}
-		return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, ProviderOptions: info.GoAIOptions}, nil
+		return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, ProviderOptions: info.OptionsForModel(model), OpenRouter: info.ID == "openrouter"}, nil
 	}
 	return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout}, nil
 }

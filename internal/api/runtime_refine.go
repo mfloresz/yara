@@ -63,7 +63,7 @@ func (s *Server) saveRefinedChapter(jc *jobContext, chapter *store.Chapter, base
 	if !applied {
 		return fmt.Errorf("chapter %s was edited while refinement was running; refinement discarded, retry the refine job", chapter.ID)
 	}
-	jc.statsDirty = true
+	jc.markStatsDirty()
 	return nil
 }
 

@@ -1,4 +1,4 @@
-import { ref, computed, watch, type Ref } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, type Ref } from "vue";
 import { useAppServices } from "@/app/services";
 import type { Novel, Chapter } from "@/domain";
 import type { ChapterSummary } from "@/api/types";
@@ -96,14 +96,24 @@ export function useOfflineCache(novelId: Ref<string>) {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
 
-  // Escuchar cambios de conexión
-  window.addEventListener("online", () => {
+  function onOnline() {
     isOnline.value = true;
-    syncPendingChanges();
+    void syncPendingChanges();
+  }
+
+  function onOffline() {
+    isOnline.value = false;
+  }
+
+  // Escuchar cambios de conexión (cleanup en onUnmounted para no acumular listeners)
+  onMounted(() => {
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
   });
 
-  window.addEventListener("offline", () => {
-    isOnline.value = false;
+  onUnmounted(() => {
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
   });
 
   // Cargar todas las novelas cacheadas

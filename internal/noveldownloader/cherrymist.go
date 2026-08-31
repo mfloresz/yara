@@ -24,6 +24,8 @@ func NewCherryMistParser() *cherrymistParser {
 
 func (p *cherrymistParser) Name() string { return "cherrymist" }
 
+func (p *cherrymistParser) RequiresBrowser() bool { return false }
+
 func (p *cherrymistParser) CanHandle(urlStr string) bool {
 	return strings.Contains(urlStr, "cherrymist.cafe")
 }

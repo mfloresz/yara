@@ -8,7 +8,9 @@ import (
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
+	"translator-server/internal/ai"
 	"translator-server/internal/config"
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
@@ -55,6 +57,12 @@ type Server struct {
 	browserQueue           chan BrowserJob
 	pendingBrowserJobs     map[string]*pendingBrowserJob
 	pendingBrowserJobsMu   sync.Mutex
+	// redownloadLocks serializes the check+create+enqueue sequence of
+	// redownload-from-url per novel, so two concurrent requests cannot both pass
+	// the active-jobs check and create competing redownload jobs.
+	redownloadLocks sync.Map
+	// NewAIProvider allows tests to inject a mock provider.
+	NewAIProvider func(store.AISettings) (ai.Provider, error)
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {
@@ -119,6 +127,14 @@ func (s *Server) cancelJob(jobID string) {
 	}
 }
 
+// lockNovel returns an unlock function holding the per-novel redownload lock.
+func (s *Server) lockNovel(novelID string) func() {
+	mu, _ := s.redownloadLocks.LoadOrStore(novelID, &sync.Mutex{})
+	lock := mu.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
 func Router(s *Server) http.Handler {
 	router, err := apis.NewRouter(s.Store.App)
 	if err != nil {
@@ -133,6 +149,21 @@ func Router(s *Server) http.Handler {
 }
 
 func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
+	// Must run before any handler.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "v1HeaderMiddleware",
+		Func: func(e *core.RequestEvent) error {
+			if err := e.Next(); err != nil {
+				return err
+			}
+			if hasPrefix(e.Request.URL.Path, "/api/v1/") {
+				e.Response.Header().Set("X-API-Version", "v1")
+			}
+			return nil
+		},
+	})
+
 	router.GET("/healthz", func(e *core.RequestEvent) error {
 		return e.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
@@ -141,37 +172,15 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	// token (it authenticates in-band via a `register` message validated
 	// against ValidateWorkerToken; unauthenticated workers never get dispatched
 	// a job). The browser-worker status and proxy-fetch endpoints, by contrast,
-	// are registered on the authenticated group in registerProtectedRoutes so
-	// that anonymous callers cannot enumerate connected workers or drive them
-	// to fetch arbitrary URLs (SSRF).
+	// are registered on the authenticated v1 group so that anonymous callers
+	// cannot enumerate connected workers or drive them to fetch arbitrary URLs
+	// (SSRF).
 	router.GET("/ws/browser-worker", func(e *core.RequestEvent) error {
 		s.handleBrowserWorkerWS(e.Response, e.Request)
 		return nil
 	})
 
-	registerAuthRoutes(router, s)
 	registerWorkerAuthPublicRoutes(router, s)
-	registerProtectedRoutes(router, s)
+	registerV1Routes(router, s)
 	registerStaticHandler(router, s.Cfg.StaticDir)
-}
-
-func registerProtectedRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
-	api := router.Group("/api")
-	api.Bind(loadAuthFromCookie())
-	api.Bind(apis.RequireAuth())
-
-	registerWorkerAuthProtectedRoutes(api, s)
-	registerProxyRoutes(api, s)
-	registerSettingsRoutes(api, s)
-	registerProviderRoutes(api, s)
-	registerPromptRoutes(api, s)
-	registerImportRoutes(api, s)
-	registerNovelRoutes(api, s)
-	registerChapterRoutes(api, s)
-	registerJobRoutes(api, s)
-	registerEpubRoutes(api, s)
-	registerGlossaryRoutes(api, s)
-	registerEpubExportRoutes(api, s)
-	registerReadingProgressRoutes(api, s)
-	registerBackupRoutes(api, s)
 }

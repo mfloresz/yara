@@ -81,6 +81,8 @@ type Novel struct {
 	Glossary                string `json:"glossary,omitempty"`
 	TranslationSystemPrompt string `json:"translationSystemPrompt,omitempty"`
 	TranslationUserPrompt   string `json:"translationUserPrompt,omitempty"`
+	TitleSystemPrompt       string `json:"titleSystemPrompt,omitempty"`
+	TitleUserPrompt         string `json:"titleUserPrompt,omitempty"`
 	RefineSystemPrompt      string `json:"refineSystemPrompt,omitempty"`
 	RefineUserPrompt        string `json:"refineUserPrompt,omitempty"`
 	CheckSystemPrompt       string `json:"checkSystemPrompt,omitempty"`
@@ -270,9 +272,10 @@ type ReadingProgress struct {
 }
 
 type DownloadChapterInfo struct {
-	URL   string `json:"url"`
-	Title string `json:"title"`
-	Order int    `json:"order"`
+	URL       string `json:"url"`
+	Title     string `json:"title"`
+	Order     int    `json:"order"`
+	ChapterID string `json:"chapterId,omitempty"` // id of an existing chapter when re-downloading
 }
 
 type BatchCheckNovelResult struct {
@@ -309,6 +312,7 @@ type BatchUpdateJobResult struct {
 	NovelID         string `json:"novelId"`
 	JobID           string `json:"jobId"`
 	PendingChapters int    `json:"pendingChapters"`
+	EnqueueFailed   bool   `json:"enqueueFailed"`
 }
 
 type BatchUpdateResponse struct {
@@ -343,6 +347,7 @@ type BatchTranslateJobResult struct {
 	NovelID         string `json:"novelId"`
 	JobID           string `json:"jobId"`
 	PendingChapters int    `json:"pendingChapters"`
+	EnqueueFailed   bool   `json:"enqueueFailed"`
 }
 
 type BatchTranslateStartResponse struct {
@@ -371,6 +376,19 @@ type ImportZipNovelInput struct {
 type ImportZipNovelResult struct {
 	Novel            Novel
 	ChaptersImported int
+}
+
+const MaxProviderConcurrency = 10
+const MinProviderConcurrency = 1
+
+func NormalizeProviderConcurrency(v int) int {
+	if v < MinProviderConcurrency {
+		return MinProviderConcurrency
+	}
+	if v > MaxProviderConcurrency {
+		return MaxProviderConcurrency
+	}
+	return v
 }
 
 var DefaultAISettings = AISettings{

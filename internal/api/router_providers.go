@@ -7,35 +7,54 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerProviderRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.GET("/user/providers", func(e *core.RequestEvent) error {
+func registerV1ProviderRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.GET("/providers", listProviders(s))
+	api.PUT("/providers/{providerKey}", upsertProvider(s))
+	api.PUT("/providers/{providerKey}/key", replaceProviderKey(s))
+	api.DELETE("/providers/{providerKey}/key", deleteProviderKey(s))
+}
+
+func listProviders(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		providers, err := s.Store.ListProviderSettings(e.Auth.Id)
 		if err != nil {
 			return e.InternalServerError("failed to load providers", err)
 		}
-		return e.JSON(http.StatusOK, map[string]any{"providers": providers})
-	})
-	api.PUT("/user/providers/{providerKey}", func(e *core.RequestEvent) error {
+		body := map[string]any{"providers": providers}
+		return v1Respond(e, http.StatusOK, body, nil, nil)
+	}
+}
+
+func upsertProvider(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		providerKey := e.Request.PathValue("providerKey")
 		body := struct {
-			Model     string `json:"model"`
-			BaseURL   string `json:"baseUrl"`
-			TimeoutMs int    `json:"timeoutMs"`
+			Model       string `json:"model"`
+			BaseURL     string `json:"baseUrl"`
+			TimeoutMs   int    `json:"timeoutMs"`
+			Concurrency int    `json:"concurrency"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
-		var timeoutArg []int
+		timeout := 0
 		if body.TimeoutMs > 0 {
-			timeoutArg = []int{body.TimeoutMs}
+			timeout = body.TimeoutMs
 		}
-		provider, err := s.Store.UpsertProviderSettings(e.Auth.Id, providerKey, body.Model, body.BaseURL, timeoutArg...)
+		concurrency := 0
+		if body.Concurrency > 0 {
+			concurrency = body.Concurrency
+		}
+		provider, err := s.Store.UpsertProviderSettingsWithConcurrency(e.Auth.Id, providerKey, body.Model, body.BaseURL, timeout, concurrency)
 		if err != nil {
 			return e.InternalServerError("failed to update provider settings", err)
 		}
-		return e.JSON(http.StatusOK, provider)
-	})
-	api.PUT("/user/providers/{providerKey}/key", func(e *core.RequestEvent) error {
+		return v1Respond(e, http.StatusOK, provider, nil, nil)
+	}
+}
+
+func replaceProviderKey(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		providerKey := e.Request.PathValue("providerKey")
 		body := struct {
 			APIKey string `json:"apiKey"`
@@ -47,13 +66,16 @@ func registerProviderRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		if err != nil {
 			return e.InternalServerError("failed to replace api key", err)
 		}
-		return e.JSON(http.StatusOK, provider)
-	})
-	api.DELETE("/user/providers/{providerKey}/key", func(e *core.RequestEvent) error {
+		return v1Respond(e, http.StatusOK, provider, nil, nil)
+	}
+}
+
+func deleteProviderKey(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		providerKey := e.Request.PathValue("providerKey")
 		if err := s.Store.DeleteProviderAPIKey(e.Auth.Id, providerKey); err != nil {
 			return e.InternalServerError("failed to delete api key", err)
 		}
 		return e.NoContent(http.StatusNoContent)
-	})
+	}
 }

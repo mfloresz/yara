@@ -18,6 +18,7 @@ export type GlossaryEntry = {
   source: string;
   target: string;
   context?: string;
+  enabled?: boolean;
 };
 
 export type PromptRoleTemplate = {
@@ -26,6 +27,7 @@ export type PromptRoleTemplate = {
 
 export type PromptSettings = {
   translation?: PromptRoleTemplate;
+  title?: PromptRoleTemplate;
   refine?: PromptRoleTemplate;
   check?: PromptRoleTemplate;
   glossary?: PromptRoleTemplate;
@@ -33,6 +35,7 @@ export type PromptSettings = {
 
 export type LegacyPromptSettings = {
   translationPrompt?: string;
+  titlePrompt?: string;
   refinePrompt?: string;
   checkPrompt?: string;
 };
@@ -124,6 +127,12 @@ export function normalizePromptSettings(
     next.translation = { systemPrompt: maybe.translationPrompt };
   }
 
+  if (maybe.title && typeof maybe.title === "object") {
+    next.title = { systemPrompt: maybe.title.systemPrompt };
+  } else if (maybe.titlePrompt) {
+    next.title = { systemPrompt: maybe.titlePrompt };
+  }
+
   if (maybe.refine && typeof maybe.refine === "object") {
     next.refine = { systemPrompt: maybe.refine.systemPrompt };
   } else if (maybe.refinePrompt) {
@@ -146,4 +155,5 @@ export type GlossaryGenerationOptions = {
   maxTokensPerBatch: number;
   provider: string;
   model: string;
+  includeExisting?: boolean;
 };

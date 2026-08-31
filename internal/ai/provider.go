@@ -115,6 +115,8 @@ type GenerateGlossaryOutput struct {
 // resolveGlossarySystemPrompt substitutes the language and existing-terms
 // placeholders in the configured glossary system prompt so the model actually
 // receives the source/target languages and the list of terms already present.
+// When no existing terms are provided the entire "Existing Glossary" block is
+// omitted so the model is not confused by contradictory instructions.
 func resolveGlossarySystemPrompt(in GenerateGlossaryInput) string {
 	system := strings.TrimSpace(in.SystemPrompt)
 	if system == "" {
@@ -130,14 +132,14 @@ func resolveGlossarySystemPrompt(in GenerateGlossaryInput) string {
 		targetLang = "the target language"
 	}
 
+	hasExisting := len(in.ExistingTerms) > 0
+
 	var existingInstruction string
-	if len(in.ExistingTerms) > 0 {
+	if hasExisting {
 		existingInstruction = fmt.Sprintf(
-			"An existing glossary already contains the following source terms. Do not re-extract or re-translate them; only extract new terms not in this list:\n%s",
+			"An existing glossary already contains the following source terms. Do not re-extract or re-translate them; only extract new terms not in this list:\n%s\n\nIf an existing glossary is provided:\n\n- Always preserve existing approved translations.\n- Do not generate alternative translations for existing terms.\n- Only extract new terms that are not already present.\n- Maintain complete terminology consistency.",
 			strings.Join(in.ExistingTerms, ", "),
 		)
-	} else {
-		existingInstruction = "No existing glossary is provided. Extract all relevant terms."
 	}
 
 	replacer := strings.NewReplacer(
@@ -145,7 +147,26 @@ func resolveGlossarySystemPrompt(in GenerateGlossaryInput) string {
 		"{TARGET_LANGUAGE}", targetLang,
 		"{EXISTING_TERMS_INSTRUCTION}", existingInstruction,
 	)
-	return replacer.Replace(system)
+	result := replacer.Replace(system)
+
+	if !hasExisting {
+		// ponytail: naive string cleanup O(n) when no existing terms — remove the
+		// now-empty "Existing Glossary" section and its static bullet list so the
+		// model does not see contradictory "If an existing glossary is provided"
+		// instructions. Covers both the new single-placeholder prompt and legacy
+		// prompts that still contain the static bullets.
+		result = strings.ReplaceAll(result, "## Existing Glossary\n\n\n\nIf an existing glossary is provided:\n\n- Always preserve existing approved translations.\n- Do not generate alternative translations for existing terms.\n- Only extract new terms that are not already present.\n- Maintain complete terminology consistency.", "")
+		result = strings.ReplaceAll(result, "## Existing Glossary\n\n\nIf an existing glossary is provided:\n\n- Always preserve existing approved translations.\n- Do not generate alternative translations for existing terms.\n- Only extract new terms that are not already present.\n- Maintain complete terminology consistency.", "")
+		result = strings.ReplaceAll(result, "## Existing Glossary\n\n\n", "")
+		result = strings.ReplaceAll(result, "## Existing Glossary\n\n", "")
+		// Collapse any triple newlines left behind.
+		for strings.Contains(result, "\n\n\n") {
+			result = strings.ReplaceAll(result, "\n\n\n", "\n\n")
+		}
+		result = strings.TrimSpace(result)
+	}
+
+	return result
 }
 
 // buildGlossaryPrompt assembles the user prompt from the provided chapter texts,

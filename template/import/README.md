@@ -83,7 +83,7 @@ La respuesta incluye `token` y `user`. Guarda el token.
 ```bash
 TOKEN="el_token_del_login"
 
-curl -X POST http://localhost:8090/api/db/novels/import-from-zip \
+curl -X POST http://localhost:8090/api/v1/novels/import-zip \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@novela.zip"
 ```
@@ -94,11 +94,11 @@ Si `metadata.json` incluye `"url"`, puedes descargar capítulos nuevos más tard
 
 ```bash
 # Ver cuántos capítulos nuevos hay
-curl http://localhost:8090/api/db/novels/{novel_id}/update-preview \
+curl -X POST http://localhost:8090/api/v1/novels/{novel_id}/check-preview \
   -H "Authorization: Bearer $TOKEN"
 
 # Descargar nuevos capítulos
-curl -X POST http://localhost:8090/api/db/novels/{novel_id}/update-from-url \
+curl -X POST http://localhost:8090/api/v1/novels/{novel_id}/update-from-url \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'

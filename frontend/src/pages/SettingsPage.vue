@@ -72,6 +72,16 @@
             <div class="row-wrap">
               <FieldNumber v-model.number="timeoutSec" label="Timeout (segundos)" :min="10" wrapper-style="min-width: 180px; flex: 1" />
             </div>
+            <div class="row-between">
+              <div>
+                <strong>Traducción concurrente</strong>
+                <div class="small muted">Activa jobs paralelos para este proveedor. Máximo 10 · SQLite serializa escrituras; más de 5 no suele mejorar el throughput. Recomendado 3-5 para OpenRouter / Opencode Go. Desactivado = traducción secuencial (1 a la vez).</div>
+              </div>
+              <n-switch v-model:value="concurrencyEnabled" style="flex-shrink: 0" />
+            </div>
+            <div v-if="concurrencyEnabled" class="row-wrap">
+              <FieldNumber v-model.number="concurrencyCount" label="Jobs paralelos" :min="2" :max="10" wrapper-style="min-width: 180px; flex: 1" />
+            </div>
           </div>
         </n-card>
 
@@ -134,7 +144,6 @@
             </div>
             <div class="row-wrap">
               <FieldNumber v-model="settings.translation.maxRetries" label="Máx. reintentos" :min="0" />
-              <FieldNumber v-model="settings.translation.concurrency" label="Concurrencia" :min="1" />
             </div>
 
             <div class="row-between">
@@ -161,7 +170,7 @@
               <div style="font-weight: 600">Descargar backup</div>
               <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
             </div>
-            <a href="/api/backup/download" target="_blank" rel="noopener" style="text-decoration: none">
+            <a href="#" @click.prevent="downloadBackup" style="text-decoration: none">
               <n-button secondary>
                 <template #icon><n-icon><DownloadOutline /></n-icon></template>
                 Descargar
@@ -284,6 +293,8 @@ const prompts = ref<GeneralPromptRecord[]>([]);
 const providerApiKey = ref("");
 const timeoutSec = ref(120);
 const titleEnabled = ref(false);
+const concurrencyEnabled = ref(false);
+const concurrencyCount = ref(3);
 
 const workerTokens = ref<WorkerToken[]>([]);
 const workerTokensLoading = ref(false);
@@ -368,8 +379,8 @@ async function loadWorkerTokens() {
   workerTokensLoading.value = true;
   try {
     workerTokens.value = await api.workerTokens.list();
-  } catch (err) {
-    console.error("Failed to load worker tokens:", err);
+  } catch {
+    // list stays empty; user can retry
   } finally {
     workerTokensLoading.value = false;
   }
@@ -401,6 +412,36 @@ async function deleteToken(tokenId: string) {
   }
 }
 
+// v1 backup endpoint accepts POST only (the body is non-deterministic and
+// the response is a streamed zip). POST and stream the response into a
+// blob the browser can save.
+async function downloadBackup() {
+  try {
+    const response = await fetch("/api/v1/backups/export", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    const fallbackName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+    const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+    const match = contentDisposition.match(/filename="?([^";]+)"?/);
+    anchor.download = match?.[1] ?? fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    message.success("Backup descargado");
+  } catch (err) {
+    message.error(`Error al descargar backup: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = null;
@@ -417,6 +458,9 @@ async function load() {
       ? Math.round(settingsResponse.ai.timeoutMs / 1000)
       : 120;
     titleEnabled.value = Boolean(settingsResponse.titleProvider);
+    const cc = settingsResponse.ai.concurrency ?? 1;
+    concurrencyEnabled.value = cc > 1;
+    concurrencyCount.value = cc > 1 ? Math.min(10, Math.max(2, cc)) : 3;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -450,6 +494,14 @@ function onProviderChange() {
   }
   settings.value.ai.baseUrl = info.baseUrl;
   providerApiKey.value = "";
+  // sync concurrency from the selected provider's stored settings
+  const prov = providers.value.find((p) => p.id === settings.value!.ai.provider);
+  const cc = prov?.concurrency ?? 1;
+  concurrencyEnabled.value = cc > 1;
+  concurrencyCount.value = cc > 1 ? Math.min(10, Math.max(2, cc)) : 3;
+  if (settings.value) {
+    settings.value.ai.concurrency = concurrencyEnabled.value ? concurrencyCount.value : 1;
+  }
 }
 
 function onTitleProviderChange() {
@@ -496,6 +548,9 @@ async function save() {
   error.value = null;
   try {
     settings.value.ai.timeoutMs = timeoutSec.value * 1000;
+    settings.value.ai.concurrency = concurrencyEnabled.value
+      ? Math.min(10, Math.max(2, concurrencyCount.value || 3))
+      : 1;
     if (!titleEnabled.value) {
       settings.value.titleProvider = "";
       settings.value.titleModel = "";
@@ -507,6 +562,7 @@ async function save() {
         model: settings.value.ai.model,
         baseUrl: settings.value.ai.baseUrl,
         timeoutMs: settings.value.ai.timeoutMs,
+        concurrency: settings.value.ai.concurrency,
       }),
       Promise.all(
         prompts.value.map((prompt) =>

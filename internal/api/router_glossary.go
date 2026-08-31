@@ -10,8 +10,13 @@ import (
 	"translator-server/internal/store"
 )
 
-func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	api.POST("/db/novels/{novelId}/generate-glossary", func(e *core.RequestEvent) error {
+func registerV1GlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+	api.POST("/novels/{novelId}/glossary/generate", generateGlossaryHandler(s))
+	api.GET("/novels/{novelId}/glossary/estimate-tokens", estimateGlossaryTokensHandler(s))
+}
+
+func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		userID := e.Auth.Id
 
@@ -28,6 +33,7 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			MaxTokensPerBatch int    `json:"maxTokensPerBatch"`
 			Provider          string `json:"provider"`
 			Model             string `json:"model"`
+			IncludeExisting   *bool  `json:"includeExisting"`
 		}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -67,6 +73,12 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.BadRequestError("no chapters found in the specified range with content", nil)
 		}
 
+		includeExisting := body.IncludeExisting
+		if includeExisting == nil {
+			v := true
+			includeExisting = &v
+		}
+
 		options := glossaryJobOptions{
 			ChapterFrom:       body.ChapterFrom,
 			ChapterTo:         body.ChapterTo,
@@ -74,6 +86,7 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			MaxTokensPerBatch: body.MaxTokensPerBatch,
 			Provider:          body.Provider,
 			Model:             body.Model,
+			IncludeExisting:   includeExisting,
 		}
 		optionsJSON, err := json.Marshal(options)
 		if err != nil {
@@ -81,11 +94,11 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 		}
 
 		job := &store.Job{
-			NovelID:    novelID,
-			Status:     "pending",
-			Operation:  "generate-glossary",
-			Provider:   body.Provider,
-			Model:      body.Model,
+			NovelID:     novelID,
+			Status:      "pending",
+			Operation:   "generate-glossary",
+			Provider:    body.Provider,
+			Model:       body.Model,
 			OptionsJSON: string(optionsJSON),
 		}
 
@@ -93,19 +106,25 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			return e.InternalServerError("failed to create job", err)
 		}
 
-		s.enqueueJob(job.ID)
+		if !s.enqueueJob(job.ID) {
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
 
-		return e.JSON(http.StatusOK, map[string]any{
-			"jobId": job.ID,
-			"status": job.Status,
+		body2 := map[string]any{
+			"jobId":     job.ID,
+			"status":    job.Status,
 			"operation": job.Operation,
-		})
-	})
+		}
+		e.Response.Header().Set("Location", "/api/v1/jobs/"+job.ID)
+		return v1Respond(e, http.StatusAccepted, body2, nil, nil)
+	}
+}
 
-	// GET /db/novels/{novelId}/estimate-glossary-tokens?from=N&to=M
-	// Returns estimated token count for a chapter range so the frontend can
-	// show the user an estimate before generating the glossary.
-	api.GET("/db/novels/{novelId}/estimate-glossary-tokens", func(e *core.RequestEvent) error {
+// GET /novels/{novelId}/glossary/estimate-tokens?from=N&to=M
+// Returns estimated token count for a chapter range so the frontend can
+// show the user an estimate before generating the glossary.
+func estimateGlossaryTokensHandler(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("novelId")
 		userID := e.Auth.Id
 
@@ -147,9 +166,10 @@ func registerGlossaryRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 			}
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{
-			"totalTokens": totalTokens,
+		body2 := map[string]any{
+			"totalTokens":  totalTokens,
 			"chapterCount": chapterCount,
-		})
-	})
+		}
+		return v1Respond(e, http.StatusOK, body2, nil, nil)
+	}
 }

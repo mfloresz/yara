@@ -15,6 +15,8 @@ func (p *FenrirRealmParser) Name() string {
 	return "fenrirealm"
 }
 
+func (p *FenrirRealmParser) RequiresBrowser() bool { return false }
+
 func (p *FenrirRealmParser) CanHandle(urlStr string) bool {
 	u, err := url.Parse(urlStr)
 	if err != nil {

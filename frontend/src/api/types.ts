@@ -1,8 +1,45 @@
 import type { Novel, Chapter, TranslationJob } from "@/domain";
 
+export type V1CollectionMeta = {
+  total?: number;
+  page?: number;
+  per_page?: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
+  next_page?: number;
+};
+
+export type V1Links = {
+  self?: string;
+  next?: string;
+  prev?: string;
+  first?: string;
+  last?: string;
+};
+
+export type V1ErrorBody = {
+  code: string;
+  message: string;
+  details?: Array<{ field?: string; message: string; code?: string }>;
+};
+
+export type V1Envelope = {
+  data?: unknown;
+  meta?: V1CollectionMeta;
+  links?: V1Links;
+  error?: V1ErrorBody;
+};
+
+// Paginated result. Constructed from the v1 list envelope after
+// `unwrapCollection` — `items` is the unwrapped data array, `hasMore` and
+// `total` come from `meta`.
 export type PaginatedResult<T> = {
   items: T[];
   hasMore?: boolean;
+  total?: number;
+  page?: number;
+  perPage?: number;
 };
 
 export type AuthUser = {
@@ -32,7 +69,12 @@ export type ImportEpubResult = {
   chaptersImported: number;
 };
 
-export type GeneralPromptKey = "translation" | "refine" | "check" | "glossary";
+export type ImportZipResult = {
+  novel: Novel;
+  chaptersImported: number;
+};
+
+export type GeneralPromptKey = "translation" | "title" | "refine" | "check" | "glossary";
 
 export type GeneralPromptRecord = {
   id: string;
@@ -80,6 +122,7 @@ export type ServerSettings = {
     baseUrl: string;
     model: string;
     timeoutMs: number;
+    concurrency: number;
   };
   titleProvider: string;
   titleModel: string;
@@ -105,6 +148,8 @@ export type ProviderInfo = {
   apiKeyConfigured?: boolean;
   apiKeyUpdatedAt?: string;
   enabled?: boolean;
+  concurrency?: number;
+  timeoutMs?: number;
 };
 
 export type ProvidersResponse = {
@@ -112,11 +157,11 @@ export type ProvidersResponse = {
 };
 
 export type ApiErrorPayload = {
+  // v1 envelope error shape: {error: {code, message, details?}}
   error?: {
     code?: string;
     message?: string;
   };
-  message?: string;
 };
 
 export type ImportUrlResult = {
@@ -145,6 +190,22 @@ export type UpdateUrlResult = {
   pendingChapters?: number;
   downloadJobId?: string;
   message?: string;
+};
+
+export type RedownloadMismatch = {
+  order: number;
+  sourceTitle: string;
+  storedTitle: string;
+};
+
+export type RedownloadFromUrlResult = {
+  pendingChapters: number;
+  downloadJobId?: string;
+  message?: string;
+  /** Present when the source titles no longer match the stored ones and the user must confirm before the job is created. */
+  needsConfirmation?: boolean;
+  titleMismatches?: number;
+  chapters?: RedownloadMismatch[];
 };
 
 export type UpdateUrlPreviewResult = {
@@ -211,10 +272,33 @@ export type ChapterOrderResponse = {
 
 export type CleanPreviewResponse = {
   chapterTitle: string;
+  changes: CleanDiffHunk[];
   original: string;
   cleaned: string;
   changed: boolean;
   removedLines: number;
+};
+
+export type CleanDiffHunk = {
+  before: string[];
+  after: string[];
+};
+
+export type CleanPreviewItem = {
+  chapterId: string;
+  chapterOrder: number;
+  chapterTitle: string;
+  changes: CleanDiffHunk[];
+  original: string;
+  cleaned: string;
+  changed: boolean;
+  removedLines: number;
+};
+
+export type CleanPreviewBulkResponse = {
+  items: CleanPreviewItem[];
+  total: number;
+  changed: number;
 };
 
 export type TranslationJobPatch = Partial<TranslationJob>;

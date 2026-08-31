@@ -39,7 +39,41 @@ func (s *Store) CreateNovel(ownerID string, novel *Novel) error {
 // API clients can pass limit up to this value; the default when unset is 100.
 const maxListLimit = 1000
 
-func (s *Store) ListNovels(userID string, limit int, offset int) ([]Novel, bool, error) {
+// NovelSortField is the sort field accepted by GET /api/db/novels.
+type NovelSortField string
+
+const (
+	NovelSortTitle    NovelSortField = "title"
+	NovelSortCreated  NovelSortField = "created"
+	NovelSortLastRead NovelSortField = "lastRead"
+)
+
+// Sort order values accepted by GET /api/db/novels.
+const (
+	SortOrderAsc  = "asc"
+	SortOrderDesc = "desc"
+)
+
+// normalizeNovelSortField validates a sort field, defaulting to title.
+func normalizeNovelSortField(sortField string) NovelSortField {
+	switch NovelSortField(sortField) {
+	case NovelSortCreated, NovelSortLastRead:
+		return NovelSortField(sortField)
+	default:
+		return NovelSortTitle
+	}
+}
+
+// normalizeNovelSortOrder validates a sort order, defaulting to ascending.
+func normalizeNovelSortOrder(order string) string {
+	if order == SortOrderDesc {
+		return SortOrderDesc
+	}
+	return SortOrderAsc
+}
+
+// normalizeListPagination clamps limit/offset to the values accepted by the API.
+func normalizeListPagination(limit, offset int) (int, int) {
 	if limit <= 0 {
 		limit = 100
 	} else if limit > maxListLimit {
@@ -48,30 +82,60 @@ func (s *Store) ListNovels(userID string, limit int, offset int) ([]Novel, bool,
 	if offset < 0 {
 		offset = 0
 	}
-	// Request limit+1 to detect whether more results exist
-	fetchLimit := limit + 1
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner} || is_public = true", "-created", fetchLimit, offset, dbx.Params{"owner": userID})
+	return limit, offset
+}
+
+func (s *Store) ListNovels(userID string, limit int, offset int, sortField string, sortOrder string) ([]Novel, bool, error) {
+	sortField = string(normalizeNovelSortField(sortField))
+	sortOrder = normalizeNovelSortOrder(sortOrder)
+	limit, offset = normalizeListPagination(limit, offset)
+
+	filter := "owner = {:owner} || is_public = true"
+
+	if sortField == string(NovelSortCreated) {
+		// DB-level sort keeps offset pagination consistent for arbitrarily large libraries.
+		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
+		dbSort := "-created"
+		if sortOrder == SortOrderDesc {
+			dbSort = "created"
+		}
+		// Request limit+1 to detect whether more results exist.
+		fetchLimit := limit + 1
+		records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, dbSort, fetchLimit, offset, dbx.Params{"owner": userID})
+		if err != nil {
+			return nil, false, err
+		}
+		hasMore := len(records) > limit
+		if hasMore {
+			records = records[:limit]
+		}
+		out := s.novelsFromRecords(records)
+		s.populateLastReadAt(out, userID)
+		return out, hasMore, nil
+	}
+
+	// title and lastRead depend on display-level data (target-or-source title and
+	// per-user reading progress), so sort the full result set in memory (unbounded
+	// fetch) and slice the sorted window. Pages stay globally consistent for the
+	// same query, and all novels are reachable regardless of library size.
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", 0, 0, dbx.Params{"owner": userID})
 	if err != nil {
 		return nil, false, err
 	}
-	hasMore := len(records) > limit
-	if hasMore {
-		records = records[:limit]
-	}
-	out := s.novelsFromRecords(records)
-	s.populateLastReadAt(out, userID)
-	return out, hasMore, nil
+	all := s.novelsFromRecords(records)
+	s.populateLastReadAt(all, userID)
+	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
+	page, hasMore := paginateNovels(all, limit, offset)
+	return page, hasMore, nil
 }
 
 // SearchNovels searches novels by title, author, or series matching the given query.
 // Supports pagination via limit/offset, scoped to novels the user owns or are public.
-func (s *Store) SearchNovels(userID, query string, limit int, offset int) ([]Novel, bool, error) {
-	if limit <= 0 {
-		limit = 100
-	} else if limit > maxListLimit {
-		limit = maxListLimit
-	}
-	if offset < 0 || query == "" {
+func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortField string, sortOrder string) ([]Novel, bool, error) {
+	sortField = string(normalizeNovelSortField(sortField))
+	sortOrder = normalizeNovelSortOrder(sortOrder)
+	limit, offset = normalizeListPagination(limit, offset)
+	if query == "" {
 		offset = 0
 	}
 
@@ -81,18 +145,123 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int) ([]Nov
 		"(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
 		"target_title ~ {:q} || target_author ~ {:q} || target_series ~ {:q})"
 
-	fetchLimit := limit + 1
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", fetchLimit, offset, dbx.Params{"owner": userID, "q": query})
+	if sortField == string(NovelSortCreated) {
+		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
+		dbSort := "-created"
+		if sortOrder == SortOrderDesc {
+			dbSort = "created"
+		}
+		fetchLimit := limit + 1
+		records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, dbSort, fetchLimit, offset, dbx.Params{"owner": userID, "q": query})
+		if err != nil {
+			return nil, false, err
+		}
+		hasMore := len(records) > limit
+		if hasMore {
+			records = records[:limit]
+		}
+		out := s.novelsFromRecords(records)
+		s.populateLastReadAt(out, userID)
+		return out, hasMore, nil
+	}
+
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", 0, 0, dbx.Params{"owner": userID, "q": query})
 	if err != nil {
 		return nil, false, err
 	}
-	hasMore := len(records) > limit
-	if hasMore {
-		records = records[:limit]
+	all := s.novelsFromRecords(records)
+	s.populateLastReadAt(all, userID)
+	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
+	page, hasMore := paginateNovels(all, limit, offset)
+	return page, hasMore, nil
+}
+
+// paginateNovels slices a fully-sorted slice into the requested page.
+func paginateNovels(sorted []Novel, limit, offset int) ([]Novel, bool) {
+	if offset >= len(sorted) {
+		return []Novel{}, false
 	}
-	out := s.novelsFromRecords(records)
-	s.populateLastReadAt(out, userID)
-	return out, hasMore, nil
+	end := offset + limit
+	hasMore := end < len(sorted)
+	if end > len(sorted) {
+		end = len(sorted)
+	}
+	return sorted[offset:end], hasMore
+}
+
+// sortNovelsInMemory orders novels by display title, created time, or last read
+// time using the same semantics the UI applies, so server pagination matches the
+// order users see. Novels with no last read time always sort last.
+func sortNovelsInMemory(novels []Novel, sortField NovelSortField, order string) {
+	desc := order == SortOrderDesc
+	switch sortField {
+	case NovelSortCreated:
+		sort.SliceStable(novels, func(i, j int) bool {
+			return compareTimestampStrings(novels[i].CreatedAt, novels[j].CreatedAt, desc)
+		})
+	case NovelSortLastRead:
+		sort.SliceStable(novels, func(i, j int) bool {
+			return compareLastReadStrings(novels[i].LastReadAt, novels[j].LastReadAt, desc)
+		})
+	default: // title
+		sort.SliceStable(novels, func(i, j int) bool {
+			left, right := novelDisplayTitle(novels[i]), novelDisplayTitle(novels[j])
+			c := compareTitleStrings(left, right)
+			if c != 0 {
+				if desc {
+					return c > 0
+				}
+				return c < 0
+			}
+			// Deterministic tiebreak so pagination stays stable across requests.
+			if desc {
+				return novels[i].ID > novels[j].ID
+			}
+			return novels[i].ID < novels[j].ID
+		})
+	}
+}
+
+// novelDisplayTitle mirrors the UI's getNovelDisplayTitle: prefer the target title,
+// fall back to the source title.
+func novelDisplayTitle(n Novel) string {
+	if n.TargetTitle != "" {
+		return n.TargetTitle
+	}
+	return n.SourceTitle
+}
+
+// compareTimestampStrings orders ISO timestamps using the UI convention: for both
+// created and lastRead, "asc" means most-recent first and "desc" means oldest first.
+func compareTimestampStrings(a, b string, desc bool) bool {
+	if desc {
+		return a < b
+	}
+	return a > b
+}
+
+// compareLastReadStrings keeps novels without a last read time at the end
+// regardless of direction, matching the UI sort behavior.
+func compareLastReadStrings(a, b string, desc bool) bool {
+	if a == "" {
+		return false
+	}
+	if b == "" {
+		return true
+	}
+	return compareTimestampStrings(a, b, desc)
+}
+
+// compareTitleStrings is a case-insensitive title comparison for stable ordering.
+func compareTitleStrings(a, b string) int {
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la != lb {
+		if la < lb {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a, b)
 }
 
 // novelsFromRecords converts PocketBase records to Novel structs.
@@ -256,6 +425,8 @@ func (s *Store) UpdateNovel(userID, novelID string, patch map[string]any) (*Nove
 			overrides := ParseNovelPromptOverrides(value)
 			record.Set("translation_system_prompt", overrides.Translation.SystemPrompt)
 			record.Set("translation_user_prompt", overrides.Translation.UserPrompt)
+			record.Set("title_system_prompt", overrides.Title.SystemPrompt)
+			record.Set("title_user_prompt", overrides.Title.UserPrompt)
 			record.Set("refine_system_prompt", overrides.Refine.SystemPrompt)
 			record.Set("refine_user_prompt", overrides.Refine.UserPrompt)
 			record.Set("check_system_prompt", overrides.Check.SystemPrompt)

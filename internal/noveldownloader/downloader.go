@@ -49,6 +49,8 @@ func NewDownloader() *Downloader {
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
 			NewLiteroticaParser(),
+			NewWTRLabParser(),
+			NewNovelArrowParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -72,6 +74,8 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewSkyNovelsParser(),
 			NewSkyDemonOrderParser(),
 			NewLiteroticaParser(),
+			NewWTRLabParser(),
+			NewNovelArrowParser(),
 		},
 		client: client,
 	}
@@ -79,6 +83,11 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 
 func (d *Downloader) IsSupportedURL(url string) bool {
 	return d.FindParser(url) != nil
+}
+
+func (d *Downloader) RequiresBrowser(url string) bool {
+	parser := d.FindParser(url)
+	return parser != nil && parser.RequiresBrowser()
 }
 
 func (d *Downloader) FindParser(url string) Parser {

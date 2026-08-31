@@ -33,8 +33,13 @@ func generateState() string {
 	return hex.EncodeToString(b)
 }
 
+// registerWorkerAuthPublicRoutes registers the public /api/v1/worker-auth/*
+// flow used by the browser extension to authorize and connect. These routes
+// are public (no auth required) because the extension opens them in a tab
+// before the user has been authenticated; the user is verified via cookie
+// inside the handler before the consent page is shown.
 func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
-	router.GET("/api/worker-auth/authorize", func(e *core.RequestEvent) error {
+	router.GET("/api/v1/worker-auth/authorize", func(e *core.RequestEvent) error {
 		extensionID := e.Request.URL.Query().Get("extension_id")
 		if extensionID == "" {
 			return e.BadRequestError("extension_id is required", nil)
@@ -69,7 +74,7 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 		return nil
 	})
 
-	router.GET("/api/worker-auth/validate", func(e *core.RequestEvent) error {
+	router.GET("/api/v1/worker-auth/validate", func(e *core.RequestEvent) error {
 		token := e.Request.Header.Get("Authorization")
 		if len(token) > 7 && token[:7] == "Bearer " {
 			token = token[7:]
@@ -94,7 +99,7 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 		})
 	})
 
-	router.GET("/api/worker-auth/callback", func(e *core.RequestEvent) error {
+	router.GET("/api/v1/worker-auth/callback", func(e *core.RequestEvent) error {
 		token := e.Request.URL.Query().Get("token")
 		userID := e.Request.URL.Query().Get("user")
 		if token == "" || userID == "" {
@@ -108,7 +113,11 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 	})
 }
 
-func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
+// registerV1WorkerAuthRoutes registers the authenticated /api/v1/worker-auth/*
+// routes (approve, revoke, delete, tokens). The public flow lives in
+// registerWorkerAuthPublicRoutes above because it must be reachable before
+// the extension has a token.
+func registerV1WorkerAuthRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	authGroup := api.Group("/worker-auth")
 	authGroup.Bind(apis.RequireAuth())
 
@@ -137,13 +146,13 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 		if len(shortID) > 8 {
 			shortID = shortID[:8]
 		}
-		label := fmt.Sprintf("Chrome Extension (%s)", shortID)
+		label := fmt.Sprintf("Browser Extension (%s)", shortID)
 		_, plaintext, err := s.Store.CreateWorkerToken(e.Auth.Id, pending.ExtensionID, label)
 		if err != nil {
 			return e.InternalServerError("failed to create token", err)
 		}
 
-		callbackURL := fmt.Sprintf("/api/worker-auth/callback?token=%s&user=%s", plaintext, e.Auth.Id)
+		callbackURL := fmt.Sprintf("/api/v1/worker-auth/callback?token=%s&user=%s", plaintext, e.Auth.Id)
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		e.Response.WriteHeader(http.StatusOK)
 		page := approvalSuccessHTML(label, callbackURL)
@@ -160,7 +169,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 			return notFoundOrForbidden(e, err)
 		}
 		CloseWorkerByTokenID(tokenID)
-		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+		return v1Respond(e, http.StatusOK, map[string]any{"ok": true}, nil, nil)
 	})
 
 	authGroup.POST("/delete/{id}", func(e *core.RequestEvent) error {
@@ -172,7 +181,7 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 			return notFoundOrForbidden(e, err)
 		}
 		CloseWorkerByTokenID(tokenID)
-		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+		return v1Respond(e, http.StatusOK, map[string]any{"ok": true}, nil, nil)
 	})
 
 	authGroup.GET("/tokens", func(e *core.RequestEvent) error {
@@ -183,10 +192,11 @@ func registerWorkerAuthProtectedRoutes(api *pbrouter.RouterGroup[*core.RequestEv
 		if err != nil {
 			return e.InternalServerError("failed to list tokens", err)
 		}
-		return e.JSON(http.StatusOK, map[string]any{
+		body := map[string]any{
 			"tokens": tokens,
 			"count":  len(tokens),
-		})
+		}
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	})
 }
 
@@ -287,7 +297,7 @@ var consentPageTmpl = template.Must(template.New("consent").Parse(`<!DOCTYPE htm
                 <li>Acceda a tu sesión de usuario</li>
             </ul>
         </div>
-        <form method="POST" action="/api/worker-auth/approve">
+        <form method="POST" action="/api/v1/worker-auth/approve">
             <input type="hidden" name="state" value="{{.State}}">
             <div class="buttons">
                 <button type="button" class="btn btn-cancel" onclick="window.close()">Cancelar</button>
@@ -453,13 +463,13 @@ func loginRequiredHTML() string {
         h1 {
             font-size: 20px;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 16px;
             color: #fff;
         }
         p {
             font-size: 14px;
             color: #888;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
             line-height: 1.5;
         }
         .btn {

@@ -1,5 +1,5 @@
 import type { Ref } from "vue";
-import { createHttpClient } from "@/api/http";
+import { createHttpClient, unwrapCollection } from "@/api/http";
 import type {
   AuthResponse,
   BatchCheckResponse,
@@ -8,23 +8,24 @@ import type {
   BatchTranslateResponse,
   BatchTranslateSelection,
   BatchTranslateStartResponse,
+  ChapterSummary,
+  ChapterSummaryPage,
+  CleanPreviewBulkResponse,
   CleanPreviewResponse,
   EpubPreviewResult,
   GeneralPromptKey,
   GeneralPromptRecord,
-  ChapterSummary,
-  ChapterSummaryPage,
-  ChapterGapsResponse,
-  ChapterOrderResponse,
   ImportEpubResult,
   ImportUrlResult,
+  ImportZipResult,
   NovelEpubRecord,
   PaginatedResult,
   PreviewUrlResult,
-  ReadingProgress,
-  UpdateUrlPreviewResult,
   ProvidersResponse,
+  ReadingProgress,
+  RedownloadFromUrlResult,
   ServerSettings,
+  UpdateUrlPreviewResult,
   UpdateUrlResult,
   WorkerToken,
 } from "@/api/types";
@@ -44,23 +45,7 @@ import {
   type GlossaryGenerationOptions,
 } from "@/domain/project-settings";
 import { getApiBaseUrl } from "@/utils/api-base-url";
-import { safeUuid } from "@/utils/safe-uuid";
-
-/** Ensure every glossary entry has a unique id (backend entries may lack one). */
-function ensureGlossaryIds(
-  glossary: unknown[],
-): Array<{ id: string; source: string; target: string; context?: string }> {
-  if (!Array.isArray(glossary)) return [];
-  return glossary.map((entry) => {
-    const e = entry as Record<string, unknown>;
-    return {
-      id: (typeof e.id === "string" && e.id) || safeUuid(),
-      source: typeof e.source === "string" ? e.source : "",
-      target: typeof e.target === "string" ? e.target : "",
-      context: typeof e.context === "string" ? e.context : undefined,
-    };
-  });
-}
+import { ensureGlossaryIds } from "@/utils/project-settings";
 
 function normalizeNovel(
   novel: Novel,
@@ -97,6 +82,9 @@ function normalizeNovel(
       provider: novel.aiOptions?.provider ?? "",
       model: novel.aiOptions?.model ?? "",
       timeoutMs: novel.aiOptions?.timeoutMs ?? undefined,
+      titleEnabled: novel.aiOptions?.titleEnabled ?? null,
+      titleProvider: novel.aiOptions?.titleProvider ?? "",
+      titleModel: novel.aiOptions?.titleModel ?? "",
     },
     translationOptions: {
       ...(translationDefaults ?? {}),
@@ -106,6 +94,8 @@ function normalizeNovel(
     url: typeof novel.url === "string" ? novel.url : "",
     customCommands:
       typeof novel.customCommands === "string" ? novel.customCommands : "",
+    canUpdate: Boolean(novel.canUpdate),
+    requiresBrowser: Boolean(novel.requiresBrowser),
     status:
       novel.status === "completed" ||
       novel.status === "hiatus" ||
@@ -142,6 +132,24 @@ function normalizeNovel(
   };
 }
 
+// Sparse fieldset for the dashboard / library list view. Excludes heavy
+// fields (glossary, tags, aiOptions, translationOptions, cleanupRules,
+// descriptions, notes) so the list payload stays small. The detail page
+// fetches a full novel via `GET /api/v1/novels/{id}` (no fields filter).
+const NOVEL_LIST_FIELDS =
+  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount";
+
+function buildQuery(
+  params: Record<string, string | number | undefined | null>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  return search.size > 0 ? `?${search.toString()}` : "";
+}
+
 export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
   const http = createHttpClient({ baseUrl: getApiBaseUrl() });
   const withDefaults = (novel: Novel) =>
@@ -150,29 +158,29 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
   return {
     auth: {
       register(input: { email: string; password: string; name?: string }) {
-        return http.post<AuthResponse>("/api/auth/register", input);
+        return http.post<AuthResponse>("/api/v1/auth/register", input);
       },
       login(input: { email: string; password: string }) {
-        return http.post<AuthResponse>("/api/auth/login", input);
+        return http.post<AuthResponse>("/api/v1/auth/login", input);
       },
       refresh() {
-        return http.post<AuthResponse>("/api/auth/refresh");
+        return http.post<AuthResponse>("/api/v1/auth/refresh");
       },
       logout() {
-        return http.post<void>("/api/auth/logout");
+        return http.post<void>("/api/v1/auth/logout");
       },
     },
     defaults: {
       async get(): Promise<ServerDefaults> {
-        return http.get<ServerDefaults>("/api/defaults");
+        return http.get<ServerDefaults>("/api/v1/defaults");
       },
     },
     settings: {
       async get(): Promise<ServerSettings> {
-        return http.get<ServerSettings>("/api/user/settings");
+        return http.get<ServerSettings>("/api/v1/settings");
       },
       async update(payload: ServerSettings): Promise<ServerSettings> {
-        return http.put<ServerSettings>("/api/user/settings", payload);
+        return http.put<ServerSettings>("/api/v1/settings", payload);
       },
     },
     providers: {
@@ -188,8 +196,10 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             apiKeyConfigured?: boolean;
             apiKeyUpdatedAt?: string;
             enabled?: boolean;
+            concurrency?: number;
+            timeoutMs?: number;
           }>;
-        }>("/api/user/providers");
+        }>("/api/v1/providers");
         return {
           providers: result.providers.map((provider) => ({
             id: provider.provider,
@@ -201,25 +211,27 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             apiKeyConfigured: provider.apiKeyConfigured,
             apiKeyUpdatedAt: provider.apiKeyUpdatedAt,
             enabled: provider.enabled,
+            concurrency: provider.concurrency ?? 1,
+            timeoutMs: provider.timeoutMs,
           })),
         };
       },
       async update(
         providerKey: string,
-        payload: { model: string; baseUrl: string; timeoutMs?: number },
+        payload: { model: string; baseUrl: string; timeoutMs?: number; concurrency?: number },
       ) {
-        return http.put(`/api/user/providers/${providerKey}`, payload);
+        return http.put(`/api/v1/providers/${providerKey}`, payload);
       },
       async replaceKey(providerKey: string, apiKey: string) {
-        return http.put(`/api/user/providers/${providerKey}/key`, { apiKey });
+        return http.put(`/api/v1/providers/${providerKey}/key`, { apiKey });
       },
       async deleteKey(providerKey: string) {
-        return http.delete(`/api/user/providers/${providerKey}/key`);
+        return http.delete(`/api/v1/providers/${providerKey}/key`);
       },
     },
     novels: {
       async previewFromUrl(url: string): Promise<PreviewUrlResult> {
-        return http.post<PreviewUrlResult>("/api/db/novels/preview-from-url", {
+        return http.post<PreviewUrlResult>("/api/v1/novels/preview-from-url", {
           url,
         });
       },
@@ -231,7 +243,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         endChapter?: number;
       }): Promise<ImportUrlResult> {
         const result = await http.post<ImportUrlResult>(
-          "/api/db/novels/import-from-url",
+          "/api/v1/novels/import-from-url",
           input,
         );
         return { ...result, novel: withDefaults(result.novel) };
@@ -241,15 +253,29 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         input: { startChapter?: number; endChapter?: number },
       ): Promise<UpdateUrlResult> {
         return http.post<UpdateUrlResult>(
-          `/api/db/novels/${novelId}/update-from-url`,
+          `/api/v1/novels/${novelId}/update-from-url`,
+          input,
+        );
+      },
+      async redownloadFromUrl(
+        novelId: string,
+        input: {
+          startChapter?: number;
+          endChapter?: number;
+          confirm?: boolean;
+        },
+      ): Promise<RedownloadFromUrlResult> {
+        return http.post<RedownloadFromUrlResult>(
+          `/api/v1/novels/${novelId}/redownload-from-url`,
           input,
         );
       },
       async updatePreviewFromUrl(
         novelId: string,
       ): Promise<UpdateUrlPreviewResult> {
-        return http.get<UpdateUrlPreviewResult>(
-          `/api/db/novels/${novelId}/update-preview`,
+        // v1: was GET, now POST (writes lastCheckedAt; not idempotent).
+        return http.post<UpdateUrlPreviewResult>(
+          `/api/v1/novels/${novelId}/check-preview`,
         );
       },
       async importFromEpub(input: {
@@ -269,88 +295,118 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           form.set("sourceLanguage", input.sourceLanguage);
         form.set("targetLanguage", input.targetLanguage);
         const result = await http.post<ImportEpubResult>(
-          "/api/db/novels/import-epub",
+          "/api/v1/novels/import-epub",
+          form,
+        );
+        return { ...result, novel: withDefaults(result.novel) };
+      },
+      async importFromZip(file: Blob, fileName: string): Promise<ImportZipResult> {
+        const form = new FormData();
+        form.set("file", new File([file], fileName, { type: "application/zip" }));
+        const result = await http.post<ImportZipResult>(
+          "/api/v1/novels/import-zip",
           form,
         );
         return { ...result, novel: withDefaults(result.novel) };
       },
       async list(
-        params: { limit?: number; offset?: number; select?: string[]; q?: string } = {},
+        params: {
+          limit?: number;
+          offset?: number;
+          page?: number;
+          perPage?: number;
+          select?: string[];
+          fields?: string;
+          q?: string;
+          sort?: "title" | "created" | "lastRead";
+          order?: "asc" | "desc";
+        } = {},
       ): Promise<PaginatedResult<Novel>> {
-        const search = new URLSearchParams();
-        if (params.limit) search.set("limit", String(params.limit));
-        if (params.offset !== undefined) search.set("offset", String(params.offset));
-        if (params.q) search.set("q", params.q);
-        if (params.select && params.select.length > 0)
-          search.set("select", params.select.join(","));
-        const suffix = search.size > 0 ? `?${search.toString()}` : "";
-        const result = await http.get<PaginatedResult<Novel>>(
-          `/api/db/novels${suffix}`,
-        );
-        return { ...result, items: result.items.map(withDefaults) };
+        // List views pass a sparse fieldset to keep payloads small; callers
+        // that need a full novel fetch by id. `select` is a frontend-only
+        // signal consumed by useNovels.ts to control field-level merging;
+        // it does not affect the wire query.
+        const fields = params.fields ?? (params.select ? undefined : NOVEL_LIST_FIELDS);
+        const query = buildQuery({
+          limit: params.limit,
+          offset: params.offset,
+          page: params.page,
+          per_page: params.perPage,
+          fields,
+          q: params.q,
+          sort: params.sort,
+          order: params.order,
+        });
+        const result = await http.get<unknown>(`/api/v1/novels${query}`);
+        const { data, meta } = unwrapCollection<Novel[]>(result);
+        const items = (Array.isArray(data) ? data : []).map(withDefaults);
+        return {
+          items,
+          hasMore: meta?.has_more,
+          total: meta?.total,
+          page: meta?.page,
+          perPage: meta?.per_page,
+        };
       },
       async get(novelId: string): Promise<Novel | null> {
-        const novel = await http.get<Novel | null>(`/api/db/novels/${novelId}`);
+        const novel = await http.get<Novel | null>(`/api/v1/novels/${novelId}`);
         return novel ? withDefaults(novel) : null;
       },
       async getFull(novelId: string): Promise<{ novel: Novel; chapters: Chapter[] } | null> {
-        const result = await http.get<{ novel: Novel; chapters: Chapter[] } | null>(`/api/db/novels/${novelId}/full`);
+        // /full returns the {novel,chapters} composite in a single envelope;
+        // http auto-unwraps to the inner object.
+        const result = await http.get<{ novel: Novel; chapters: Chapter[] } | null>(
+          `/api/v1/novels/${novelId}/full`,
+        );
         if (!result) return null;
         return { novel: withDefaults(result.novel), chapters: result.chapters };
       },
       async listTagSuggestions(query = "", limit = 100): Promise<string[]> {
-        const search = new URLSearchParams();
-        if (query.trim()) search.set("q", query.trim());
-        if (limit > 0) search.set("limit", String(limit));
-        const suffix = search.size > 0 ? `?${search.toString()}` : "";
-        const result = await http.get<{ items?: string[] }>(
-          `/api/db/novels/tags/suggestions${suffix}`,
+        const suffix = buildQuery({ q: query.trim(), limit: limit > 0 ? limit : undefined });
+        const result = await http.get<unknown>(
+          `/api/v1/novels/tags/suggestions${suffix}`,
         );
-        return Array.isArray(result.items)
-          ? result.items.filter(
-              (item): item is string => typeof item === "string",
-            )
+        const { data } = unwrapCollection<string[]>(result);
+        return Array.isArray(data)
+          ? data.filter((item): item is string => typeof item === "string")
           : [];
       },
       async listSeriesSuggestions(query = "", limit = 100): Promise<string[]> {
-        const search = new URLSearchParams();
-        if (query.trim()) search.set("q", query.trim());
-        if (limit > 0) search.set("limit", String(limit));
-        const suffix = search.size > 0 ? `?${search.toString()}` : "";
-        const result = await http.get<{ items?: string[] }>(
-          `/api/db/novels/series/suggestions${suffix}`,
+        const suffix = buildQuery({ q: query.trim(), limit: limit > 0 ? limit : undefined });
+        const result = await http.get<unknown>(
+          `/api/v1/novels/series/suggestions${suffix}`,
         );
-        return Array.isArray(result.items)
-          ? result.items.filter(
-              (item): item is string => typeof item === "string",
-            )
+        const { data } = unwrapCollection<string[]>(result);
+        return Array.isArray(data)
+          ? data.filter((item): item is string => typeof item === "string")
           : [];
       },
       async create(data: CreateNovelInput): Promise<Novel> {
-        const novel = await http.post<Novel>("/api/db/novels", data);
+        const novel = await http.post<Novel>("/api/v1/novels", data);
         return withDefaults(novel);
       },
       async update(novelId: string, patch: UpdateNovelInput): Promise<Novel> {
         const novel = await http.patch<Novel>(
-          `/api/db/novels/${novelId}`,
+          `/api/v1/novels/${novelId}`,
           patch,
         );
         return withDefaults(novel);
       },
       async remove(novelId: string): Promise<void> {
-        await http.delete<{ ok: boolean }>(`/api/db/novels/${novelId}`);
+        // v1: returns 204 No Content.
+        await http.delete<void>(`/api/v1/novels/${novelId}`);
       },
       async uploadCover(novelId: string, file: File): Promise<Novel> {
         const form = new FormData();
         form.set("cover", file);
         const novel = await http.post<Novel>(
-          `/api/db/novels/${novelId}/cover`,
+          `/api/v1/novels/${novelId}/cover`,
           form,
         );
         return withDefaults(novel);
       },
       async copy(novelId: string): Promise<Novel> {
-        const novel = await http.post<Novel>(`/api/db/novels/${novelId}/copy`);
+        const novel = await http.post<Novel>(`/api/v1/novels/${novelId}/clone`);
         return withDefaults(novel);
       },
       async updateVisibility(
@@ -358,37 +414,38 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         isPublic: boolean,
       ): Promise<Novel> {
         const novel = await http.patch<Novel>(
-          `/api/db/novels/${novelId}/visibility`,
+          `/api/v1/novels/${novelId}/visibility`,
           { isPublic },
         );
         return withDefaults(novel);
       },
       async checkBatchUpdates(): Promise<BatchCheckResponse> {
-        return http.get<BatchCheckResponse>(
-          "/api/db/novels/check-batch-updates",
-        );
+        // v1: was GET /check-batch-updates, now POST /batch-check.
+        return http.post<BatchCheckResponse>("/api/v1/novels/batch-check", {});
       },
       async batchCheck(novelIds: string[]): Promise<{ jobs: { novelId: string; jobId: string }[] }> {
-        return http.post("/api/db/novels/batch-check", { novelIds });
+        return http.post("/api/v1/novels/batch-check-scheduled", { novelIds });
       },
       async batchUpdateFromUrl(
         selections: BatchUpdateSelection[],
       ): Promise<BatchUpdateResponse> {
         return http.post<BatchUpdateResponse>(
-          "/api/db/novels/batch-update-from-url",
+          "/api/v1/novels/batch-update",
           { selections },
         );
       },
       async batchTranslatePreview(): Promise<BatchTranslateResponse> {
-        return http.get<BatchTranslateResponse>(
-          "/api/db/novels/batch-translate-preview",
+        // v1: was GET, now POST (the request triggers enqueueable work).
+        return http.post<BatchTranslateResponse>(
+          "/api/v1/novels/batch-translate-preview",
+          {},
         );
       },
       async batchTranslate(
         selections: BatchTranslateSelection[],
       ): Promise<BatchTranslateStartResponse> {
         return http.post<BatchTranslateStartResponse>(
-          "/api/db/novels/batch-translate",
+          "/api/v1/novels/batch-translate",
           { selections },
         );
       },
@@ -396,7 +453,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         novelId: string,
         options: GlossaryGenerationOptions,
       ): Promise<{ jobId: string; status: string; operation: string }> {
-        return http.post(`/api/db/novels/${novelId}/generate-glossary`, options);
+        return http.post(`/api/v1/novels/${novelId}/glossary/generate`, options);
       },
       async estimateGlossaryTokens(
         novelId: string,
@@ -405,77 +462,103 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       ): Promise<{ totalTokens: number; chapterCount: number }> {
         const params = new URLSearchParams({ from: String(from) });
         if (to > 0) params.set("to", String(to));
-        return http.get(`/api/db/novels/${novelId}/estimate-glossary-tokens?${params}`);
+        return http.get(`/api/v1/novels/${novelId}/glossary/estimate-tokens?${params}`);
       },
     },
     chapters: {
-      list(novelId: string) {
-        return http.get<ChapterSummary[]>(`/api/db/novels/${novelId}/chapters`);
+      async list(novelId: string): Promise<ChapterSummary[]> {
+        const result = await http.get<unknown>(`/api/v1/novels/${novelId}/chapters`);
+        const { data } = unwrapCollection<ChapterSummary[]>(result);
+        return Array.isArray(data) ? data : [];
       },
-      listEligible(novelId: string, operation: "translate" | "refine") {
-        return http.get<ChapterSummary[]>(
-          `/api/db/novels/${novelId}/chapters/eligible?operation=${operation}`,
+      async listEligible(novelId: string, operation: "translate" | "refine"): Promise<ChapterSummary[]> {
+        const result = await http.get<unknown>(
+          `/api/v1/novels/${novelId}/chapters/eligible?operation=${operation}`,
         );
+        const { data } = unwrapCollection<ChapterSummary[]>(result);
+        return Array.isArray(data) ? data : [];
       },
-      listFull(novelId: string) {
-        return http.get<Chapter[]>(`/api/db/novels/${novelId}/chapters/full`);
+      // Full chapter array (with content). v1 has no /chapters/full route;
+      // use ?includeContent=true on the /chapters list.
+      async listFull(novelId: string): Promise<Chapter[]> {
+        const result = await http.get<unknown>(
+          `/api/v1/novels/${novelId}/chapters?includeContent=true`,
+        );
+        const { data } = unwrapCollection<Chapter[]>(result);
+        return Array.isArray(data) ? data : [];
       },
       listSummaries(
         novelId: string,
-        params: { limit?: number; offset?: number } = {},
+        params: { page?: number; perPage?: number; limit?: number; offset?: number } = {},
       ) {
-        const search = new URLSearchParams();
-        if (params.limit) search.set("limit", String(params.limit));
-        if (params.offset) search.set("offset", String(params.offset));
-        const suffix = search.size > 0 ? `?${search.toString()}` : "";
-        return http.get<ChapterSummaryPage>(
-          `/api/db/novels/${novelId}/chapter-summaries${suffix}`,
-        );
+        const suffix = buildQuery({
+          page: params.page,
+          per_page: params.perPage,
+          limit: params.limit,
+          offset: params.offset,
+        });
+        return http
+          .get<unknown>(`/api/v1/novels/${novelId}/chapter-summaries${suffix}`)
+          .then((result) => {
+            const { data, meta } = unwrapCollection<ChapterSummary[]>(result);
+            const items = Array.isArray(data) ? data : [];
+            const perPage = meta?.per_page ?? params.perPage ?? items.length;
+            const total = meta?.total ?? items.length;
+            const offset = meta?.offset ?? params.offset ?? 0;
+            return { items, total, limit: perPage, offset } satisfies ChapterSummaryPage;
+          });
       },
-      gaps(novelId: string) {
-        return http.get<ChapterGapsResponse>(
-          `/api/db/novels/${novelId}/chapters/gaps`,
+      async gaps(novelId: string): Promise<{ gaps: Array<{ from: number; to: number; count: number }>; excludedOrders: number[] }> {
+        const result = await http.get<{ gaps?: Array<{ from: number; to: number; count: number }>; excludedOrders?: number[] }>(
+          `/api/v1/novels/${novelId}/chapters/gaps`,
         );
+        return {
+          gaps: Array.isArray(result?.gaps) ? result.gaps : [],
+          excludedOrders: Array.isArray(result?.excludedOrders) ? result.excludedOrders : [],
+        };
       },
-      listExcluded(novelId: string) {
-        return http.get<ChapterSummary[]>(
-          `/api/db/novels/${novelId}/chapters/excluded`,
-        );
+      async listExcluded(novelId: string): Promise<ChapterSummary[]> {
+        const result = await http.get<unknown>(`/api/v1/novels/${novelId}/chapters/excluded`);
+        const { data } = unwrapCollection<ChapterSummary[]>(result);
+        return Array.isArray(data) ? data : [];
       },
-      reorder(novelId: string, chapterIds: string[]) {
-        return http.patch<ChapterOrderResponse>(
-          `/api/db/novels/${novelId}/chapters/order`,
+      async reorder(novelId: string, chapterIds: string[]): Promise<{ items: ChapterSummary[] }> {
+        const result = await http.patch<{ items?: ChapterSummary[] }>(
+          `/api/v1/novels/${novelId}/chapters/order`,
           { chapterIds },
         );
+        return { items: Array.isArray(result?.items) ? result.items : [] };
       },
-      setVisibility(novelId: string, chapterId: string, excluded: boolean) {
-        return http.patch<Chapter>(
-          `/api/db/novels/${novelId}/chapters/${chapterId}/visibility`,
-          { excluded },
-        );
+      async setVisibility(novelId: string, chapterId: string, excluded: boolean): Promise<Chapter> {
+        return http.patch<Chapter>(`/api/v1/novels/${novelId}/chapters/${chapterId}/visibility`, { excluded });
       },
 
       get(novelId: string, chapterId: string) {
         return http.get<Chapter | null>(
-          `/api/db/novels/${novelId}/chapters/${chapterId}`,
+          `/api/v1/novels/${novelId}/chapters/${chapterId}`,
         );
       },
       upsert(novelId: string, chapter: ChapterUpsertInput) {
         return http.post<Chapter>(
-          `/api/db/novels/${novelId}/chapters`,
+          `/api/v1/novels/${novelId}/chapters`,
           chapter,
         );
       },
       async remove(novelId: string, chapterId: string) {
-        await http.delete<{ ok: boolean }>(
-          `/api/db/novels/${novelId}/chapters/${chapterId}`,
+        // v1: returns 204 No Content.
+        await http.delete<void>(
+          `/api/v1/novels/${novelId}/chapters/${chapterId}`,
         );
       },
       async bulkRemove(novelId: string, ids: string[]) {
-        return http.post<{ deleted: number; requested: number }>(
-          `/api/db/novels/${novelId}/chapters/bulk-delete`,
+        const result = await http.post<{ deleted?: number; requested?: number }>(
+          `/api/v1/novels/${novelId}/chapters/bulk-delete`,
           { ids },
         );
+        return {
+          deleted: result?.deleted ?? 0,
+          requested: result?.requested ?? ids.length,
+        };
       },
       clean(
         novelId: string,
@@ -495,7 +578,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           skipped: number;
           notFound: number;
           failed: number;
-        }>(`/api/db/novels/${novelId}/chapters/clean`, input);
+        }>(`/api/v1/novels/${novelId}/chapters/clean`, input);
       },
       cleanPreview(
         novelId: string,
@@ -510,7 +593,24 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         },
       ) {
         return http.post<CleanPreviewResponse>(
-          `/api/db/novels/${novelId}/chapters/clean-preview`,
+          `/api/v1/novels/${novelId}/chapters/clean-preview`,
+          input,
+        );
+      },
+      cleanPreviewBulk(
+        novelId: string,
+        input: {
+          chapterIds: string[];
+          mode: string;
+          searchText: string;
+          replaceText?: string;
+          caseSensitive: boolean;
+          useRegex: boolean;
+          applyTo: string;
+        },
+      ) {
+        return http.post<CleanPreviewBulkResponse>(
+          `/api/v1/novels/${novelId}/chapters/clean-preview-bulk`,
           input,
         );
       },
@@ -521,7 +621,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         errorMessage?: string,
       ) {
         await http.patch<Chapter>(
-          `/api/db/novels/${novelId}/chapters/${chapterId}/status`,
+          `/api/v1/novels/${novelId}/chapters/${chapterId}/status`,
           { status, errorMessage },
         );
       },
@@ -533,7 +633,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         options: TranslationJobOptions = {},
       ) {
         return http.post<TranslationJob>(
-          `/api/db/novels/${novelId}/translation-jobs`,
+          `/api/v1/novels/${novelId}/jobs`,
           {
             chapterIds,
             operation: options.operation,
@@ -544,34 +644,53 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           },
         );
       },
-      list(novelId: string, options: { failedOnly?: boolean } = {}) {
-        const search = new URLSearchParams();
-        if (options.failedOnly) search.set("failedOnly", "1");
-        const suffix = search.size > 0 ? `?${search.toString()}` : "";
-        return http.get<TranslationJob[]>(
-          `/api/db/novels/${novelId}/translation-jobs${suffix}`,
+      async list(
+        novelId: string,
+        options: { failedOnly?: boolean; page?: number; perPage?: number } = {},
+      ): Promise<TranslationJob[]> {
+        const suffix = buildQuery({
+          failedOnly: options.failedOnly ? "1" : undefined,
+          page: options.page,
+          per_page: options.perPage,
+        });
+        const result = await http.get<unknown>(
+          `/api/v1/novels/${novelId}/jobs${suffix}`,
         );
+        const { data } = unwrapCollection<TranslationJob[]>(result);
+        return Array.isArray(data) ? data : [];
       },
-      status() {
-        return http.get<{ hasActive: boolean }>(
-          `/api/db/translation-jobs/active/status`,
+      // v1 returns hasActive alongside the active jobs list, so a single
+      // /jobs/active fetch powers both `status` and `listActive` callers.
+      async status(): Promise<{ hasActive: boolean }> {
+        const result = await http.get<{ data?: { hasActive?: boolean } }>(
+          "/api/v1/jobs/active",
         );
+        return { hasActive: Boolean(result.data?.hasActive) };
       },
-      listActive() {
-        return http.get<TranslationJob[]>(`/api/db/translation-jobs/active`);
-      },
-      update(jobId: string, patch: Partial<TranslationJob>) {
-        return http.patch<TranslationJob>(
-          `/api/db/translation-jobs/${jobId}`,
-          patch,
+      async listActive(): Promise<TranslationJob[]> {
+        const result = await http.get<{ data?: { jobs?: TranslationJob[] } }>(
+          "/api/v1/jobs/active",
         );
+        return Array.isArray(result.data?.jobs) ? result.data.jobs : [];
+      },
+      async update(jobId: string, patch: Partial<TranslationJob>): Promise<TranslationJob> {
+        // v1 split PATCH /jobs/{jobId} into two explicit sub-routes: cancel
+        // and retry. Any other status is a no-op; we just refetch the job.
+        const status = (patch as { status?: string }).status;
+        if (status === "cancelled") {
+          return http.post<TranslationJob>(`/api/v1/jobs/${jobId}/cancel`);
+        }
+        if (status === "pending") {
+          return http.post<TranslationJob>(`/api/v1/jobs/${jobId}/retry`);
+        }
+        return http.get<TranslationJob>(`/api/v1/jobs/${jobId}`);
       },
     },
     prompts: {
       async list() {
-        const records =
-          await http.get<Array<Record<string, unknown>>>("/api/user/prompts");
-        return records as GeneralPromptRecord[];
+        const result = await http.get<unknown>("/api/v1/prompts");
+        const { data } = unwrapCollection<GeneralPromptRecord[]>(result);
+        return (Array.isArray(data) ? data : []) as GeneralPromptRecord[];
       },
       upsert(input: {
         key: GeneralPromptKey;
@@ -581,7 +700,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         active?: boolean;
       }) {
         return http.put<GeneralPromptRecord>(
-          `/api/user/prompts/${input.key}`,
+          `/api/v1/prompts/${input.key}`,
           input,
         );
       },
@@ -590,7 +709,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       async get(novelId: string): Promise<ReadingProgress | null> {
         try {
           return await http.get<ReadingProgress>(
-            `/api/user/novels/${novelId}/reading-progress`,
+            `/api/v1/novels/${novelId}/reading-progress`,
           );
         } catch {
           return null;
@@ -601,22 +720,24 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         data: { chapterId: string; scrollPercent: number },
       ): Promise<ReadingProgress> {
         return http.put<ReadingProgress>(
-          `/api/user/novels/${novelId}/reading-progress`,
+          `/api/v1/novels/${novelId}/reading-progress`,
           data,
         );
       },
     },
     epubs: {
-      listByNovel(novelId: string) {
-        return http.get<NovelEpubRecord[]>(
-          `/api/epubs?novelId=${encodeURIComponent(novelId)}`,
+      async listByNovel(novelId: string): Promise<NovelEpubRecord[]> {
+        const result = await http.get<unknown>(
+          `/api/v1/epubs?novelId=${encodeURIComponent(novelId)}`,
         );
+        const { data } = unwrapCollection<NovelEpubRecord[]>(result);
+        return Array.isArray(data) ? data : [];
       },
       build(input: {
         novelId: string;
         source: "original" | "translated" | "refined";
       }) {
-        return http.post<NovelEpubRecord>("/api/epubs/build", input);
+        return http.post<NovelEpubRecord>("/api/v1/epubs/build", input);
       },
       save(input: {
         novelId: string;
@@ -635,7 +756,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             type: input.blob.type || "application/epub+zip",
           }),
         );
-        return http.post<NovelEpubRecord>("/api/epubs", form);
+        return http.post<NovelEpubRecord>("/api/v1/epubs", form);
       },
       preview(file: Blob, fileName: string) {
         const form = new FormData();
@@ -643,25 +764,25 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           "file",
           new File([file], fileName, { type: "application/epub+zip" }),
         );
-        return http.post<EpubPreviewResult>("/api/epubs/preview", form);
+        return http.post<EpubPreviewResult>("/api/v1/epubs/preview", form);
       },
       download(id: string, cacheBust?: string) {
         const suffix = cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : "";
-        return http.downloadBlob(`/api/epubs/${id}/download${suffix}`);
+        return http.downloadBlob(`/api/v1/epubs/${id}/download${suffix}`);
       },
     },
     workerTokens: {
       async list(): Promise<WorkerToken[]> {
-        const result = await http.get<{ tokens: WorkerToken[]; count: number }>(
-          "/api/worker-auth/tokens",
+        const result = await http.get<{ tokens?: WorkerToken[] }>(
+          "/api/v1/worker-auth/tokens",
         );
-        return result.tokens;
+        return Array.isArray(result?.tokens) ? result.tokens : [];
       },
       async revoke(tokenId: string): Promise<void> {
-        await http.post(`/api/worker-auth/revoke/${tokenId}`);
+        await http.post<void>(`/api/v1/worker-auth/revoke/${tokenId}`);
       },
       async delete(tokenId: string): Promise<void> {
-        await http.post(`/api/worker-auth/delete/${tokenId}`);
+        await http.post<void>(`/api/v1/worker-auth/delete/${tokenId}`);
       },
     },
   };

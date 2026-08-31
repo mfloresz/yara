@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
@@ -21,12 +24,16 @@ const chapterDownloadMaxRetries = 3
 // waits n * baseDelay before retrying.
 const chapterDownloadRetryBaseDelay = 5 * time.Second
 
+// jobQueueFullMessage is persisted as the job errorMessage and returned to the
+// client when a job cannot be enqueued because the worker queue is saturated.
+const jobQueueFullMessage = "Server is busy processing other jobs. Please wait a few minutes and try again."
+
 func (s *Server) startJobWorker() {
 	s.downloadQueue = make(chan string, 128)
 	s.translateQueue = make(chan string, 128)
 
-	go s.downloadWorkerLoop()
-	go s.translateWorkerLoop()
+	go s.workerLoop(s.downloadQueue)
+	go s.workerLoop(s.translateQueue)
 
 	jobs, err := s.Store.ListRunnableJobs()
 	if err != nil {
@@ -38,9 +45,9 @@ func (s *Server) startJobWorker() {
 	}
 }
 
-func (s *Server) enqueueJob(jobID string) {
+func (s *Server) enqueueJob(jobID string) bool {
 	if jobID == "" {
-		return
+		return false
 	}
 	s.queueMu.Lock()
 	if s.queuedJobs == nil {
@@ -48,7 +55,7 @@ func (s *Server) enqueueJob(jobID string) {
 	}
 	if _, exists := s.queuedJobs[jobID]; exists {
 		s.queueMu.Unlock()
-		return
+		return true
 	}
 	s.queuedJobs[jobID] = struct{}{}
 	s.queueMu.Unlock()
@@ -56,12 +63,17 @@ func (s *Server) enqueueJob(jobID string) {
 	job, err := s.Store.GetJob(jobID)
 	if err != nil {
 		slog.Error("enqueue job: get job", "jobId", jobID, "error", err)
-		return
+		s.queueMu.Lock()
+		delete(s.queuedJobs, jobID)
+		s.queueMu.Unlock()
+		return false
 	}
 
 	var queue chan string
 	switch job.Operation {
-	case "download":
+	case "download", "check":
+		// Both fetch from the source site via noveldownloader; they must not
+		// wait behind long-running AI jobs.
 		queue = s.downloadQueue
 	default:
 		queue = s.translateQueue
@@ -69,14 +81,14 @@ func (s *Server) enqueueJob(jobID string) {
 
 	select {
 	case queue <- jobID:
+		return true
 	default:
 		s.queueMu.Lock()
 		delete(s.queuedJobs, jobID)
 		s.queueMu.Unlock()
-		msg := "Server is busy processing other jobs. Please wait a few minutes and try again."
 		if ue := s.Store.UpdateJob(jobID, map[string]any{
 			"status":       "failed",
-			"errorMessage": msg,
+			"errorMessage": jobQueueFullMessage,
 		}); ue != nil {
 			slog.Error("update job status on queue saturation", "jobId", jobID, "error", ue)
 		}
@@ -84,6 +96,7 @@ func (s *Server) enqueueJob(jobID string) {
 			"jobId", jobID,
 			"queueLen", len(queue),
 			"queueCap", cap(queue))
+		return false
 	}
 }
 
@@ -96,14 +109,6 @@ func (s *Server) workerLoop(queue chan string) {
 			slog.Error("job failed", "jobId", jobID, "error", err)
 		}
 	}
-}
-
-func (s *Server) downloadWorkerLoop() {
-	s.workerLoop(s.downloadQueue)
-}
-
-func (s *Server) translateWorkerLoop() {
-	s.workerLoop(s.translateQueue)
 }
 
 func (s *Server) processJob(jobID string) error {
@@ -121,6 +126,18 @@ func (s *Server) processJob(jobID string) error {
 		cancel()
 		s.unregisterJobCancel(jobID)
 	}()
+
+	// A cancellation request can land between the status check above and the
+	// registration of the cancel func. Re-read the job after registering so a
+	// job cancelled in that window is not processed: from now on cancelJob
+	// always finds a registered func and cancels runCtx.
+	job, err = s.Store.GetJob(jobID)
+	if err != nil {
+		return fmt.Errorf("recheck job after cancel registration: %w", err)
+	}
+	if job.Status == "cancelled" || job.Status == "done" || job.Status == "failed" {
+		return nil
+	}
 
 	if job.Operation == "download" {
 		return s.processDownloadJob(runCtx, job)
@@ -163,65 +180,133 @@ func (s *Server) processJob(jobID string) error {
 		return fmt.Errorf("set job running: %w", err)
 	}
 
+	concurrency := store.NormalizeProviderConcurrency(jc.cfg.AI.Concurrency)
+	isConcurrent := concurrency > 1 && len(jc.chapters) > 1
 	var wasCancelled bool
-	for idx := range jc.chapters {
-		if runCtx.Err() != nil {
+	if isConcurrent {
+		if concurrency > len(jc.chapters) {
+			concurrency = len(jc.chapters)
+		}
+		if jc.cfg.IncludePrevTitle {
+			slog.Warn("concurrent translation: disabling includePreviousTitleHints (requires sequential execution)", "jobId", jobID, "concurrency", concurrency)
+			jc.mu.Lock()
+			jc.cfg.IncludePrevTitle = false
+			jc.cfg.Translation.IncludePreviousTitleHints = false
+			jc.mu.Unlock()
+		}
+		slog.Info("starting concurrent translation", "jobId", jobID, "concurrency", concurrency, "totalChapters", len(jc.chapters), "operation", job.Operation)
+		var cancelledMu sync.Mutex
+		setCancelled := func() {
+			cancelledMu.Lock()
 			wasCancelled = true
-			break
+			cancelledMu.Unlock()
 		}
-		chapter := jc.chapters[idx]
-		jc.resetSegmentProgress()
-
-		var chapterErr error
-		switch job.Operation {
-		case "refine":
-			chapterErr = s.runRefineChapter(jc, idx, &chapter)
-		default:
-			segmentation := previewChapterSegmentation(jc.cfg, chapter)
-			jc.recordSegProgress(0, 0, segmentation.SegmentCount, chapter.ID, chapter.Title, segmentation.Applied)
-			jc.flushProgress(s)
-			var segErr error
-			_, segErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
-			chapterErr = segErr
-		}
-
-		if runCtx.Err() != nil {
-			wasCancelled = true
-		}
-
-		jc.recordChapterResult(chapterErr)
-		if chapterErr != nil {
-			if wasCancelled {
-				if err := s.Store.UpdateChapterStatusFast(chapter.ID, "pending", ""); err != nil {
-					slog.Warn("reset chapter status on cancel", "chapterId", chapter.ID, "error", err)
+		g, gCtx := errgroup.WithContext(runCtx)
+		g.SetLimit(concurrency)
+		for idx := range jc.chapters {
+			if runCtx.Err() != nil || gCtx.Err() != nil {
+				setCancelled()
+				break
+			}
+			idx := idx
+			g.Go(func() error {
+				if runCtx.Err() != nil || gCtx.Err() != nil {
+					setCancelled()
+					return nil
 				}
-			} else {
-				if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
-					slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+				chapter := jc.chapters[idx]
+				var chapterErr error
+				switch job.Operation {
+				case "refine":
+					chapterErr = s.runRefineChapter(jc, idx, &chapter)
+				default:
+					_, chapterErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
+				}
+				if runCtx.Err() != nil || gCtx.Err() != nil {
+					setCancelled()
+					if chapterErr != nil {
+						_ = s.Store.UpdateChapterStatusFast(chapter.ID, "pending", "")
+					}
+					return nil
+				}
+				jc.recordChapterResult(chapterErr)
+				if chapterErr != nil {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
+						slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+					}
+				}
+				jc.flushProgress(s)
+				return nil
+			})
+		}
+		_ = g.Wait()
+		if runCtx.Err() != nil {
+			setCancelled()
+		}
+		cancelledMu.Lock()
+		wasCancelled = wasCancelled || runCtx.Err() != nil
+		cancelledMu.Unlock()
+	} else {
+		for idx := range jc.chapters {
+			if runCtx.Err() != nil {
+				wasCancelled = true
+				break
+			}
+			chapter := jc.chapters[idx]
+			jc.resetSegmentProgress()
+
+			var chapterErr error
+			switch job.Operation {
+			case "refine":
+				chapterErr = s.runRefineChapter(jc, idx, &chapter)
+			default:
+				segmentation := previewChapterSegmentation(jc.cfg, chapter)
+				jc.recordSegProgress(0, 0, segmentation.SegmentCount, chapter.ID, chapter.Title, segmentation.Applied)
+				jc.flushProgress(s)
+				var segErr error
+				_, segErr = s.runTranslateChapterDetailed(jc, idx, &chapter)
+				chapterErr = segErr
+			}
+
+			if runCtx.Err() != nil {
+				wasCancelled = true
+			}
+
+			jc.recordChapterResult(chapterErr)
+			if chapterErr != nil {
+				if wasCancelled {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "pending", ""); err != nil {
+						slog.Warn("reset chapter status on cancel", "chapterId", chapter.ID, "error", err)
+					}
+				} else {
+					if err := s.Store.UpdateChapterStatusFast(chapter.ID, "failed", chapterErr.Error()); err != nil {
+						slog.Warn("update chapter status on failure", "chapterId", chapter.ID, "error", err)
+					}
 				}
 			}
+			jc.resetSegmentProgress()
+			jc.flushProgress(s)
 		}
-		jc.resetSegmentProgress()
-		jc.flushProgress(s)
 	}
 
 	if err := s.Store.RecalculateNovelStats(jc.novel.ID); err != nil {
 		slog.Error("recalculate novel stats at job end", "jobId", jobID, "error", err)
 	}
 
+	completed, failed, lastErr, _ := jc.snapshotProgress()
 	finalStatus := "done"
 	finalError := ""
 	if wasCancelled {
 		finalStatus = "cancelled"
-	} else if jc.failed > 0 {
+	} else if failed > 0 {
 		finalStatus = "failed"
-		finalError = jc.lastError
+		finalError = lastErr
 	}
 
 	return s.Store.UpdateJob(jobID, map[string]interface{}{
 		"status":                    finalStatus,
-		"completedChapters":         jc.completed,
-		"failedChapters":            jc.failed,
+		"completedChapters":         completed,
+		"failedChapters":            failed,
 		"errorMessage":              finalError,
 		"autoSegmentActive":         false,
 		"autoSegmentCurrentIndex":   0,
@@ -237,6 +322,7 @@ type downloadJobOptions struct {
 	StartOrder     int                         `json:"startOrder"`
 	SourceLanguage string                      `json:"sourceLanguage"`
 	TargetLanguage string                      `json:"targetLanguage"`
+	ReDownload     bool                        `json:"reDownload"`
 }
 
 func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
@@ -246,6 +332,22 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			slog.Error("update job status on invalid options", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("parse download options: %w", err)
+	}
+	if opts.ReDownload {
+		activeJobs, err := s.Store.ListActiveNovelJobs(job.NovelID)
+		if err != nil {
+			return fmt.Errorf("check active novel jobs: %w", err)
+		}
+		for _, activeJob := range activeJobs {
+			if activeJob.ID == job.ID {
+				continue
+			}
+			message := "No se puede re-descargar: ya hay otro trabajo en curso para esta novela. Espera a que termine e inténtalo de nuevo."
+			if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": message}); ue != nil {
+				slog.Error("update redownload job after active job conflict", "jobId", job.ID, "error", ue)
+			}
+			return fmt.Errorf("redownload blocked by active job %s", activeJob.ID)
+		}
 	}
 	dl := s.DownloaderFactory(job.OwnerID)
 	if len(opts.Chapters) == 0 {
@@ -288,6 +390,9 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		}
 		if idx > 0 {
 			if err := dl.SleepBetweenChapters(ctx); err != nil {
+				if ctx.Err() != nil {
+					break
+				}
 				return err
 			}
 		}
@@ -312,7 +417,25 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			if chTitle == "" {
 				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 			}
-			if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+			if opts.ReDownload {
+				// Re-download mode: update only the original content of an
+				// existing chapter (matched by id). Title, status and any
+				// existing translation/refinement are preserved because the
+				// upsert only overwrites non-empty fields.
+				if chInfo.ChapterID == "" {
+					failed++
+					slog.Error("re-download chapter without id", "jobId", job.ID, "chapter", chTitle)
+				} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+					ID:              chInfo.ChapterID,
+					ChapterOrder:    chOrder,
+					OriginalContent: ch.Markdown,
+				}); err != nil {
+					failed++
+					slog.Error("failed to save re-downloaded chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
+				} else {
+					completed++
+				}
+			} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
 				ChapterOrder:    chOrder,
 				Title:           chTitle,
 				OriginalContent: ch.Markdown,
@@ -476,7 +599,7 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 
 	newAvailable := 0
 	for _, ch := range info.Chapters {
-		chNum := extractChapterOrder(ch.Title)
+		chNum := chapterOrderOf(ch)
 		if chNum > 0 && existingOrders[chNum] {
 			continue
 		}

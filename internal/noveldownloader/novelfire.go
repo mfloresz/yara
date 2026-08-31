@@ -15,6 +15,8 @@ func (p *NovelfireParser) Name() string {
 	return "novelfire"
 }
 
+func (p *NovelfireParser) RequiresBrowser() bool { return false }
+
 func (p *NovelfireParser) CanHandle(urlStr string) bool {
 	u, err := url.Parse(urlStr)
 	if err != nil {

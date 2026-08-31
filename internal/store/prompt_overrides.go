@@ -12,6 +12,7 @@ type PromptOverride struct {
 
 type NovelPromptOverrides struct {
 	Translation PromptOverride `json:"translation,omitempty"`
+	Title       PromptOverride `json:"title,omitempty"`
 	Refine      PromptOverride `json:"refine,omitempty"`
 	Check       PromptOverride `json:"check,omitempty"`
 }
@@ -23,6 +24,7 @@ func buildNovelPromptOverrides(novel *Novel) NovelPromptOverrides {
 	}
 
 	applyPromptColumns(&overrides.Translation, novel.TranslationSystemPrompt, novel.TranslationUserPrompt)
+	applyPromptColumns(&overrides.Title, novel.TitleSystemPrompt, novel.TitleUserPrompt)
 	applyPromptColumns(&overrides.Refine, novel.RefineSystemPrompt, novel.RefineUserPrompt)
 	applyPromptColumns(&overrides.Check, novel.CheckSystemPrompt, novel.CheckUserPrompt)
 
@@ -32,6 +34,7 @@ func buildNovelPromptOverrides(novel *Novel) NovelPromptOverrides {
 func (o NovelPromptOverrides) ToMap() map[string]map[string]string {
 	result := map[string]map[string]string{}
 	appendPromptOverride(result, "translation", o.Translation)
+	appendPromptOverride(result, "title", o.Title)
 	appendPromptOverride(result, "refine", o.Refine)
 	appendPromptOverride(result, "check", o.Check)
 	return result

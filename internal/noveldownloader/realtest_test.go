@@ -227,6 +227,46 @@ func TestRealFenrirRealmRange(t *testing.T) {
 	}
 }
 
+func TestRealFenrirRealmHTMLFormat(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://fenrirealm.com/series/clearing-the-world-starting-as-a-low-rank-adventurer"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q totalChapters=%d", info.Title, len(info.Chapters))
+	if len(info.Chapters) == 0 {
+		t.Fatal("no chapters found")
+	}
+
+	// This series uses content_format "html" with Cloudflare obfuscation.
+	chapter, err := dl.DownloadChapter(ctx, info.Chapters[0].URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("chapter title=%q markdownLen=%d", chapter.Title, len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 100 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+	}
+	// Verify CF obfuscation was stripped — content should not contain
+	// invisible zero-width characters.
+	for _, ch := range chapter.Markdown {
+		if ch == '\u200b' || ch == '\u200d' || ch == '\u200f' {
+			t.Errorf("markdown contains invisible Unicode character (CF obfuscation not stripped): U+%04X", ch)
+			break
+		}
+	}
+}
+
 func TestRealSkyDemonOrder(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real URL test in short mode")
@@ -452,6 +492,172 @@ func TestRealLiteroticaChapter(t *testing.T) {
 		t.Skip("skipping real URL test in short mode")
 	}
 	url := "https://www.literotica.com/series/se/495277611"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatal("no chapters to test")
+	}
+	first := info.Chapters[0]
+	t.Logf("downloading first chapter: %s", first.URL)
+	chapter, err := dl.DownloadChapter(ctx, first.URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("title=%q contentLen=%d markdownLen=%d", chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 100 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+		t.Logf("content=%q", chapter.Content)
+		t.Logf("markdown=%q", chapter.Markdown)
+	}
+}
+
+func TestRealWTRLab(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://wtr-lab.com/en/novel/88651/im-playing-the-role-of-a-beautiful-powerful-and-tragic-big-shot-in-the-infinite-world"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+	t.Logf("parser: %s", parser.Name())
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q", info.Title)
+	t.Logf("author=%q", info.Author)
+	t.Logf("coverURL=%q", info.CoverURL)
+	t.Logf("totalChapters=%d", len(info.Chapters))
+	desc := info.Description
+	if len(desc) > 300 {
+		desc = desc[:300] + "..."
+	}
+	t.Logf("descriptionLen=%d descPreview=%q", len(info.Description), desc)
+	if info.Title == "" {
+		t.Errorf("empty title")
+	}
+	if info.CoverURL == "" {
+		t.Errorf("empty coverURL")
+	}
+	if info.Description == "" {
+		t.Errorf("empty description")
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatalf("no chapters found")
+	}
+	t.Logf("first 3 chapters:")
+	for i, ch := range info.Chapters {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  - %s -> %s", ch.Title, ch.URL)
+	}
+	t.Logf("last 3 chapters:")
+	for i := len(info.Chapters) - 3; i < len(info.Chapters); i++ {
+		t.Logf("  - %s -> %s", info.Chapters[i].Title, info.Chapters[i].URL)
+	}
+}
+
+func TestRealWTRLabChapter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://wtr-lab.com/en/novel/88651/im-playing-the-role-of-a-beautiful-powerful-and-tragic-big-shot-in-the-infinite-world/chapter-1"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	chapter, err := dl.DownloadChapter(ctx, url)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("title=%q contentLen=%d markdownLen=%d", chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 100 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+		t.Logf("content=%q", chapter.Content)
+		t.Logf("markdown=%q", chapter.Markdown)
+	}
+}
+
+func TestRealNovelArrow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://novelarrow.com/novel/qt-the-rescue-of-the-miserable-bigshots"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+	t.Logf("parser: %s", parser.Name())
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q", info.Title)
+	t.Logf("author=%q", info.Author)
+	t.Logf("coverURL=%q", info.CoverURL)
+	t.Logf("totalChapters=%d", len(info.Chapters))
+	desc := info.Description
+	if len(desc) > 300 {
+		desc = desc[:300] + "..."
+	}
+	t.Logf("descriptionLen=%d descPreview=%q", len(info.Description), desc)
+	if info.Title == "" {
+		t.Errorf("empty title")
+	}
+	if info.Author == "" {
+		t.Errorf("empty author")
+	}
+	if info.CoverURL == "" {
+		t.Errorf("empty coverURL")
+	}
+	if info.Description == "" {
+		t.Errorf("empty description")
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatalf("no chapters found")
+	}
+	t.Logf("first 3 chapters:")
+	for i, ch := range info.Chapters {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  - %s -> %s", ch.Title, ch.URL)
+	}
+	t.Logf("last 3 chapters:")
+	for i := len(info.Chapters) - 3; i < len(info.Chapters); i++ {
+		t.Logf("  - %s -> %s", info.Chapters[i].Title, info.Chapters[i].URL)
+	}
+}
+
+func TestRealNovelArrowChapter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://novelarrow.com/novel/qt-the-rescue-of-the-miserable-bigshots"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

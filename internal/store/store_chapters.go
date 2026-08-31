@@ -285,7 +285,11 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 		record.Set("refined_content", "")
 	}
 	if chapter.OriginalContent != "" || chapter.TranslatedContent != "" || chapter.RefinedContent != "" || record.IsNew() {
-		setCharCounts(record, chapter.OriginalContent, chapter.TranslatedContent, chapter.RefinedContent)
+		setCharCounts(record,
+			record.GetString("original_content"),
+			record.GetString("translated_content"),
+			record.GetString("refined_content"),
+		)
 	}
 	record.Set("status", status)
 	if chapter.ErrorMessage != "" {
@@ -513,9 +517,21 @@ func (s *Store) ReconcileProcessingChaptersForJob(jobID string) error {
 		return err
 	}
 	chapterIDs := []string{}
-	if trimmed := strings.TrimSpace(job.ChapterIDs); trimmed != "" {
+	if trimmed := strings.TrimSpace(job.ChapterIDs); trimmed != "" && trimmed != "[]" {
 		if err := json.Unmarshal([]byte(trimmed), &chapterIDs); err != nil {
 			return err
+		}
+	} else {
+		// Jobs without explicit chapter ids cover the whole novel (same rule as
+		// LoadJobChapters), so the chapters marked processing by the handler must
+		// be derived the same way instead of iterating an empty list.
+		chapters, _, err := s.LoadJobChapters(job)
+		if err != nil {
+			return err
+		}
+		chapterIDs = make([]string, 0, len(chapters))
+		for _, chapter := range chapters {
+			chapterIDs = append(chapterIDs, chapter.ID)
 		}
 	}
 	mutated := false
