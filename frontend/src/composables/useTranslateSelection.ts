@@ -1,5 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
 import type { ChapterSummary } from "@/api/types";
+import { chapterPosition } from "@/domain";
 import { resolvedChapterStatus } from "@/composables/useChapterStatus";
 
 export type TranslateOperation = "translate" | "refine";
@@ -60,7 +61,7 @@ export function useTranslateSelection(
     }
     const from = Math.min(rangeFrom.value, rangeTo.value);
     const to = Math.max(rangeFrom.value, rangeTo.value);
-    const matched = selectableChapters.value.filter((chapter) => chapter.chapterOrder >= from && chapter.chapterOrder <= to);
+    const matched = selectableChapters.value.filter((chapter) => chapterPosition(chapter) >= from && chapterPosition(chapter) <= to);
     if (matched.length === 0) {
       warn(`No hay capítulos seleccionables entre #${from} y #${to}`);
       return;
@@ -94,7 +95,7 @@ export function useTranslateSelection(
 
   watch(selectionMode, (mode) => {
     if (mode !== "rango") return;
-    const orders = sourceSummaries.value.map((chapter) => chapter.chapterOrder);
+    const orders = sourceSummaries.value.map((chapter) => chapterPosition(chapter));
     if (orders.length === 0) return;
     const sorted = [...orders].sort((a, b) => a - b);
     if (rangeFrom.value == null) rangeFrom.value = sorted[0];

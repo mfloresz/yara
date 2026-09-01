@@ -216,6 +216,9 @@ func (s *Store) LoadJobChapters(job *Job) ([]Chapter, *Novel, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// ListChaptersAccessible already filters excluded chapters, so jobs never
+	// pick up logically deleted chapters — neither via "all chapters" nor via
+	// an explicit ID list.
 	chapters, err := s.ListChaptersAccessible(job.OwnerID, job.NovelID)
 	if err != nil {
 		return nil, nil, err
@@ -237,65 +240,24 @@ func (s *Store) LoadJobChapters(job *Job) ([]Chapter, *Novel, error) {
 			}
 		}
 	}
-	sort.Slice(selected, func(i, j int) bool { return selected[i].ChapterOrder < selected[j].ChapterOrder })
+	// Jobs process chapters in user-controlled position order (falling back to
+	// source order for records that predate the position migration).
+	sort.Slice(selected, func(i, j int) bool {
+		if selected[i].Position != selected[j].Position {
+			return selected[i].Position < selected[j].Position
+		}
+		return selected[i].ChapterOrder < selected[j].ChapterOrder
+	})
 	return selected, novel, nil
 }
 
-func (s *Store) removeDeletedChapterReferences(novelID string, deletedIDs []string) error {
-	if len(deletedIDs) == 0 {
-		return nil
-	}
-	deleted := make(map[string]struct{}, len(deletedIDs))
-	for _, id := range deletedIDs {
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
-			deleted[trimmed] = struct{}{}
-		}
-	}
-	if len(deleted) == 0 {
-		return nil
-	}
-	records, err := s.App.FindRecordsByFilter(JobsCollection, "novel = {:novel}", "", 500, 0, dbx.Params{"novel": novelID})
+// HasActiveJobsForNovel reports whether the novel has any pending or running
+// job. Exclusion and reorder are rejected while such jobs exist so in-flight
+// chapter sets are never silently mutated.
+func (s *Store) HasActiveJobsForNovel(novelID string) (bool, error) {
+	records, err := s.App.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
 	if err != nil {
-		return err
+		return false, err
 	}
-	for _, record := range records {
-		changed := false
-		if raw := strings.TrimSpace(record.GetString("chapter_ids")); raw != "" && raw != "[]" {
-			var ids []string
-			if err := json.Unmarshal([]byte(raw), &ids); err == nil {
-				pruned := make([]string, 0, len(ids))
-				for _, id := range ids {
-					if _, shouldDelete := deleted[id]; shouldDelete {
-						changed = true
-						continue
-					}
-					pruned = append(pruned, id)
-				}
-				if changed {
-					encoded, err := json.Marshal(pruned)
-					if err != nil {
-						return err
-					}
-					record.Set("chapter_ids", string(encoded))
-					status := record.GetString("status")
-					if status == "pending" || status == "running" {
-						record.Set("total_chapters", len(pruned))
-					}
-				}
-			}
-		}
-		if current := strings.TrimSpace(record.GetString("auto_segment_chapter_id")); current != "" {
-			if _, shouldClear := deleted[current]; shouldClear {
-				record.Set("auto_segment_chapter_id", "")
-				record.Set("auto_segment_chapter_title", "")
-				changed = true
-			}
-		}
-		if changed {
-			if err := s.App.Save(record); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return len(records) > 0, nil
 }

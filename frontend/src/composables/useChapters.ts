@@ -1,5 +1,5 @@
 import { onScopeDispose, ref, watch, type Ref } from "vue";
-import type { Chapter, ChapterUpsertInput } from "@/domain";
+import { chapterPosition, type Chapter, type ChapterUpsertInput } from "@/domain";
 import { useAppServices } from "@/app/services";
 
 const PARALLEL_BATCH = 4;
@@ -77,6 +77,8 @@ export function useChapters(
       a.id === b.id &&
       a.novelId === b.novelId &&
       a.chapterOrder === b.chapterOrder &&
+      a.position === b.position &&
+      a.excluded === b.excluded &&
       a.title === b.title &&
       a.status === b.status &&
       a.originalContent === b.originalContent &&
@@ -91,7 +93,7 @@ export function useChapters(
   async function createChapter(chapter: ChapterUpsertInput) {
     const created = await api.chapters.upsert(novelId.value, chapter);
     chapters.value = [...chapters.value, created].sort(
-      (a, b) => a.chapterOrder - b.chapterOrder,
+      (a, b) => chapterPosition(a) - chapterPosition(b),
     );
     return created;
   }
@@ -133,7 +135,7 @@ export function useChapters(
     const map = new Map(chapters.value.map((item) => [item.id, item]));
     created.forEach((item) => map.set(item.id, item));
     chapters.value = Array.from(map.values()).sort(
-      (a, b) => a.chapterOrder - b.chapterOrder,
+      (a, b) => chapterPosition(a) - chapterPosition(b),
     );
     return created;
   }

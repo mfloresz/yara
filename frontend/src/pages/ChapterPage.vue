@@ -20,7 +20,7 @@
           <h1 style="margin: 0 0 0.25rem">{{ translatedTitle || title }}</h1>
           <div v-if="translatedTitle" class="small muted">{{ title }}</div>
           <div class="row-wrap" style="margin-top: 0.75rem">
-            <n-tag size="small" round> #{{ chapter.chapterOrder }} </n-tag>
+            <n-tag size="small" round> #{{ chapterPosition(chapter) }} </n-tag>
             <n-tag :type="chapterTagType(displayStatus)" size="small" round>
               {{ chapterStatusLabel(displayStatus) }}
             </n-tag>
@@ -136,7 +136,7 @@ import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useAppServices } from "@/app/services";
 import { chapterStatusLabel, chapterTagType } from "@/composables/useChapterStatus";
-import { type Chapter, type Novel } from "@/domain";
+import { chapterPosition, type Chapter, type Novel } from "@/domain";
 import { emitJobChanged } from "@/utils/job-events";
 import { markdownToHtml } from "@/utils/markdown";
 

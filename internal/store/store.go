@@ -26,6 +26,15 @@ const (
 var ErrNotFound = errors.New("not found")
 var ErrForbidden = errors.New("forbidden")
 
+// ErrActiveJobs is returned when an operation (excluding or reordering
+// chapters) is rejected because the novel has pending/running jobs that are
+// actively downloading or processing chapters.
+var ErrActiveJobs = errors.New("active jobs on novel")
+
+// ErrInvalidReorder is returned when a chapter reorder payload is rejected:
+// empty, duplicate, foreign, or partial (missing chapters of the novel).
+var ErrInvalidReorder = errors.New("invalid chapter order list")
+
 type Store struct {
 	App       core.App
 	Encryptor *secure.Encryptor

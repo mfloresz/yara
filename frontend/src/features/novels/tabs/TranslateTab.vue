@@ -45,7 +45,7 @@
         <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 420px">
           <div v-for="chapter in sourceSummaries" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
             <n-checkbox :checked="selectedIds.has(chapter.id)" :disabled="submitting || !selectableChapterIds.has(chapter.id)" @update:checked="toggle(chapter.id, $event)" />
-            <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
+            <span class="mono small muted" style="width: 48px">#{{ chapterPosition(chapter) }}</span>
             <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
             <n-tag :type="chapterTagType(resolvedChapterStatus(chapter))" size="small" round>{{ chapterStatusLabel(resolvedChapterStatus(chapter)) }}</n-tag>
           </div>
@@ -60,6 +60,7 @@ import { toRef } from "vue";
 import { useMessage, NButton, NButtonGroup, NCard, NCheckbox, NSkeleton, NTag, NIcon, NInputNumber } from "naive-ui";
 import { PlayOutline } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
+import { chapterPosition } from "@/domain";
 import { chapterStatusLabel, chapterTagType, resolvedChapterStatus } from "@/composables/useChapterStatus";
 import {
   useTranslateSelection,

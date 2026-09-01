@@ -508,11 +508,29 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             return { items, total, limit: perPage, offset } satisfies ChapterSummaryPage;
           });
       },
-      async gaps(novelId: string): Promise<{ gaps: Array<{ from: number; to: number; count: number }> }> {
-        const result = await http.get<{ gaps: Array<{ from: number; to: number; count: number }> }>(
+      async gaps(novelId: string): Promise<{ gaps: Array<{ from: number; to: number; count: number }>; excludedOrders: number[] }> {
+        const result = await http.get<{ gaps?: Array<{ from: number; to: number; count: number }>; excludedOrders?: number[] }>(
           `/api/v1/novels/${novelId}/chapters/gaps`,
         );
-        return { gaps: Array.isArray(result?.gaps) ? result.gaps : [] };
+        return {
+          gaps: Array.isArray(result?.gaps) ? result.gaps : [],
+          excludedOrders: Array.isArray(result?.excludedOrders) ? result.excludedOrders : [],
+        };
+      },
+      async listExcluded(novelId: string): Promise<ChapterSummary[]> {
+        const result = await http.get<unknown>(`/api/v1/novels/${novelId}/chapters/excluded`);
+        const { data } = unwrapCollection<ChapterSummary[]>(result);
+        return Array.isArray(data) ? data : [];
+      },
+      async reorder(novelId: string, chapterIds: string[]): Promise<{ items: ChapterSummary[] }> {
+        const result = await http.patch<{ items?: ChapterSummary[] }>(
+          `/api/v1/novels/${novelId}/chapters/order`,
+          { chapterIds },
+        );
+        return { items: Array.isArray(result?.items) ? result.items : [] };
+      },
+      async setVisibility(novelId: string, chapterId: string, excluded: boolean): Promise<Chapter> {
+        return http.patch<Chapter>(`/api/v1/novels/${novelId}/chapters/${chapterId}/visibility`, { excluded });
       },
 
       get(novelId: string, chapterId: string) {

@@ -76,6 +76,8 @@ export type Chapter = {
   id: string;
   novelId: string;
   chapterOrder: number;
+  position?: number;
+  excluded?: boolean;
   title: string;
   translatedTitle?: string;
   originalContent?: string;
@@ -148,7 +150,8 @@ export type UpdateNovelInput = Partial<CreateNovelInput>;
 
 export type ChapterUpsertInput = {
   id?: string;
-  chapterOrder: number;
+  chapterOrder?: number;
+  position?: number;
   title?: string;
   translatedTitle?: string;
   originalContent?: string;
@@ -192,4 +195,12 @@ export function getNovelDisplayNumber(
   novel: Pick<Novel, "targetNumber" | "sourceNumber">,
 ): string {
   return (novel.targetNumber || novel.sourceNumber || "").trim();
+}
+
+/**
+ * User-controlled reading/display/export order. Falls back to the source
+ * number when the position migration has not run yet (position is 0/undefined).
+ */
+export function chapterPosition(ch: { position?: number; chapterOrder: number }): number {
+  return ch.position && ch.position > 0 ? ch.position : ch.chapterOrder;
 }

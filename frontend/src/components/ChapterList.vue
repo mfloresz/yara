@@ -19,7 +19,7 @@
           @click="emit('bulk-delete', $event)"
         >
           <template #icon><n-icon><TrashOutline /></n-icon></template>
-          Eliminar {{ selected.length }}
+          Excluir {{ selected.length }}
         </n-button>
         <n-button size="small" secondary @click="emit('import')">
           <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
@@ -82,16 +82,16 @@
             v-if="isOwner"
             :checked="isSelected(item.chapter)"
             class="chapter-list-checkbox"
-            :aria-label="`Seleccionar capítulo ${item.chapter.chapterOrder}`"
+            :aria-label="`Seleccionar capítulo ${chapterPosition(item.chapter)}`"
             @update:checked="toggleSelected(item.chapter, $event)"
           />
 
           <RouterLink
             :to="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
             class="chapter-list-link"
-            :aria-label="`Editar capítulo ${item.chapter.chapterOrder}: ${item.chapter.title}`"
+            :aria-label="`Editar capítulo ${chapterPosition(item.chapter)}: ${item.chapter.title}`"
           >
-            <span class="chapter-list-order mono small muted">#{{ String(item.chapter.chapterOrder).padStart(2, "0") }}</span>
+            <span class="chapter-list-order mono small muted">#{{ String(chapterPosition(item.chapter)).padStart(2, "0") }}</span>
             <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
           </RouterLink>
 
@@ -112,12 +112,12 @@
                   circle
                   size="tiny"
                   class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
-                  aria-label="Eliminar"
+                  aria-label="Excluir"
                 >
                   <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
                 </n-button>
               </template>
-              ¿Eliminar el capítulo "{{ item.chapter.title }}"?
+              ¿Excluir el capítulo "{{ item.chapter.title }}"? Se conservará y podrás restaurarlo.
             </n-popconfirm>
           </div>
         </article>
@@ -152,6 +152,7 @@ import {
   DocumentTextOutline,
 } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
+import { chapterPosition } from "@/domain";
 import { chapterStatusLabel, chapterTagType, resolvedChapterStatus as resolvedStatus } from "@/composables/useChapterStatus";
 
 const props = defineProps<{

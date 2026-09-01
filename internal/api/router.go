@@ -59,7 +59,9 @@ type Server struct {
 	pendingBrowserJobsMu   sync.Mutex
 	// redownloadLocks serializes the check+create+enqueue sequence of
 	// redownload-from-url per novel, so two concurrent requests cannot both pass
-	// the active-jobs check and create competing redownload jobs.
+	// the active-jobs check and create competing redownload jobs. Reused for
+	// chapter reorder/visibility/bulk-exclude which must also not race
+	// translate/download jobs.
 	redownloadLocks sync.Map
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings) (ai.Provider, error)

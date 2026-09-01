@@ -94,23 +94,53 @@
           </n-tab>
         </n-tabs>
 
-        <ChaptersTab
-          v-show="activeTab === 'chapters'"
-          :active="true"
-          :chapters="chapterSummaries"
-          :total="chapterSummaryTotal"
-          :loading="chapterSummariesLoading"
-          :page="chapterPage"
-          :page-size="chapterPageSize"
-          v-model:selected="selectedChapters"
-          :is-owner="isOwner"
-          :gaps="chapterGaps"
-          @delete="onDeleteChapter"
-          @bulk-delete="onBulkDeleteChapters"
-          @create="openCreateChapter"
-          @import="bulkImportOpen = true"
-          @update:page="chapterPage = $event"
-        />
+        <div v-show="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
+          <div v-if="isOwner" class="row-wrap" style="justify-content: flex-end">
+            <n-button
+              size="small"
+              secondary
+              :disabled="chapterSummaryTotal === 0"
+              :loading="chapterSummariesLoading"
+              @click="openReorder"
+            >
+              <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
+              Reordenar
+            </n-button>
+          </div>
+          <ChaptersTab
+            :active="true"
+            :chapters="chapterSummaries"
+            :total="chapterSummaryTotal"
+            :loading="chapterSummariesLoading"
+            :page="chapterPage"
+            :page-size="chapterPageSize"
+            v-model:selected="selectedChapters"
+            :is-owner="isOwner"
+            :gaps="chapterGaps"
+            @delete="onDeleteChapter"
+            @bulk-delete="onBulkDeleteChapters"
+            @create="openCreateChapter"
+            @import="bulkImportOpen = true"
+            @update:page="chapterPage = $event"
+          />
+          <div v-if="excludedChapters.length > 0" class="stack-sm">
+            <h3 class="small muted" style="margin: 0">Capítulos excluidos ({{ excludedChapters.length }})</h3>
+            <n-card size="small">
+              <div
+                v-for="chapter in excludedChapters"
+                :key="chapter.id"
+                style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
+              >
+                <span class="mono small muted" style="width: 48px">#{{ chapterPosition(chapter) }}</span>
+                <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
+                <n-button size="tiny" secondary @click="restoreChapter(chapter)">
+                  <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                  Restaurar
+                </n-button>
+              </div>
+            </n-card>
+          </div>
+        </div>
 
         <TranslateTab
           v-show="activeTab === 'translate'"
@@ -151,7 +181,7 @@
     <NovelChapterDialog
       :open="chapterDialogOpen"
       :editing-chapter="editingChapter"
-      :next-chapter-order="nextChapterOrder"
+      :chapter-count="chapterStats.totalChapters"
       :saving="chapterSaving"
       @update:open="chapterDialogOpen = $event"
       @save="saveChapter"
@@ -182,6 +212,57 @@
       @update:open="updateUrlOpen = $event"
       @updated="onUrlUpdated"
     />
+
+    <n-modal v-model:show="reorderOpen" preset="card" title="Reordenar capítulos" :style="{ width: 'min(520px, 96vw)' }">
+      <div class="stack-md">
+        <p class="small muted">
+          El orden de lectura, traducción y exportación es independiente del número de capítulo fuente. Los capítulos
+          excluidos se mantienen al final y pueden volver a ordenarse tras restaurarlos.
+        </p>
+        <div v-if="reorderSaving" class="muted small">Guardando orden…</div>
+        <div v-else class="stack-sm">
+          <div
+            v-for="(chapter, index) in reorderItems"
+            :key="chapter.id"
+            style="display: flex; gap: 0.5rem; align-items: center; padding: 0.375rem 0; border-bottom: 1px solid var(--divide)"
+          >
+            <span class="mono small muted" style="width: 2ch">{{ index + 1 }}</span>
+            <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
+            <n-button
+              quaternary
+              circle
+              size="tiny"
+              :disabled="index === 0"
+              aria-label="Subir"
+              @click="moveReorderChapter(index, -1)"
+            >
+              <template #icon><n-icon :size="14"><ChevronUpOutline /></n-icon></template>
+            </n-button>
+            <n-button
+              quaternary
+              circle
+              size="tiny"
+              :disabled="index === reorderItems.length - 1"
+              aria-label="Bajar"
+              @click="moveReorderChapter(index, 1)"
+            >
+              <template #icon><n-icon :size="14"><ChevronDownOutline /></n-icon></template>
+            </n-button>
+          </div>
+        </div>
+      </div>
+      <template #action>
+        <n-button secondary @click="reorderOpen = false">Cancelar</n-button>
+        <n-button
+          type="primary"
+          :loading="reorderSaving"
+          :disabled="reorderItems.length === 0"
+          @click="saveReorder"
+        >
+          Guardar orden
+        </n-button>
+      </template>
+    </n-modal>
   </AppLayout>
 </template>
 
@@ -201,8 +282,15 @@ import TranslateTab from "@/features/novels/tabs/TranslateTab.vue";
 import CleanTab from "@/features/novels/tabs/CleanTab.vue";
 import ExportTab from "@/features/novels/tabs/ExportTab.vue";
 import JobsTab from "@/features/novels/tabs/JobsTab.vue";
-import { NAlert, NButton, NIcon, NSkeleton, NTab, NTag, NTabs } from "naive-ui";
-import { ArrowBackOutline, BookmarkOutline } from "@vicons/ionicons5";
+import { NAlert, NButton, NCard, NIcon, NModal, NSkeleton, NTab, NTag, NTabs } from "naive-ui";
+import {
+  ArrowBackOutline,
+  BookmarkOutline,
+  ChevronDownOutline,
+  ChevronUpOutline,
+  RefreshOutline,
+  SwapVerticalOutline,
+} from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
 import { useChapters } from "@/composables/useChapters";
@@ -212,6 +300,7 @@ import { useTranslationJobs } from "@/composables/useTranslationJobs";
 import { useOfflineCache } from "@/composables/useOfflineCache";
 import { useChapterSummaries } from "@/composables/useChapterSummaries";
 import {
+  chapterPosition,
   getNovelDisplayAuthor,
   getNovelDisplayDescription,
   getNovelDisplayNumber,
@@ -281,6 +370,33 @@ const pendingDeleteChapterId = ref<string | null>(null);
 const bulkDeleting = ref(false);
 
 const downloadingOffline = ref(false);
+
+const excludedChapters = ref<ChapterSummary[]>([]);
+const reorderOpen = ref(false);
+const reorderSaving = ref(false);
+const reorderItems = ref<ChapterSummary[]>([]);
+
+function chapterToSummary(chapter: Chapter): ChapterSummary {
+  return {
+    id: chapter.id,
+    novelId: chapter.novelId,
+    chapterOrder: chapter.chapterOrder,
+    position: chapter.position,
+    excluded: chapter.excluded,
+    title: chapter.title,
+    translatedTitle: chapter.translatedTitle,
+    status: chapter.status,
+    errorMessage: chapter.errorMessage,
+    hasOriginalContent: !!chapter.originalContent,
+    hasTranslatedContent: !!chapter.translatedContent,
+    hasRefinedContent: !!chapter.refinedContent,
+    originalChars: chapter.originalContent?.length || 0,
+    translatedChars: chapter.translatedContent?.length || 0,
+    refinedChars: chapter.refinedContent?.length || 0,
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt,
+  };
+}
 
 const novelLoading = ref(true);
 const novel = ref<Novel | null>(null);
@@ -353,7 +469,7 @@ async function loadCurrentNovel() {
 }
 
 async function refreshNovelAndChapterMeta() {
-  await Promise.all([loadCurrentNovel(), loadChapterSummaries()]);
+  await Promise.all([loadCurrentNovel(), loadChapterSummaries(), loadExcludedChapters()]);
 }
 
 async function refreshChapterViews() {
@@ -483,7 +599,7 @@ async function confirmDeleteChapter() {
     markAllSummariesDirty();
     await refreshChapterViews();
   } catch (err) {
-    message.error(`Error al eliminar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+    message.error(`Error al excluir capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     pendingDeleteChapterId.value = null;
   }
@@ -498,9 +614,9 @@ function onBulkDeleteChapters(_event: Event) {
   if (selectedChapters.value.length <= 1) return;
   const count = selectedChapters.value.length;
   dialog.warning({
-    title: `¿Eliminar ${count} capítulos?`,
-    content: "Esta acción no se puede deshacer y eliminará los capítulos seleccionados junto con su contenido traducido y refinado.",
-    positiveText: `Eliminar ${count}`,
+    title: `¿Excluir ${count} capítulos?`,
+    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
+    positiveText: `Excluir ${count}`,
     negativeText: "Cancelar",
     onPositiveClick: () => void confirmBulkDeleteChapters(),
   });
@@ -519,12 +635,12 @@ async function confirmBulkDeleteChapters() {
     selectedChapters.value = [];
     if (deleted === requested) {
       message.success(
-        `Capítulos eliminados: ${deleted} ${deleted === 1 ? "capítulo eliminado" : "capítulos eliminados"}.`,
+        `Capítulos excluidos: ${deleted} ${deleted === 1 ? "capítulo excluido" : "capítulos excluidos"}.`,
         { duration: 3000 },
       );
     } else {
       message.warning(
-        `Eliminación parcial: ${deleted} de ${requested} capítulos eliminados.`,
+        `Exclusión parcial: ${deleted} de ${requested} capítulos excluidos.`,
         { duration: 4500 },
       );
     }
@@ -532,6 +648,72 @@ async function confirmBulkDeleteChapters() {
     message.error(`Error al eliminar capítulos: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   } finally {
     bulkDeleting.value = false;
+  }
+}
+
+async function loadExcludedChapters() {
+  if (!novelId.value) {
+    excludedChapters.value = [];
+    return;
+  }
+  try {
+    excludedChapters.value = await api.chapters.listExcluded(novelId.value);
+  } catch {
+    excludedChapters.value = [];
+  }
+}
+
+async function restoreChapter(chapter: ChapterSummary) {
+  if (!novelId.value) return;
+  try {
+    await api.chapters.setVisibility(novelId.value, chapter.id, false);
+    markAllSummariesDirty();
+    await refreshChapterViews();
+    message.success(`Capítulo #${chapterPosition(chapter)} restaurado`, { duration: 2500 });
+  } catch (err) {
+    message.error(`Error al restaurar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+async function openReorder() {
+  if (!novelId.value) return;
+  try {
+    const [visible, excluded] = await Promise.all([
+      api.chapters.listFull(novelId.value),
+      api.chapters.listExcluded(novelId.value),
+    ]);
+    reorderItems.value = [...visible.map(chapterToSummary), ...excluded];
+    reorderOpen.value = true;
+  } catch (err) {
+    message.error(`Error al cargar el orden: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+function moveReorderChapter(index: number, delta: number) {
+  const target = index + delta;
+  if (target < 0 || target >= reorderItems.value.length) return;
+  const items = [...reorderItems.value];
+  const [moved] = items.splice(index, 1);
+  items.splice(target, 0, moved);
+  reorderItems.value = items;
+}
+
+async function saveReorder() {
+  if (!novelId.value || reorderItems.value.length === 0) return;
+  reorderSaving.value = true;
+  try {
+    await api.chapters.reorder(
+      novelId.value,
+      reorderItems.value.map((chapter) => chapter.id),
+    );
+    reorderOpen.value = false;
+    markAllSummariesDirty();
+    await refreshChapterViews();
+    message.success("Orden de capítulos actualizado", { duration: 2500 });
+  } catch (err) {
+    message.error(`Error al reordenar capítulos: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  } finally {
+    reorderSaving.value = false;
   }
 }
 
