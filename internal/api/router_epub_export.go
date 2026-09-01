@@ -184,7 +184,11 @@ func buildEpubChapters(chapters []store.Chapter, source string) []epubexport.Cha
 		}
 
 		if title == "" {
-			title = fmt.Sprintf("Chapter %d", ch.ChapterOrder)
+			pos := ch.Position
+			if pos == 0 {
+				pos = ch.ChapterOrder
+			}
+			title = fmt.Sprintf("Chapter %d", pos)
 		}
 
 		result = append(result, epubexport.ChapterData{

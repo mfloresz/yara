@@ -150,7 +150,8 @@ export type UpdateNovelInput = Partial<CreateNovelInput>;
 
 export type ChapterUpsertInput = {
   id?: string;
-  chapterOrder: number;
+  chapterOrder?: number;
+  position?: number;
   title?: string;
   translatedTitle?: string;
   originalContent?: string;

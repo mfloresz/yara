@@ -230,19 +230,238 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 		if record.GetString("novel") != novelID {
 			return nil, ErrForbidden
 		}
+		if chapter.Position != 0 {
+			curPos := asInt(record.GetFloat("position"), 0)
+			if curPos == 0 {
+				curPos, _ = s.maxChapterPosition(novelID)
+				if curPos == 0 {
+					curPos = 1
+				}
+			}
+			if chapter.Position != curPos {
+				if chapter.Position < 1 {
+					return nil, fmt.Errorf("%w: position must be between 1 and %d", ErrInvalidReorder, curPos)
+				}
+				maxPos, _ := s.maxChapterPosition(novelID)
+				if chapter.Position > maxPos {
+					return nil, fmt.Errorf("%w: position must be between 1 and %d", ErrInvalidReorder, maxPos)
+				}
+				active, err := s.HasActiveJobsForNovel(novelID)
+				if err != nil {
+					return nil, err
+				}
+				if active {
+					return nil, ErrActiveJobs
+				}
+				desiredPos := chapter.Position
+				oldPos := curPos
+				txErr := s.App.RunInTransaction(func(txApp core.App) error {
+					records, err := txApp.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
+					if err != nil {
+						return err
+					}
+					if len(records) > 0 {
+						return ErrActiveJobs
+					}
+					moved, err := txApp.FindRecordById(ChaptersCollection, record.Id)
+					if err != nil {
+						return err
+					}
+					moved.Set("position", -1)
+					if err := txApp.Save(moved); err != nil {
+						return err
+					}
+					if desiredPos < oldPos {
+						toShift, err := txApp.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && position >= {:from} && position < {:to}", "-position", 5000, 0, dbx.Params{"novel": novelID, "from": desiredPos, "to": oldPos})
+						if err != nil {
+							return err
+						}
+						for _, rec := range toShift {
+							cur := asInt(rec.GetFloat("position"), 0)
+							rec.Set("position", cur+1)
+							if err := txApp.Save(rec); err != nil {
+								return err
+							}
+						}
+					} else {
+						toShift, err := txApp.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && position > {:from} && position <= {:to}", "position", 5000, 0, dbx.Params{"novel": novelID, "from": oldPos, "to": desiredPos})
+						if err != nil {
+							return err
+						}
+						for _, rec := range toShift {
+							cur := asInt(rec.GetFloat("position"), 0)
+							rec.Set("position", cur-1)
+							if err := txApp.Save(rec); err != nil {
+								return err
+							}
+						}
+					}
+					moved.Set("position", desiredPos)
+					if err := txApp.Save(moved); err != nil {
+						return err
+					}
+					return nil
+				})
+				if txErr != nil {
+					return nil, txErr
+				}
+				// clear Position so the common update block does not try to
+				// overwrite it again, and fall through to update other fields
+				chapter.Position = 0
+				record, _ = s.App.FindRecordById(ChaptersCollection, record.Id)
+			} else {
+				chapter.Position = 0
+			}
+		}
 	} else {
+		// New chapter: handle explicit position insertion with atomic shift.
+		// When chapter.Position is 0 or omitted the chapter appends after the
+		// current maximum position (backwards compatible). When a valid position
+		// 1..max+1 is supplied and it is not the append position, the suffix
+		// [pos, max] is shifted by +1 inside a transaction so the insert is
+		// atomic and never leaves a hole or a duplicate under the
+		// (novel, position) unique index. A shift is treated as a reorder and
+		// is rejected with ErrActiveJobs while the novel has pending/running jobs.
+		desiredPos := chapter.Position
+		desiredOrder := chapter.ChapterOrder
+		if desiredOrder == 0 {
+			maxOrder, err := s.maxChapterOrder(novelID)
+			if err != nil {
+				return nil, err
+			}
+			desiredOrder = maxOrder + 1
+		}
+		maxPos, posErr := s.maxChapterPosition(novelID)
+		if posErr != nil {
+			return nil, posErr
+		}
+		needsPos := desiredPos != 0
+		if !needsPos {
+			desiredPos = maxPos + 1
+		} else {
+			if desiredPos < 1 || desiredPos > maxPos+1 {
+				return nil, fmt.Errorf("%w: position must be between 1 and %d", ErrInvalidReorder, maxPos+1)
+			}
+		}
+		needsShift := desiredPos <= maxPos
+		if needsShift {
+			active, err := s.HasActiveJobsForNovel(novelID)
+			if err != nil {
+				return nil, err
+			}
+			if active {
+				return nil, ErrActiveJobs
+			}
+			var stored *Chapter
+			txErr := s.App.RunInTransaction(func(txApp core.App) error {
+				records, err := txApp.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
+				if err != nil {
+					return err
+				}
+				if len(records) > 0 {
+					return ErrActiveJobs
+				}
+				toShift, err := txApp.FindRecordsByFilter(ChaptersCollection, "novel = {:novel} && position >= {:pos}", "-position", 5000, 0, dbx.Params{"novel": novelID, "pos": desiredPos})
+				if err != nil {
+					return err
+				}
+				for _, rec := range toShift {
+					cur := asInt(rec.GetFloat("position"), 0)
+					rec.Set("position", cur+1)
+					if err := txApp.Save(rec); err != nil {
+						return err
+					}
+				}
+				collection, cErr := txApp.FindCollectionByNameOrId(ChaptersCollection)
+				if cErr != nil {
+					return cErr
+				}
+				newRec := core.NewRecord(collection)
+				newRec.Set("novel", novelID)
+				newRec.Set("position", desiredPos)
+				newRec.Set("excluded", false)
+				newRec.Set("chapter_order", desiredOrder)
+				if chapter.Title != "" {
+					newRec.Set("title", chapter.Title)
+				}
+				if chapter.TranslatedTitle != "" {
+					newRec.Set("translated_title", chapter.TranslatedTitle)
+				}
+				if chapter.OriginalContent != "" {
+					newRec.Set("original_content", chapter.OriginalContent)
+				}
+				if chapter.TranslatedContent != "" {
+					newRec.Set("translated_content", chapter.TranslatedContent)
+				}
+				if chapter.RefinedContent != "" {
+					newRec.Set("refined_content", chapter.RefinedContent)
+				}
+				setCharCounts(newRec,
+					newRec.GetString("original_content"),
+					newRec.GetString("translated_content"),
+					newRec.GetString("refined_content"),
+				)
+				status := strings.TrimSpace(chapter.Status)
+				if status == "" {
+					status = "pending"
+				}
+				newRec.Set("status", status)
+				if chapter.ErrorMessage != "" {
+					newRec.Set("error_message", chapter.ErrorMessage)
+				}
+				if err := txApp.Save(newRec); err != nil {
+					return err
+				}
+				ch := chapterFromRecord(newRec)
+				stored = &ch
+				return nil
+			})
+			if txErr != nil {
+				return nil, txErr
+			}
+			if recalcStats {
+				if err := s.RecalculateNovelStats(novelID); err != nil {
+					return nil, err
+				}
+			}
+			return stored, nil
+		}
+		// Append path (no shift needed) — use the normal single-record flow
+		// but honour the auto-assigned chapter_order when the caller hid it.
 		collection, cErr := s.App.FindCollectionByNameOrId(ChaptersCollection)
 		if cErr != nil {
 			return nil, cErr
 		}
 		record = core.NewRecord(collection)
 		record.Set("novel", novelID)
+		record.Set("position", desiredPos)
+		record.Set("excluded", false)
+		record.Set("chapter_order", desiredOrder)
+		// chapter already carries the desired values; fall through to the
+		// common field assignment below. Mark isNew so the position/excluded
+		// block is not re-run.
 		isNew = true
+		// Prevent the generic isNew block below from overwriting the position
+		// we just assigned.
+		chapter.ChapterOrder = desiredOrder
+		chapter.Position = 0
 	}
-	// New chapters append after the current maximum position and are never
-	// created excluded. Existing records keep their position/excluded unless
-	// explicitly changed through the reorder/visibility endpoints.
-	if isNew {
+	// Existing records keep their position/excluded unless explicitly moved
+	// through the insertion path above or the reorder/visibility endpoints.
+	// For updates where the caller supplies a new Position that differs from
+	// the stored one, treat it as a move inside the same transaction pattern.
+	// To keep the diff minimal this path only handles the append/shift for
+	// new inserts; moving an existing chapter is done via ReorderChapters.
+	// The ponytail note below still applies to the append path.
+	//
+	// ponytail: position assignment is not atomic — two concurrent creates
+	// could read the same max and collide on the (novel,position) unique
+	// index. The current worker serializes per-novel creates (download +
+	// manual insert rarely overlap), so we surface the unique error to the
+	// caller and rely on retry at the HTTP/handler layer. If parallel
+	// imports per novel are added, switch to a DB-level sequence or
+	// INSERT ... ON CONFLICT retry.
+	if isNew && record.GetFloat("position") == 0 {
 		maxPos, posErr := s.maxChapterPosition(novelID)
 		if posErr != nil {
 			return nil, posErr
@@ -258,7 +477,11 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 		status = "pending"
 	}
 
-	record.Set("chapter_order", chapter.ChapterOrder)
+	if chapter.ChapterOrder != 0 {
+		record.Set("chapter_order", chapter.ChapterOrder)
+	} else if record.IsNew() && record.GetFloat("chapter_order") == 0 {
+		// Auto-assigned above for the append path; keep it.
+	}
 	if chapter.Title != "" {
 		record.Set("title", chapter.Title)
 	} else if record.IsNew() {
@@ -348,7 +571,8 @@ func (s *Store) SetChapterExcluded(userID, novelID, chapterID string, excluded b
 
 // BulkExcludeChapters logically deletes several chapters at once. Chapters
 // that do not belong to the novel are skipped, mirroring the previous
-// bulk-delete behavior.
+// bulk-delete behavior. Chapters already excluded are not counted as
+// newly excluded — the return value is the number of state transitions.
 func (s *Store) BulkExcludeChapters(userID, novelID string, ids []string) (int, error) {
 	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
 		return 0, err
@@ -369,7 +593,6 @@ func (s *Store) BulkExcludeChapters(userID, novelID string, ids []string) (int, 
 			continue
 		}
 		if record.GetBool("excluded") {
-			excluded++
 			continue
 		}
 		record.Set("excluded", true)
@@ -378,8 +601,10 @@ func (s *Store) BulkExcludeChapters(userID, novelID string, ids []string) (int, 
 		}
 		excluded++
 	}
-	if err := s.RecalculateNovelStats(novelID); err != nil {
-		return excluded, err
+	if excluded > 0 {
+		if err := s.RecalculateNovelStats(novelID); err != nil {
+			return excluded, err
+		}
 	}
 	return excluded, nil
 }
@@ -713,6 +938,17 @@ func (s *Store) GetMaxChapterPosition(userID, novelID string) (int, error) {
 	return s.maxChapterPosition(novelID)
 }
 
+func (s *Store) maxChapterOrder(novelID string) (int, error) {
+	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel}", "-chapter_order", 1, 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return 0, err
+	}
+	if len(records) == 0 {
+		return 0, nil
+	}
+	return asInt(records[0].GetFloat("chapter_order"), 0), nil
+}
+
 func (s *Store) maxChapterPosition(novelID string) (int, error) {
 	records, err := s.App.FindRecordsByFilter(ChaptersCollection, "novel = {:novel}", "-position", 1, 0, dbx.Params{"novel": novelID})
 	if err != nil {
@@ -798,7 +1034,16 @@ func (s *Store) ReorderChapters(userID, novelID string, chapterIDs []string) err
 	// unique temporary position to free the original values, then write the
 	// final dense positions. This avoids unique-index collisions on
 	// (novel, position) during arbitrary swaps.
+	// Re-check HasActiveJobs inside the transaction so a job created between
+	// the fast-path check above and the tx start is not missed.
 	return s.App.RunInTransaction(func(txApp core.App) error {
+		records, err := txApp.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
+		if err != nil {
+			return err
+		}
+		if len(records) > 0 {
+			return ErrActiveJobs
+		}
 		for i, id := range chapterIDs {
 			record, err := txApp.FindRecordById(ChaptersCollection, id)
 			if err != nil {

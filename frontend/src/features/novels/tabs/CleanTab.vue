@@ -67,7 +67,7 @@
         <div v-else style="border: 1px solid var(--divide); border-radius: 12px; overflow: auto; max-height: 320px">
           <div v-for="chapter in eligibleChapters" :key="chapter.id" style="display: flex; gap: 0.75rem; align-items: center; padding: 0.875rem 1rem; border-bottom: 1px solid var(--divide)">
             <n-checkbox :checked="selectedIds.has(chapter.id)" @update:checked="toggle(chapter.id, $event)" />
-            <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
+            <span class="mono small muted" style="width: 48px">#{{ chapterPosition(chapter) }}</span>
             <span style="flex: 1">{{ chapter.title }}</span>
             <n-button size="small" secondary @click="previewChapter(chapter)">Previsualizar</n-button>
           </div>
@@ -138,6 +138,7 @@ import { computed, toRef } from "vue";
 import { useMessage, NAlert, NButton, NCard, NCheckbox, NInput, NModal, NSelect, NSkeleton, NSwitch, NTag, NIcon } from "naive-ui";
 import { EyeOutline, SaveOutline } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
+import { chapterPosition } from "@/domain";
 import { CLEAN_MODE_DESCRIPTIONS, CLEAN_MODE_LABELS, type CleanMode } from "@/utils/cleaner";
 import { useCleanSelection, type CleanApplyTo } from "@/composables/useCleanSelection";
 import { useAppServices } from "@/app/services";

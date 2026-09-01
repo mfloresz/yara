@@ -131,7 +131,7 @@
                 :key="chapter.id"
                 style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
               >
-                <span class="mono small muted" style="width: 48px">#{{ chapter.chapterOrder }}</span>
+                <span class="mono small muted" style="width: 48px">#{{ chapterPosition(chapter) }}</span>
                 <span style="flex: 1; min-width: 0">{{ chapter.title }}</span>
                 <n-button size="tiny" secondary @click="restoreChapter(chapter)">
                   <template #icon><n-icon><RefreshOutline /></n-icon></template>
@@ -181,7 +181,7 @@
     <NovelChapterDialog
       :open="chapterDialogOpen"
       :editing-chapter="editingChapter"
-      :next-chapter-order="nextChapterOrder"
+      :chapter-count="chapterStats.totalChapters"
       :saving="chapterSaving"
       @update:open="chapterDialogOpen = $event"
       @save="saveChapter"
@@ -669,7 +669,7 @@ async function restoreChapter(chapter: ChapterSummary) {
     await api.chapters.setVisibility(novelId.value, chapter.id, false);
     markAllSummariesDirty();
     await refreshChapterViews();
-    message.success(`Capítulo #${chapter.chapterOrder} restaurado`, { duration: 2500 });
+    message.success(`Capítulo #${chapterPosition(chapter)} restaurado`, { duration: 2500 });
   } catch (err) {
     message.error(`Error al restaurar capítulo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
   }

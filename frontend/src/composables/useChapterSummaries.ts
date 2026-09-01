@@ -1,5 +1,5 @@
 import { ref, watch, type Ref } from "vue";
-import type { Chapter } from "@/domain";
+import { chapterPosition, type Chapter } from "@/domain";
 import type { ChapterSummary } from "@/api/types";
 import { useAppServices } from "@/app/services";
 import type { CachedNovel } from "@/composables/useOfflineCache";
@@ -54,6 +54,7 @@ export function useChapterSummaries(
       id: chapter.id,
       novelId: chapter.novelId,
       chapterOrder: chapter.chapterOrder,
+      position: chapter.position,
       title: chapter.title,
       translatedTitle: chapter.translatedTitle,
       status: chapter.status,
@@ -70,7 +71,7 @@ export function useChapterSummaries(
   }
 
   function computeGaps(chapters: Chapter[]): ChapterGap[] {
-    const sorted = [...chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
+    const sorted = [...chapters].sort((a, b) => chapterPosition(a) - chapterPosition(b));
     const gaps: ChapterGap[] = [];
     if (sorted.length === 0) return gaps;
     let expected = 1;
@@ -95,6 +96,7 @@ export function useChapterSummaries(
       a.id === b.id &&
       a.novelId === b.novelId &&
       a.chapterOrder === b.chapterOrder &&
+      a.position === b.position &&
       a.title === b.title &&
       a.translatedTitle === b.translatedTitle &&
       a.status === b.status &&
@@ -113,11 +115,11 @@ export function useChapterSummaries(
   function mergeChapterSummaries(fresh: ChapterSummary[]) {
     const current = chapterSummaries.value;
     if (current.length === 0) {
-      chapterSummaries.value = [...fresh].sort((a, b) => a.chapterOrder - b.chapterOrder);
+      chapterSummaries.value = [...fresh].sort((a, b) => chapterPosition(a) - chapterPosition(b));
       return;
     }
     const currentById = new Map(current.map((item) => [item.id, item]));
-    const sortedFresh = [...fresh].sort((a, b) => a.chapterOrder - b.chapterOrder);
+    const sortedFresh = [...fresh].sort((a, b) => chapterPosition(a) - chapterPosition(b));
     const next: ChapterSummary[] = [];
     let mutated = false;
     for (const item of sortedFresh) {

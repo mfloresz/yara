@@ -46,7 +46,7 @@
               <div class="row-between" style="align-items: flex-start; gap: 0.75rem">
                 <div style="min-width: 0; flex: 1">
                   <div class="row-wrap">
-                    <span class="mono small muted">#{{ chapter.chapterOrder }}</span>
+                    <span class="mono small muted">#{{ chapterPosition(chapter) }}</span>
                     <n-button text style="padding: 0; text-align: left" @click="router.push(`/novels/${chapter.novelId}/chapters/${chapter.id}`)">
                       {{ chapter.title }}
                     </n-button>
@@ -74,6 +74,7 @@ import { useRouter } from "vue-router";
 import { NAlert, NButton, NCard, NIcon, NProgress, NTag } from "naive-ui";
 import { ChevronDownOutline, ChevronForwardOutline, TimeOutline } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
+import { chapterPosition } from "@/domain";
 import type { TranslationJob } from "@/domain";
 import { chapterStatusLabel, resolvedChapterStatus } from "@/composables/useChapterStatus";
 import {
@@ -101,7 +102,7 @@ function failedChapters(job: TranslationJob) {
   const idSet = new Set(job.chapterIds);
   return props.allSummaries
     .filter((chapter) => idSet.has(chapter.id) && chapter.status === "failed")
-    .sort((a, b) => a.chapterOrder - b.chapterOrder);
+    .sort((a, b) => chapterPosition(a) - chapterPosition(b));
 }
 
 function toggleJobFailedChapters(jobId: string) {
