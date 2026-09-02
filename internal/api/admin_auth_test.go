@@ -438,3 +438,109 @@ func TestSharedProviderKeysLifecycle(t *testing.T) {
 		t.Fatal("expected no shared entries after delete")
 	}
 }
+
+func TestGlobalPromptOverridesAndReset(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	user := registerUser(t, env, "writer@example.com", "secret123", "Writer")
+
+	// Non-admin cannot manage overrides.
+	forbidden := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/prompt-overrides/translation", user.Token, map[string]any{
+		"prompt": map[string]any{"systemPrompt": "ADMIN SYS", "userPrompt": ""},
+	})
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	// Unknown key -> 400.
+	unknown := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/prompt-overrides/bogus", admin.Token, map[string]any{
+		"prompt": map[string]any{"systemPrompt": "X"},
+	})
+	assertStatus(t, unknown, http.StatusBadRequest)
+
+	// Set a global override.
+	put := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/prompt-overrides/translation", admin.Token, map[string]any{
+		"prompt": map[string]any{"systemPrompt": "ADMIN TRANSLATION SYS", "userPrompt": "ADMIN TRANSLATION USER"},
+	})
+	assertStatus(t, put, http.StatusOK)
+
+	// The user now sees the global override.
+	prompts := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/prompts", user.Token, nil)
+	assertStatus(t, prompts, http.StatusOK)
+	type promptEntry struct {
+		Key    string `json:"key"`
+		Prompt struct {
+			SystemPrompt string `json:"systemPrompt"`
+			UserPrompt   string `json:"userPrompt"`
+		} `json:"prompt"`
+	}
+	var list []promptEntry
+	decodeResponse(t, prompts, &list)
+	findPrompt := func(key string) *promptEntry {
+		for i := range list {
+			if list[i].Key == key {
+				return &list[i]
+			}
+		}
+		return nil
+	}
+	entry := findPrompt("translation")
+	if entry == nil || entry.Prompt.SystemPrompt != "ADMIN TRANSLATION SYS" {
+		t.Fatalf("expected global override to apply, got %+v", entry)
+	}
+
+	// The user's own setting beats the global.
+	upsert := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/prompts/translation", user.Token, map[string]any{
+		"label":  "Traducción",
+		"prompt": map[string]any{"systemPrompt": "USER SYS", "userPrompt": "USER USER"},
+		"active": true,
+	})
+	assertStatus(t, upsert, http.StatusOK)
+	prompts = doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/prompts", user.Token, nil)
+	decodeResponse(t, prompts, &list)
+	entry = findPrompt("translation")
+	if entry == nil || entry.Prompt.SystemPrompt != "USER SYS" {
+		t.Fatalf("expected user override to win, got %+v", entry.Prompt)
+	}
+
+	// Runtime resolution: effective prompts honor user > global > embedded.
+	novel := createNovel(t, env.handler, user.Token, "Novela", "es", "en")
+	effective, err := env.store.GetEffectivePrompts(user.User.ID, &store.Novel{ID: novel.ID, OwnerID: user.User.ID})
+	if err != nil {
+		t.Fatalf("effective prompts: %v", err)
+	}
+	for _, p := range effective {
+		if p.Key == "translation" && p.SystemPrompt != "USER SYS" {
+			t.Fatalf("expected USER SYS effective, got %q", p.SystemPrompt)
+		}
+	}
+
+	// Reset deletes only the user's row: the global applies again.
+	reset := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/prompts/translation", user.Token, nil)
+	assertStatus(t, reset, http.StatusOK)
+	prompts = doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/prompts", user.Token, nil)
+	decodeResponse(t, prompts, &list)
+	entry = findPrompt("translation")
+	if entry == nil || entry.Prompt.SystemPrompt != "ADMIN TRANSLATION SYS" {
+		t.Fatalf("expected global after reset, got %+v", entry.Prompt)
+	}
+
+	// Per-novel prompts still win over everything.
+	effective, err = env.store.GetEffectivePrompts(user.User.ID, &store.Novel{ID: novel.ID, OwnerID: user.User.ID, TranslationSystemPrompt: "NOVEL SYS"})
+	if err != nil {
+		t.Fatalf("effective prompts: %v", err)
+	}
+	for _, p := range effective {
+		if p.Key == "translation" && p.SystemPrompt != "NOVEL SYS" {
+			t.Fatalf("expected novel prompt to win, got %q", p.SystemPrompt)
+		}
+	}
+
+	// Admin deletes the override: embedded default applies again.
+	del := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/admin/prompt-overrides/translation", admin.Token, nil)
+	assertStatus(t, del, http.StatusNoContent)
+	prompts = doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/prompts", user.Token, nil)
+	decodeResponse(t, prompts, &list)
+	entry = findPrompt("translation")
+	if entry == nil || entry.Prompt.SystemPrompt != store.DefaultTranslationSystemPrompt {
+		t.Fatalf("expected embedded default after admin delete, got %q", entry.Prompt.SystemPrompt)
+	}
+}

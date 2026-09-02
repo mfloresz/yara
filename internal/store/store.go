@@ -132,6 +132,22 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt, Active: 1},
 		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: "", Active: 1},
 	}
+	// Admin global overrides form the layer between the embedded defaults and
+	// the user's own settings: embedded < admin global < user.
+	overrides, err := s.ListPromptOverrides()
+	if err != nil {
+		return nil, err
+	}
+	byOverrideKey := map[string]Prompt{}
+	for _, item := range overrides {
+		byOverrideKey[item.Key] = item
+	}
+	for i := range defaults {
+		if override := byOverrideKey[defaults[i].Key]; override.Key != "" {
+			defaults[i].SystemPrompt = defaultString(override.SystemPrompt, defaults[i].SystemPrompt)
+			defaults[i].UserPrompt = defaultString(override.UserPrompt, defaults[i].UserPrompt)
+		}
+	}
 	records, err := s.App.FindRecordsByFilter(UserPromptSettingsCollection, "owner = {:owner}", "", 20, 0, dbx.Params{"owner": userID})
 	if err != nil {
 		return nil, err
@@ -155,6 +171,16 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// DeleteUserPrompt removes the user's override for a prompt key so the admin
+// global (or the embedded default when no global exists) applies again.
+func (s *Store) DeleteUserPrompt(userID, key string) error {
+	record, err := s.App.FindFirstRecordByFilter(UserPromptSettingsCollection, "owner = {:owner} && key = {:key}", dbx.Params{"owner": userID, "key": key})
+	if err != nil {
+		return ErrNotFound
+	}
+	return s.App.Delete(record)
 }
 
 func (s *Store) UpsertPrompt(userID string, prompt Prompt) (Prompt, error) {

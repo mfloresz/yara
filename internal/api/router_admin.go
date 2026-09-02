@@ -25,6 +25,59 @@ func registerV1AdminRoutes(admin *pbrouter.RouterGroup[*core.RequestEvent], s *S
 	admin.GET("/provider-keys", adminListProviderKeys(s))
 	admin.PUT("/provider-keys/{providerKey}", adminUpsertProviderKey(s))
 	admin.DELETE("/provider-keys/{providerKey}", adminDeleteProviderKey(s))
+
+	admin.GET("/prompt-overrides", adminListPromptOverrides(s))
+	admin.PUT("/prompt-overrides/{promptKey}", adminUpsertPromptOverride(s))
+	admin.DELETE("/prompt-overrides/{promptKey}", adminDeletePromptOverride(s))
+}
+
+func adminListPromptOverrides(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		overrides, err := s.Store.ListPromptOverrides()
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		out := make([]store.Prompt, 0, len(overrides))
+		out = append(out, overrides...)
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
+	}
+}
+
+func adminUpsertPromptOverride(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		key := e.Request.PathValue("promptKey")
+		body := struct {
+			Prompt struct {
+				SystemPrompt string `json:"systemPrompt"`
+				UserPrompt   string `json:"userPrompt"`
+			} `json:"prompt"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid body")
+		}
+		prompt, err := s.Store.UpsertPromptOverride(store.Prompt{Key: key, SystemPrompt: body.Prompt.SystemPrompt, UserPrompt: body.Prompt.UserPrompt})
+		if err != nil {
+			switch err {
+			case store.ErrInvalidInput:
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "unknown prompt key or prompt too long")
+			default:
+				return v1ServiceError(e, err)
+			}
+		}
+		slog.Info("prompt override set", "actorId", e.Auth.Id, "promptKey", key)
+		return v1Respond(e, http.StatusOK, prompt, nil, nil)
+	}
+}
+
+func adminDeletePromptOverride(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		key := e.Request.PathValue("promptKey")
+		if err := s.Store.DeletePromptOverride(key); err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("prompt override reset to embedded default", "actorId", e.Auth.Id, "promptKey", key)
+		return e.NoContent(http.StatusNoContent)
+	}
 }
 
 func adminListProviderKeys(s *Server) func(*core.RequestEvent) error {
