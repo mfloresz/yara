@@ -19,7 +19,10 @@ type sharedNovelHandlers struct{}
 var sharedNovels = sharedNovelHandlers{}
 
 // listNovels: GET /novels. Supports ?q, ?sort, ?order, ?limit, ?offset (and
-// ?page&per_page on v1). The ?select= param is accepted as an alias for ?fields=.
+// ?page&per_page on v1). Optional filters: ?tag (exact match,
+// case/accent-insensitive), ?shared (all|own|shared), ?progress
+// (all|translated|completed|ongoing). Invalid filter values fall back to
+// "no filter". The ?select= param is accepted as an alias for ?fields=.
 func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		q := e.Request.URL.Query()
@@ -31,15 +34,20 @@ func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 		searchQuery := firstQuery(q, "q")
 		sortParam := firstQuery(q, "sort")
 		orderParam := firstQuery(q, "order")
+		opts := store.ListNovelOptions{
+			Tag:      firstQuery(q, "tag"),
+			Shared:   firstQuery(q, "shared"),
+			Progress: firstQuery(q, "progress"),
+		}
 
 		var list []store.Novel
 		var hasMore bool
 		var err error
 
 		if searchQuery != "" {
-			list, hasMore, err = s.Store.SearchNovels(e.Auth.Id, searchQuery, limit, offset, sortParam, orderParam)
+			list, hasMore, err = s.Store.SearchNovels(e.Auth.Id, searchQuery, limit, offset, sortParam, orderParam, opts)
 		} else {
-			list, hasMore, err = s.Store.ListNovels(e.Auth.Id, limit, offset, sortParam, orderParam)
+			list, hasMore, err = s.Store.ListNovels(e.Auth.Id, limit, offset, sortParam, orderParam, opts)
 		}
 		if err != nil {
 			return e.InternalServerError("failed to list novels", err)

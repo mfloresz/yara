@@ -144,6 +144,28 @@ paths:
         - name: q
           in: query
           schema: { type: string }
+        - name: tag
+          in: query
+          description: >
+            Filter by tag. Exact match, case-insensitive and accent-insensitive
+            (e.g. `fantasia` matches `Fantasía`). Novels without tags are excluded.
+          schema: { type: string }
+        - name: shared
+          in: query
+          description: Scope of the result. Invalid values fall back to `all`.
+          schema:
+            type: string
+            enum: [all, own, shared]
+            default: all
+        - name: progress
+          in: query
+          description: >
+            Filter by progress/status. `translated` means `chapter_count > 0 &&
+            translated_count = chapter_count`. Invalid values fall back to `all`.
+          schema:
+            type: string
+            enum: [all, translated, completed, ongoing]
+            default: all
         - name: sort
           in: query
           schema: { type: string }

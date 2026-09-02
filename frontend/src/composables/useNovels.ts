@@ -9,7 +9,6 @@ import type {
 import { useAppServices } from "@/app/services";
 
 const novels = ref<Novel[]>([]);
-const loadedListSignatures = new Set<string>();
 const fullNovelIds = new Set<string>();
 const hasMore = ref(true);
 const loadingMore = ref(false);
@@ -22,20 +21,39 @@ const maxListLimit = 1000;
 export type NovelSortField = "title" | "created" | "lastRead";
 export type NovelSortOrder = "asc" | "desc";
 
+// Library filters (GET /api/v1/novels ?shared/?progress/?tag). They travel with
+// every list call so pagination and search honor the active filters, and they
+// take part in the list signature: changing a filter forces a fresh page-0 load.
+export type NovelListFilters = {
+  shared?: "all" | "own" | "shared";
+  progress?: "all" | "translated" | "completed" | "ongoing";
+  tag?: string | null;
+};
+
 // Track the sort/order used for the last list load so pagination (loadMore) and
 // search reuse the same ordering. Changing the sort changes the list signature,
 // which forces a fresh page-0 load.
 let lastSort: NovelSortField = "title";
 let lastOrder: NovelSortOrder = "asc";
+let lastFilters: NovelListFilters = {};
+// Signature currently reflected by novels.value. A previously loaded signature
+// that differs from this one is stale (the state belongs to another filter/sort
+// combination) and must be refetched, not served from state.
+let currentListSignature = "";
+
+function filterKey(filters: NovelListFilters) {
+  return `${filters.shared ?? "all"}:${filters.progress ?? "all"}:${filters.tag ?? ""}`;
+}
 
 export function useNovels() {
   const { api } = useAppServices();
   const loading = ref(false);
 
-  function listSignature(select?: string[], sort?: NovelSortField, order?: NovelSortOrder) {
+  function listSignature(select?: string[], sort?: NovelSortField, order?: NovelSortOrder, filters?: NovelListFilters) {
     const s = sort ?? lastSort;
     const o = order ?? lastOrder;
-    const key = `${s}:${o}`;
+    const f = filters ?? lastFilters;
+    const key = `${s}:${o}:${filterKey(f)}`;
     if (!select || select.length === 0) return `${key}:__full__`;
     return `${key}:${[...select].sort().join(",")}`;
   }
@@ -71,13 +89,15 @@ export function useNovels() {
     select?: string[],
     sort?: NovelSortField,
     order?: NovelSortOrder,
+    filters?: NovelListFilters,
   ) {
     const nextSort = sort ?? lastSort;
     const nextOrder = order ?? lastOrder;
     lastSort = nextSort;
     lastOrder = nextOrder;
+    if (filters) lastFilters = filters;
     const signature = listSignature(select, nextSort, nextOrder);
-    if (loadedListSignatures.has(signature) && !force) return novels.value;
+    if (!force && currentListSignature === signature) return novels.value;
     loading.value = true;
     currentOffset = 0;
     lastSelect = select;
@@ -87,13 +107,16 @@ export function useNovels() {
         select,
         sort: nextSort,
         order: nextOrder,
+        shared: lastFilters.shared,
+        progress: lastFilters.progress,
+        tag: lastFilters.tag ?? undefined,
         limit: PAGE_SIZE,
         offset: 0,
       });
       novels.value = mergeNovelList(result.items, select);
       hasMore.value = result.hasMore ?? false;
       currentOffset = result.items.length;
-      loadedListSignatures.add(signature);
+      currentListSignature = signature;
       // The list endpoint now always uses a sparse fieldset (NOVEL_LIST_FIELDS);
       // do not mark these as full — getNovel(novelId) will refetch the
       // complete record when a component needs the heavy fields.
@@ -111,6 +134,9 @@ export function useNovels() {
         select: lastSelect,
         sort: lastSort,
         order: lastOrder,
+        shared: lastFilters.shared,
+        progress: lastFilters.progress,
+        tag: lastFilters.tag ?? undefined,
         limit: PAGE_SIZE,
         offset: currentOffset,
       });
@@ -138,6 +164,9 @@ export function useNovels() {
         select: lastSelect,
         sort: lastSort,
         order: lastOrder,
+        shared: lastFilters.shared,
+        progress: lastFilters.progress,
+        tag: lastFilters.tag ?? undefined,
         limit: maxListLimit,
       });
       // Ignore stale response if query changed while request was in flight

@@ -85,14 +85,85 @@ func normalizeListPagination(limit, offset int) (int, int) {
 	return limit, offset
 }
 
-func (s *Store) ListNovels(userID string, limit int, offset int, sortField string, sortOrder string) ([]Novel, bool, error) {
+// ListNovelOptions carries the optional library filters accepted by
+// GET /api/v1/novels. All values default to "no filter" and are validated by
+// normalizeListNovelOptions.
+type ListNovelOptions struct {
+	Tag      string // "" = no filter; exact match, case/accent-insensitive
+	Shared   string // "all" | "own" | "shared"
+	Progress string // "all" | "translated" | "completed" | "ongoing"
+}
+
+// normalizeListNovelOptions validates option values, mapping unknown values to
+// the "no filter" default instead of erroring.
+func normalizeListNovelOptions(opts ListNovelOptions) ListNovelOptions {
+	switch opts.Shared {
+	case "own", "shared":
+	default:
+		opts.Shared = "all"
+	}
+	switch opts.Progress {
+	case "translated", "completed", "ongoing":
+	default:
+		opts.Progress = "all"
+	}
+	opts.Tag = strings.TrimSpace(opts.Tag)
+	return opts
+}
+
+// buildScopeFilter returns the visibility scope clause (shared filter) plus the
+// progress clause. The scope is parenthesized so the appended && progress
+// clause cannot bind to only one arm of the || scope (PocketBase gives &&
+// higher precedence than ||). The :owner param must be provided in dbx.Params.
+func buildScopeFilter(opts ListNovelOptions) string {
+	var scope string
+	switch opts.Shared {
+	case "own":
+		scope = "(owner = {:owner})"
+	case "shared":
+		scope = "(owner != {:owner} && is_public = true)"
+	default:
+		scope = "(owner = {:owner} || is_public = true)"
+	}
+	switch opts.Progress {
+	case "translated":
+		return scope + " && chapter_count > 0 && translated_count = chapter_count"
+	case "completed":
+		return scope + " && status = 'completed'"
+	case "ongoing":
+		return scope + " && status = 'ongoing'"
+	}
+	return scope
+}
+
+// filterNovelsByTag keeps only novels whose tags include tag, compared in
+// canonical form (case/accent-insensitive).
+func filterNovelsByTag(novels []Novel, tag string) []Novel {
+	key := normalizeTagKey(tag)
+	out := make([]Novel, 0, len(novels))
+	for _, n := range novels {
+		for _, t := range parseNovelTagsJSON(n.Tags) {
+			if normalizeTagKey(t) == key {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (s *Store) ListNovels(userID string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
 	limit, offset = normalizeListPagination(limit, offset)
+	opts = normalizeListNovelOptions(opts)
 
-	filter := "owner = {:owner} || is_public = true"
+	filter := buildScopeFilter(opts)
 
-	if sortField == string(NovelSortCreated) {
+	// Tag filtering is Go-level post-filtering over the full scope: running it
+	// after the DB offset would leave holes in pages and make meta.total
+	// inconsistent, so force the in-memory route when a tag is active.
+	if opts.Tag == "" && sortField == string(NovelSortCreated) {
 		// DB-level sort keeps offset pagination consistent for arbitrarily large libraries.
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
 		dbSort := "-created"
@@ -124,6 +195,9 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 	}
 	all := s.novelsFromRecords(records)
 	s.populateLastReadAt(all, userID)
+	if opts.Tag != "" {
+		all = filterNovelsByTag(all, opts.Tag)
+	}
 	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
 	page, hasMore := paginateNovels(all, limit, offset)
 	return page, hasMore, nil
@@ -131,21 +205,22 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 
 // SearchNovels searches novels by title, author, or series matching the given query.
 // Supports pagination via limit/offset, scoped to novels the user owns or are public.
-func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortField string, sortOrder string) ([]Novel, bool, error) {
+func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
 	limit, offset = normalizeListPagination(limit, offset)
+	opts = normalizeListNovelOptions(opts)
 	if query == "" {
 		offset = 0
 	}
 
 	// Search across title, author, and series fields (both source and target)
 	// Note: field names must match the schema exactly (snake_case, not camelCase)
-	filter := "(owner = {:owner} || is_public = true) && " +
+	filter := buildScopeFilter(opts) + " && " +
 		"(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
 		"target_title ~ {:q} || target_author ~ {:q} || target_series ~ {:q})"
 
-	if sortField == string(NovelSortCreated) {
+	if opts.Tag == "" && sortField == string(NovelSortCreated) {
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
 		dbSort := "-created"
 		if sortOrder == SortOrderDesc {
@@ -171,6 +246,9 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortFi
 	}
 	all := s.novelsFromRecords(records)
 	s.populateLastReadAt(all, userID)
+	if opts.Tag != "" {
+		all = filterNovelsByTag(all, opts.Tag)
+	}
 	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
 	page, hasMore := paginateNovels(all, limit, offset)
 	return page, hasMore, nil
@@ -503,14 +581,14 @@ func (s *Store) ListNovelTagSuggestions(userID, query string, limit int) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = strings.TrimSpace(query)
 	seen := make(map[string]string)
 	for _, record := range records {
 		for _, tag := range parseNovelTagsJSON(record.GetString("tags")) {
-			if query != "" && !strings.Contains(strings.ToLower(tag), query) {
+			if query != "" && !strings.Contains(normalizeTagKey(tag), normalizeTagKey(query)) {
 				continue
 			}
-			key := strings.ToLower(tag)
+			key := normalizeTagKey(tag)
 			if _, ok := seen[key]; ok {
 				continue
 			}

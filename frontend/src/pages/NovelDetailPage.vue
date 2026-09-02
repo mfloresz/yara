@@ -84,7 +84,14 @@
             :reset-key="novel.id"
           />
           <div v-if="novel.tags.length > 0" class="novel-description-tags">
-            <n-tag v-for="tagItem in novel.tags" :key="tagItem" type="info" size="small">{{ tagItem }}</n-tag>
+            <n-tag
+              v-for="tagItem in novel.tags"
+              :key="tagItem"
+              type="info"
+              size="small"
+              class="clickable-tag"
+              @click="goToTag(tagItem)"
+            >{{ tagItem }}</n-tag>
           </div>
         </header>
 
@@ -535,6 +542,10 @@ async function onRead() {
   await router.push(`/novels/${novel.value.id}/read`);
 }
 
+function goToTag(tag: string) {
+  void router.push({ path: "/", query: { tag } });
+}
+
 async function copyCurrentNovel() {
   if (!novel.value) return;
   const copy = await api.novels.copy(novel.value.id);
@@ -870,6 +881,14 @@ void refreshNovelAndChapterMeta();
   flex-wrap: wrap;
   gap: 0.375rem;
   margin-top: 0.375rem;
+}
+
+.clickable-tag {
+  cursor: pointer;
+}
+
+.clickable-tag:hover {
+  opacity: 0.85;
 }
 
 .tab-panel {

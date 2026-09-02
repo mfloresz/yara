@@ -5,6 +5,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"translator-server/internal/ai"
 )
@@ -93,6 +96,28 @@ func normalizeNovelStatus(value string) string {
 	}
 }
 
+// stripAccents removes diacritics: decompose to NFD and drop combining marks.
+// Without the prior decomposition, "á" (U+00E1) is a single non-Mn rune and the
+// loop over the raw string would never remove it.
+// "Fantasía" -> "fantasia", "Ação" -> "acao".
+func stripAccents(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range norm.NFD.String(s) {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// normalizeTagKey returns the canonical form used to compare tags:
+// lowercase, trimmed, without diacritics.
+func normalizeTagKey(tag string) string {
+	return stripAccents(strings.ToLower(strings.TrimSpace(tag)))
+}
+
 func normalizeNovelTags(tags []string) []string {
 	seen := make(map[string]struct{}, len(tags))
 	out := make([]string, 0, len(tags))
@@ -101,7 +126,7 @@ func normalizeNovelTags(tags []string) []string {
 		if tag == "" {
 			continue
 		}
-		key := strings.ToLower(tag)
+		key := normalizeTagKey(tag)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -109,7 +134,7 @@ func normalizeNovelTags(tags []string) []string {
 		out = append(out, tag)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+		return normalizeTagKey(out[i]) < normalizeTagKey(out[j])
 	})
 	return out
 }

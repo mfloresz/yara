@@ -117,6 +117,22 @@ GET /api/v1/novels?fields=id,sourceTitle,status,chapterCount
 GET /api/v1/novels/abc123
 ```
 
+### Library filters on `GET /api/v1/novels`
+
+| Param | Values | Default | Notes |
+|---|---|---|---|
+| `tag` | any string | — | Exact tag match, case-insensitive and accent-insensitive (`fantasia` matches `Fantasía`, `FANTASÍA`, `Ação` ↔ `acao`). Novels without tags are excluded. Combinable with the other filters (AND). |
+| `shared` | `all` \| `own` \| `shared` | `all` | `own` = only novels owned by the caller; `shared` = only foreign public novels. Invalid values fall back to `all`. |
+| `progress` | `all` \| `translated` \| `completed` \| `ongoing` | `all` | `translated` = `chapter_count > 0 && translated_count = chapter_count` (0-chapter novels excluded); `completed`/`ongoing` match the novel `status`. Invalid values fall back to `all`. |
+
+Filters combine with AND and with `?q` (which still searches title/author/series only — not tags). With `?tag` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
+
+**Example:**
+
+```http
+GET /api/v1/novels?tag=fantasia&shared=own&progress=ongoing
+```
+
 ## Status codes
 
 | Code | Meaning |

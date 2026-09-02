@@ -42,6 +42,12 @@
         </div>
       </header>
 
+      <div v-if="activeTagFilter" class="active-filters">
+        <n-tag type="info" closable @close="clearTagFilter">
+          Tag: {{ activeTagFilter }}
+        </n-tag>
+      </div>
+
       <div v-if="loading" class="library-grid" role="status" aria-label="Cargando biblioteca">
         <LibrarySkeleton />
       </div>
@@ -284,7 +290,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, h, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   NSelect,
   NButton,
@@ -294,6 +300,7 @@ import {
   NAlert,
   NIcon,
   NDropdown,
+  NTag,
   useMessage,
 } from "naive-ui";
 import {
@@ -313,7 +320,7 @@ import {
 import AppLayout from "@/components/AppLayout.vue";
 import NovelCard from "@/components/NovelCard.vue";
 import LibrarySkeleton from "@/pages/LibrarySkeleton.vue";
-import { useNovels } from "@/composables/useNovels";
+import { useNovels, type NovelListFilters } from "@/composables/useNovels";
 import { useOfflineCache } from "@/composables/useOfflineCache";
 import { LANGUAGES } from "@/config/languages";
 import { getNovelDisplayTitle, getNovelDisplayAuthor, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
@@ -324,6 +331,7 @@ import ImportUrlConfirmDialog from "@/features/novels/ImportUrlConfirmDialog.vue
 import type { PreviewUrlResult } from "@/api/types";
 
 type SortField = "title" | "created" | "lastRead";
+type ProgressFilter = "all" | "translated" | "completed" | "ongoing";
 
 const sortOptions = [
   { label: "Título", value: "title" },
@@ -331,11 +339,59 @@ const sortOptions = [
   { label: "Fecha Lectura", value: "lastRead" },
 ];
 
+const progressOptions = [
+  { label: "Todas (progreso)", value: "all" },
+  { label: "Completamente traducidas", value: "translated" },
+  { label: "Completadas", value: "completed" },
+  { label: "En curso", value: "ongoing" },
+];
+
+function isProgressFilter(value: string | undefined): value is ProgressFilter {
+  return value !== undefined && progressOptions.some((option) => option.value === value);
+}
+
 const sortField = ref<SortField>("title");
 const sortOrder = ref<"asc" | "desc">("asc");
 const groupBySeries = ref(false);
 const searchQuery = ref("");
 const preferenceKey = ref<string | null>(null);
+
+// Library filters. showShared/progressFilter persist per user; activeTagFilter
+// lives only in the URL (it comes from an external click on a tag).
+const showShared = ref(true);
+const progressFilter = ref<ProgressFilter>("all");
+const activeTagFilter = ref<string | null>(null);
+
+const route = useRoute();
+
+// Effective filters sent to the backend on every list call.
+function currentFilters(): NovelListFilters {
+  return {
+    shared: showShared.value ? "all" : "own",
+    progress: progressFilter.value,
+    tag: activeTagFilter.value,
+  };
+}
+
+function applyFiltersFromRoute() {
+  activeTagFilter.value = route.query.tag?.toString() ?? null;
+  const urlShared = route.query.shared?.toString();
+  if (urlShared === "own") showShared.value = false;
+  else if (urlShared === "all") showShared.value = true;
+  const urlProgress = route.query.progress?.toString();
+  if (isProgressFilter(urlProgress)) progressFilter.value = urlProgress;
+}
+
+// Reflect showShared/progressFilter in the URL so the full filter state is
+// shareable and survives back/forward navigation.
+function syncFiltersToUrl() {
+  const query: Record<string, string> = {};
+  const tag = route.query.tag?.toString();
+  if (tag) query.tag = tag;
+  if (!showShared.value) query.shared = "own";
+  if (progressFilter.value !== "all") query.progress = progressFilter.value;
+  void router.replace({ path: "/", query });
+}
 
 function restorePreferences(userId?: string) {
   if (!userId) return;
@@ -343,10 +399,19 @@ function restorePreferences(userId?: string) {
   try {
     const raw = localStorage.getItem(preferenceKey.value);
     if (!raw) return;
-    const saved = JSON.parse(raw) as Partial<{ sortField: SortField; sortOrder: "asc" | "desc"; groupBySeries: boolean }>;
+    const saved = JSON.parse(raw) as Partial<{
+      sortField: SortField;
+      sortOrder: "asc" | "desc";
+      groupBySeries: boolean;
+      showShared: boolean;
+      progressFilter: ProgressFilter;
+    }>;
     if (saved.sortField && sortOptions.some((option) => option.value === saved.sortField)) sortField.value = saved.sortField;
     if (saved.sortOrder === "asc" || saved.sortOrder === "desc") sortOrder.value = saved.sortOrder;
     if (typeof saved.groupBySeries === "boolean") groupBySeries.value = saved.groupBySeries;
+    // URL wins over localStorage for the filters it carries.
+    if (typeof saved.showShared === "boolean" && route.query.shared === undefined) showShared.value = saved.showShared;
+    if (isProgressFilter(saved.progressFilter) && route.query.progress === undefined) progressFilter.value = saved.progressFilter;
   } catch {
     // Ignore invalid preferences and use defaults.
   }
@@ -358,6 +423,8 @@ function savePreferences() {
     sortField: sortField.value,
     sortOrder: sortOrder.value,
     groupBySeries: groupBySeries.value,
+    showShared: showShared.value,
+    progressFilter: progressFilter.value,
   }));
 }
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -387,12 +454,16 @@ const LIST_SELECT = [
   "isPublic",
   "lastReadAt",
   "createdAt",
+  "tags",
+  "status",
+  "chapterCount",
+  "translatedCount",
 ];
 
 // The library is pre-sorted by the backend; changing the sort reloads page 0 so
 // pagination stays consistent with the requested ordering.
 async function reloadLibrary() {
-  await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value);
+  await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value, currentFilters());
 }
 
 function toggleSortOrder() {
@@ -507,8 +578,7 @@ const groupedNovels = computed((): GroupedResult => {
 });
 
 const router = useRouter();
-const message = useMessage();
-const { api, auth } = useAppServices();
+const message = useMessage();const { api, auth } = useAppServices();
 const {
   novels,
   loading,
@@ -578,6 +648,16 @@ const viewMenuOptions = computed(() => [
     key: "toggle-group",
     icon: () => h(NIcon, null, { default: () => h(groupBySeries.value ? PricetagsOutline : PricetagOutline) }),
   },
+  { type: "divider", key: "d2" },
+  {
+    label: `Solo propias${showShared.value ? "" : "  ✓"}`,
+    key: "toggle-own",
+  },
+  { type: "divider", key: "d3" },
+  ...progressOptions.map((option) => ({
+    label: `${option.label}${progressFilter.value === option.value ? "  ✓" : ""}`,
+    key: `progress:${option.value}`,
+  })),
 ]);
 
 function handleViewMenuSelect(key: string) {
@@ -589,8 +669,30 @@ function handleViewMenuSelect(key: string) {
     }
     return;
   }
+  if (typeof key === "string" && key.startsWith("progress:")) {
+    const value = key.slice("progress:".length) as ProgressFilter;
+    if (value !== progressFilter.value) {
+      progressFilter.value = value;
+      savePreferences();
+      syncFiltersToUrl();
+      void reloadLibrary();
+    }
+    return;
+  }
   if (key === "toggle-order") toggleSortOrder();
   else if (key === "toggle-group") toggleGroupBySeries();
+  else if (key === "toggle-own") {
+    showShared.value = !showShared.value;
+    savePreferences();
+    syncFiltersToUrl();
+    void reloadLibrary();
+  }
+}
+
+function clearTagFilter() {
+  const query = { ...route.query };
+  delete query.tag;
+  void router.replace({ path: "/", query });
 }
 
 function handleNovelCreationSelect(key: string) {
@@ -606,12 +708,23 @@ function isSharedNovel(novel: Novel) {
 
 onMounted(() => {
   restorePreferences(auth.user.value?.id);
+  applyFiltersFromRoute();
   void loadLibrary();
 });
 
+// Back/forward navigation: re-apply the filter state encoded in the URL and
+// reload (the composable's signature cache skips the fetch when nothing changed).
+watch(
+  () => [route.query.tag, route.query.shared, route.query.progress],
+  () => {
+    applyFiltersFromRoute();
+    void loadLibrary();
+  },
+);
+
 async function loadLibrary() {
   try {
-    await listNovels(false, LIST_SELECT, sortField.value, sortOrder.value);
+    await listNovels(false, LIST_SELECT, sortField.value, sortOrder.value, currentFilters());
   } catch {
     const cached = await offlineCache.loadCachedNovels();
     hydrateCachedNovels(Object.values(cached).map((item) => item.novel));
@@ -736,7 +849,7 @@ async function submitImport() {
 async function copyNovel(novelId: string) {
   try {
     await api.novels.copy(novelId);
-    await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value);
+    await listNovels(true, LIST_SELECT, sortField.value, sortOrder.value, currentFilters());
     message.success("Novela copiada a tu biblioteca");
   } catch (err) {
     message.error("Error al copiar: " + (err instanceof Error ? err.message : String(err)));
@@ -869,6 +982,12 @@ function onBackToUrlDialog() {
   display: flex;
   justify-content: center;
   padding-top: 1.5rem;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .empty-state {

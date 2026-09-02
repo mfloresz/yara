@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -1843,4 +1844,323 @@ func findProvider(t *testing.T, providers []store.ProviderSetting, key string) s
 	}
 	t.Fatalf("provider %q not found in response", key)
 	return store.ProviderSetting{}
+}
+
+// createFilterNovel creates a novel with tags/status/visibility and the given
+// number of chapters (the first `translated` of them with translated content
+// and status=translated), so ?tag/?shared/?progress filters can be exercised.
+func createFilterNovel(t *testing.T, handler http.Handler, token, title string, tags []string, status string, chapters, translated int, isPublic bool) novelPayload {
+	t.Helper()
+	body := map[string]any{
+		"sourceTitle":    title,
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+	}
+	if tags != nil {
+		body["tags"] = tags
+	}
+	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/novels", token, body)
+	assertStatus(t, resp, http.StatusCreated)
+	var novel novelPayload
+	decodeData(t, resp, &novel)
+	if status != "" {
+		patchResp := doJSONRequest(t, handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, token, map[string]any{"status": status})
+		assertStatus(t, patchResp, http.StatusOK)
+	}
+	if isPublic {
+		visResp := doJSONRequest(t, handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/visibility", token, map[string]any{"isPublic": true})
+		assertStatus(t, visResp, http.StatusOK)
+	}
+	for i := 0; i < chapters; i++ {
+		order := i + 1
+		ch := map[string]any{
+			"chapterOrder":    order,
+			"title":           fmt.Sprintf("Cap %d", order),
+			"originalContent": "Texto original",
+		}
+		if i < translated {
+			ch["translatedContent"] = "Texto traducido"
+			ch["status"] = "translated"
+		}
+		chResp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", token, ch)
+		assertStatus(t, chResp, http.StatusCreated)
+	}
+	return novel
+}
+
+// listNovelFilterIDs GETs /api/v1/novels with the given query and returns the
+// result IDs, meta.total, and meta.has_more.
+func listNovelFilterIDs(t *testing.T, env *apiTestEnv, token, query string) ([]string, int, bool) {
+	t.Helper()
+	path := "/api/v1/novels"
+	if query != "" {
+		path += "?" + query
+	}
+	resp := doJSONRequest(t, env.handler, http.MethodGet, path, token, nil)
+	assertStatus(t, resp, http.StatusOK)
+	var envelope struct {
+		Data []map[string]any `json:"data"`
+		Meta *v1Meta          `json:"meta"`
+	}
+	decodeRaw(t, resp, &envelope)
+	ids := make([]string, 0, len(envelope.Data))
+	for _, item := range envelope.Data {
+		ids = append(ids, item["id"].(string))
+	}
+	total := 0
+	hasMore := false
+	if envelope.Meta != nil {
+		total = envelope.Meta.Total
+		hasMore = envelope.Meta.HasMore
+	}
+	return ids, total, hasMore
+}
+
+func TestListNovelsFilterByTag(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-tag@example.com", "secret123", "Alice")
+
+	fantasia := createFilterNovel(t, env.handler, alice.Token, "Fantasía Novela", []string{"Fantasía"}, "", 0, 0, false)
+	shouted := createFilterNovel(t, env.handler, alice.Token, "Shouted Tag", []string{"FANTASÍA"}, "", 0, 0, false)
+	other := createFilterNovel(t, env.handler, alice.Token, "Otro tag", []string{"Terror"}, "", 0, 0, false)
+	untagged := createFilterNovel(t, env.handler, alice.Token, "Sin tags", nil, "", 0, 0, false)
+
+	// ?tag=foo matches only novels tagged foo (test 1) and excludes untagged (test 3).
+	ids, total, _ := listNovelFilterIDs(t, env, alice.Token, "tag=foo")
+	if len(ids) != 0 || total != 0 {
+		t.Fatalf("expected no matches for tag=foo, got %v (total %d)", ids, total)
+	}
+	untaggedIDs, _, _ := listNovelFilterIDs(t, env, alice.Token, "sort=title")
+	if !reflect.DeepEqual(untaggedIDs, []string{fantasia.ID, other.ID, shouted.ID, untagged.ID}) {
+		t.Fatalf("expected unfiltered list %v, got %v", []string{fantasia.ID, other.ID, shouted.ID, untagged.ID}, untaggedIDs)
+	}
+
+	// Accent- and case-insensitive matching (test 2).
+	for _, query := range []string{"tag=fantasia", "tag=Fantas%C3%ADa", "tag=FANTASIA"} {
+		ids, total, hasMore := listNovelFilterIDs(t, env, alice.Token, query)
+		want := []string{fantasia.ID, shouted.ID}
+		if !reflect.DeepEqual(ids, want) || total != len(want) || hasMore {
+			t.Fatalf("query %q: expected %v (total %d), got %v (total %d, hasMore %v)", query, want, len(want), ids, total, hasMore)
+		}
+	}
+}
+
+func TestListNovelsFilterShared(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-shared@example.com", "secret123", "Alice")
+	bob := registerUser(t, env.handler, "bob-shared@example.com", "secret123", "Bob")
+
+	own := createFilterNovel(t, env.handler, alice.Token, "Propia", nil, "", 0, 0, false)
+	bobsPrivate := createFilterNovel(t, env.handler, bob.Token, "Privada de Bob", nil, "", 0, 0, false)
+	bobsPublic := createFilterNovel(t, env.handler, bob.Token, "Pública de Bob", nil, "", 0, 0, true)
+
+	// ?shared=own excludes foreign public novels (test 4).
+	ids, _, _ := listNovelFilterIDs(t, env, alice.Token, "shared=own&sort=title")
+	if !reflect.DeepEqual(ids, []string{own.ID}) {
+		t.Fatalf("shared=own: expected [%s], got %v", own.ID, ids)
+	}
+
+	// ?shared=shared excludes own novels (test 5).
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "shared=shared&sort=title")
+	if !reflect.DeepEqual(ids, []string{bobsPublic.ID}) {
+		t.Fatalf("shared=shared: expected [%s], got %v", bobsPublic.ID, ids)
+	}
+
+	// Default (all) includes own + foreign public, not foreign private.
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "sort=title")
+	if !reflect.DeepEqual(ids, []string{own.ID, bobsPublic.ID}) {
+		t.Fatalf("default scope: expected [%s %s], got %v", own.ID, bobsPublic.ID, ids)
+	}
+
+	// Bob still sees his own private novel.
+	ids, _, _ = listNovelFilterIDs(t, env, bob.Token, "sort=title")
+	if !reflect.DeepEqual(ids, []string{bobsPrivate.ID, bobsPublic.ID}) {
+		t.Fatalf("bob scope: expected [%s %s], got %v", bobsPrivate.ID, bobsPublic.ID, ids)
+	}
+}
+
+func TestListNovelsFilterProgress(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-progress@example.com", "secret123", "Alice")
+
+	ongoing := createFilterNovel(t, env.handler, alice.Token, "En curso", nil, "ongoing", 5, 2, false)
+	completed := createFilterNovel(t, env.handler, alice.Token, "Completada", nil, "completed", 3, 3, false)
+	hiatus := createFilterNovel(t, env.handler, alice.Token, "En pausa", nil, "hiatus", 2, 1, false)
+	empty := createFilterNovel(t, env.handler, alice.Token, "Vacía", nil, "ongoing", 0, 0, false)
+
+	// ?progress=completed (test 6).
+	ids, _, _ := listNovelFilterIDs(t, env, alice.Token, "progress=completed")
+	if !reflect.DeepEqual(ids, []string{completed.ID}) {
+		t.Fatalf("progress=completed: expected [%s], got %v", completed.ID, ids)
+	}
+
+	// ?progress=ongoing: status=ongoing only; hiatus does not count (test 7).
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "progress=ongoing&sort=title")
+	want := []string{ongoing.ID, empty.ID}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("progress=ongoing: expected %v, got %v", want, ids)
+	}
+
+	// ?progress=translated: chapter_count > 0 && translated_count = chapter_count (test 8)…
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "progress=translated")
+	if !reflect.DeepEqual(ids, []string{completed.ID}) {
+		t.Fatalf("progress=translated: expected [%s], got %v", completed.ID, ids)
+	}
+
+	// …and excludes novels with 0 chapters (test 9).
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "progress=translated&sort=title")
+	for _, id := range ids {
+		if id == empty.ID {
+			t.Fatalf("progress=translated must exclude the 0-chapter novel")
+		}
+	}
+	if hiatus.ID == completed.ID {
+		t.Fatal("test setup error")
+	}
+}
+
+func TestListNovelsFilterCombination(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-combo@example.com", "secret123", "Alice")
+	bob := registerUser(t, env.handler, "bob-combo@example.com", "secret123", "Bob")
+
+	// Own, ongoing, tagged Alpha → matches all three filters.
+	match := createFilterNovel(t, env.handler, alice.Token, "Coincide", []string{"Alpha"}, "ongoing", 2, 1, false)
+	// Same tag but completed → excluded by progress.
+	_ = createFilterNovel(t, env.handler, alice.Token, "Progreso distinto", []string{"Alpha"}, "completed", 1, 1, false)
+	// Same tag/status but foreign → only visible without shared=own.
+	foreignMatch := createFilterNovel(t, env.handler, bob.Token, "Ajena que coincide", []string{"Alpha"}, "ongoing", 2, 1, true)
+	// Own, ongoing, different tag → excluded by tag.
+	_ = createFilterNovel(t, env.handler, alice.Token, "Otro tag", []string{"Beta"}, "ongoing", 2, 1, false)
+
+	// AND combination (test 10).
+	ids, _, _ := listNovelFilterIDs(t, env, alice.Token, "tag=alpha&shared=own&progress=ongoing")
+	if !reflect.DeepEqual(ids, []string{match.ID}) {
+		t.Fatalf("combined filter: expected [%s], got %v", match.ID, ids)
+	}
+
+	// Combination with ?q — title match and tag together (test 11). The default
+	// scope also includes the foreign public novel whose title contains the query.
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "tag=alpha&q=Coincide")
+	wantQ := []string{foreignMatch.ID, match.ID}
+	if !reflect.DeepEqual(ids, wantQ) {
+		t.Fatalf("tag+q: expected %v, got %v", wantQ, ids)
+	}
+	// Same tag with a non-matching query returns nothing.
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "tag=alpha&q=inexistente")
+	if len(ids) != 0 {
+		t.Fatalf("tag+non-matching q: expected no results, got %v", ids)
+	}
+
+	// ?q with shared/progress also routes through SearchNovels (test 16).
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "q=Coincide&shared=own&progress=ongoing")
+	if !reflect.DeepEqual(ids, []string{match.ID}) {
+		t.Fatalf("q+shared+progress: expected [%s], got %v", match.ID, ids)
+	}
+	ids, _, _ = listNovelFilterIDs(t, env, alice.Token, "q=Coincide&shared=shared")
+	if !reflect.DeepEqual(ids, []string{foreignMatch.ID}) {
+		t.Fatalf("q+shared: expected [%s], got %v", foreignMatch.ID, ids)
+	}
+}
+
+func TestListNovelsFilterInvalidValuesFallBackToAll(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-invalid@example.com", "secret123", "Alice")
+
+	first := createFilterNovel(t, env.handler, alice.Token, "Primera", nil, "", 0, 0, false)
+	second := createFilterNovel(t, env.handler, alice.Token, "Segunda", nil, "", 0, 0, true)
+
+	// Invalid shared/progress values behave like "all" and return 200 (test 12).
+	for _, query := range []string{"shared=weird", "progress=weird", "shared=&progress="} {
+		resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels?"+query, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		ids, _, _ := listNovelFilterIDs(t, env, alice.Token, query+"&sort=title")
+		if !reflect.DeepEqual(ids, []string{first.ID, second.ID}) {
+			t.Fatalf("query %q: expected both novels, got %v", query, ids)
+		}
+	}
+}
+
+func TestCreateNovelDedupesAccentTags(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-dedup@example.com", "secret123", "Alice")
+
+	// normalizeNovelTags dedup (test 13): Fantasía and fantasia collapse to one.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+		"sourceTitle":    "Dedup",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+		"tags":           []string{"Fantasía", "fantasia", "Ação", "ação"},
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var novel struct {
+		ID   string   `json:"id"`
+		Tags []string `json:"tags"`
+	}
+	decodeData(t, resp, &novel)
+	if len(novel.Tags) != 2 {
+		t.Fatalf("expected 2 deduped tags, got %v", novel.Tags)
+	}
+	if novel.Tags[0] != "Ação" || novel.Tags[1] != "Fantasía" {
+		t.Fatalf("expected first occurrence kept and sorted, got %v", novel.Tags)
+	}
+
+	// ListNovelTagSuggestions dedup (test 14).
+	suggResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/tags/suggestions", alice.Token, nil)
+	assertStatus(t, suggResp, http.StatusOK)
+	var sugg struct {
+		Data []string `json:"data"`
+	}
+	decodeRaw(t, suggResp, &sugg)
+	if len(sugg.Data) != 2 {
+		t.Fatalf("expected 2 deduped tag suggestions, got %v", sugg.Data)
+	}
+}
+
+func TestListNovelsFilterByTagPagination(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env.handler, "alice-tagpage@example.com", "secret123", "Alice")
+
+	// 5 tagged novels + 5 untagged. Sorted by title, the tagged novels land on
+	// both pages of the unfiltered order, so a DB-offset tag filter would skip
+	// some of them.
+	var taggedIDs []string
+	for i := 1; i <= 10; i++ {
+		title := fmt.Sprintf("Novela %02d", i)
+		if i%2 == 1 {
+			tagged := createFilterNovel(t, env.handler, alice.Token, title, []string{"Serie"}, "", 0, 0, false)
+			taggedIDs = append(taggedIDs, tagged.ID)
+		} else {
+			createFilterNovel(t, env.handler, alice.Token, title, nil, "", 0, 0, false)
+		}
+	}
+
+	// meta.total is exact and pages cover ALL matches without holes (test 15).
+	var seen []string
+	total := 0
+	for page := 1; ; page++ {
+		resp := doJSONRequest(t, env.handler, http.MethodGet, fmt.Sprintf("/api/v1/novels?tag=Serie&sort=title&page=%d&per_page=2", page), alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var envelope struct {
+			Data []map[string]any `json:"data"`
+			Meta *v1Meta          `json:"meta"`
+		}
+		decodeRaw(t, resp, &envelope)
+		total = envelope.Meta.Total
+		for _, item := range envelope.Data {
+			seen = append(seen, item["id"].(string))
+		}
+		if !envelope.Meta.HasMore {
+			break
+		}
+		if page > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if total != 5 {
+		t.Fatalf("expected meta.total=5, got %d", total)
+	}
+	if !reflect.DeepEqual(seen, taggedIDs) {
+		t.Fatalf("expected all 5 tagged novels across pages, got %v (want %v)", seen, taggedIDs)
+	}
 }

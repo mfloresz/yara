@@ -137,7 +137,7 @@ function normalizeNovel(
 // descriptions, notes) so the list payload stays small. The detail page
 // fetches a full novel via `GET /api/v1/novels/{id}` (no fields filter).
 const NOVEL_LIST_FIELDS =
-  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount";
+  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags";
 
 function buildQuery(
   params: Record<string, string | number | undefined | null>,
@@ -320,6 +320,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           q?: string;
           sort?: "title" | "created" | "lastRead";
           order?: "asc" | "desc";
+          tag?: string;
+          shared?: "all" | "own" | "shared";
+          progress?: "all" | "translated" | "completed" | "ongoing";
         } = {},
       ): Promise<PaginatedResult<Novel>> {
         // List views pass a sparse fieldset to keep payloads small; callers
@@ -336,6 +339,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           q: params.q,
           sort: params.sort,
           order: params.order,
+          tag: params.tag,
+          shared: params.shared === "all" ? undefined : params.shared,
+          progress: params.progress === "all" ? undefined : params.progress,
         });
         const result = await http.get<unknown>(`/api/v1/novels${query}`);
         const { data, meta } = unwrapCollection<Novel[]>(result);
