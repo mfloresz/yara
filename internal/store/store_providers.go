@@ -44,6 +44,14 @@ func (s *Store) ListProviderSettings(userID string) ([]ProviderSetting, error) {
 	for _, item := range settings {
 		byProviderID[item.GetString("provider")] = item
 	}
+	sharedKeys, err := s.ListSharedProviderKeys()
+	if err != nil {
+		return nil, err
+	}
+	sharedByKey := map[string]SharedProviderKey{}
+	for _, item := range sharedKeys {
+		sharedByKey[item.Provider] = item
+	}
 	out := make([]ProviderSetting, 0, len(providers))
 	for _, provider := range providers {
 		item := ProviderSetting{
@@ -71,6 +79,10 @@ func (s *Store) ListProviderSettings(userID string) ([]ProviderSetting, error) {
 		} else {
 			item.Concurrency = DefaultAISettings.Concurrency
 		}
+		if shared := sharedByKey[item.Provider]; shared.Shared && shared.Configured {
+			item.SharedKeyAvailable = true
+		}
+		item.UsingSharedKey = item.SharedKeyAvailable && !item.APIKeyConfigured
 		out = append(out, item)
 	}
 	return out, nil
@@ -196,6 +208,17 @@ func (s *Store) ResolveProviderAISettings(userID, providerKey string) (AISetting
 			apiKey, err = s.Encryptor.Decrypt(settingsRecord.GetString("api_key_encrypted"))
 			if err != nil {
 				return AISettings{}, err
+			}
+		}
+		// The user's own key wins; fall back to the admin's shared key when
+		// the provider is marked as shared.
+		if strings.TrimSpace(apiKey) == "" {
+			sharedKey, ok, err := s.GetDecryptedSharedKey(providerKey)
+			if err != nil {
+				return AISettings{}, err
+			}
+			if ok {
+				apiKey = sharedKey
 			}
 		}
 		timeoutMs := item.TimeoutMs

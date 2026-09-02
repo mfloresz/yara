@@ -323,3 +323,118 @@ func TestInvitationListAdminOnly(t *testing.T) {
 		t.Fatalf("expected 1 invitation, got %d", len(out))
 	}
 }
+
+func TestSharedProviderKeysLifecycle(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	user := registerUser(t, env, "reader@example.com", "secret123", "Reader")
+
+	// Unknown provider -> 404.
+	unknown := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/provider-keys/nope", admin.Token, map[string]any{"apiKey": "sk-123", "shared": true})
+	assertStatus(t, unknown, http.StatusNotFound)
+
+	// First configuration requires a key.
+	noKey := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/provider-keys/venice", admin.Token, map[string]any{"apiKey": "", "shared": true})
+	assertStatus(t, noKey, http.StatusBadRequest)
+
+	// Configure + share.
+	put := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/provider-keys/venice", admin.Token, map[string]any{"apiKey": "sk-shared-1", "shared": true})
+	assertStatus(t, put, http.StatusOK)
+
+	// Non-admin cannot manage provider keys.
+	forbidden := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/provider-keys/venice", user.Token, map[string]any{"apiKey": "sk-x", "shared": true})
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	// The admin list reports configured+shared, never the key itself.
+	list := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/admin/provider-keys", admin.Token, nil)
+	assertStatus(t, list, http.StatusOK)
+	type keyEntry struct {
+		Provider   string `json:"provider"`
+		Configured bool   `json:"configured"`
+		Shared     bool   `json:"shared"`
+	}
+	var entries []keyEntry
+	decodeResponse(t, list, &entries)
+	var venice *keyEntry
+	for i := range entries {
+		if entries[i].Provider == "venice" {
+			venice = &entries[i]
+		}
+	}
+	if venice == nil || !venice.Configured || !venice.Shared {
+		t.Fatalf("expected venice configured+shared, got %+v", venice)
+	}
+	if strings.Contains(list.Body.String(), "sk-shared-1") {
+		t.Fatal("shared key plaintext leaked in admin list response")
+	}
+
+	// User sees sharedKeyAvailable and usingSharedKey flags.
+	providers := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/providers", user.Token, nil)
+	assertStatus(t, providers, http.StatusOK)
+	var providerOut struct {
+		Providers []struct {
+			Provider           string `json:"provider"`
+			APIKeyConfigured   bool   `json:"apiKeyConfigured"`
+			SharedKeyAvailable bool   `json:"sharedKeyAvailable"`
+			UsingSharedKey     bool   `json:"usingSharedKey"`
+		} `json:"providers"`
+	}
+	decodeResponse(t, providers, &providerOut)
+	var userVenice *struct {
+		Provider           string `json:"provider"`
+		APIKeyConfigured   bool   `json:"apiKeyConfigured"`
+		SharedKeyAvailable bool   `json:"sharedKeyAvailable"`
+		UsingSharedKey     bool   `json:"usingSharedKey"`
+	}
+	for i := range providerOut.Providers {
+		if providerOut.Providers[i].Provider == "venice" {
+			userVenice = &providerOut.Providers[i]
+		}
+	}
+	if userVenice == nil || !userVenice.SharedKeyAvailable || !userVenice.UsingSharedKey {
+		t.Fatalf("expected venice shared+using for user, got %+v", userVenice)
+	}
+
+	// Resolution order: shared key used when the user has none.
+	settings, err := env.store.ResolveProviderAISettings(user.User.ID, "venice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if settings.APIKey != "sk-shared-1" {
+		t.Fatalf("expected shared key fallback, got %q", settings.APIKey)
+	}
+
+	// The user's own key takes precedence.
+	if _, err := env.store.ReplaceProviderAPIKey(user.User.ID, "venice", "sk-own-1"); err != nil {
+		t.Fatalf("replace user key: %v", err)
+	}
+	settings, err = env.store.ResolveProviderAISettings(user.User.ID, "venice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if settings.APIKey != "sk-own-1" {
+		t.Fatalf("expected own key to win, got %q", settings.APIKey)
+	}
+
+	// Un-sharing removes the fallback for the user.
+	unshare := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/admin/provider-keys/venice", admin.Token, map[string]any{"shared": false})
+	assertStatus(t, unshare, http.StatusOK)
+	if err := env.store.DeleteProviderAPIKey(user.User.ID, "venice"); err != nil {
+		t.Fatalf("delete user key: %v", err)
+	}
+	settings, err = env.store.ResolveProviderAISettings(user.User.ID, "venice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if settings.APIKey != "" {
+		t.Fatalf("expected no key after unshare, got %q", settings.APIKey)
+	}
+
+	// Deleting the shared entry removes it from the admin list.
+	del := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/admin/provider-keys/venice", admin.Token, nil)
+	assertStatus(t, del, http.StatusNoContent)
+	list = doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/admin/provider-keys", admin.Token, nil)
+	if strings.Contains(list.Body.String(), `"shared":true`) {
+		t.Fatal("expected no shared entries after delete")
+	}
+}

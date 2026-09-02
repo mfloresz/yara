@@ -21,6 +21,82 @@ func registerV1AdminRoutes(admin *pbrouter.RouterGroup[*core.RequestEvent], s *S
 	admin.GET("/invitations", adminListInvitations(s))
 	admin.POST("/invitations", adminCreateInvitation(s))
 	admin.DELETE("/invitations/{invitationId}", adminDeleteInvitation(s))
+
+	admin.GET("/provider-keys", adminListProviderKeys(s))
+	admin.PUT("/provider-keys/{providerKey}", adminUpsertProviderKey(s))
+	admin.DELETE("/provider-keys/{providerKey}", adminDeleteProviderKey(s))
+}
+
+func adminListProviderKeys(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		providers, err := s.Store.App.FindRecordsByFilter(store.ProvidersCollection, "", "key", 200, 0)
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		sharedKeys, err := s.Store.ListSharedProviderKeys()
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		sharedByKey := map[string]store.SharedProviderKey{}
+		for _, item := range sharedKeys {
+			sharedByKey[item.Provider] = item
+		}
+		out := make([]map[string]any, 0, len(providers))
+		for _, provider := range providers {
+			key := provider.GetString("key")
+			entry := map[string]any{
+				"provider":   key,
+				"label":      provider.GetString("label"),
+				"enabled":    provider.GetBool("enabled"),
+				"configured": false,
+				"shared":     false,
+			}
+			if shared := sharedByKey[key]; shared.Provider != "" {
+				entry["configured"] = shared.Configured
+				entry["shared"] = shared.Shared
+				entry["apiKeyUpdatedAt"] = shared.APIKeyUpdatedAt
+			}
+			out = append(out, entry)
+		}
+		return v1RespondList(e, http.StatusOK, out, 1, len(out), len(out), false, e.Request.URL.Path)
+	}
+}
+
+func adminUpsertProviderKey(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		providerKey := e.Request.PathValue("providerKey")
+		body := struct {
+			APIKey string `json:"apiKey"`
+			Shared bool   `json:"shared"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid body")
+		}
+		entry, err := s.Store.UpsertSharedProviderKey(providerKey, body.APIKey, body.Shared, e.Auth.Id)
+		if err != nil {
+			switch err {
+			case store.ErrNotFound:
+				return writeV1Error(e, http.StatusNotFound, "not_found", "unknown provider")
+			case store.ErrInvalidInput:
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "apiKey is required when configuring a provider key for the first time")
+			default:
+				return v1ServiceError(e, err)
+			}
+		}
+		slog.Info("shared provider key updated", "actorId", e.Auth.Id, "provider", providerKey, "shared", body.Shared, "configured", entry.Configured)
+		return v1Respond(e, http.StatusOK, entry, nil, nil)
+	}
+}
+
+func adminDeleteProviderKey(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		providerKey := e.Request.PathValue("providerKey")
+		if err := s.Store.DeleteSharedProviderKey(providerKey); err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("shared provider key deleted", "actorId", e.Auth.Id, "provider", providerKey)
+		return e.NoContent(http.StatusNoContent)
+	}
 }
 
 func adminListInvitations(s *Server) func(*core.RequestEvent) error {

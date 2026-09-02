@@ -66,24 +66,26 @@ type Invitation struct {
 }
 
 type SharedProviderKey struct {
-	Provider         string `json:"provider"`
-	Configured       bool   `json:"configured"`
-	Shared           bool   `json:"shared"`
-	APIKeyUpdatedAt  string `json:"apiKeyUpdatedAt,omitempty"`
+	Provider        string `json:"provider"`
+	Configured      bool   `json:"configured"`
+	Shared          bool   `json:"shared"`
+	APIKeyUpdatedAt string `json:"apiKeyUpdatedAt,omitempty"`
 }
 
 type ProviderSetting struct {
-	Provider         string   `json:"provider"`
-	Label            string   `json:"label"`
-	BaseURL          string   `json:"baseUrl"`
-	Model            string   `json:"model"`
-	Models           []string `json:"models,omitempty"`
-	Kind             string   `json:"kind"`
-	APIKeyConfigured bool     `json:"apiKeyConfigured"`
-	APIKeyUpdatedAt  string   `json:"apiKeyUpdatedAt,omitempty"`
-	Enabled          bool     `json:"enabled"`
-	TimeoutMs        int      `json:"timeoutMs,omitempty"`
-	Concurrency      int      `json:"concurrency,omitempty"`
+	Provider           string   `json:"provider"`
+	Label              string   `json:"label"`
+	BaseURL            string   `json:"baseUrl"`
+	Model              string   `json:"model"`
+	Models             []string `json:"models,omitempty"`
+	Kind               string   `json:"kind"`
+	APIKeyConfigured   bool     `json:"apiKeyConfigured"`
+	APIKeyUpdatedAt    string   `json:"apiKeyUpdatedAt,omitempty"`
+	Enabled            bool     `json:"enabled"`
+	TimeoutMs          int      `json:"timeoutMs,omitempty"`
+	Concurrency        int      `json:"concurrency,omitempty"`
+	SharedKeyAvailable bool     `json:"sharedKeyAvailable,omitempty"`
+	UsingSharedKey     bool     `json:"usingSharedKey,omitempty"`
 }
 
 type Novel struct {
