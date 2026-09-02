@@ -568,6 +568,70 @@ paths:
                           gaps:
                             type: array
                             items: { type: integer, format: int32 }
+                          excludedOrders:
+                            type: array
+                            description: Chapter orders that are currently logically excluded.
+                            items: { type: integer, format: int32 }
+
+  /novels/{novelId}/chapters/excluded:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    get:
+      tags: [Chapters]
+      summary: List logically excluded chapters.
+      description: Returns the full list (not paginated) of chapters excluded via DELETE or the visibility endpoint.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CollectionEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChapterSummary' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /novels/{novelId}/chapters/order:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    patch:
+      tags: [Chapters]
+      summary: Reorder chapters.
+      description: Atomically assigns new positions following the order of `chapterIds`. Rejected if any id is missing/unknown or while jobs are active on the novel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chapterIds]
+              properties:
+                chapterIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: OK — returns all the novel's chapter summaries in their new order.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/ChapterSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /novels/{novelId}/chapters/{chapterId}:
     parameters:
@@ -590,9 +654,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Chapters]
-      summary: Delete a chapter.
+      summary: Logically exclude a chapter.
+      description: The chapter is hidden, not removed — the record, its content and its order are retained so jobs and history keep referencing it. Restore it with `PATCH /novels/{novelId}/chapters/{chapterId}/visibility`.
       responses:
         '204': { $ref: '#/components/responses/NoContent' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /novels/{novelId}/chapters/{chapterId}/status:
@@ -626,12 +692,44 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/Chapter' }
 
+  /novels/{novelId}/chapters/{chapterId}/visibility:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+      - $ref: '#/components/parameters/ChapterIdParam'
+    patch:
+      tags: [Chapters]
+      summary: Toggle a chapter's logical exclusion.
+      description: 'Restores a chapter hidden via DELETE/bulk-delete (excluded: false) or hides it without deleting (excluded: true).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [excluded]
+              properties:
+                excluded: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Chapter' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /novels/{novelId}/chapters/bulk-delete:
     parameters:
       - $ref: '#/components/parameters/NovelIdParam'
     post:
       tags: [Chapters]
-      summary: Delete many chapters.
+      summary: Logically exclude many chapters.
+      description: Same logical-exclusion semantics as the single DELETE — chapters are hidden, not removed.
       requestBody:
         required: true
         content:
@@ -658,6 +756,8 @@ paths:
                         properties:
                           deleted: { type: integer }
                           requested: { type: integer }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /novels/{novelId}/chapters/clean:
     parameters:
@@ -2031,6 +2131,12 @@ components:
         id: { type: string }
         novelId: { type: string }
         chapterOrder: { type: integer }
+        position:
+          type: integer
+          description: User-controlled display order within the novel. Distinct from `chapterOrder`, which stays at the stable source-order slot.
+        excluded:
+          type: boolean
+          description: When true, the chapter is logically excluded — hidden from the UI and eligible operations, but the record and its content are retained.
         title: { type: string }
         translatedTitle: { type: string }
         originalContent: { type: string }
@@ -2051,6 +2157,8 @@ components:
         id: { type: string }
         novelId: { type: string }
         chapterOrder: { type: integer }
+        position: { type: integer }
+        excluded: { type: boolean }
         title: { type: string }
         translatedTitle: { type: string }
         status:
@@ -2073,6 +2181,9 @@ components:
           type: string
           description: If present and matches an existing chapter, the record is updated; otherwise a new chapter is created.
         chapterOrder: { type: integer }
+        position:
+          type: integer
+          description: Optional. When supplied, the upsert shifts the trailing positions +1 atomically; rejected with `409` if active jobs exist on the novel.
         title: { type: string }
         translatedTitle: { type: string }
         originalContent: { type: string }

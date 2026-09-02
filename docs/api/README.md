@@ -252,12 +252,15 @@ v1 errors return `Content-Type: application/problem+json`:
 | `GET` | `/api/v1/novels/{id}/chapters/eligible?operation=translate\|refine` | Summaries eligible for that operation. |
 | `GET` | `/api/v1/novels/{id}/chapter-summaries?page=&per_page=` | Lightweight, paginated variant. |
 | `GET` | `/api/v1/novels/{id}/chapter-stats` | Aggregate char counts. |
-| `GET` | `/api/v1/novels/{id}/chapters/gaps` | Detect missing chapter numbers. |
+| `GET` | `/api/v1/novels/{id}/chapters/gaps` | Detect missing chapter numbers. Also returns `excludedOrders`. |
+| `GET` | `/api/v1/novels/{id}/chapters/excluded` | List logically excluded chapters. |
 | `GET` | `/api/v1/novels/{id}/chapters/{chapterId}` | Get one chapter (full record). |
-| `POST` | `/api/v1/novels/{id}/chapters` | Upsert a chapter. Returns 201 + `Location`. |
+| `POST` | `/api/v1/novels/{id}/chapters` | Upsert a chapter. Accepts an optional `position`. Returns 201 + `Location`. |
+| `PATCH` | `/api/v1/novels/{id}/chapters/order` | Reorder chapters. Body `{ "chapterIds": ["id1", "id2"] }`. 409 if jobs are active on the novel. |
+| `PATCH` | `/api/v1/novels/{id}/chapters/{chapterId}/visibility` | Toggle logical exclusion. Body `{ "excluded": true \| false }`. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/{chapterId}/status` | Body `{ "status": "pending", "errorMessage": "" }`. |
-| `POST` | `/api/v1/novels/{id}/chapters/bulk-delete` | Body `{ "ids": ["id1", "id2"] }`. |
-| `DELETE` | `/api/v1/novels/{id}/chapters/{chapterId}` | Delete a chapter. Status 204. |
+| `POST` | `/api/v1/novels/{id}/chapters/bulk-delete` | Body `{ "ids": ["id1", "id2"] }`. Logical exclusion — chapters are hidden, not removed. |
+| `DELETE` | `/api/v1/novels/{id}/chapters/{chapterId}` | Logical exclusion — the chapter is hidden but retained. Status 204. |
 | `POST` | `/api/v1/novels/{id}/chapters/clean` | Apply cleaning rules to a list of chapters. |
 | `POST` | `/api/v1/novels/{id}/chapters/clean-preview` | Preview a clean operation without persisting. |
 | `POST` | `/api/v1/novels/{id}/chapters/clean-preview-bulk` | Bulk preview. |
