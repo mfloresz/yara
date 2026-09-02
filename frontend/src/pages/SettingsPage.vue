@@ -62,6 +62,7 @@
               />
               <div class="small muted" style="margin-top: 0.35rem">
                 <span v-if="providerConfigured">API key configurada{{ activeProvider?.apiKeyUpdatedAt ? ` · actualizada ${formatDate(activeProvider.apiKeyUpdatedAt)}` : '' }}</span>
+                <span v-else-if="activeProvider?.sharedKeyAvailable">Sin clave propia: se usará la clave compartida por el administrador.</span>
                 <span v-else>No hay API key configurada para este provider.</span>
               </div>
               <div class="row-wrap" style="margin-top: 0.75rem">
@@ -202,6 +203,10 @@
                 <div class="row-between">
                   <span class="small muted">Activo</span>
                   <n-switch v-model:value="prompt.active" />
+                </div>
+                <div class="row-between">
+                  <span class="small muted">Restablece tu personalización al valor global</span>
+                  <n-button size="small" quaternary :loading="resettingPrompt === prompt.key" @click="resetPrompt(prompt.key)">Restablecer</n-button>
                 </div>
               </div>
             </n-collapse-item>
@@ -582,6 +587,21 @@ async function save() {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     saving.value = false;
+  }
+}
+
+const resettingPrompt = ref<string | null>(null);
+
+async function resetPrompt(key: GeneralPromptRecord["key"]) {
+  resettingPrompt.value = key;
+  try {
+    await api.prompts.reset(key);
+    prompts.value = await api.prompts.list();
+    message.success("Prompt restablecido al valor global");
+  } catch (err) {
+    message.error(`Error al restablecer: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    resettingPrompt.value = null;
   }
 }
 

@@ -111,6 +111,19 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 	}
 }
 
+// handleAuthSetupStatus tells a fresh install's UI that the first (admin)
+// user can still register directly. Public by necessity: it is called before
+// any user exists. It leaks nothing beyond "this install has no users".
+func handleAuthSetupStatus(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		userCount, err := s.Store.CountUsers()
+		if err != nil {
+			return e.InternalServerError("failed to count users", err)
+		}
+		return v1Respond(e, http.StatusOK, map[string]any{"needsSetup": userCount == 0}, nil, nil)
+	}
+}
+
 func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {

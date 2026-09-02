@@ -14,8 +14,8 @@ import (
 // /api/v1/auth/invitations/*. Validate never explains WHY an invitation is
 // invalid (unknown / used / expired) to avoid leaking invitation state.
 func registerV1InvitationPublicRoutes(auth *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	auth.POST("/invitations/validate", handleInvitationValidate(s))
-	auth.POST("/invitations/accept", handleInvitationAccept(s))
+	auth.POST("/invitations/validate", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.invitationLimiter, handleInvitationValidate(s))))
+	auth.POST("/invitations/accept", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.invitationLimiter, handleInvitationAccept(s))))
 }
 
 func handleInvitationValidate(s *Server) func(*core.RequestEvent) error {

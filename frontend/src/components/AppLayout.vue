@@ -138,6 +138,10 @@
           <template #icon><n-icon :size="20"><FlashOutline /></n-icon></template>
           <span>Operaciones</span>
         </n-button>
+        <n-button v-if="auth.isAdmin.value" text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/admin'))">
+          <template #icon><n-icon :size="20"><ShieldOutline /></n-icon></template>
+          <span>Administración</span>
+        </n-button>
         <n-divider style="margin: 0.5rem 0;" />
         <n-button text block class="mobile-nav-item mobile-nav-item--danger touch-target" @click="handleMobileNav(() => doLogout())">
           <template #icon><n-icon :size="20"><LogOutOutline /></n-icon></template>
@@ -170,6 +174,7 @@ import {
   CloseOutline,
   BriefcaseOutline,
   SettingsOutline,
+  ShieldOutline,
   LogOutOutline,
 } from "@vicons/ionicons5";
 import JobsDrawer from "@/components/JobsDrawer.vue";
@@ -210,15 +215,22 @@ const themeMenuOptions = computed(() => {
   }));
 });
 
-const userMenuDropdownItems = computed(() => [
-  { label: auth.user.value?.email ?? "", key: "email", disabled: true },
-  { type: "divider", key: "d1" },
-  { label: "Configuración", key: "settings" },
-  { label: "Cerrar sesión", key: "logout" },
-]);
+const userMenuDropdownItems = computed(() => {
+  const items: Array<Record<string, unknown>> = [
+    { label: auth.user.value?.email ?? "", key: "email", disabled: true },
+    { type: "divider", key: "d1" },
+    { label: "Configuración", key: "settings" },
+  ];
+  if (auth.isAdmin.value) {
+    items.push({ label: "Administración", key: "admin" });
+  }
+  items.push({ label: "Cerrar sesión", key: "logout" });
+  return items;
+});
 
 function handleUserMenuSelect(key: string) {
   if (key === "settings") router.push("/settings");
+  else if (key === "admin") router.push("/admin");
   else if (key === "logout") doLogout();
 }
 

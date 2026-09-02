@@ -43,8 +43,11 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 
 func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	auth := v1.Group("/auth")
-	auth.POST("/register", handleAuthRegister(s))
-	auth.POST("/login", handleAuthLogin(s))
+	// The unauthenticated auth surface is rate-limited per client IP and
+	// capped to tiny bodies: it is the brute-force target.
+	auth.POST("/register", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthRegister(s))))
+	auth.POST("/login", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthLogin(s))))
+	auth.GET("/setup-status", handleAuthSetupStatus(s))
 	registerV1InvitationPublicRoutes(auth, s)
 
 	authed := auth.Group("")

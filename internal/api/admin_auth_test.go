@@ -1,8 +1,9 @@
 package api
 
 import (
-	"strings"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"translator-server/internal/store"
@@ -543,4 +544,84 @@ func TestGlobalPromptOverridesAndReset(t *testing.T) {
 	if entry == nil || entry.Prompt.SystemPrompt != store.DefaultTranslationSystemPrompt {
 		t.Fatalf("expected embedded default after admin delete, got %q", entry.Prompt.SystemPrompt)
 	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/healthz", "", nil)
+	csp := resp.Header().Get("Content-Security-Policy")
+	if resp.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("expected X-Frame-Options DENY, got %q", resp.Header().Get("X-Frame-Options"))
+	}
+	if resp.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("expected Referrer-Policy no-referrer, got %q", resp.Header().Get("Referrer-Policy"))
+	}
+	if resp.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("expected nosniff, got %q", resp.Header().Get("X-Content-Type-Options"))
+	}
+	if csp == "" || !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("expected CSP with default-src 'self', got %q", csp)
+	}
+	if resp.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("HSTS must not be sent over plain HTTP requests")
+	}
+
+	// Behind a proxy that terminates TLS, HSTS is enabled.
+	hstsReq := doRequestWithHeader(t, env.handler, http.MethodGet, "/healthz", "", "X-Forwarded-Proto", "https", nil)
+	if hstsReq.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatal("expected HSTS when X-Forwarded-Proto is https")
+	}
+}
+
+func TestLoginRateLimited(t *testing.T) {
+	env := newAPITestEnv(t)
+	registerUser(t, env, "victim@example.com", "secret123", "Victim")
+
+	// Burn through the per-IP login budget (capacity 5).
+	for i := 0; i < 5; i++ {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+			"email":    "victim@example.com",
+			"password": "wrong-password",
+		})
+		if resp.Code == http.StatusTooManyRequests {
+			t.Fatalf("unexpected 429 on attempt %d", i+1)
+		}
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+		"email":    "victim@example.com",
+		"password": "wrong-password",
+	})
+	assertStatus(t, resp, http.StatusTooManyRequests)
+	if resp.Header().Get("Retry-After") == "" {
+		t.Fatal("expected Retry-After header on 429")
+	}
+}
+
+func TestAuthBodySizeCapped(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	big := strings.Repeat("a", 20_000)
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+		"email":    "x@example.com",
+		"password": big,
+	})
+	if resp.Code >= 500 {
+		t.Fatalf("expected client error for oversized body, got %d", resp.Code)
+	}
+}
+
+func doRequestWithHeader(t *testing.T, handler http.Handler, method, path, token, headerKey, headerValue string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	if headerKey != "" {
+		req.Header.Set(headerKey, headerValue)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	return resp
 }

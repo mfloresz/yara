@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,6 +73,9 @@ type Server struct {
 	// invitationMu serializes invitation redemption: the check-then-create
 	// sequence in accept must not race a second accept of the same token.
 	invitationMu sync.Mutex
+	// Rate limiters for the internet-exposed auth surface.
+	loginLimiter      *rateLimiter
+	invitationLimiter *rateLimiter
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings) (ai.Provider, error)
 }
@@ -86,6 +90,8 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		importInfoCache:    make(map[string]importInfoCacheEntry),
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
+		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
+		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
 	}
 	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()
@@ -160,6 +166,25 @@ func Router(s *Server) http.Handler {
 }
 
 func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	// Security headers for every response. PocketBase already sets
+	// nosniff/X-Frame-Options; this overrides X-Frame-Options to DENY and adds
+	// CSP, Referrer-Policy, Permissions-Policy and HSTS (only over HTTPS, as
+	// detected from X-Forwarded-Proto behind a reverse proxy / tunnel).
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "securityHeaders",
+		Func: func(e *core.RequestEvent) error {
+			header := e.Response.Header()
+			header.Set("X-Frame-Options", "DENY")
+			header.Set("Referrer-Policy", "no-referrer")
+			header.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+			if strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https") || e.Request.TLS != nil {
+				header.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			}
+			return e.Next()
+		},
+	})
+
 	// Block the PocketBase superuser dashboard. The embedded PB app registers
 	// its management routes for any request carrying superuser auth; when the
 	// server is exposed through a tunnel those must never be reachable, so the

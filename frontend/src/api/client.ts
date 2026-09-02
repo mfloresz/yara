@@ -1,7 +1,13 @@
 import type { Ref } from "vue";
 import { createHttpClient, unwrapCollection } from "@/api/http";
 import type {
+  AdminInvitation,
+  AdminPromptOverride,
+  AdminProviderKey,
+  AdminUser,
   AuthResponse,
+  InvitationValidation,
+  SetupStatus,
   BatchCheckResponse,
   BatchUpdateResponse,
   BatchUpdateSelection,
@@ -160,6 +166,21 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       register(input: { email: string; password: string; name?: string }) {
         return http.post<AuthResponse>("/api/v1/auth/register", input);
       },
+      async setupStatus(): Promise<SetupStatus> {
+        return http.get<SetupStatus>("/api/v1/auth/setup-status");
+      },
+      async validateInvitation(token: string): Promise<InvitationValidation> {
+        return http.post<InvitationValidation>(
+          "/api/v1/auth/invitations/validate",
+          { token },
+        );
+      },
+      async acceptInvitation(input: { token: string; password: string }) {
+        return http.post<{ email: string; role: string }>(
+          "/api/v1/auth/invitations/accept",
+          input,
+        );
+      },
       login(input: { email: string; password: string }) {
         return http.post<AuthResponse>("/api/v1/auth/login", input);
       },
@@ -168,6 +189,64 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       },
       logout() {
         return http.post<void>("/api/v1/auth/logout");
+      },
+    },
+    admin: {
+      async listUsers(): Promise<AdminUser[]> {
+        const result = await http.get<unknown>("/api/v1/admin/users");
+        const { data } = unwrapCollection<AdminUser[]>(result);
+        return Array.isArray(data) ? data : [];
+      },
+      async updateUserRole(userId: string, role: "admin" | "user") {
+        return http.patch<AdminUser>(`/api/v1/admin/users/${userId}`, { role });
+      },
+      async listInvitations(): Promise<AdminInvitation[]> {
+        const result = await http.get<unknown>("/api/v1/admin/invitations");
+        const { data } = unwrapCollection<AdminInvitation[]>(result);
+        return Array.isArray(data) ? data : [];
+      },
+      async createInvitation(input: { email: string; role: string }) {
+        return http.post<{ invitation: AdminInvitation; invitationUrl: string }>(
+          "/api/v1/admin/invitations",
+          input,
+        );
+      },
+      async deleteInvitation(invitationId: string) {
+        return http.delete<void>(`/api/v1/admin/invitations/${invitationId}`);
+      },
+      async listProviderKeys(): Promise<AdminProviderKey[]> {
+        const result = await http.get<unknown>("/api/v1/admin/provider-keys");
+        const { data } = unwrapCollection<AdminProviderKey[]>(result);
+        return Array.isArray(data) ? data : [];
+      },
+      async upsertProviderKey(
+        provider: string,
+        payload: { apiKey?: string; shared: boolean },
+      ) {
+        return http.put<AdminProviderKey>(
+          `/api/v1/admin/provider-keys/${provider}`,
+          payload,
+        );
+      },
+      async deleteProviderKey(provider: string) {
+        return http.delete<void>(`/api/v1/admin/provider-keys/${provider}`);
+      },
+      async listPromptOverrides(): Promise<AdminPromptOverride[]> {
+        const result = await http.get<unknown>("/api/v1/admin/prompt-overrides");
+        const { data } = unwrapCollection<AdminPromptOverride[]>(result);
+        return Array.isArray(data) ? data : [];
+      },
+      async upsertPromptOverride(
+        key: string,
+        prompt: { systemPrompt?: string; userPrompt?: string },
+      ) {
+        return http.put<AdminPromptOverride>(
+          `/api/v1/admin/prompt-overrides/${key}`,
+          { prompt },
+        );
+      },
+      async deletePromptOverride(key: string) {
+        return http.delete<void>(`/api/v1/admin/prompt-overrides/${key}`);
       },
     },
     defaults: {
@@ -198,6 +277,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             enabled?: boolean;
             concurrency?: number;
             timeoutMs?: number;
+            sharedKeyAvailable?: boolean;
+            usingSharedKey?: boolean;
           }>;
         }>("/api/v1/providers");
         return {
@@ -213,6 +294,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
             enabled: provider.enabled,
             concurrency: provider.concurrency ?? 1,
             timeoutMs: provider.timeoutMs,
+            sharedKeyAvailable: provider.sharedKeyAvailable,
+            usingSharedKey: provider.usingSharedKey,
           })),
         };
       },
@@ -709,6 +792,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           `/api/v1/prompts/${input.key}`,
           input,
         );
+      },
+      async reset(key: GeneralPromptKey) {
+        return http.delete<GeneralPromptRecord>(`/api/v1/prompts/${key}`);
       },
     },
     readingProgress: {
