@@ -86,6 +86,23 @@
               </template>
               Traduce los pendientes de las seleccionadas
             </n-tooltip>
+
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  type="error"
+                  ghost
+                  :loading="deletingSelected"
+                  :disabled="selectedRowKeys.length === 0"
+                  @click="handleDeleteSelected"
+                >
+                  <template #icon><n-icon><TrashOutline /></n-icon></template>
+                  Eliminar{{ selectedRowKeys.length ? ` (${selectedRowKeys.length})` : '' }}
+                </n-button>
+              </template>
+              Elimina las novelas seleccionadas y todos sus datos asociados
+            </n-tooltip>
           </n-flex>
         </n-flex>
       </n-card>
@@ -123,6 +140,7 @@
               <n-button size="tiny" secondary :loading="checkingSelected" :disabled="selectedActualizableIds.length === 0" @click="handleCheckSelected">Verificar</n-button>
               <n-button size="tiny" :loading="bulkDownloading" :disabled="selectedWithUpdatesIds.length === 0" @click="handleDownloadSelected">Descargar</n-button>
               <n-button size="tiny" type="primary" :loading="translatingSelected" :disabled="selectedTranslatableIds.length === 0" @click="handleTranslateSelected">Traducir</n-button>
+              <n-button size="tiny" type="error" ghost :loading="deletingSelected" :disabled="selectedRowKeys.length === 0" @click="handleDeleteSelected">Eliminar</n-button>
             </n-flex>
           </n-flex>
         </n-card>
@@ -132,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from "vue";
 import {
   NAlert,
   NButton,
@@ -151,6 +169,7 @@ import {
   NTooltip,
   NAvatar,
   NEllipsis,
+  useDialog,
   useMessage,
   type DataTableColumns,
 } from "naive-ui";
@@ -160,9 +179,11 @@ import {
   PlayOutline,
   RefreshOutline,
   SearchOutline,
+  TrashOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
+import { authState } from "@/app/auth";
 import { useActiveJobs } from "@/composables/useActiveJobs";
 import { jobStatusLabel } from "@/composables/useJobHelpers";
 import { emitJobChanged } from "@/utils/job-events";
@@ -174,6 +195,7 @@ const PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 type FilterValue = "all" | "actualizable" | "updates" | "completed" | "active";
 
 const message = useMessage();
+const dialog = useDialog();
 const { api } = useAppServices();
 const { jobs: activeJobs } = useActiveJobs();
 
@@ -187,6 +209,10 @@ const selectedRowKeys = ref<string[]>([]);
 const checkingSelected = ref(false);
 const bulkDownloading = ref(false);
 const translatingSelected = ref(false);
+const deletingSelected = ref(false);
+
+const pendingDeleteIds = ref<string[]>([]);
+const pendingDeleteTitles = ref<Map<string, string>>(new Map());
 
 const updateResults = ref<Map<string, { added: number; error?: string }>>(new Map());
 
@@ -513,11 +539,14 @@ async function loadNovels() {
   loading.value = true;
   error.value = null;
   try {
+    const ownerId = authState.user.value?.id ?? "";
     const all: Novel[] = [];
     let offset = 0;
     for (;;) {
       const resp = await api.novels.list({ limit: PAGE_SIZE, offset });
-      all.push(...resp.items);
+      for (const item of resp.items) {
+        if (item.ownerId === ownerId) all.push(item);
+      }
       if (!resp.hasMore || resp.items.length === 0) break;
       offset += resp.items.length;
     }
@@ -634,6 +663,98 @@ async function handleTranslateSelected() {
   } finally {
     translatingSelected.value = false;
   }
+}
+
+async function handleDeleteSelected() {
+  const ids = selectedRowKeys.value.slice();
+  if (ids.length === 0) return;
+
+  const titlesById = new Map(novels.value.map((n) => [n.id, n.sourceTitle] as const));
+  pendingDeleteIds.value = ids;
+  pendingDeleteTitles.value = titlesById;
+
+  const DeleteDialogBody = defineComponent({
+    setup() {
+      return () =>
+        h("div", { style: "display: flex; flex-direction: column; gap: 12px;" }, [
+          h(
+            "p",
+            { style: "margin: 0; line-height: 1.4;" },
+            "Esta operación no se puede deshacer. Se eliminarán también todos sus capítulos, trabajos, EPUBs, glosario y progreso de lectura asociados.",
+          ),
+          h(
+            "p",
+            { style: "margin: 0; font-size: 12px; opacity: 0.85;" },
+            "Quita del listado cualquier novela que no quieras incluir:",
+          ),
+          h(
+            NSpace,
+            { size: [6, 6], wrap: true, style: "max-height: 220px; overflow-y: auto; padding: 2px;" },
+            pendingDeleteIds.value.length === 0
+              ? [h("span", { style: "font-size: 12px; opacity: 0.7;" }, "Sin novelas seleccionadas")]
+              : pendingDeleteIds.value.map((id) =>
+                  h(
+                    NTag,
+                    {
+                      key: id,
+                      size: "small",
+                      type: "error",
+                      ghost: true,
+                      closable: true,
+                      onClose: () => {
+                        pendingDeleteIds.value = pendingDeleteIds.value.filter((x) => x !== id);
+                      },
+                    },
+                    { default: () => pendingDeleteTitles.value.get(id) ?? id },
+                  ),
+                ),
+          ),
+        ]);
+    },
+  });
+
+  dialog.warning({
+    title: () =>
+      `Eliminar ${pendingDeleteIds.value.length === 1 ? "1 novela" : `${pendingDeleteIds.value.length} novelas`}`,
+    content: () => h(DeleteDialogBody),
+    positiveText: "Eliminar",
+    negativeText: "Cancelar",
+    onPositiveClick: async () => {
+      const idsToDelete = pendingDeleteIds.value.slice();
+      if (idsToDelete.length === 0) return;
+      deletingSelected.value = true;
+      const deleted: string[] = [];
+      const failed: { id: string; error: string }[] = [];
+      try {
+        for (const id of idsToDelete) {
+          try {
+            await api.novels.remove(id);
+            deleted.push(id);
+          } catch (err) {
+            failed.push({ id, error: err instanceof Error ? err.message : String(err) });
+            break;
+          }
+        }
+        if (deleted.length > 0) {
+          selectedRowKeys.value = selectedRowKeys.value.filter((k) => !deleted.includes(k));
+          await loadNovels();
+        }
+        if (failed.length === 0) {
+          message.success(`${deleted.length === 1 ? "Novela eliminada" : `${deleted.length} novelas eliminadas`}.`);
+        } else {
+          const first = failed[0];
+          const title = pendingDeleteTitles.value.get(first.id) ?? first.id;
+          message.error(`No se pudo eliminar "${title}": ${first.error}. ${deleted.length} eliminadas antes del fallo.`);
+        }
+      } finally {
+        pendingDeleteIds.value = [];
+        deletingSelected.value = false;
+      }
+    },
+    onClose: () => {
+      pendingDeleteIds.value = [];
+    },
+  });
 }
 
 onMounted(loadNovels);
