@@ -159,7 +159,7 @@ paths:
   /auth/login:
     post:
       tags: [Auth]
-      summary: Exchange email + password for a token.
+      summary: Exchange email + password for a session.
       security: []
       requestBody:
         required: true
@@ -198,10 +198,10 @@ paths:
   /auth/refresh:
     post:
       tags: [Auth]
-      summary: Refresh the current token.
+      summary: Refresh the current session.
       responses:
         '200':
-          description: New token issued. Cookie is refreshed.
+          description: Session refreshed. Cookie is re-issued.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResult' }
@@ -2318,9 +2318,8 @@ components:
 
     AuthResult:
       type: object
-      required: [token, user]
+      required: [user]
       properties:
-        token: { type: string, description: PocketBase auth token. }
         user: { $ref: '#/components/schemas/User' }
 
     RegisterRequest:

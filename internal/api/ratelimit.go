@@ -73,11 +73,21 @@ func (l *rateLimiter) allow(key string) bool {
 	return true
 }
 
-// clientKeyForRateLimit identifies the caller for rate limiting. Behind a
-// Cloudflare Tunnel every request arrives via cloudflared, which sets
-// CF-Connecting-IP to the real client address; X-Forwarded-For and
-// RemoteAddr are the fallbacks.
+// clientKeyForRateLimit identifies the caller for rate limiting. Forwarded
+// headers are only trusted when the TCP peer is loopback — the supported
+// exposure path is cloudflared running on the same host, which connects from
+// 127.0.0.1 and sets CF-Connecting-IP to the real client address. On a direct
+// connection the client controls its own headers, so a spoofable value would
+// let an attacker rotate keys to bypass the limit; only the socket address is
+// trustworthy there.
 func clientKeyForRateLimit(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return host
+	}
 	if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
 		return ip
 	}
@@ -87,10 +97,7 @@ func clientKeyForRateLimit(r *http.Request) string {
 			return first
 		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return host
 }
 
 // maxAuthBodyBytes caps the unauthenticated auth endpoints (login, register,

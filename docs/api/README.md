@@ -46,9 +46,9 @@ Every v1 response carries `X-API-Version: v1`.
 The API uses PocketBase-compatible auth tokens. Two ways to send a token:
 
 1. **HttpOnly cookie** — `auth.token=<token>`. This is the default after login. `Path=/`, `SameSite=Strict`, `Secure` when the request is HTTPS.
-2. **Authorization header** — `Authorization: Bearer <token>`. Used by the browser-worker extension and by CLI callers.
+2. **Authorization header** — `Authorization: Bearer <token>`. Accepted for callers that already hold a token (e.g. issued out-of-band); the browser-worker extension uses its own worker tokens instead.
 
-After authenticating, send the token in **either** form on every request to a non-public endpoint. The server checks the cookie first (if no Authorization header is present) via the `loadAuthFromCookie` middleware in `router_auth.go`.
+Login, register and refresh deliver the session token **only** in the `auth.token` cookie — never in the response body — so it stays unreadable to JavaScript. After authenticating, send the token in either form on every request to a non-public endpoint. The server checks the cookie first (if no Authorization header is present) via the `loadAuthFromCookie` middleware in `router_auth.go`.
 
 Public endpoints (no auth required):
 
@@ -187,14 +187,17 @@ v1 errors return `Content-Type: application/problem+json`:
 | `GET` | `/api/v1/auth/setup-status` | `{ needsSetup }` — true while the install has no users. Public. |
 | `POST` | `/api/v1/auth/invitations/validate` | Validate an invitation token. Public. `{ valid, email?, role?, expiresAt? }`. |
 | `POST` | `/api/v1/auth/invitations/accept` | Redeem an invitation (`{ token, password }`), create the invited user. Status 201. Public. |
-| `POST` | `/api/v1/auth/login` | Exchange email + password for a token. Returns `AuthResult` + sets `auth.token` cookie. Status 200. |
+| `POST` | `/api/v1/auth/login` | Exchange email + password for a session. Returns `{ user }` + sets `auth.token` cookie. Status 200. |
 | `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
-| `POST` | `/api/v1/auth/refresh` | Refresh the current token. Returns a new `AuthResult` + sets cookie. |
+| `POST` | `/api/v1/auth/refresh` | Refresh the current session. Returns `{ user }` + re-issues the cookie. |
 | `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. |
 
 Register, login and the invitation endpoints are rate-limited per client IP
 (register/login: 5/min, invitations: 10/min; 429 + `Retry-After: 60` beyond
-that) and cap request bodies at 16 KB.
+that) and cap request bodies at 16 KB. Forwarded-IP headers
+(`CF-Connecting-IP`, `X-Forwarded-For`) are only honored for connections from
+loopback — the supported cloudflared-on-localhost deployment — so a direct
+caller cannot rotate its rate-limit key by spoofing them.
 
 `GET /api/v1/auth/me` returns the standard single-resource envelope:
 
@@ -206,8 +209,8 @@ that) and cap request bodies at 16 KB.
 // POST /api/v1/auth/register
 // request
 { "email": "alice@example.com", "password": "secret123", "name": "Alice" }
-// response (201)
-{ "token": "eyJhbGciOi...", "user": { "id": "...", "email": "alice@example.com", "name": "Alice", "theme": "system" } }
+// response (201) — the session token is only set as the auth.token cookie
+{ "data": { "user": { "id": "...", "email": "alice@example.com", "name": "Alice", "role": "admin", "theme": "system" } } }
 ```
 
 ### Novels

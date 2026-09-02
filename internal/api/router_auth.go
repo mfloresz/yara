@@ -107,7 +107,10 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 		result.User = promoted
 		setAuthCookie(e, result.Token)
 		slog.Info("first user registered as admin", "userId", result.User.ID)
-		return v1Respond(e, http.StatusCreated, result, nil, nil)
+		// The session token is only delivered via the HttpOnly cookie; it is
+		// never echoed in the response body where JS-readable XSS payloads
+		// could exfiltrate it.
+		return v1Respond(e, http.StatusCreated, map[string]any{"user": result.User}, nil, nil)
 	}
 }
 
@@ -138,7 +141,7 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 			return e.BadRequestError("invalid credentials", nil)
 		}
 		setAuthCookie(e, result.Token)
-		return v1Respond(e, http.StatusOK, result, nil, nil)
+		return v1Respond(e, http.StatusOK, map[string]any{"user": result.User}, nil, nil)
 	}
 }
 
@@ -160,7 +163,7 @@ func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
 			return e.UnauthorizedError("invalid token", err)
 		}
 		setAuthCookie(e, result.Token)
-		return v1Respond(e, http.StatusOK, result, nil, nil)
+		return v1Respond(e, http.StatusOK, map[string]any{"user": result.User}, nil, nil)
 	}
 }
 

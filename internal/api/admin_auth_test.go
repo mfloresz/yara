@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,19 +21,87 @@ func TestFirstUserBecomesAdmin(t *testing.T) {
 	assertStatus(t, resp, http.StatusCreated)
 	var out authPayload
 	decodeResponse(t, resp, &out)
-	if out.Token == "" {
-		t.Fatal("expected auth token")
+	// The session token must only travel in the HttpOnly cookie, never in the
+	// response body where XSS-readable payloads could exfiltrate it.
+	if out.Token != "" {
+		t.Fatal("expected no token in the register response body")
 	}
 	if out.User.Role != store.RoleAdmin {
 		t.Fatalf("expected first user role %q, got %q", store.RoleAdmin, out.User.Role)
 	}
 
-	meResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/auth/me", out.Token, nil)
+	cookie := findAuthCookie(t, resp)
+	meResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/auth/me", cookie, nil)
 	assertStatus(t, meResp, http.StatusOK)
 	var me store.User
 	decodeResponse(t, meResp, &me)
 	if me.Role != store.RoleAdmin {
 		t.Fatalf("expected /me role %q, got %q", store.RoleAdmin, me.Role)
+	}
+}
+
+// findAuthCookie returns the session token from the auth.token Set-Cookie
+// header of a login/register/refresh response.
+func findAuthCookie(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+	for _, cookie := range resp.Result().Cookies() {
+		if cookie.Name == authCookieName && cookie.Value != "" {
+			return cookie.Value
+		}
+	}
+	t.Fatalf("expected %s cookie in response", authCookieName)
+	return ""
+}
+
+// TestUserCannotSelfPromoteViaPocketBaseAPI locks in the fix for the role
+// escalation: users.UpdateRule allows self-updates, so the role field must be
+// hidden — PocketBase strips hidden fields from non-superuser writes, and the
+// native REST surface must not be able to grant admin.
+func TestUserCannotSelfPromoteViaPocketBaseAPI(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-escalate@example.com", "secret123", "Alice")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPatch,
+		"/api/collections/users/records/"+alice.User.ID, alice.Token,
+		map[string]any{"role": store.RoleAdmin})
+	assertStatus(t, resp, http.StatusOK)
+	if strings.Contains(resp.Body.String(), `"role"`) {
+		t.Fatalf("expected hidden role field to be absent from the response, got %s", resp.Body.String())
+	}
+
+	record, err := env.store.App.FindRecordById("users", alice.User.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if got := record.GetString("role"); got != store.RoleUser {
+		t.Fatalf("expected role to remain %q after self-PATCH, got %q", store.RoleUser, got)
+	}
+}
+
+// TestRateLimitIgnoresSpoofedForwardedHeaders verifies that a direct (non-
+// loopback) connection cannot rotate its rate-limit key by faking
+// CF-Connecting-IP / X-Forwarded-For: after burning the login budget, a
+// request with a fresh spoofed IP must still be rejected.
+func TestRateLimitIgnoresSpoofedForwardedHeaders(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	login := func(spoofedIP string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"nobody@example.com","password":"wrong"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("CF-Connecting-IP", spoofedIP)
+		req.Header.Set("X-Forwarded-For", spoofedIP)
+		resp := httptest.NewRecorder()
+		env.handler.ServeHTTP(resp, req)
+		return resp
+	}
+
+	for i := 0; i < 5; i++ {
+		if resp := login(fmt.Sprintf("10.0.0.%d", i+1)); resp.Code == http.StatusTooManyRequests {
+			t.Fatalf("unexpected 429 on attempt %d", i+1)
+		}
+	}
+	if resp := login("10.0.0.200"); resp.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 with spoofed forwarded IP after budget exhausted, got %d", resp.Code)
 	}
 }
 
@@ -139,6 +208,8 @@ func bootstrapAdmin(t *testing.T, env *apiTestEnv, email string) authPayload {
 	assertStatus(t, resp, http.StatusCreated)
 	var out authPayload
 	decodeResponse(t, resp, &out)
+	// The session token is only delivered in the HttpOnly cookie now.
+	out.Token = findAuthCookie(t, resp)
 	return out
 }
 
