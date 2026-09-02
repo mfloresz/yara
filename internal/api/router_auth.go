@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -74,12 +75,39 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 		if strings.TrimSpace(body.Email) == "" || strings.TrimSpace(body.Password) == "" {
 			return e.BadRequestError("email and password are required", nil)
 		}
+		if len(body.Password) < 8 {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "password must be at least 8 characters")
+		}
+
+		// First user on a fresh install becomes the admin. Everything after
+		// that requires an invitation (handleInvitationAccept creates the
+		// invited users itself and never goes through this handler).
+		s.bootstrapMu.Lock()
+		userCount, err := s.Store.CountUsers()
+		if err != nil {
+			s.bootstrapMu.Unlock()
+			return e.InternalServerError("failed to count users", err)
+		}
+		if userCount > 0 {
+			s.bootstrapMu.Unlock()
+			return writeV1Error(e, http.StatusForbidden, "forbidden", "registration requires an invitation")
+		}
 		result, err := s.Store.CreateUser(body.Email, body.Password, body.Name)
 		if err != nil {
-			return e.BadRequestError("failed to create user", err)
+			s.bootstrapMu.Unlock()
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "failed to create user")
 		}
+		promoted, err := s.Store.UpdateUserRole(result.User.ID, store.RoleAdmin)
+		if err != nil {
+			s.bootstrapMu.Unlock()
+			return e.InternalServerError("failed to promote first user", err)
+		}
+		s.bootstrapMu.Unlock()
+
+		result.User = promoted
 		setAuthCookie(e, result.Token)
-		return e.JSON(http.StatusCreated, result)
+		slog.Info("first user registered as admin", "userId", result.User.ID)
+		return v1Respond(e, http.StatusCreated, result, nil, nil)
 	}
 }
 
@@ -97,13 +125,17 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 			return e.BadRequestError("invalid credentials", nil)
 		}
 		setAuthCookie(e, result.Token)
-		return e.JSON(http.StatusOK, result)
+		return v1Respond(e, http.StatusOK, result, nil, nil)
 	}
 }
 
 func handleAuthMe(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		return v1Respond(e, http.StatusOK, store.User{ID: e.Auth.Id, Email: e.Auth.Email(), Name: e.Auth.GetString("name"), Theme: defaultTheme(e.Auth.GetString("theme")), CreatedAt: e.Auth.GetString("created"), UpdatedAt: e.Auth.GetString("updated")}, nil, nil)
+		user := store.User{ID: e.Auth.Id, Email: e.Auth.Email(), Name: e.Auth.GetString("name"), Role: store.RoleUser, Theme: defaultTheme(e.Auth.GetString("theme")), CreatedAt: e.Auth.GetString("created"), UpdatedAt: e.Auth.GetString("updated")}
+		if e.Auth.GetString("role") == store.RoleAdmin {
+			user.Role = store.RoleAdmin
+		}
+		return v1Respond(e, http.StatusOK, user, nil, nil)
 	}
 }
 
@@ -115,7 +147,7 @@ func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
 			return e.UnauthorizedError("invalid token", err)
 		}
 		setAuthCookie(e, result.Token)
-		return e.JSON(http.StatusOK, result)
+		return v1Respond(e, http.StatusOK, result, nil, nil)
 	}
 }
 

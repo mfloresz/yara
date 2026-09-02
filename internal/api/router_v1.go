@@ -36,6 +36,9 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	registerV1BackupRoutes(authed, s)
 	registerV1ProxyRoutes(authed, s)
 	registerV1WorkerAuthRoutes(authed, s)
+
+	// Admin panel surface. Every route requires the admin role.
+	registerV1AdminRoutes(authed.Group("/admin").Bind(requireAdmin()), s)
 }
 
 func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {

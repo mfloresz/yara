@@ -2,13 +2,48 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"translator-server/internal/store"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 )
+
+// requireAdmin rejects the request with a v1 problem+json 403 unless the
+// authenticated user has the admin role. Mounted on the /api/v1/admin group.
+func requireAdmin() *hook.Handler[*core.RequestEvent] {
+	return &hook.Handler[*core.RequestEvent]{
+		Id: "requireAdmin",
+		Func: func(e *core.RequestEvent) error {
+			if e.Auth == nil || e.Auth.GetString("role") != store.RoleAdmin {
+				return writeV1Error(e, http.StatusForbidden, "forbidden", "admin role required")
+			}
+			return e.Next()
+		},
+	}
+}
+
+// v1ServiceError maps store-level sentinel errors to v1 problem+json
+// responses for admin endpoints (notFoundOrForbidden doesn't know about
+// ErrLastAdmin / validation failures).
+func v1ServiceError(e *core.RequestEvent, err error) error {
+	switch err {
+	case store.ErrNotFound:
+		return writeV1Error(e, http.StatusNotFound, "not_found", "resource not found")
+	case store.ErrForbidden:
+		return writeV1Error(e, http.StatusForbidden, "forbidden", "forbidden")
+	case store.ErrLastAdmin:
+		return writeV1Error(e, http.StatusConflict, "last_admin", "at least one admin user is required")
+	case store.ErrInvalidInput:
+		return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid input")
+	default:
+		slog.Error("admin endpoint internal error", "error", err)
+		return writeV1Error(e, http.StatusInternalServerError, "internal_error", "internal error")
+	}
+}
 
 func jsonString(value any, fallback string) string {
 	if value == nil {

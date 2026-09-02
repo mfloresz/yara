@@ -64,6 +64,14 @@ type Server struct {
 	// chapter reorder/visibility/bulk-exclude which must also not race
 	// translate/download jobs.
 	redownloadLocks sync.Map
+	// bootstrapMu serializes the first-registration check+promote sequence so
+	// two concurrent registers on a fresh install cannot both observe an empty
+	// users table and both become admin (there is nothing to demote-guard
+	// against at that point, but exactly one admin is the invariant).
+	bootstrapMu sync.Mutex
+	// invitationMu serializes invitation redemption: the check-then-create
+	// sequence in accept must not race a second accept of the same token.
+	invitationMu sync.Mutex
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings) (ai.Provider, error)
 }
@@ -152,6 +160,21 @@ func Router(s *Server) http.Handler {
 }
 
 func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	// Block the PocketBase superuser dashboard. The embedded PB app registers
+	// its management routes for any request carrying superuser auth; when the
+	// server is exposed through a tunnel those must never be reachable, so the
+	// UI path always answers 404. Superuser API calls are additionally
+	// IP-restricted to loopback at startup (see cmd/server/main.go).
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "blockSuperuserUI",
+		Func: func(e *core.RequestEvent) error {
+			if hasPrefix(e.Request.URL.Path, "/_/") || e.Request.URL.Path == "/_" {
+				return e.NotFoundError("", nil)
+			}
+			return e.Next()
+		},
+	})
+
 	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
 	// Must run before any handler.
 	router.Bind(&hook.Handler[*core.RequestEvent]{

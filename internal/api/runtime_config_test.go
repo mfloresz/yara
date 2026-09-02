@@ -9,7 +9,7 @@ import (
 
 func TestResolveJobConfigAppliesNovelAutoSegmentOverride(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-autosegment@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-autosegment@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 
 	if _, err := env.store.SaveAppSettings(alice.User.ID, store.AppSettings{
@@ -139,7 +139,7 @@ func TestJobRecordIncludesAutoSegmentEnabled(t *testing.T) {
 
 func TestResolveJobConfigHandlesInvalidGlossaryJSON(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-glossary@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-glossary@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Libro", "es", "en")
 
 	if _, err := env.store.SaveAppSettings(alice.User.ID, store.AppSettings{

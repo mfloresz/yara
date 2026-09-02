@@ -9,10 +9,18 @@ func userFromRecord(record *core.Record) User {
 		ID:        record.Id,
 		Email:     record.Email(),
 		Name:      record.GetString("name"),
+		Role:      userRoleFromRecord(record),
 		Theme:     defaultString(record.GetString("theme"), "system"),
 		CreatedAt: record.GetString("created"),
 		UpdatedAt: record.GetString("updated"),
 	}
+}
+
+func userRoleFromRecord(record *core.Record) string {
+	if record.GetString("role") == RoleAdmin {
+		return RoleAdmin
+	}
+	return RoleUser
 }
 
 func (s *Store) novelFromRecord(record *core.Record) Novel {

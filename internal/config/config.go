@@ -24,9 +24,13 @@ type Config struct {
 	// between two consecutive chapter fetches. <= 0 means use the
 	// downloader default.
 	DownloadMaxDelayMs int
-	MigrateDB             bool
-	MigrateChapterStats   bool
+	MigrateDB               bool
+	MigrateChapterStats     bool
 	MigrateChapterPositions bool
+	// PromoteAdmin grants the admin role to the user with this email and
+	// exits. Bootstrap for pre-existing installs that already have users
+	// (fresh installs promote the first registrant automatically).
+	PromoteAdmin string
 }
 
 func Load() (*Config, error) {
@@ -38,6 +42,7 @@ func Load() (*Config, error) {
 	flag.BoolVar(&cfg.MigrateDB, "migrate-db", false, "migrate legacy database fields before serving")
 	flag.BoolVar(&cfg.MigrateChapterStats, "migrate-chapter-stats", false, "recalculate chapter stats for every novel and exit")
 	flag.BoolVar(&cfg.MigrateChapterPositions, "migrate-chapter-positions", false, "initialize chapter positions in source order and exit (required once before using chapter reorder/exclusion)")
+	flag.StringVar(&cfg.PromoteAdmin, "promote-admin", "", "grant the admin role to the user with this email and exit")
 	flag.Parse()
 
 	if cfg.Addr == "" {

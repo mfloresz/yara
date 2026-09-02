@@ -92,6 +92,7 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.CreateRule = nil
 	c.Fields.Add(&core.TextField{Name: "name", Max: 120})
 	c.Fields.Add(&core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1})
+	c.Fields.Add(&core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "active_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
@@ -106,6 +107,9 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1}); err != nil {
+		return nil, err
+	}
+	if err := s.ensureField(c, &core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, MaxSelect: 1}); err != nil {
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.TextField{Name: "active_provider", Max: 120}); err != nil {

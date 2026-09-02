@@ -95,7 +95,7 @@ func setupRedownloadFixture(t *testing.T, withChapters bool) *redownloadFixture 
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-redownload@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-redownload@example.com", "secret123", "Alice")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
 		"sourceTitle":    "Mock Test Novel",
@@ -313,7 +313,7 @@ func TestRedownloadFromUrlRangeFilter(t *testing.T) {
 
 func TestRedownloadFromUrlRequiresSourceURL(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-redownload-no-url@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-redownload-no-url@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Sin URL", "es", "en")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/redownload-from-url", alice.Token, map[string]any{})

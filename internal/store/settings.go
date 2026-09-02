@@ -33,10 +33,16 @@ type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Name      string `json:"name,omitempty"`
+	Role      string `json:"role,omitempty"`
 	Theme     string `json:"theme"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
+
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
 
 type Prompt struct {
 	Key          string `json:"key,omitempty"`

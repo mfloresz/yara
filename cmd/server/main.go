@@ -50,6 +50,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Defense in depth for internet exposure: PB's own superuser whitelist
+	// middleware only restricts superuser-authenticated requests when the
+	// list is non-empty, so default it to loopback. The /_/ dashboard path is
+	// answered 404 by the router middleware regardless.
+	if len(app.Settings().SuperuserIPs) == 0 {
+		app.Settings().SuperuserIPs = []string{"127.0.0.1", "::1"}
+		slog.Info("restricted superuser API access to loopback")
+	}
+
+	if cfg.PromoteAdmin != "" {
+		slog.Info("promoting user to admin")
+		user, err := st.PromoteUserByEmail(cfg.PromoteAdmin)
+		if err != nil {
+			slog.Error("promote-admin failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("user promoted to admin, exiting", "userId", user.ID, "email", user.Email)
+		os.Exit(0)
+	}
+
 	if *migrateThumbnails {
 		slog.Info("running thumbnail migration")
 		if err := st.RunThumbnailMigration(); err != nil {
