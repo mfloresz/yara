@@ -28,6 +28,7 @@ The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). Whe
   - [Backup](#backup)
   - [Browser workers & proxy](#browser-workers--proxy)
   - [Worker auth](#worker-auth)
+  - [Admin](#admin)
 - [WebSocket](#websocket)
 
 ## Base URL & versioning
@@ -182,16 +183,23 @@ v1 errors return `Content-Type: application/problem+json`:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/auth/register` | Create a new user. Returns `AuthResult` + sets `auth.token` cookie. Status 201. |
+| `POST` | `/api/v1/auth/register` | Create the **first** user (becomes admin). Status 201. Returns `403` once any user exists — registration is invitation-only afterwards. |
+| `GET` | `/api/v1/auth/setup-status` | `{ needsSetup }` — true while the install has no users. Public. |
+| `POST` | `/api/v1/auth/invitations/validate` | Validate an invitation token. Public. `{ valid, email?, role?, expiresAt? }`. |
+| `POST` | `/api/v1/auth/invitations/accept` | Redeem an invitation (`{ token, password }`), create the invited user. Status 201. Public. |
 | `POST` | `/api/v1/auth/login` | Exchange email + password for a token. Returns `AuthResult` + sets `auth.token` cookie. Status 200. |
-| `GET` | `/api/v1/auth/me` | Return the authenticated user. |
+| `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
 | `POST` | `/api/v1/auth/refresh` | Refresh the current token. Returns a new `AuthResult` + sets cookie. |
 | `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. |
+
+Register, login and the invitation endpoints are rate-limited per client IP
+(register/login: 5/min, invitations: 10/min; 429 + `Retry-After: 60` beyond
+that) and cap request bodies at 16 KB.
 
 `GET /api/v1/auth/me` returns the standard single-resource envelope:
 
 ```json
-{ "data": { "id": "...", "email": "alice@example.com", "name": "Alice", "theme": "system" } }
+{ "data": { "id": "...", "email": "alice@example.com", "name": "Alice", "role": "user", "theme": "system" } }
 ```
 
 ```json
@@ -352,6 +360,7 @@ v1 errors return `Content-Type: application/problem+json`:
 |---|---|---|
 | `GET` | `/api/v1/prompts` | List the user's prompts. |
 | `PUT` | `/api/v1/prompts/{key}` | Create or update a prompt. Body: `{ "label", "description", "prompt": { "systemPrompt", "userPrompt" }, "active" }`. |
+| `DELETE` | `/api/v1/prompts/{key}` | Reset the user's own prompt: deletes the personal override so the admin global (or embedded default) applies again. Per-novel prompts are untouched. Status 200 with the effective prompt. |
 
 ```json
 // PUT /api/v1/prompts/translation
@@ -483,6 +492,33 @@ Browser-worker extension OAuth-style flow. The HTML pages are not part of the JS
 | `GET` | `/api/v1/worker-auth/tokens` | user | List the user's worker tokens. |
 | `POST` | `/api/v1/worker-auth/revoke/{tokenId}` | user | Revoke (disconnect, keep record). |
 | `POST` | `/api/v1/worker-auth/delete/{tokenId}` | user | Delete the record. |
+
+### Admin
+
+All `/api/v1/admin/*` routes require the authenticated user to have the
+`admin` role; everyone else gets `403` (`problem+json`).
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/admin/users` | List every user (id, email, name, role, dates). |
+| `PATCH` | `/api/v1/admin/users/{userId}` | `{ "role": "admin" \| "user" }`. Demoting the last admin returns 409. |
+| `GET` | `/api/v1/admin/invitations` | List invitations (email, role, expiry, used status). |
+| `POST` | `/api/v1/admin/invitations` | `{ "email", "role" }` → 201 with the shareable `invitationUrl` (raw token shown **once**; only its SHA-256 hash is stored; expires in 7 days). 409 if the email is already registered. |
+| `DELETE` | `/api/v1/admin/invitations/{invitationId}` | Revoke an unused invitation. 204. |
+| `GET` | `/api/v1/admin/provider-keys` | Provider catalog with `configured` / `shared` flags. Never returns key material. |
+| `PUT` | `/api/v1/admin/provider-keys/{providerKey}` | `{ "apiKey"?, "shared" }`. `apiKey` is required on first configuration; omit it to toggle sharing only. |
+| `DELETE` | `/api/v1/admin/provider-keys/{providerKey}` | Delete the shared key. 204. |
+| `GET` | `/api/v1/admin/prompt-overrides` | List global prompt overrides. |
+| `PUT` | `/api/v1/admin/prompt-overrides/{promptKey}` | `{ "prompt": { "systemPrompt", "userPrompt" } }` for keys `translation`, `title`, `refine`, `check`, `glossary` (≤ 20 000 chars). |
+| `DELETE` | `/api/v1/admin/prompt-overrides/{promptKey}` | Remove the override so the embedded default applies. 204. |
+
+**Shared provider key resolution order:** the user's own configured key wins;
+when the user has none and the provider is marked `shared`, the admin's key
+is used. `GET /api/v1/providers` exposes `sharedKeyAvailable` and
+`usingSharedKey` per provider so clients can display it.
+
+**Prompt precedence:** embedded default < admin global override < user
+setting < per-novel prompt.
 
 ## WebSocket
 
