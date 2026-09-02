@@ -1576,6 +1576,13 @@ func newAPITestEnv(t *testing.T) *apiTestEnv {
 	}
 
 	server := New(st, &config.Config{DataDir: dataDir})
+	// Cleanups run LIFO: stop the job workers and unbootstrap PocketBase
+	// before t.TempDir removes the data dir, so no background writer races
+	// the removal.
+	t.Cleanup(func() {
+		server.StopJobWorker()
+		app.ResetBootstrapState()
+	})
 	return &apiTestEnv{handler: Router(server), store: st, server: server}
 }
 

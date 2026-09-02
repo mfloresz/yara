@@ -45,6 +45,7 @@ type Server struct {
 	Cfg                    *config.Config
 	downloadQueue          chan string
 	translateQueue         chan string
+	workerWG               sync.WaitGroup
 	queuedJobs             map[string]struct{}
 	queueMu                sync.Mutex
 	cancelMu               sync.Mutex

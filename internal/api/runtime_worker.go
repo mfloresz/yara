@@ -32,8 +32,15 @@ func (s *Server) startJobWorker() {
 	s.downloadQueue = make(chan string, 128)
 	s.translateQueue = make(chan string, 128)
 
-	go s.workerLoop(s.downloadQueue)
-	go s.workerLoop(s.translateQueue)
+	s.workerWG.Add(2)
+	go func() {
+		defer s.workerWG.Done()
+		s.workerLoop(s.downloadQueue)
+	}()
+	go func() {
+		defer s.workerWG.Done()
+		s.workerLoop(s.translateQueue)
+	}()
 
 	jobs, err := s.Store.ListRunnableJobs()
 	if err != nil {
@@ -43,6 +50,16 @@ func (s *Server) startJobWorker() {
 	for _, job := range jobs {
 		s.enqueueJob(job.ID)
 	}
+}
+
+// StopJobWorker closes both job queues and waits for the worker loops to exit
+// (draining any queued job and finishing the in-flight one). Call at most
+// once, and before closing the store — e.g. in tests, ahead of the PocketBase
+// unbootstrap — so no worker writes to a closed DB afterwards.
+func (s *Server) StopJobWorker() {
+	close(s.downloadQueue)
+	close(s.translateQueue)
+	s.workerWG.Wait()
 }
 
 func (s *Server) enqueueJob(jobID string) bool {
