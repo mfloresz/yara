@@ -602,6 +602,81 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 	return c, nil
 }
 
+// adminOnlyRule is the PocketBase collection rule used for admin-managed
+// collections (invitations, shared provider keys, prompt overrides). The Go
+// layer already guards the /api/v1/admin routes; these rules protect the
+// underlying data if PocketBase's own REST surface is ever hit directly.
+var adminOnlyRule = "@request.auth.id != '' && @collection.users.id = @request.auth.id && @collection.users.role = 'admin'"
+
+func (s *Store) ensureInvitationsCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(InvitationsCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(InvitationsCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = types.Pointer(adminOnlyRule)
+	c.Fields.Add(&core.TextField{Name: "email", Required: true, Max: 254})
+	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
+	c.Fields.Add(&core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, Required: true, MaxSelect: 1})
+	c.Fields.Add(&core.DateField{Name: "expires_at", Required: true})
+	c.Fields.Add(&core.DateField{Name: "used_at"})
+	c.Fields.Add(&core.RelationField{Name: "created_by", CollectionId: users.Id, MaxSelect: 1})
+	addSystemDateFields(c)
+	c.AddIndex("idx_invitations_token_hash", true, "token_hash", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensureSharedProviderKeysCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(SharedProviderKeysCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(SharedProviderKeysCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = nil
+	c.Fields.Add(&core.TextField{Name: "provider", Required: true, Max: 120})
+	c.Fields.Add(&core.TextField{Name: "api_key_encrypted"})
+	c.Fields.Add(&core.BoolField{Name: "api_key_configured"})
+	c.Fields.Add(&core.BoolField{Name: "shared"})
+	c.Fields.Add(&core.DateField{Name: "api_key_updated_at"})
+	c.Fields.Add(&core.RelationField{Name: "updated_by", CollectionId: users.Id, MaxSelect: 1})
+	c.AddIndex("idx_shared_provider_keys_provider", true, "provider", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensurePromptOverridesCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(PromptOverridesCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(PromptOverridesCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = nil
+	c.Fields.Add(&core.TextField{Name: "key", Required: true, Max: 64})
+	c.Fields.Add(&core.EditorField{Name: "system_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "user_prompt"})
+	c.Fields.Add(&core.RelationField{Name: "updated_by", CollectionId: users.Id, MaxSelect: 1})
+	addSystemDateFields(c)
+	c.AddIndex("idx_prompt_overrides_key", true, "key", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 func (s *Store) seedProviders() error {
 	collection, err := s.App.FindCollectionByNameOrId(ProvidersCollection)
 	if err != nil {

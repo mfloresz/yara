@@ -55,6 +55,23 @@ type Prompt struct {
 	UpdatedAt    string `json:"updatedAt,omitempty"`
 }
 
+type Invitation struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	UsedAt    string `json:"usedAt,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+type SharedProviderKey struct {
+	Provider         string `json:"provider"`
+	Configured       bool   `json:"configured"`
+	Shared           bool   `json:"shared"`
+	APIKeyUpdatedAt  string `json:"apiKeyUpdatedAt,omitempty"`
+}
+
 type ProviderSetting struct {
 	Provider         string   `json:"provider"`
 	Label            string   `json:"label"`

@@ -45,6 +45,7 @@ func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	auth := v1.Group("/auth")
 	auth.POST("/register", handleAuthRegister(s))
 	auth.POST("/login", handleAuthLogin(s))
+	registerV1InvitationPublicRoutes(auth, s)
 
 	authed := auth.Group("")
 	authed.Bind(loadAuthFromCookie())

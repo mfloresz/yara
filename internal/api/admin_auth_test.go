@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"net/http"
 	"testing"
 
@@ -123,5 +124,202 @@ func TestSuperuserUIBlocked(t *testing.T) {
 		if resp.Code != http.StatusNotFound {
 			t.Fatalf("expected 404 for %s, got %d", path, resp.Code)
 		}
+	}
+}
+
+// admin creates a fresh install's first user (admin) via HTTP registration.
+func bootstrapAdmin(t *testing.T, env *apiTestEnv, email string) authPayload {
+	t.Helper()
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
+		"email":    email,
+		"password": "secret123",
+		"name":     "Admin",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var out authPayload
+	decodeResponse(t, resp, &out)
+	return out
+}
+
+func createInvitation(t *testing.T, env *apiTestEnv, admin authPayload, email, role string) (invitationPayload, string) {
+	t.Helper()
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/admin/invitations", admin.Token, map[string]any{
+		"email": email,
+		"role":  role,
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var out struct {
+		Invitation    invitationPayload `json:"invitation"`
+		InvitationURL string            `json:"invitationUrl"`
+	}
+	decodeResponse(t, resp, &out)
+	idx := strings.LastIndex(out.InvitationURL, "/invite/")
+	if idx < 0 {
+		t.Fatalf("invitation URL missing token: %q", out.InvitationURL)
+	}
+	return out.Invitation, out.InvitationURL[idx+len("/invite/"):]
+}
+
+type invitationPayload struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expiresAt"`
+	UsedAt    string `json:"usedAt"`
+}
+
+func TestInvitationLifecycle(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+
+	// Admin creates an invitation; URL carries the raw token.
+	invitation, rawToken := createInvitation(t, env, admin, "invited@example.com", "user")
+	if invitation.Role != "user" || invitation.Email != "invited@example.com" {
+		t.Fatalf("unexpected invitation payload: %+v", invitation)
+	}
+	if invitation.UsedAt != "" {
+		t.Fatalf("expected unused invitation, got usedAt=%q", invitation.UsedAt)
+	}
+
+	// Validation succeeds and reveals email + role.
+	validate := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/validate", "", map[string]any{"token": rawToken})
+	assertStatus(t, validate, http.StatusOK)
+	var validated struct {
+		Valid bool   `json:"valid"`
+		Email string `json:"email"`
+	}
+	decodeResponse(t, validate, &validated)
+	if !validated.Valid || validated.Email != "invited@example.com" {
+		t.Fatalf("unexpected validation result: %+v", validated)
+	}
+
+	// Unknown token reports valid:false, not an error.
+	unknown := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/validate", "", map[string]any{"token": "nope"})
+	assertStatus(t, unknown, http.StatusOK)
+	var unknownOut struct {
+		Valid bool `json:"valid"`
+	}
+	decodeResponse(t, unknown, &unknownOut)
+	if unknownOut.Valid {
+		t.Fatal("expected valid=false for unknown token")
+	}
+
+	// Accept creates the user with the invited role.
+	accept := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/accept", "", map[string]any{
+		"token":    rawToken,
+		"password": "secret123",
+	})
+	assertStatus(t, accept, http.StatusCreated)
+
+	login := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+		"email":    "invited@example.com",
+		"password": "secret123",
+	})
+	assertStatus(t, login, http.StatusOK)
+	var invited authPayload
+	decodeResponse(t, login, &invited)
+	if invited.User.Role != "user" {
+		t.Fatalf("expected invited user role user, got %q", invited.User.Role)
+	}
+
+	// The token is now used: validate and accept both fail.
+	revalidate := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/validate", "", map[string]any{"token": rawToken})
+	var revalidated struct {
+		Valid bool `json:"valid"`
+	}
+	decodeResponse(t, revalidate, &revalidated)
+	if revalidated.Valid {
+		t.Fatal("expected used invitation to validate as false")
+	}
+	reaccept := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/accept", "", map[string]any{
+		"token":    rawToken,
+		"password": "secret456",
+	})
+	assertStatus(t, reaccept, http.StatusBadRequest)
+}
+
+func TestInvitationAcceptAdminRole(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+
+	_, rawToken := createInvitation(t, env, admin, "second-admin@example.com", "admin")
+	accept := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/accept", "", map[string]any{
+		"token":    rawToken,
+		"password": "secret123",
+	})
+	assertStatus(t, accept, http.StatusCreated)
+	var out struct {
+		Role string `json:"role"`
+	}
+	decodeResponse(t, accept, &out)
+	if out.Role != "admin" {
+		t.Fatalf("expected admin role, got %q", out.Role)
+	}
+}
+
+func TestInvitationRevoke(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	invitation, rawToken := createInvitation(t, env, admin, "revoked@example.com", "user")
+
+	del := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/admin/invitations/"+invitation.ID, admin.Token, nil)
+	assertStatus(t, del, http.StatusNoContent)
+
+	validate := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/validate", "", map[string]any{"token": rawToken})
+	var out struct {
+		Valid bool `json:"valid"`
+	}
+	decodeResponse(t, validate, &out)
+	if out.Valid {
+		t.Fatal("expected revoked invitation to validate as false")
+	}
+}
+
+func TestInvitationDuplicateEmailRejected(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	registerUser(t, env, "taken@example.com", "secret123", "Taken")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/admin/invitations", admin.Token, map[string]any{
+		"email": "taken@example.com",
+		"role":  "user",
+	})
+	assertStatus(t, resp, http.StatusConflict)
+}
+
+func TestInvitationAcceptShortPasswordRejected(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	_, rawToken := createInvitation(t, env, admin, "shortpass@example.com", "user")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/accept", "", map[string]any{
+		"token":    rawToken,
+		"password": "short",
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	// The invitation must still be redeemable after a failed accept.
+	retry := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/invitations/accept", "", map[string]any{
+		"token":    rawToken,
+		"password": "secret123",
+	})
+	assertStatus(t, retry, http.StatusCreated)
+}
+
+func TestInvitationListAdminOnly(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	createInvitation(t, env, admin, "someone@example.com", "user")
+	nonAdmin := registerUser(t, env, "peasant@example.com", "secret123", "Peasant")
+
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/admin/invitations", nonAdmin.Token, nil)
+	assertStatus(t, resp, http.StatusForbidden)
+
+	list := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/admin/invitations", admin.Token, nil)
+	assertStatus(t, list, http.StatusOK)
+	var out []invitationPayload
+	decodeResponse(t, list, &out)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 invitation, got %d", len(out))
 	}
 }
