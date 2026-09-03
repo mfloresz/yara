@@ -36,6 +36,7 @@ export type AppServices = {
     name?: string;
   }) => Promise<AuthResponse>;
   logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
 };
 
 export const appServicesKey: InjectionKey<AppServices> = Symbol("app-services");
@@ -122,6 +123,18 @@ export function createAppServices(): AppServices {
     }
   }
 
+  // Rotates the server-side tokenKey: every session of this user (including
+  // other devices) becomes invalid immediately.
+  async function logoutAll() {
+    try {
+      await api.auth.logoutAll();
+    } finally {
+      clearAuth();
+      providerList.value = [];
+      defaults.value = null;
+    }
+  }
+
   const providers = computed(() => providerList.value);
   const providerById = computed(
     () => new Map(providerList.value.map((p) => [p.id, p])),
@@ -141,6 +154,7 @@ export function createAppServices(): AppServices {
     login,
     register,
     logout,
+    logoutAll,
   };
 }
 

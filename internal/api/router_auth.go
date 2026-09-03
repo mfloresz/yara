@@ -173,3 +173,21 @@ func handleAuthLogout(s *Server) func(*core.RequestEvent) error {
 		return e.NoContent(http.StatusNoContent)
 	}
 }
+
+// handleAuthLogoutAll invalidates every outstanding session token for the
+// calling user. PocketBase signs auth JWTs with the record's tokenKey plus
+// the collection secret, so rotating the tokenKey (RefreshTokenKey + save)
+// kills all previously issued tokens at once — this is the deliberate
+// "logout everywhere" action; the plain logout above only clears the
+// calling client's cookie.
+func handleAuthLogoutAll(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		e.Auth.RefreshTokenKey()
+		if err := e.App.Save(e.Auth); err != nil {
+			return e.InternalServerError("failed to invalidate sessions", err)
+		}
+		slog.Info("all sessions invalidated", "userId", e.Auth.Id)
+		clearAuthCookie(e)
+		return e.NoContent(http.StatusNoContent)
+	}
+}

@@ -190,6 +190,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       logout() {
         return http.post<void>("/api/v1/auth/logout");
       },
+      logoutAll() {
+        return http.post<void>("/api/v1/auth/logout-all");
+      },
     },
     admin: {
       async listUsers(): Promise<AdminUser[]> {

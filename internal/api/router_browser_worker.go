@@ -62,7 +62,35 @@ var (
 
 // ── WebSocket handler ──────────────────────────────────────────────────────
 
+// The production extensions only open the WebSocket with a stored token and
+// send `register` immediately on open, so the guards below never affect
+// them: they exist to keep anonymous connections (which can only come from
+// attackers — the tokenless extension never connects) from squatting
+// sockets or injecting job results.
+const (
+	workerAuthGrace          = 30 * time.Second
+	maxUnauthenticatedWorkers = 16
+)
+
+func countUnauthenticatedWorkers() int {
+	browserWorkersMu.RLock()
+	defer browserWorkersMu.RUnlock()
+	n := 0
+	for _, w := range browserWorkers {
+		w.mu.Lock()
+		if w.State != "authenticated" {
+			n++
+		}
+		w.mu.Unlock()
+	}
+	return n
+}
+
 func (s *Server) handleBrowserWorkerWS(w http.ResponseWriter, r *http.Request) {
+	if countUnauthenticatedWorkers() >= maxUnauthenticatedWorkers {
+		http.Error(w, "too many unauthenticated workers", http.StatusTooManyRequests)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("browser worker websocket upgrade", "error", err)
@@ -89,6 +117,23 @@ func (s *Server) handleBrowserWorkerWS(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		slog.Info("browser worker disconnected", "workerId", worker.ID)
 	}()
+
+	// Authentication grace period: a worker that has not registered with a
+	// valid token within workerAuthGrace is closed. The check reads the
+	// current state, so workers that authenticate early are never touched.
+	authTimer := time.AfterFunc(workerAuthGrace, func() {
+		worker.mu.Lock()
+		state := worker.State
+		worker.mu.Unlock()
+		if state != "authenticated" {
+			slog.Warn("closing unauthenticated browser worker", "workerId", worker.ID)
+			conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication required"),
+				time.Now().Add(time.Second))
+			conn.Close()
+		}
+	})
+	defer authTimer.Stop()
 
 	// Catalog responses can contain a large JSON-encoded chapter list, but the
 	// extension now sends the compact Livewire component instead of the fully
@@ -211,6 +256,13 @@ func (s *Server) handleWorkerMessage(worker *BrowserWorker, msg *BrowserWorkerMe
 		var result BrowserWorkerJobResult
 		if err := json.Unmarshal(msg.Payload, &result); err != nil {
 			slog.Error("browser worker invalid job result", "workerId", worker.ID, "error", err)
+			return
+		}
+		worker.mu.Lock()
+		state := worker.State
+		worker.mu.Unlock()
+		if state != "authenticated" {
+			slog.Warn("job result from unauthenticated worker, dropping", "workerId", worker.ID, "jobId", result.JobID)
 			return
 		}
 		s.deliverBrowserJobResult(worker, &result)

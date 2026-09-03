@@ -33,7 +33,6 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	registerV1PromptRoutes(authed, s)
 	registerV1ProviderRoutes(authed, s)
 	registerV1SettingsRoutes(authed, s)
-	registerV1BackupRoutes(authed, s)
 	registerV1ProxyRoutes(authed, s)
 	registerV1WorkerAuthRoutes(authed, s)
 
@@ -56,4 +55,5 @@ func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	authed.GET("/me", handleAuthMe(s))
 	authed.POST("/refresh", handleAuthRefresh(s))
 	authed.POST("/logout", handleAuthLogout(s))
+	authed.POST("/logout-all", handleAuthLogoutAll(s))
 }

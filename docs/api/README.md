@@ -190,7 +190,8 @@ v1 errors return `Content-Type: application/problem+json`:
 | `POST` | `/api/v1/auth/login` | Exchange email + password for a session. Returns `{ user }` + sets `auth.token` cookie. Status 200. |
 | `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
 | `POST` | `/api/v1/auth/refresh` | Refresh the current session. Returns `{ user }` + re-issues the cookie. |
-| `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. |
+| `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. The token itself stays valid until expiry — use logout-all to revoke it. |
+| `POST` | `/api/v1/auth/logout-all` | Invalidate every session of the calling user (all devices) by rotating the server-side token key, and clear the cookie. Status 204. |
 
 Register, login and the invitation endpoints are rate-limited per client IP
 (register/login: 5/min, invitations: 10/min; 429 + `Retry-After: 60` beyond
@@ -227,6 +228,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `POST` | `/api/v1/novels/{id}/clone` | Duplicate the novel (translations, glossary, options). Returns 201 + `Location`. |
 | `PATCH` | `/api/v1/novels/{id}/visibility` | Body `{ "isPublic": true\|false }`. |
 | `POST` | `/api/v1/novels/{id}/cover` | `multipart/form-data` with `cover` field. Returns the updated novel. |
+| `GET` | `/api/v1/novels/{id}/cover` | Download the stored cover (thumbnail when present). Cookie-authenticated; the underlying file fields are protected so PocketBase's native `/api/files` route is not usable for covers. Access follows novel visibility (owner or `isPublic`). |
 | `POST` | `/api/v1/novels/{id}/recalculate-stats` | Recompute chapter counts and char counts. |
 | `GET` | `/api/v1/novels/{id}/full` | Return the novel + all chapters (heavy). |
 
@@ -464,9 +466,9 @@ caller cannot rotate its rate-limit key by spoofing them.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/backups/export` | Stream a `backup-YYYYMMDD-HHMMSS.zip` of the entire `data-dir`. `Content-Type: application/zip`. |
+| `POST` | `/api/v1/admin/backups/export` | **Admin role required.** Stream a `backup-YYYYMMDD-HHMMSS.zip` of the entire `data-dir` (includes the app encryption key). `Content-Type: application/zip`. |
 
-`POST` (not `GET`) because generating a fresh archive is not idempotent in the GET sense.
+`POST` (not `GET`) because generating a fresh archive is not idempotent in the GET sense. The endpoint lives under `/admin` because the archive contains every user's data.
 
 ### Browser workers & proxy
 

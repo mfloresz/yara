@@ -2,7 +2,7 @@ package store
 
 import (
 	"encoding/json"
-	"path"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -36,11 +36,14 @@ func normalizeTranslation(cfg TranslationDefaults) TranslationDefaults {
 	return cfg
 }
 
-func buildPBFileURL(collection, recordID, fileName string) string {
+// novelCoverURL points at the authenticated cover handler instead of
+// PocketBase's native /api/files route, because cover/thumbnail files are
+// Protected (see ensureNovelsCollection) and require a file token there.
+func novelCoverURL(novelID, fileName string) string {
 	if strings.TrimSpace(fileName) == "" {
 		return ""
 	}
-	return path.Join("/api/files", collection, recordID, fileName)
+	return fmt.Sprintf("/api/v1/novels/%s/cover", novelID)
 }
 
 func jsonString(value any, fallback string) string {

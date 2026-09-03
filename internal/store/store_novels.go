@@ -451,6 +451,26 @@ func (s *Store) GetNovelAccessible(userID, novelID string) (*Novel, error) {
 	return &novel, nil
 }
 
+// GetNovelCoverFile returns the novel record plus the file name to serve as
+// its cover image (the thumbnail when present, the full cover otherwise).
+// Access follows the novel's visibility: owner or is_public.
+func (s *Store) GetNovelCoverFile(userID, novelID string) (*core.Record, string, error) {
+	record, err := s.App.FindRecordById(NovelsCollection, novelID)
+	if err != nil {
+		return nil, "", ErrNotFound
+	}
+	if record.GetString("owner") != userID && !record.GetBool("is_public") {
+		return nil, "", ErrForbidden
+	}
+	if name := firstString(record.GetStringSlice("thumbnail")); name != "" {
+		return record, name, nil
+	}
+	if name := firstString(record.GetStringSlice("cover")); name != "" {
+		return record, name, nil
+	}
+	return nil, "", ErrNotFound
+}
+
 func (s *Store) GetOwnedNovel(userID, novelID string) (*Novel, error) {
 	record, err := s.App.FindRecordById(NovelsCollection, novelID)
 	if err != nil {

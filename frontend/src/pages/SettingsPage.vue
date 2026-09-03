@@ -165,7 +165,7 @@
           </div>
         </n-card>
 
-        <n-card title="Backup" size="small">
+        <n-card v-if="isAdmin" title="Backup" size="small">
           <div class="row-between">
             <div>
               <div style="font-weight: 600">Descargar backup</div>
@@ -177,6 +177,20 @@
                 Descargar
               </n-button>
             </a>
+          </div>
+        </n-card>
+
+        <n-card title="Sesión" size="small">
+          <div class="row-between">
+            <div>
+              <div style="font-weight: 600">Cerrar sesión en todos los dispositivos</div>
+              <div class="small muted">
+                Invalida todos los tokens de tu cuenta, incluidas otras sesiones y navegadores. Este dispositivo también se desconecta.
+              </div>
+            </div>
+            <n-button secondary type="warning" :loading="loggingOutEverywhere" @click="logoutEverywhere">
+              Cerrar todas las sesiones
+            </n-button>
           </div>
         </n-card>
 
@@ -280,13 +294,15 @@ import {
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
-import { applyTheme } from "@/app/auth";
+import { applyTheme, authState } from "@/app/auth";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
+import { useRouter } from "vue-router";
 import type { GeneralPromptRecord, ServerSettings, WorkerToken } from "@/api/types";
 
 const message = useMessage();
-const { api, loadProviders } = useAppServices();
+const router = useRouter();
+const { api, loadProviders, logoutAll } = useAppServices();
 const { providers, byId, loading: providersLoading, reload: reloadProviders } = useProviders();
 const loading = ref(true);
 const saving = ref(false);
@@ -305,6 +321,22 @@ const workerTokens = ref<WorkerToken[]>([]);
 const workerTokensLoading = ref(false);
 const revokingTokenId = ref<string | null>(null);
 const deletingTokenId = ref<string | null>(null);
+
+const isAdmin = authState.isAdmin;
+const loggingOutEverywhere = ref(false);
+
+async function logoutEverywhere() {
+  loggingOutEverywhere.value = true;
+  try {
+    await logoutAll();
+    message.success("Todas las sesiones fueron cerradas");
+    await router.push("/login");
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    loggingOutEverywhere.value = false;
+  }
+}
 
 const themeOptions = [
   { label: "Sistema", value: "system" },
@@ -422,7 +454,7 @@ async function deleteToken(tokenId: string) {
 // blob the browser can save.
 async function downloadBackup() {
   try {
-    const response = await fetch("/api/v1/backups/export", {
+    const response = await fetch("/api/v1/admin/backups/export", {
       method: "POST",
       credentials: "include",
     });

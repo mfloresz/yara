@@ -975,7 +975,9 @@ func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	}
 
 	if imported.Novel.CoverPath != "" {
-		coverResp := doJSONRequest(t, env.handler, http.MethodGet, imported.Novel.CoverPath, "", nil)
+		// CoverPath points at the authenticated cover route; the owner's
+		// request must 404 because the novel (and its cover) are gone.
+		coverResp := doJSONRequest(t, env.handler, http.MethodGet, imported.Novel.CoverPath, alice.Token, nil)
 		assertStatus(t, coverResp, http.StatusNotFound)
 	}
 }

@@ -10,16 +10,14 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
-	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerV1BackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	// POST is correct here: the server is generating and returning a fresh
-	// archive every time, so the action is not safe/idempotent in the GET
-	// sense (the body is non-deterministic with respect to disk state).
-	api.POST("/backups/export", backupDownload(s))
-}
-
+// backupDownload is mounted under the admin group (/api/v1/admin/backups/export)
+// because the archive streams the whole data dir — every user's data plus the
+// app encryption key — so it must never be reachable by a regular invited user.
+// POST is correct here: the server is generating and returning a fresh
+// archive every time, so the action is not safe/idempotent in the GET
+// sense (the body is non-deterministic with respect to disk state).
 func backupDownload(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		dataDir := s.Cfg.DataDir

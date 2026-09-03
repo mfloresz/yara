@@ -288,8 +288,8 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.EditorField{Name: "custom_commands"})
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"ongoing", "completed", "hiatus", "cancelled"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "tags"})
-	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1})
-	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1})
+	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1, Protected: true})
+	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1, Protected: true})
 	c.Fields.Add(&core.BoolField{Name: "is_public"})
 	c.Fields.Add(&core.NumberField{Name: "chapter_count"})
 	c.Fields.Add(&core.NumberField{Name: "translated_count"})
@@ -358,6 +358,23 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 			if err := s.App.Save(c); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// ensureField is a no-op for fields that already exist, so installs created
+	// before cover/thumbnail were protected need an explicit flip. Protected
+	// files require a file token on PocketBase's native /api/files route, so
+	// covers and thumbnails are only reachable through the authenticated
+	// /api/v1/novels/{id}/cover handler.
+	changed := false
+	for _, name := range []string{"cover", "thumbnail"} {
+		if f, ok := c.Fields.GetByName(name).(*core.FileField); ok && !f.Protected {
+			f.Protected = true
+			changed = true
+		}
+	}
+	if changed {
+		if err := s.App.Save(c); err != nil {
+			return nil, err
 		}
 	}
 	if err := s.App.Save(c); err != nil {
@@ -542,7 +559,7 @@ func (s *Store) ensureEpubsCollection(novels *core.Collection) (*core.Collection
 	c.Fields.Add(&core.SelectField{Name: "file_kind", Values: []string{"original", "translated"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "source_variant", Max: 64})
 	c.Fields.Add(&core.TextField{Name: "label", Max: 250})
-	c.Fields.Add(&core.FileField{Name: "file", Required: true, MaxSelect: 1, MaxSize: epubFileMaxSize})
+	c.Fields.Add(&core.FileField{Name: "file", Required: true, MaxSelect: 1, MaxSize: epubFileMaxSize, Protected: true})
 	addSystemDateFields(c)
 	c.AddIndex("idx_epubs_unique_variant", true, "novel,file_kind,source_variant", "")
 	if err := s.App.Save(c); err != nil {
@@ -553,15 +570,28 @@ func (s *Store) ensureEpubsCollection(novels *core.Collection) (*core.Collection
 
 // migrateEpubFileMaxSize raises the max upload size of the "file" field on
 // pre-existing epubs collections that were created before epubFileMaxSize
-// was introduced (they default to PocketBase's 5MB limit).
+// was introduced (they default to PocketBase's 5MB limit). It also flips the
+// field to Protected on pre-existing collections: epub files must only be
+// reachable through the authenticated /api/v1/epubs/{id}/download handler,
+// never through PocketBase's public /api/files route.
 func (s *Store) migrateEpubFileMaxSize(c *core.Collection) (*core.Collection, error) {
 	field, ok := c.Fields.GetByName("file").(*core.FileField)
-	if !ok || field.MaxSize >= epubFileMaxSize {
+	if !ok {
 		return c, nil
 	}
-	field.MaxSize = epubFileMaxSize
-	if err := s.App.Save(c); err != nil {
-		return nil, err
+	changed := false
+	if field.MaxSize < epubFileMaxSize {
+		field.MaxSize = epubFileMaxSize
+		changed = true
+	}
+	if !field.Protected {
+		field.Protected = true
+		changed = true
+	}
+	if changed {
+		if err := s.App.Save(c); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }

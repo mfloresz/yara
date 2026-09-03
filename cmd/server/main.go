@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"translator-server/internal/api"
@@ -104,7 +105,20 @@ func main() {
 	handler := api.Router(server)
 
 	slog.Info("translator-server listening", "addr", cfg.Addr, "dataDir", cfg.DataDir)
-	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
+	// ReadHeaderTimeout neutralizes slowloris (headers must arrive complete
+	// within 20s) and IdleTimeout reclaims keep-alive sockets. ReadTimeout and
+	// WriteTimeout stay unlimited on purpose: they would kill large epub
+	// uploads on slow links, long synchronous scrapes (import-from-url,
+	// batch-check) and the streamed admin backup. The configurable AI
+	// timeout does not apply here — it lives in the async job worker, not in
+	// an HTTP request.
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 20 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := httpServer.ListenAndServe(); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}

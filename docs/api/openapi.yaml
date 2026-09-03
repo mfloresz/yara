@@ -37,7 +37,6 @@ tags:
   - name: Settings
   - name: Reading progress
   - name: Imports
-  - name: Backup
   - name: Browser workers
   - name: Worker auth
   - name: Admin
@@ -213,6 +212,18 @@ paths:
       summary: Clear the auth cookie.
       responses:
         '204': { $ref: '#/components/responses/NoContent' }
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Invalidate every session of the calling user (all devices) and clear the cookie.
+      description: >-
+        Rotates the server-side token key so every outstanding auth token for
+        the user — including sessions on other devices — becomes invalid
+        immediately. Plain logout only clears the local cookie.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   # ---------------------------------------------------------------------------
   # Novels
@@ -446,6 +457,23 @@ paths:
   /novels/{id}/cover:
     parameters:
       - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Novels]
+      summary: Download the stored cover (thumbnail when present) image.
+      description: >-
+        Cookie-authenticated serving of the novel's cover image. The cover and
+        thumbnail file fields are protected, so PocketBase's native
+        /api/files route requires a file token; this endpoint is the
+        replacement the novel's coverPath points at. Access follows novel
+        visibility (owner or is_public).
+      responses:
+        '200':
+          description: OK
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [Novels]
       summary: Upload a cover image.
@@ -1760,10 +1788,13 @@ paths:
   # ---------------------------------------------------------------------------
   # Backup
   # ---------------------------------------------------------------------------
-  /backups/export:
+  /admin/backups/export:
     post:
-      tags: [Backup]
-      summary: Stream a fresh `backup-YYYYMMDD-HHMMSS.zip` of the data dir.
+      tags: [Admin]
+      summary: Stream a fresh `backup-YYYYMMDD-HHMMSS.zip` of the data dir (admin role required).
+      description: >-
+        The archive contains the whole data dir — every user's data and the
+        app encryption key — so the endpoint is restricted to the admin role.
       responses:
         '200':
           description: OK
@@ -1774,6 +1805,7 @@ paths:
           content:
             application/zip:
               schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ---------------------------------------------------------------------------
   # Browser workers & proxy

@@ -29,6 +29,8 @@ func registerV1AdminRoutes(admin *pbrouter.RouterGroup[*core.RequestEvent], s *S
 	admin.GET("/prompt-overrides", adminListPromptOverrides(s))
 	admin.PUT("/prompt-overrides/{promptKey}", adminUpsertPromptOverride(s))
 	admin.DELETE("/prompt-overrides/{promptKey}", adminDeletePromptOverride(s))
+
+	admin.POST("/backups/export", backupDownload(s))
 }
 
 func adminListPromptOverrides(s *Server) func(*core.RequestEvent) error {

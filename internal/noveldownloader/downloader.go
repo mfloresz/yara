@@ -290,9 +290,16 @@ func (d *Downloader) DownloadCover(ctx context.Context, coverURL string) ([]byte
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("HTTP %d fetching cover", resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// 25MB hard cap: the cover URL comes from scraped HTML, so its size is
+	// untrusted — without the limit a malicious source page could point the
+	// server at a stream that OOMs it.
+	const maxCoverBytes int64 = 25 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("reading cover body: %w", err)
+	}
+	if int64(len(body)) > maxCoverBytes {
+		return nil, "", fmt.Errorf("cover exceeds %d bytes", maxCoverBytes)
 	}
 	mimeType := resp.Header.Get("Content-Type")
 	if mimeType == "" {

@@ -20,6 +20,20 @@ These protections are built in — no reverse-proxy configuration needed:
 - Session cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` whenever the
   request arrives via `X-Forwarded-Proto: https` (cloudflared always sets it).
 - Provider API keys are encrypted at rest (AES-256-GCM).
+- Covers, thumbnails and epub files are **protected** file fields: PocketBase's
+  native `/api/files/*` route requires a file token, and the app serves them
+  through authenticated endpoints (`/api/v1/novels/{id}/cover`,
+  `/api/v1/epubs/{id}/download`) that enforce ownership/visibility.
+- `POST /api/v1/backups/export` is restricted to the admin role (the archive
+  contains every user's data plus the app encryption key).
+- HTTP hardening: `ReadHeaderTimeout` (20s) neutralizes slowloris, `IdleTimeout`
+  (120s) reclaims keep-alive sockets. Body/response timeouts stay unlimited so
+  large uploads, long scrapes and the backup stream are not cut off.
+- Browser-worker WebSocket: connections must register with a valid token
+  within 30 seconds or are closed; unauthenticated connections are capped and
+  can never deliver job results.
+- Import/cover size caps: decompressed EPUB/ZIP import content is capped at
+  25MB, and cover downloads are capped at 25MB (zip-bomb / OOM protection).
 
 ## Deployment checklist (Cloudflare Tunnel)
 
@@ -86,11 +100,39 @@ Cloudflare Tunnel, the same rules apply: terminate TLS at the proxy, forward
 to `127.0.0.1:5176`, and make sure the proxy sets `X-Forwarded-Proto: https`
 so the `Secure` cookie flag and HSTS activate. Caddy does this automatically.
 
+### Forwarded-IP headers and the login rate limit
+
+The per-IP rate limit (login/register 5/min, invitations 10/min) only trusts
+`CF-Connecting-IP` / `X-Forwarded-For` when the TCP peer is **loopback**, and
+it uses the **first** element of `X-Forwarded-For`. With cloudflared this is
+safe: it sets `CF-Connecting-IP` to the real client address and the header is
+authoritative.
+
+With a generic local proxy, make sure it **overwrites** (not appends to)
+`X-Forwarded-For`. nginx's default `proxy_set_header X-Forwarded-For
+$proxy_add_x_forwarded_for` *appends* the client-supplied value, which lets an
+attacker rotate fake IPs and bypass the login rate limit. Use instead:
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+
+The Caddy equivalent is `header_up X-Forwarded-For {remote_host}` on the
+reverse_proxy handler.
+
+If the proxy is not on loopback (e.g. a Docker bridge or LAN address), the
+server cannot trust any forwarded header at all: every client then shares the
+proxy's IP for rate limiting, which is safe against spoofing but can lock
+everyone out under a brute-force attempt (shared 5/min bucket).
+
 ## Accepted risks (deliberate, documented)
 
-- Logout clears the cookie but the PB token remains valid until its natural
-  30-day expiry (it is HttpOnly + SameSite=Strict; rotate by changing the
-  password once a password-change feature exists).
+- Plain logout clears the cookie but the PB token remains valid until its
+  natural 30-day expiry (it is HttpOnly + SameSite=Strict). To revoke it
+  server-side, use `POST /api/v1/auth/logout-all` ("cerrar sesión en todos los
+  dispositivos" in Settings), which rotates the token key and invalidates
+  **every** session of the user — all devices at once; there is no
+  per-device revocation in PocketBase's stateless token model.
 - No per-account lockout or CAPTCHA; the per-IP login rate limit is the
   brute-force defense.
 - Audit logging goes to stdout as structured slog lines (no persistent audit

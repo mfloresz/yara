@@ -160,7 +160,10 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		t.Errorf("imported novel not present in list")
 	}
 
+	// CoverPath now points at the authenticated cover route (the file fields
+	// are protected), so the request must carry the owner's token.
 	coverReq := httptest.NewRequest(http.MethodGet, importResp.Novel.CoverPath, nil)
+	coverReq.Header.Set("Authorization", "Bearer "+alice.Token)
 	coverRec := httptest.NewRecorder()
 	env.handler.ServeHTTP(coverRec, coverReq)
 	if coverRec.Code != http.StatusOK {
