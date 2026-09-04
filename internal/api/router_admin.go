@@ -203,16 +203,27 @@ func adminCreateInvitation(s *Server) func(*core.RequestEvent) error {
 		}
 		slog.Info("invitation created", "actorId", e.Auth.Id, "invitationId", invitation.ID, "role", invitation.Role)
 
-		scheme := "http"
-		if e.Request.TLS != nil || strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https") {
-			scheme = "https"
-		}
-		invitationURL := fmt.Sprintf("%s://%s/invite/%s", scheme, e.Request.Host, rawToken)
+		invitationURL := invitationURLFor(s, e, rawToken)
 		return v1Respond(e, http.StatusCreated, map[string]any{
 			"invitation":    invitation,
 			"invitationUrl": invitationURL,
 		}, nil, nil)
 	}
+}
+
+// invitationURLFor builds the absolute invite link shown to the admin. The
+// configured public origin wins; the request Host is a dev-only fallback
+// because Host / X-Forwarded-Proto are client-controlled on direct
+// connections and could otherwise produce a poisoned link.
+func invitationURLFor(s *Server, e *core.RequestEvent, rawToken string) string {
+	if base := strings.TrimSuffix(strings.TrimSpace(s.Cfg.PublicBaseURL), "/"); base != "" {
+		return base + "/invite/" + rawToken
+	}
+	scheme := "http"
+	if e.Request.TLS != nil || strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/invite/%s", scheme, e.Request.Host, rawToken)
 }
 
 func adminDeleteInvitation(s *Server) func(*core.RequestEvent) error {

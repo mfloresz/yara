@@ -365,7 +365,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 |---|---|---|
 | `GET` | `/api/v1/prompts` | List the user's prompts. |
 | `PUT` | `/api/v1/prompts/{key}` | Create or update a prompt. Body: `{ "label", "description", "prompt": { "systemPrompt", "userPrompt" }, "active" }`. |
-| `DELETE` | `/api/v1/prompts/{key}` | Reset the user's own prompt: deletes the personal override so the admin global (or embedded default) applies again. Per-novel prompts are untouched. Status 200 with the effective prompt. |
+| `DELETE` | `/api/v1/prompts/{key}` | Reset the user's own prompt (idempotent): deletes the personal override so the admin global (or embedded default) applies again. Per-novel prompts are untouched. Status 200 with the effective prompt. |
 
 ```json
 // PUT /api/v1/prompts/translation
@@ -513,6 +513,7 @@ All `/api/v1/admin/*` routes require the authenticated user to have the
 | `GET` | `/api/v1/admin/provider-keys` | Provider catalog with `configured` / `shared` flags. Never returns key material. |
 | `PUT` | `/api/v1/admin/provider-keys/{providerKey}` | `{ "apiKey"?, "shared" }`. `apiKey` is required on first configuration; omit it to toggle sharing only. |
 | `DELETE` | `/api/v1/admin/provider-keys/{providerKey}` | Delete the shared key. 204. |
+| `GET` | `/api/v1/admin/prompts` | Effective prompts (embedded default + global override) with `hasOverride` flag. Same precedence the user sees, minus the per-user layer. |
 | `GET` | `/api/v1/admin/prompt-overrides` | List global prompt overrides. |
 | `PUT` | `/api/v1/admin/prompt-overrides/{promptKey}` | `{ "prompt": { "systemPrompt", "userPrompt" } }` for keys `translation`, `title`, `refine`, `check`, `glossary` (≤ 20 000 chars). |
 | `DELETE` | `/api/v1/admin/prompt-overrides/{promptKey}` | Remove the override so the embedded default applies. 204. |

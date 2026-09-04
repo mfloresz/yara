@@ -12,8 +12,16 @@ import (
 
 const authCookieName = "auth.token"
 
+// authCookieSecure mirrors the deployment topology: TLS directly on the Go
+// server or HTTPS terminated at the tunnel/reverse proxy (signalled via
+// X-Forwarded-Proto). Set and clear must agree, otherwise the browser keeps a
+// Secure session cookie after logout on HTTPS deployments.
+func authCookieSecure(e *core.RequestEvent) bool {
+	return e.Request.TLS != nil || strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 func setAuthCookie(e *core.RequestEvent, token string) {
-	secure := e.Request.TLS != nil || strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https")
+	secure := authCookieSecure(e)
 	e.SetCookie(&http.Cookie{
 		Name:     authCookieName,
 		Value:    token,
@@ -31,6 +39,7 @@ func clearAuthCookie(e *core.RequestEvent) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   authCookieSecure(e),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})

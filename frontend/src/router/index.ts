@@ -80,7 +80,17 @@ export const router = createRouter({
 });
 
 router.beforeEach((to) => {
+  // Fail closed while the session is still loading: never render protected
+  // content (in particular /admin) on an unverified role. The router is
+  // attached after restoreSession in main.ts, so this branch only covers
+  // programmatic edge navigations — the checks mirror the ready ones below.
   if (!authState.ready.value) {
+    if (to.meta.requiresAuth && !authState.isAuthenticated.value) {
+      return { name: "login", query: { redirect: to.fullPath } };
+    }
+    if (to.meta.requiresAdmin && !authState.isAdmin.value) {
+      return { name: "dashboard" };
+    }
     return true;
   }
   if (to.meta.requiresAuth && !authState.isAuthenticated.value) {

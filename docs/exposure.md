@@ -87,7 +87,10 @@ These protections are built in — no reverse-proxy configuration needed:
 
 5. **Invite users** from the Yara admin panel (`/admin` → Invitaciones). The
    invitation URL is shown once; share it over a private channel. Invitations
-   expire after 7 days and are single-use.
+   expire after 7 days and are single-use. Set `--public-url` (or `PUBLIC_URL`)
+   to your public origin (e.g. `https://novels.example.com`) so invitation
+   links use it: the fallback derives the origin from the request Host, which
+   is client-controlled on direct connections.
 
 6. **Backups.** `data/` contains the SQLite database (users, novels,
    encrypted keys) and uploaded files. Back it up before upgrades; the

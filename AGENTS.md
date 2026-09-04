@@ -397,6 +397,7 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 | `-static-dir` | `string` | `""` (use embed) | Dev-only: serve frontend from disk instead of embed. Falls back to `STATIC_DIR` env. Also sets PocketBase `DefaultDev: true`. |
 | `-migrate-db` | `bool` | `false` | Run legacy database migration and exit. |
 | `-promote-admin` | `string` | `""` | Grant the admin role to the user with this email and exit. Bootstrap for pre-existing installs. |
+| `-public-url` | `string` | `""` (derive from request Host) | Public origin (e.g. `https://novels.example.com`) used for absolute URLs shown to admins (invitation links). Falls back to `PUBLIC_URL` env. Set it in production: the request Host is client-controlled. |
 | `-migrate-thumbnails` | `bool` | `false` | Generate thumbnails for existing covers and exit. |
 | `-version` | `bool` | `false` | Print version and exit. |
 
@@ -411,6 +412,7 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 | `ADDR` | `string` | `:5176` | Listen address. Only used if `-addr` flag is empty. |
 | `PORT` | `string` | `:5176` | Listen port. Only used if `-port` flag is empty. |
 | `DATA_DIR` | `string` | `<binary-dir>/data` | PocketBase data directory. Only used if `-data-dir` flag is empty. |
+| `PUBLIC_URL` | `string` | `""` (derive from request Host) | Public origin for absolute admin-facing URLs (invitation links). Only used if `-public-url` flag is empty. |
 | `VITE_API_URL` | `string` | `""` (same-origin) | Frontend only: overrides API base URL for the Vue SPA. |
 
 ### Build-time variables

@@ -31,6 +31,11 @@ type Config struct {
 	// exits. Bootstrap for pre-existing installs that already have users
 	// (fresh installs promote the first registrant automatically).
 	PromoteAdmin string
+	// PublicBaseURL is the externally reachable origin (e.g.
+	// https://novels.example.com) used to build absolute URLs shown to
+	// admins, such as invitation links. Empty means derive from the request
+	// Host (dev only — Host is client-controlled on direct connections).
+	PublicBaseURL string
 }
 
 func Load() (*Config, error) {
@@ -43,6 +48,7 @@ func Load() (*Config, error) {
 	flag.BoolVar(&cfg.MigrateChapterStats, "migrate-chapter-stats", false, "recalculate chapter stats for every novel and exit")
 	flag.BoolVar(&cfg.MigrateChapterPositions, "migrate-chapter-positions", false, "initialize chapter positions in source order and exit (required once before using chapter reorder/exclusion)")
 	flag.StringVar(&cfg.PromoteAdmin, "promote-admin", "", "grant the admin role to the user with this email and exit")
+	flag.StringVar(&cfg.PublicBaseURL, "public-url", "", "public origin for absolute URLs (e.g. https://novels.example.com)")
 	flag.Parse()
 
 	if cfg.Addr == "" {
@@ -92,7 +98,18 @@ func Load() (*Config, error) {
 	}
 
 	cfg.AppEncryptionKey = strings.TrimSpace(os.Getenv("APP_ENCRYPTION_KEY"))
+	cfg.PublicBaseURL = firstNonEmpty(cfg.PublicBaseURL, strings.TrimSpace(os.Getenv("PUBLIC_URL")))
+	cfg.PublicBaseURL = strings.TrimSuffix(cfg.PublicBaseURL, "/")
 	cfg.DownloadMinDelayMs, _ = strconv.Atoi(strings.TrimSpace(os.Getenv("DOWNLOAD_MIN_DELAY_MS")))
 	cfg.DownloadMaxDelayMs, _ = strconv.Atoi(strings.TrimSpace(os.Getenv("DOWNLOAD_MAX_DELAY_MS")))
 	return cfg, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

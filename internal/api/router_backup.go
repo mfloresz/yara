@@ -22,6 +22,16 @@ func backupDownload(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		dataDir := s.Cfg.DataDir
 
+		// Checkpoint the WAL into data.db before streaming: the walker skips
+		// -wal/-shm files, so without a checkpoint the copied .db would miss
+		// recent writes. A failed checkpoint is non-fatal (the backup still
+		// streams) but is logged.
+		if _, err := s.Store.App.DB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute(); err != nil {
+			slog.Warn("backup checkpoint failed, streaming anyway", "error", err)
+		}
+
+		slog.Info("backup exported", "actorId", e.Auth.Id)
+
 		pr, pw := io.Pipe()
 
 		go func() {

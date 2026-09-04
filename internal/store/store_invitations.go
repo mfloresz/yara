@@ -89,10 +89,15 @@ func (s *Store) FindInvitationByToken(token string) (*Invitation, error) {
 }
 
 // RedeemInvitation validates the invitation token and creates the invited
-// user with the invited role, marking the invitation as used. Callers must
-// serialize redemption (check-then-act) — the api layer holds a mutex around
-// this call. ErrNotFound/ErrInvitationUsed/ErrInvitationExpired/ErrEmailTaken
-// are returned as-is; handlers map used/expired to the same generic message.
+// user with the invited role, marking the invitation as used BEFORE creating
+// the user so a failure between the two steps cannot leave the token reusable
+// for a second redemption. If user creation fails, the mark is rolled back
+// (best effort) so the admin can re-issue; if the rollback itself fails the
+// token stays consumed and the admin must create a fresh invitation.
+// Callers must serialize redemption (check-then-act) — the api layer holds a
+// mutex around this call. ErrNotFound/ErrInvitationUsed/ErrInvitationExpired/
+// ErrEmailTaken are returned as-is; handlers map used/expired to the same
+// generic message.
 func (s *Store) RedeemInvitation(token, password string) (User, error) {
 	invitation, err := s.FindInvitationByToken(token)
 	if err != nil {
@@ -103,8 +108,24 @@ func (s *Store) RedeemInvitation(token, password string) (User, error) {
 		return User{}, ErrEmailTaken
 	}
 
+	record, err := s.App.FindRecordById(InvitationsCollection, invitation.ID)
+	if err != nil {
+		return User{}, ErrNotFound
+	}
+	record.Set("used_at", time.Now().UTC())
+	if err := s.App.Save(record); err != nil {
+		return User{}, fmt.Errorf("mark invitation used: %w", err)
+	}
+	reopen := func() {
+		if rec, recErr := s.App.FindRecordById(InvitationsCollection, invitation.ID); recErr == nil {
+			rec.Set("used_at", "")
+			_ = s.App.Save(rec)
+		}
+	}
+
 	result, err := s.CreateUser(invitation.Email, password, "")
 	if err != nil {
+		reopen()
 		return User{}, fmt.Errorf("create invited user: %w", err)
 	}
 	if invitation.Role == RoleAdmin {
@@ -114,14 +135,6 @@ func (s *Store) RedeemInvitation(token, password string) (User, error) {
 		}
 	}
 
-	record, err := s.App.FindRecordById(InvitationsCollection, invitation.ID)
-	if err != nil {
-		return User{}, ErrNotFound
-	}
-	record.Set("used_at", time.Now().UTC())
-	if err := s.App.Save(record); err != nil {
-		return User{}, fmt.Errorf("mark invitation used: %w", err)
-	}
 	return result.User, nil
 }
 

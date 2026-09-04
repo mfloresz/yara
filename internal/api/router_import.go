@@ -137,7 +137,7 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 				return e.InternalServerError("failed to read zip entry", readErr)
 			}
 			if int64(len(data)) > remainingDecompressed {
-				return e.BadRequestError("zip decompressed size exceeds 25MB limit", nil)
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "zip decompressed size exceeds 25MB limit")
 			}
 			remainingDecompressed -= int64(len(data))
 			name := strings.TrimLeft(filepath.ToSlash(f.Name), "./")

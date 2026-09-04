@@ -87,6 +87,15 @@ func countUnauthenticatedWorkers() int {
 }
 
 func (s *Server) handleBrowserWorkerWS(w http.ResponseWriter, r *http.Request) {
+	// Per-IP upgrade cap first: without it a single peer can reconnect in a
+	// loop and squat all maxUnauthenticatedWorkers slots. CheckOrigin stays
+	// permissive by design (auth is in-band via the register message).
+	if s.wsLimiter != nil && !s.wsLimiter.allow(clientKeyForRateLimit(r)) {
+		slog.Warn("browser worker ws rate limited", "remote", r.RemoteAddr)
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "too many connection attempts", http.StatusTooManyRequests)
+		return
+	}
 	if countUnauthenticatedWorkers() >= maxUnauthenticatedWorkers {
 		http.Error(w, "too many unauthenticated workers", http.StatusTooManyRequests)
 		return

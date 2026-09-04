@@ -31,8 +31,16 @@ func listPrompts(s *Server) func(*core.RequestEvent) error {
 func resetPrompt(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		key := e.Request.PathValue("key")
+		// Idempotent reset: when the user has no own override the effective
+		// prompt already comes from the admin global (or the embedded
+		// default), so return it with 200 instead of 404.
 		if err := s.Store.DeleteUserPrompt(e.Auth.Id, key); err != nil {
-			return notFoundOrForbidden(e, err)
+			switch err {
+			case store.ErrNotFound:
+				// fall through to the effective-prompt lookup below
+			default:
+				return notFoundOrForbidden(e, err)
+			}
 		}
 		prompts, err := s.Store.ListPrompts(e.Auth.Id)
 		if err != nil {

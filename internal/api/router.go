@@ -76,6 +76,10 @@ type Server struct {
 	// Rate limiters for the internet-exposed auth surface.
 	loginLimiter      *rateLimiter
 	invitationLimiter *rateLimiter
+	// wsLimiter caps WebSocket upgrade attempts per client IP so one peer
+	// cannot reconnect in a loop and starve the maxUnauthenticatedWorkers
+	// slots that legitimate browser workers need.
+	wsLimiter *rateLimiter
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }
@@ -92,6 +96,7 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
 		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
 		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
+		wsLimiter:          newRateLimiter(16, 16), // 16 WS upgrades per minute per IP
 	}
 	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()
