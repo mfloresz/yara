@@ -46,13 +46,13 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobConte
 	if err != nil {
 		return nil, fmt.Errorf("resolve job config: %w", err)
 	}
-	provider, err := s.newAIProvider(cfg.AI)
+	provider, err := s.newAIProvider(cfg.AI, ai.SessionForJob(job.ID))
 	if err != nil {
 		return nil, fmt.Errorf("new AI provider: %w", err)
 	}
 	var titleProvider ai.Provider
 	if cfg.TitleAI != nil {
-		tp, err := s.newAIProvider(*cfg.TitleAI)
+		tp, err := s.newAIProvider(*cfg.TitleAI, ai.SessionForJob(job.ID))
 		if err != nil {
 			slog.Warn("failed to create title provider, will fallback to content provider", "err", err)
 		} else {

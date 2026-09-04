@@ -23,7 +23,10 @@ func (p *GoogleProvider) model() (provider.LanguageModel, error) {
 	if p == nil || p.APIKey == "" {
 		return nil, fmt.Errorf("google not configured")
 	}
-	return google.Chat(p.Model, google.WithAPIKey(p.APIKey)), nil
+	return google.Chat(p.Model,
+		google.WithAPIKey(p.APIKey),
+		google.WithHeaders(map[string]string{"User-Agent": yaraUserAgent}),
+	), nil
 }
 
 func (p *GoogleProvider) TranslateTitle(ctx context.Context, in TranslateTitleInput) (string, error) {

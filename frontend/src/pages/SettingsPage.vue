@@ -62,8 +62,8 @@
               />
               <div class="small muted" style="margin-top: 0.35rem">
                 <span v-if="providerConfigured">API key configurada{{ activeProvider?.apiKeyUpdatedAt ? ` · actualizada ${formatDate(activeProvider.apiKeyUpdatedAt)}` : '' }}</span>
-                <span v-else-if="activeProvider?.sharedKeyAvailable">Sin clave propia: se usará la clave compartida por el administrador.</span>
-                <span v-else>No hay API key configurada para este provider.</span>
+                <span v-else-if="activeProvider?.sharedKeyAvailable">Clave compartida por el admin, puedes insertar manualmente tu propia apikey si así lo deseas.</span>
+                <span v-else>Ingrese Apikey</span>
               </div>
               <div class="row-wrap" style="margin-top: 0.75rem">
                 <n-button secondary :disabled="!providerApiKey.trim()" :loading="replacingKey" @click="replaceKey">Reemplazar key</n-button>
@@ -162,21 +162,6 @@
               </div>
               <n-switch v-model:value="settings.translation.includePreviousChapterTitles" />
             </div>
-          </div>
-        </n-card>
-
-        <n-card v-if="isAdmin" title="Backup" size="small">
-          <div class="row-between">
-            <div>
-              <div style="font-weight: 600">Descargar backup</div>
-              <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
-            </div>
-            <a href="#" @click.prevent="downloadBackup" style="text-decoration: none">
-              <n-button secondary>
-                <template #icon><n-icon><DownloadOutline /></n-icon></template>
-                Descargar
-              </n-button>
-            </a>
           </div>
         </n-card>
 
@@ -287,14 +272,13 @@ import {
 } from "naive-ui";
 import {
   SaveOutline,
-  DownloadOutline,
   RefreshOutline,
   BanOutline,
   TrashOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import FieldNumber from "@/components/FieldNumber.vue";
-import { applyTheme, authState } from "@/app/auth";
+import { applyTheme } from "@/app/auth";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
 import { useRouter } from "vue-router";
@@ -322,7 +306,6 @@ const workerTokensLoading = ref(false);
 const revokingTokenId = ref<string | null>(null);
 const deletingTokenId = ref<string | null>(null);
 
-const isAdmin = authState.isAdmin;
 const loggingOutEverywhere = ref(false);
 
 async function logoutEverywhere() {
@@ -446,36 +429,6 @@ async function deleteToken(tokenId: string) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     deletingTokenId.value = null;
-  }
-}
-
-// v1 backup endpoint accepts POST only (the body is non-deterministic and
-// the response is a streamed zip). POST and stream the response into a
-// blob the browser can save.
-async function downloadBackup() {
-  try {
-    const response = await fetch("/api/v1/admin/backups/export", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    const fallbackName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
-    const contentDisposition = response.headers.get("Content-Disposition") ?? "";
-    const match = contentDisposition.match(/filename="?([^";]+)"?/);
-    anchor.download = match?.[1] ?? fallbackName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    message.success("Backup descargado");
-  } catch (err) {
-    message.error(`Error al descargar backup: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

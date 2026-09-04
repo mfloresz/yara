@@ -1,6 +1,8 @@
 package store
 
 import (
+	"strings"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -16,6 +18,19 @@ func IsKnownPromptKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// AdminPrompt is the effective view of a prompt from the admin's perspective:
+// it is the embedded default with the admin's own override applied (if any),
+// plus a flag so the UI can label "Con override" / "Valor integrado".
+type AdminPrompt struct {
+	Key          string `json:"key"`
+	Label        string `json:"label,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SystemPrompt string `json:"systemPrompt"`
+	UserPrompt   string `json:"userPrompt"`
+	HasOverride  bool   `json:"hasOverride"`
+	UpdatedAt    string `json:"updatedAt,omitempty"`
 }
 
 // MaxPromptLength caps admin-managed prompt text (same clamp as the client
@@ -79,4 +94,42 @@ func (s *Store) DeletePromptOverride(key string) error {
 		return ErrNotFound
 	}
 	return s.App.Delete(record)
+}
+
+// ListEffectiveAdminPrompts returns the 5 known prompt slots with the admin's
+// global override applied on top of the embedded defaults, plus a hasOverride
+// flag so the UI can label "Con override" / "Valor integrado". This is the
+// admin-side analogue of ListPrompts(userID): same precedence, minus the
+// per-user layer (which the admin cannot edit).
+func (s *Store) ListEffectiveAdminPrompts() ([]AdminPrompt, error) {
+	defaults := []AdminPrompt{
+		{Key: "translation", Label: "Traducción", Description: "Prompt global para traducción de capítulos.", SystemPrompt: DefaultTranslationSystemPrompt, UserPrompt: DefaultTranslationUserPrompt},
+		{Key: "title", Label: "Traducción de Título", Description: "Prompt global para traducción de títulos de capítulo.", SystemPrompt: DefaultTitleTranslationSystemPrompt, UserPrompt: DefaultTitleTranslationUserPrompt},
+		{Key: "refine", Label: "Refinamiento", Description: "Prompt global para mejorar traducciones generadas.", SystemPrompt: DefaultRefineSystemPrompt, UserPrompt: DefaultRefineUserPrompt},
+		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt},
+		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: ""},
+	}
+	overrides, err := s.ListPromptOverrides()
+	if err != nil {
+		return nil, err
+	}
+	byKey := map[string]Prompt{}
+	for _, item := range overrides {
+		byKey[item.Key] = item
+	}
+	for i := range defaults {
+		override, ok := byKey[defaults[i].Key]
+		if !ok {
+			continue
+		}
+		defaults[i].HasOverride = true
+		defaults[i].UpdatedAt = override.UpdatedAt
+		if strings.TrimSpace(override.SystemPrompt) != "" {
+			defaults[i].SystemPrompt = override.SystemPrompt
+		}
+		if strings.TrimSpace(override.UserPrompt) != "" {
+			defaults[i].UserPrompt = override.UserPrompt
+		}
+	}
+	return defaults, nil
 }

@@ -77,7 +77,7 @@ type Server struct {
 	loginLimiter      *rateLimiter
 	invitationLimiter *rateLimiter
 	// NewAIProvider allows tests to inject a mock provider.
-	NewAIProvider func(store.AISettings) (ai.Provider, error)
+	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {

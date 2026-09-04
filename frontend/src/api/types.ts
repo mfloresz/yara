@@ -101,6 +101,18 @@ export type AdminPromptOverride = {
   updatedAt?: string;
 };
 
+// Effective prompt as seen by the admin: embedded default with the admin's
+// own global override applied on top, plus a flag to distinguish both cases.
+export type AdminEffectivePrompt = {
+  key: string;
+  label?: string;
+  description?: string;
+  systemPrompt: string;
+  userPrompt: string;
+  hasOverride: boolean;
+  updatedAt?: string;
+};
+
 export type ImportEpubResult = {
   novel: Novel;
   epub: {

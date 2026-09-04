@@ -60,7 +60,7 @@ func TestNewAIProviderKnownProviderUsesResolvedBaseURLAndProviderOptions(t *test
 		BaseURL:   "https://custom.opencode.example/v1",
 		Model:     "deepseek-v4-flash",
 		TimeoutMs: 45000,
-	})
+	}, "session-abc")
 	if err != nil {
 		t.Fatalf("new AI provider: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
 		Provider: "opencode-go",
 		APIKey:   "test-key",
 		Model:    "muse-spark-1.2-contributor",
-	})
+	}, "session-abc")
 	if err != nil {
 		t.Fatalf("new AI provider: %v", err)
 	}

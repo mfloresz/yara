@@ -29,6 +29,7 @@ func registerV1AdminRoutes(admin *pbrouter.RouterGroup[*core.RequestEvent], s *S
 	admin.GET("/prompt-overrides", adminListPromptOverrides(s))
 	admin.PUT("/prompt-overrides/{promptKey}", adminUpsertPromptOverride(s))
 	admin.DELETE("/prompt-overrides/{promptKey}", adminDeletePromptOverride(s))
+	admin.GET("/prompts", adminListEffectivePrompts(s))
 
 	admin.POST("/backups/export", backupDownload(s))
 }
@@ -79,6 +80,20 @@ func adminDeletePromptOverride(s *Server) func(*core.RequestEvent) error {
 		}
 		slog.Info("prompt override reset to embedded default", "actorId", e.Auth.Id, "promptKey", key)
 		return e.NoContent(http.StatusNoContent)
+	}
+}
+
+// adminListEffectivePrompts returns the 5 known prompts with the admin's
+// global override applied on top of the embedded defaults, so the admin UI
+// can show what is actually in effect today (same precedence the user sees,
+// minus the per-user layer which the admin cannot edit).
+func adminListEffectivePrompts(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		prompts, err := s.Store.ListEffectiveAdminPrompts()
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		return v1RespondList(e, http.StatusOK, prompts, 1, len(prompts), len(prompts), false, e.Request.URL.Path)
 	}
 }
 

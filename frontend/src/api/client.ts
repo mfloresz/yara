@@ -1,6 +1,7 @@
 import type { Ref } from "vue";
 import { createHttpClient, unwrapCollection } from "@/api/http";
 import type {
+  AdminEffectivePrompt,
   AdminInvitation,
   AdminPromptOverride,
   AdminProviderKey,
@@ -250,6 +251,11 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       },
       async deletePromptOverride(key: string) {
         return http.delete<void>(`/api/v1/admin/prompt-overrides/${key}`);
+      },
+      async listEffectivePrompts(): Promise<AdminEffectivePrompt[]> {
+        const result = await http.get<unknown>("/api/v1/admin/prompts");
+        const { data } = unwrapCollection<AdminEffectivePrompt[]>(result);
+        return Array.isArray(data) ? data : [];
       },
     },
     defaults: {

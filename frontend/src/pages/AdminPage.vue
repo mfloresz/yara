@@ -1,5 +1,6 @@
 <template>
-  <div class="admin-page">
+  <AppLayout>
+    <div class="admin-page">
     <div class="page-head">
       <h1 class="page-title">Administración</h1>
       <p class="small muted">Gestión de usuarios, invitaciones y recursos compartidos.</p>
@@ -79,7 +80,6 @@
                   v-model:value="item.systemPrompt"
                   type="textarea"
                   :autosize="{ minRows: 3, maxRows: 12 }"
-                  placeholder="Vacío = usar el valor integrado"
                 />
               </div>
               <div>
@@ -88,7 +88,6 @@
                   v-model:value="item.userPrompt"
                   type="textarea"
                   :autosize="{ minRows: 2, maxRows: 8 }"
-                  placeholder="Vacío = usar el valor integrado"
                 />
               </div>
               <div class="prompt-actions">
@@ -110,8 +109,26 @@
           </n-card>
         </div>
       </n-tab-pane>
+      <!-- Backup -->
+      <n-tab-pane name="backup" tab="Backup">
+        <n-card size="small" title="Backup del servidor">
+          <div class="row-between">
+            <div>
+              <div style="font-weight: 600">Descargar backup</div>
+              <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
+            </div>
+            <a href="#" @click.prevent="downloadBackup" style="text-decoration: none">
+              <n-button secondary>
+                <template #icon><n-icon><DownloadOutline /></n-icon></template>
+                Descargar
+              </n-button>
+            </a>
+          </div>
+        </n-card>
+      </n-tab-pane>
     </n-tabs>
   </div>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
@@ -121,6 +138,7 @@ import {
   NButton,
   NCard,
   NDataTable,
+  NIcon,
   NInput,
   NSelect,
   NSwitch,
@@ -130,8 +148,10 @@ import {
   useMessage,
   type DataTableColumns,
 } from "naive-ui";
+import { DownloadOutline } from "@vicons/ionicons5";
 import type { AdminInvitation, AdminProviderKey, AdminUser } from "@/api/types";
 import { useAppServices } from "@/app/services";
+import AppLayout from "@/components/AppLayout.vue";
 
 const { api } = useAppServices();
 const message = useMessage();
@@ -356,10 +376,10 @@ async function loadProviderKeys() {
 }
 
 async function loadPrompts() {
-  const overrides = await api.admin.listPromptOverrides();
+  const prompts = await api.admin.listEffectivePrompts();
   for (const item of promptItems) {
-    const found = overrides.find((o) => o.key === item.key);
-    item.hasOverride = Boolean(found);
+    const found = prompts.find((p) => p.key === item.key);
+    item.hasOverride = found?.hasOverride ?? false;
     item.systemPrompt = found?.systemPrompt ?? "";
     item.userPrompt = found?.userPrompt ?? "";
   }
@@ -458,7 +478,7 @@ async function savePrompt(item: (typeof promptItems)[number]) {
       systemPrompt: item.systemPrompt,
       userPrompt: item.userPrompt,
     });
-    item.hasOverride = true;
+    await loadPrompts();
     message.success("Prompt global guardado");
   } catch (err) {
     message.error(errorMessage(err));
@@ -470,12 +490,40 @@ async function savePrompt(item: (typeof promptItems)[number]) {
 async function deletePrompt(item: (typeof promptItems)[number]) {
   try {
     await api.admin.deletePromptOverride(item.key);
-    item.hasOverride = false;
-    item.systemPrompt = "";
-    item.userPrompt = "";
+    await loadPrompts();
     message.success("Override eliminado; se usará el valor integrado");
   } catch (err) {
     message.error(errorMessage(err));
+  }
+}
+
+// v1 backup endpoint accepts POST only (the body is non-deterministic and
+// the response is a streamed zip). POST and stream the response into a
+// blob the browser can save.
+async function downloadBackup() {
+  try {
+    const response = await fetch("/api/v1/admin/backups/export", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    const fallbackName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+    const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+    const match = contentDisposition.match(/filename="?([^";]+)"?/);
+    anchor.download = match?.[1] ?? fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    message.success("Backup descargado");
+  } catch (err) {
+    message.error(`Error al descargar backup: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
