@@ -718,6 +718,20 @@ async function downloadBackup() {
       throw new Error(`HTTP ${response.status}`);
     }
     const blob = await response.blob();
+    // Truncation guard: the server sends Content-Length (see router_backup.go).
+    // Without this check a cut connection still saves a partial zip that
+    // opens but is missing the tail entries (storage/ sorts last).
+    const expected = Number(response.headers.get("Content-Length") ?? 0);
+    if (expected > 0 && blob.size !== expected) {
+      throw new Error(`descarga incompleta (${blob.size}/${expected} bytes) — reintenta`);
+    }
+    if (blob.size < 22) {
+      throw new Error("descarga incompleta (archivo demasiado pequeño) — reintenta");
+    }
+    const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+    if (magic[0] !== 0x50 || magic[1] !== 0x4b) {
+      throw new Error("el archivo descargado no es un zip válido — reintenta");
+    }
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
