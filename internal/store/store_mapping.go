@@ -10,6 +10,7 @@ func userFromRecord(record *core.Record) User {
 		Email:     record.Email(),
 		Name:      record.GetString("name"),
 		Role:      userRoleFromRecord(record),
+		Blocked:   record.GetBool("blocked"),
 		Theme:     defaultString(record.GetString("theme"), "system"),
 		CreatedAt: record.GetString("created"),
 		UpdatedAt: record.GetString("updated"),

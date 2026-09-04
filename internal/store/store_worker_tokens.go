@@ -90,6 +90,10 @@ func (s *Store) ValidateWorkerToken(token string) (*WorkerToken, error) {
 	record := records[0]
 	ownerID := record.GetString("owner")
 
+	if owner, err := s.App.FindRecordById(UsersCollection, ownerID); err != nil || owner.GetBool("blocked") {
+		return nil, fmt.Errorf("invalid or revoked token")
+	}
+
 	record.Set("last_used_at", time.Now().Format(time.RFC3339))
 	if err := s.App.Save(record); err != nil {
 		return nil, fmt.Errorf("update last used: %w", err)

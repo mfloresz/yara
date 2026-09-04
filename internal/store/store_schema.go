@@ -100,6 +100,7 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.Fields.Add(&core.TextField{Name: "active_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
+	c.Fields.Add(&core.BoolField{Name: "blocked"})
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
@@ -123,6 +124,9 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.TextField{Name: "title_model", Max: 200}); err != nil {
+		return nil, err
+	}
+	if err := s.ensureField(c, &core.BoolField{Name: "blocked"}); err != nil {
 		return nil, err
 	}
 	// ensureField is a no-op for fields that already exist, so installs that
@@ -714,6 +718,29 @@ func (s *Store) ensurePromptOverridesCollection(users *core.Collection) (*core.C
 	c.Fields.Add(&core.RelationField{Name: "updated_by", CollectionId: users.Id, MaxSelect: 1})
 	addSystemDateFields(c)
 	c.AddIndex("idx_prompt_overrides_key", true, "key", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensurePasswordResetsCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(PasswordResetsCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(PasswordResetsCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = nil
+	c.Fields.Add(&core.RelationField{Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
+	c.Fields.Add(&core.DateField{Name: "expires_at", Required: true})
+	c.Fields.Add(&core.DateField{Name: "used_at"})
+	c.Fields.Add(&core.RelationField{Name: "created_by", CollectionId: users.Id, MaxSelect: 1})
+	addSystemDateFields(c)
+	c.AddIndex("idx_password_resets_token_hash", true, "token_hash", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}

@@ -147,6 +147,9 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 		}
 		result, err := s.Store.AuthenticateUser(body.Email, body.Password)
 		if err != nil {
+			if err == store.ErrForbidden {
+				return writeV1Error(e, http.StatusForbidden, "account_blocked", "account is blocked")
+			}
 			return e.BadRequestError("invalid credentials", nil)
 		}
 		setAuthCookie(e, result.Token)
@@ -169,6 +172,9 @@ func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
 		token := bearerToken(e.Request)
 		result, err := s.Store.RefreshAuth(token)
 		if err != nil {
+			if err == store.ErrForbidden {
+				return writeV1Error(e, http.StatusForbidden, "account_blocked", "account is blocked")
+			}
 			return e.UnauthorizedError("invalid token", err)
 		}
 		setAuthCookie(e, result.Token)

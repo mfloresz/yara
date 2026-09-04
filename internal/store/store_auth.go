@@ -50,6 +50,9 @@ func (s *Store) AuthenticateUser(email, password string) (*AuthResult, error) {
 	if err != nil || record == nil || !record.ValidatePassword(password) {
 		return nil, fmt.Errorf("invalid credentials")
 	}
+	if record.GetBool("blocked") {
+		return nil, ErrForbidden
+	}
 	token, err := record.NewAuthToken()
 	if err != nil {
 		return nil, err
@@ -61,6 +64,9 @@ func (s *Store) RefreshAuth(token string) (*AuthResult, error) {
 	record, err := s.App.FindAuthRecordByToken(token, core.TokenTypeAuth)
 	if err != nil {
 		return nil, err
+	}
+	if record.GetBool("blocked") {
+		return nil, ErrForbidden
 	}
 	newToken, err := record.NewAuthToken()
 	if err != nil {

@@ -17,6 +17,11 @@ import (
 func registerV1AdminRoutes(admin *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	admin.GET("/users", adminListUsers(s))
 	admin.PATCH("/users/{userId}", adminUpdateUserRole(s))
+	admin.GET("/users/{userId}/stats", adminGetUserStats(s))
+	admin.POST("/users/{userId}/block", adminBlockUser(s))
+	admin.POST("/users/{userId}/unblock", adminUnblockUser(s))
+	admin.DELETE("/users/{userId}", adminDeleteUser(s))
+	admin.POST("/users/{userId}/password-resets", adminCreatePasswordReset(s))
 
 	admin.GET("/invitations", adminListInvitations(s))
 	admin.POST("/invitations", adminCreateInvitation(s))
@@ -275,7 +280,97 @@ func adminUserRecord(user store.User) map[string]any {
 		"email":     user.Email,
 		"name":      user.Name,
 		"role":      user.Role,
+		"blocked":   user.Blocked,
 		"createdAt": user.CreatedAt,
 		"updatedAt": user.UpdatedAt,
 	}
+}
+
+func adminGetUserStats(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		stats, err := s.Store.GetAdminUserStats(e.Request.PathValue("userId"))
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		return v1Respond(e, http.StatusOK, stats, nil, nil)
+	}
+}
+
+func adminBlockUser(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		user, err := s.Store.BlockUser(e.Auth.Id, e.Request.PathValue("userId"))
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("user blocked", "actorId", e.Auth.Id, "userId", user.ID)
+		return v1Respond(e, http.StatusOK, adminUserRecord(user), nil, nil)
+	}
+}
+
+func adminUnblockUser(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		user, err := s.Store.UnblockUser(e.Request.PathValue("userId"))
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("user unblocked", "actorId", e.Auth.Id, "userId", user.ID)
+		return v1Respond(e, http.StatusOK, adminUserRecord(user), nil, nil)
+	}
+}
+
+func adminDeleteUser(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		userID := e.Request.PathValue("userId")
+		body := struct {
+			Mode            string `json:"mode"`
+			TransferToUser  string `json:"transferToUserId"`
+			TransferToUser2 string `json:"transferTo"`
+		}{}
+		_ = e.BindBody(&body)
+		toUser := body.TransferToUser
+		if toUser == "" {
+			toUser = body.TransferToUser2
+		}
+		if body.Mode == "transfer" {
+			moved, err := s.Store.TransferNovelsAndDeleteUser(e.Auth.Id, userID, toUser)
+			if err != nil {
+				return v1ServiceError(e, err)
+			}
+			slog.Info("user deleted with novel transfer", "actorId", e.Auth.Id, "userId", userID, "toUserId", toUser, "novelsMoved", moved)
+			return e.NoContent(http.StatusNoContent)
+		}
+		if err := s.Store.DeleteUserWithNovels(e.Auth.Id, userID); err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("user deleted with novels", "actorId", e.Auth.Id, "userId", userID)
+		return e.NoContent(http.StatusNoContent)
+	}
+}
+
+func adminCreatePasswordReset(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		userID := e.Request.PathValue("userId")
+		reset, plaintext, err := s.Store.CreatePasswordReset(e.Auth.Id, userID)
+		if err != nil {
+			return v1ServiceError(e, err)
+		}
+		slog.Info("password reset created", "actorId", e.Auth.Id, "userId", userID, "resetId", reset.ID)
+		resetURL := passwordResetURLFor(s, e, plaintext)
+		e.Response.Header().Set("Location", "/api/v1/admin/users/"+userID+"/password-resets/"+reset.ID)
+		return v1Respond(e, http.StatusCreated, map[string]any{
+			"resetUrl":  resetURL,
+			"expiresAt": reset.ExpiresAt,
+		}, nil, nil)
+	}
+}
+
+func passwordResetURLFor(s *Server, e *core.RequestEvent, rawToken string) string {
+	if base := strings.TrimSuffix(strings.TrimSpace(s.Cfg.PublicBaseURL), "/"); base != "" {
+		return base + "/reset-password/" + rawToken
+	}
+	scheme := "http"
+	if e.Request.TLS != nil || strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/reset-password/%s", scheme, e.Request.Host, rawToken)
 }

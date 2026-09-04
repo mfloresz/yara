@@ -34,6 +34,7 @@ type User struct {
 	Email     string `json:"email"`
 	Name      string `json:"name,omitempty"`
 	Role      string `json:"role,omitempty"`
+	Blocked   bool   `json:"blocked,omitempty"`
 	Theme     string `json:"theme"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`

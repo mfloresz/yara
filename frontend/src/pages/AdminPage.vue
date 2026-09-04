@@ -9,11 +9,15 @@
     <n-tabs type="line" animated>
       <!-- Usuarios -->
       <n-tab-pane name="users" tab="Usuarios">
+        <n-alert type="info" class="section-note">
+          Haz clic en un usuario para ver sus novelas, bloquearlo, generar un enlace de recuperación o eliminarlo.
+        </n-alert>
         <n-data-table
           :columns="userColumns"
           :data="users"
           :loading="loading"
           :bordered="false"
+          :row-props="userRowProps"
           size="small"
         />
       </n-tab-pane>
@@ -127,6 +131,84 @@
         </n-card>
       </n-tab-pane>
     </n-tabs>
+
+    <!-- Drawer derecho con stats y acciones del usuario. -->
+    <n-drawer v-model:show="drawerOpen" :width="420" placement="right">
+      <n-drawer-content :title="selectedUser ? selectedUser.email : 'Usuario'" closable>
+        <div v-if="statsLoading">Cargando…</div>
+        <div v-else-if="userStats" class="stack-md">
+          <div class="row-between">
+            <div>
+              <div style="font-weight: 600">{{ userStats.user.email }}</div>
+              <div class="small muted">{{ userStats.user.name }} · {{ userStats.user.role === "admin" ? "Admin" : "Usuario" }}</div>
+            </div>
+            <n-tag :type="userStats.user.blocked ? 'error' : 'success'" size="small">
+              {{ userStats.user.blocked ? "Bloqueado" : "Activo" }}
+            </n-tag>
+          </div>
+          <div class="small">
+            {{ userStats.ownedCount }} novelas propias · {{ userStats.sharedCount }} compartidas (públicas)
+          </div>
+          <n-collapse>
+            <n-collapse-item :title="`Novelas (${userStats.novels.length})`" name="novels">
+              <div v-for="novel in userStats.novels" :key="novel.id" class="row-between" style="padding: 0.25rem 0">
+                <span>{{ novel.targetTitle || novel.sourceTitle }}</span>
+                <n-tag :type="novel.isPublic ? 'info' : 'default'" size="small">
+                  {{ novel.isPublic ? "Pública" : "Privada" }}
+                </n-tag>
+              </div>
+              <div v-if="userStats.novels.length === 0" class="small muted">Sin novelas.</div>
+            </n-collapse-item>
+          </n-collapse>
+          <div class="stack-md">
+            <n-button
+              :type="userStats.user.blocked ? 'primary' : 'warning'"
+              secondary
+              :loading="blockLoading"
+              @click="toggleBlock"
+            >
+              {{ userStats.user.blocked ? "Desbloquear" : "Bloquear" }}
+            </n-button>
+            <n-button :loading="resetLoading" @click="generateReset">
+              Generar enlace de recuperación
+            </n-button>
+            <n-alert v-if="createdResetUrl" type="success" closable class="invite-url-alert">
+              <template #header>Enlace de un solo uso — cópialo ahora</template>
+              <span class="invite-url">{{ createdResetUrl }}</span>
+              <n-button size="tiny" style="margin-left: 0.5rem" @click="copyResetUrl">
+                Copiar
+              </n-button>
+            </n-alert>
+            <n-button type="error" secondary @click="deleteModalOpen = true">
+              Eliminar usuario…
+            </n-button>
+          </div>
+        </div>
+      </n-drawer-content>
+    </n-drawer>
+
+    <!-- Modal de eliminación con transferencia opcional. -->
+    <n-modal v-model:show="deleteModalOpen" preset="card" title="Eliminar usuario" style="max-width: 480px">
+      <div class="stack-md">
+        <n-alert type="warning" title="Esta acción no se puede deshacer" />
+        <n-radio-group v-model:value="deleteMode">
+          <n-radio value="with-novels">Eliminar usuario y SUS novelas</n-radio>
+          <n-radio value="transfer">Eliminar y mover novelas a otro usuario</n-radio>
+        </n-radio-group>
+        <n-select
+          v-if="deleteMode === 'transfer'"
+          v-model:value="transferTo"
+          :options="transferOptions"
+          placeholder="Elige el nuevo dueño"
+        />
+        <div class="row-between">
+          <n-button secondary @click="deleteModalOpen = false">Cancelar</n-button>
+          <n-button type="error" :loading="deleteLoading" @click="confirmDelete">
+            Eliminar
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
   </div>
   </AppLayout>
 </template>
@@ -137,9 +219,16 @@ import {
   NAlert,
   NButton,
   NCard,
+  NCollapse,
+  NCollapseItem,
   NDataTable,
+  NDrawer,
+  NDrawerContent,
   NIcon,
   NInput,
+  NModal,
+  NRadio,
+  NRadioGroup,
   NSelect,
   NSwitch,
   NTabPane,
@@ -149,7 +238,12 @@ import {
   type DataTableColumns,
 } from "naive-ui";
 import { DownloadOutline } from "@vicons/ionicons5";
-import type { AdminInvitation, AdminProviderKey, AdminUser } from "@/api/types";
+import type {
+  AdminInvitation,
+  AdminProviderKey,
+  AdminUser,
+  AdminUserStats,
+} from "@/api/types";
 import { useAppServices } from "@/app/services";
 import AppLayout from "@/components/AppLayout.vue";
 
@@ -191,6 +285,16 @@ const promptItems = reactive(
 const userColumns: DataTableColumns<AdminUser> = [
   { title: "Email", key: "email" },
   { title: "Nombre", key: "name" },
+  {
+    title: "Estado",
+    key: "blocked",
+    render(row) {
+      if (row.blocked) {
+        return h(NTag, { size: "small", type: "error" }, { default: () => "Bloqueado" });
+      }
+      return h(NTag, { size: "small", type: "success" }, { default: () => "Activo" });
+    },
+  },
   {
     title: "Rol",
     key: "role",
@@ -392,6 +496,110 @@ async function changeRole(user: AdminUser, role: "admin" | "user") {
     await loadUsers();
   } catch (err) {
     message.error(errorMessage(err));
+  }
+}
+
+function userRowProps(row: AdminUser) {
+  return {
+    style: "cursor: pointer",
+    onClick: () => openUserDrawer(row),
+  };
+}
+
+const drawerOpen = ref(false);
+const selectedUser = ref<AdminUser | null>(null);
+const userStats = ref<AdminUserStats | null>(null);
+const statsLoading = ref(false);
+const blockLoading = ref(false);
+const resetLoading = ref(false);
+const createdResetUrl = ref("");
+const deleteModalOpen = ref(false);
+const deleteMode = ref<"with-novels" | "transfer">("with-novels");
+const transferTo = ref<string | null>(null);
+const deleteLoading = ref(false);
+
+const transferOptions = ref<{ label: string; value: string }[]>([]);
+
+async function openUserDrawer(row: AdminUser) {
+  selectedUser.value = row;
+  userStats.value = null;
+  createdResetUrl.value = "";
+  deleteMode.value = "with-novels";
+  transferTo.value = null;
+  drawerOpen.value = true;
+  transferOptions.value = users.value
+    .filter((u) => u.id !== row.id)
+    .map((u) => ({ label: `${u.email} (${u.role})`, value: u.id }));
+  statsLoading.value = true;
+  try {
+    userStats.value = await api.admin.getUserStats(row.id);
+  } catch (err) {
+    message.error(errorMessage(err));
+  } finally {
+    statsLoading.value = false;
+  }
+}
+
+async function toggleBlock() {
+  if (!userStats.value) return;
+  blockLoading.value = true;
+  try {
+    const updated = userStats.value.user.blocked
+      ? await api.admin.unblockUser(userStats.value.user.id)
+      : await api.admin.blockUser(userStats.value.user.id);
+    userStats.value.user = { ...userStats.value.user, blocked: updated.blocked };
+    message.success(updated.blocked ? "Usuario bloqueado" : "Usuario desbloqueado");
+    await loadUsers();
+  } catch (err) {
+    message.error(errorMessage(err));
+  } finally {
+    blockLoading.value = false;
+  }
+}
+
+async function generateReset() {
+  if (!userStats.value) return;
+  resetLoading.value = true;
+  createdResetUrl.value = "";
+  try {
+    const result = await api.admin.createPasswordReset(userStats.value.user.id);
+    createdResetUrl.value = result.resetUrl;
+  } catch (err) {
+    message.error(errorMessage(err));
+  } finally {
+    resetLoading.value = false;
+  }
+}
+
+async function copyResetUrl() {
+  try {
+    await navigator.clipboard.writeText(createdResetUrl.value);
+    message.success("Enlace copiado");
+  } catch {
+    message.error("No se pudo copiar el enlace");
+  }
+}
+
+async function confirmDelete() {
+  if (!userStats.value) return;
+  if (deleteMode.value === "transfer" && !transferTo.value) {
+    message.error("Elige el nuevo dueño de las novelas");
+    return;
+  }
+  deleteLoading.value = true;
+  try {
+    await api.admin.deleteUser(userStats.value.user.id, {
+      mode: deleteMode.value,
+      transferToUserId: transferTo.value ?? undefined,
+    });
+    message.success("Usuario eliminado");
+    deleteModalOpen.value = false;
+    drawerOpen.value = false;
+    await loadUsers();
+  } catch (err) {
+    message.error(errorMessage(err));
+  } finally {
+    deleteLoading.value = false;
   }
 }
 

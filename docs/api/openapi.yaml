@@ -2022,6 +2022,167 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [Admin]
+      summary: Delete a user, optionally transferring their novels.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [with-novels, transfer]
+                  default: with-novels
+                transferToUserId:
+                  type: string
+                  description: Required when mode is transfer.
+                transferTo:
+                  type: string
+                  description: Alias of transferToUserId.
+      responses:
+        '204': { description: User deleted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Last admin, or user has active jobs.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /admin/users/{userId}/stats:
+    get:
+      tags: [Admin]
+      summary: Novel counts plus owned novel list for the admin user drawer.
+      responses:
+        '200':
+          description: Stats with novels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminUserStats' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/users/{userId}/block:
+    post:
+      tags: [Admin]
+      summary: Block a user (login/API/extensions rejected, sessions killed).
+      responses:
+        '200':
+          description: Blocked user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Blocking the last admin is rejected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /admin/users/{userId}/unblock:
+    post:
+      tags: [Admin]
+      summary: Unblock a user.
+      responses:
+        '200':
+          description: Unblocked user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/users/{userId}/password-resets:
+    post:
+      tags: [Admin]
+      summary: Issue a single-use password reset link for a user.
+      responses:
+        '201':
+          description: Reset link (show once).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [resetUrl]
+                    properties:
+                      resetUrl: { type: string }
+                      expiresAt: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /auth/password-reset/validate:
+    post:
+      tags: [Auth]
+      summary: Check a password reset token (never explains why invalid).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: "{valid:false} for unknown/used/expired tokens."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [valid]
+                    properties:
+                      valid: { type: boolean }
+                      email: { type: string }
+                      expiresAt: { type: string }
+
+  /auth/password-reset/accept:
+    post:
+      tags: [Auth]
+      summary: Redeem a reset token with a new password (kills all sessions and extension tokens).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Password changed; client must redirect to login.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      email: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /admin/invitations:
     get:
@@ -2438,8 +2599,31 @@ components:
         email: { type: string }
         name: { type: string }
         role: { type: string, enum: [admin, user] }
+        blocked: { type: boolean }
         createdAt: { type: string }
         updatedAt: { type: string }
+
+    AdminUserStats:
+      type: object
+      required: [user, ownedCount, sharedCount, novels]
+      properties:
+        user: { $ref: '#/components/schemas/AdminUser' }
+        ownedCount: { type: integer }
+        sharedCount:
+          type: integer
+          description: Owned novels with isPublic=true.
+        novels:
+          type: array
+          items:
+            type: object
+            required: [id, sourceTitle, isPublic, chapterCount]
+            properties:
+              id: { type: string }
+              sourceTitle: { type: string }
+              targetTitle: { type: string }
+              isPublic: { type: boolean }
+              status: { type: string }
+              chapterCount: { type: integer }
 
     Invitation:
       type: object

@@ -21,6 +21,7 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	authed := v1.Group("")
 	authed.Bind(loadAuthFromCookie())
 	authed.Bind(apis.RequireAuth())
+	authed.Bind(rejectBlocked())
 
 	registerV1NovelRoutes(authed, s)
 	registerV1ChapterRoutes(authed, s)
@@ -48,10 +49,12 @@ func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	auth.POST("/login", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthLogin(s))))
 	auth.GET("/setup-status", handleAuthSetupStatus(s))
 	registerV1InvitationPublicRoutes(auth, s)
+	registerV1PasswordResetPublicRoutes(auth, s)
 
 	authed := auth.Group("")
 	authed.Bind(loadAuthFromCookie())
 	authed.Bind(apis.RequireAuth())
+	authed.Bind(rejectBlocked())
 	authed.GET("/me", handleAuthMe(s))
 	authed.POST("/refresh", handleAuthRefresh(s))
 	authed.POST("/logout", handleAuthLogout(s))
