@@ -120,6 +120,9 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 			name    string
 			content []byte
 		}, 0)
+		// Zip bomb guard: cap the total decompressed content the same way the
+		// EPUB import does (see epubimport.MaxDecompressedBytes).
+		remainingDecompressed := epubimport.MaxDecompressedBytes
 		for _, f := range reader.File {
 			if f.FileInfo().IsDir() {
 				continue
@@ -128,11 +131,15 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 			if openErr != nil {
 				return e.InternalServerError("failed to read zip entry", openErr)
 			}
-			data, readErr := io.ReadAll(rc)
+			data, readErr := io.ReadAll(io.LimitReader(rc, remainingDecompressed+1))
 			rc.Close()
 			if readErr != nil {
 				return e.InternalServerError("failed to read zip entry", readErr)
 			}
+			if int64(len(data)) > remainingDecompressed {
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "zip decompressed size exceeds 25MB limit")
+			}
+			remainingDecompressed -= int64(len(data))
 			name := strings.TrimLeft(filepath.ToSlash(f.Name), "./")
 			rawEntries = append(rawEntries, struct {
 				name    string

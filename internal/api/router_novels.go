@@ -283,6 +283,28 @@ func (sharedNovelHandlers) cover(s *Server) func(*core.RequestEvent) error {
 	}
 }
 
+// coverImage serves the stored cover/thumbnail file. cover and thumbnail are
+// Protected file fields, so PocketBase's native /api/files route requires a
+// file token; this cookie-authenticated handler is the replacement the
+// frontend's coverPath points at.
+func (sharedNovelHandlers) coverImage(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		record, fileName, err := s.Store.GetNovelCoverFile(e.Auth.Id, e.Request.PathValue("id"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		fsys, err := e.App.NewFilesystem()
+		if err != nil {
+			return e.InternalServerError("filesystem init failure", err)
+		}
+		defer fsys.Close()
+		// Covers are replaced in place under the same URL; allow short-lived
+		// caching but never serve a stale copy for long.
+		e.Response.Header().Set("Cache-Control", "private, max-age=60")
+		return fsys.Serve(e.Response, e.Request, record.BaseFilesPath()+"/"+fileName, fileName)
+	}
+}
+
 func (sharedNovelHandlers) full(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		novel, err := s.Store.GetNovelAccessible(e.Auth.Id, e.Request.PathValue("id"))
@@ -342,6 +364,7 @@ func registerV1NovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 	api.POST("/novels/{id}/recalculate-stats", sharedNovels.recalculateStats(s))
 	api.PATCH("/novels/{id}", sharedNovels.patch(s))
 	api.POST("/novels/{id}/cover", sharedNovels.cover(s))
+	api.GET("/novels/{id}/cover", sharedNovels.coverImage(s))
 	api.DELETE("/novels/{id}", sharedNovels.delete(s))
 	api.POST("/novels/{id}/clone", sharedNovels.copyNovel(s))
 	api.PATCH("/novels/{id}/visibility", sharedNovels.setVisibility(s))

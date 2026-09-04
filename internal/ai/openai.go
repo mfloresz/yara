@@ -23,18 +23,32 @@ type OpenAIProvider struct {
 	// OpenRouter selects goai's native OpenRouter provider, which adds the
 	// gateway's recommended headers and usage reporting.
 	OpenRouter bool
+	// SessionID carries the opaque OpenCode session for cache grouping.
+	// Only set for opencode-go/opencode-zen; empty for every other provider.
+	SessionID string
+}
+
+// headers identifies the app and, when SessionID is set, the job conversation.
+// User-Agent is always yara so OpenCode does not see a generic Go HTTP client.
+func (p *OpenAIProvider) headers() map[string]string {
+	h := map[string]string{"User-Agent": yaraUserAgent}
+	if trimmed := strings.TrimSpace(p.SessionID); trimmed != "" {
+		h[opencodeSessionHeader] = trimmed
+	}
+	return h
 }
 
 func (p *OpenAIProvider) model() (provider.LanguageModel, error) {
 	if p == nil || p.APIKey == "" {
 		return nil, fmt.Errorf("openai not configured")
 	}
-	opts := []openai.Option{openai.WithAPIKey(p.APIKey)}
+	headers := p.headers()
+	opts := []openai.Option{openai.WithAPIKey(p.APIKey), openai.WithHeaders(headers)}
 	if p.BaseURL != "" {
 		opts = append(opts, openai.WithBaseURL(p.BaseURL))
 	}
 	if p.OpenRouter {
-		openRouterOpts := []openrouter.Option{openrouter.WithAPIKey(p.APIKey)}
+		openRouterOpts := []openrouter.Option{openrouter.WithAPIKey(p.APIKey), openrouter.WithHeaders(headers)}
 		if p.BaseURL != "" {
 			openRouterOpts = append(openRouterOpts, openrouter.WithBaseURL(p.BaseURL))
 		}

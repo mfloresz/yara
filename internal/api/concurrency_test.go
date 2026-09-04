@@ -69,7 +69,7 @@ func (m *mockConcurrentProvider) GenerateGlossary(ctx context.Context, in ai.Gen
 
 func TestConcurrentTranslationRespectsLimitAndNoCross(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-concurrent@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-concurrent@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Novela Concurrente", "en", "es")
 
 	// Create 6 chapters
@@ -109,7 +109,7 @@ func TestConcurrentTranslationRespectsLimitAndNoCross(t *testing.T) {
 	var concurrent int32
 	var maxObserved int32
 	mock := &mockConcurrentProvider{delay: 120 * time.Millisecond, concurrent: &concurrent, maxObserved: &maxObserved}
-	env.server.NewAIProvider = func(s store.AISettings) (ai.Provider, error) {
+	env.server.NewAIProvider = func(s store.AISettings, _ string) (ai.Provider, error) {
 		return mock, nil
 	}
 
@@ -176,7 +176,7 @@ func TestConcurrentTranslationRespectsLimitAndNoCross(t *testing.T) {
 
 func TestSequentialWhenConcurrencyDisabled(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-seq@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-seq@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Novela Secuencial", "en", "es")
 	for i := 1; i <= 3; i++ {
 		_, err := env.store.UpsertChapter(alice.User.ID, novel.ID, &store.Chapter{
@@ -204,7 +204,7 @@ func TestSequentialWhenConcurrencyDisabled(t *testing.T) {
 	var concurrent int32
 	var maxObserved int32
 	mock := &mockConcurrentProvider{delay: 80 * time.Millisecond, concurrent: &concurrent, maxObserved: &maxObserved}
-	env.server.NewAIProvider = func(s store.AISettings) (ai.Provider, error) { return mock, nil }
+	env.server.NewAIProvider = func(s store.AISettings, _ string) (ai.Provider, error) { return mock, nil }
 
 	job2 := &store.Job{NovelID: novel.ID, Operation: "translate", Status: "pending"}
 	if err := env.store.CreateJob(alice.User.ID, job2); err != nil {

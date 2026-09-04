@@ -11,6 +11,14 @@ info:
 
     When the running server and this document diverge, the running server is the
     source of truth.
+
+    PocketBase's native routes (`/api/files/*`, `/api/collections/*`, `/_/`)
+    are implementation details and are OUT OF CONTRACT: clients must never
+    call them directly. Protected file fields (covers, epub binaries) are
+    served through the authenticated `/api/v1` replacements
+    (`GET /api/v1/novels/{id}/cover`, `GET /api/v1/epubs/{id}/download`).
+    The only documented exceptions outside `/api/v1` are `GET /healthz` and
+    `GET /ws/browser-worker`.
   contact:
     name: Yara
     url: https://github.com/mfloresz/yara
@@ -37,9 +45,9 @@ tags:
   - name: Settings
   - name: Reading progress
   - name: Imports
-  - name: Backup
   - name: Browser workers
   - name: Worker auth
+  - name: Admin
   - name: WebSocket
 
 paths:
@@ -68,11 +76,97 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResult' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Registration requires an invitation (only the first user may register directly).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /auth/setup-status:
+    get:
+      tags: [Auth]
+      summary: Whether the install still needs its first (admin) user.
+      security: []
+      responses:
+        '200':
+          description: Setup status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      needsSetup: { type: boolean }
+
+  /auth/invitations/validate:
+    post:
+      tags: [Auth]
+      summary: Validate an invitation token.
+      description: 'Returns `valid: false` for unknown, already-used and expired tokens without distinguishing the reason.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid: { type: boolean }
+                      email: { type: string }
+                      role: { type: string, enum: [admin, user] }
+                      expiresAt: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /auth/invitations/accept:
+    post:
+      tags: [Auth]
+      summary: Redeem an invitation and create the invited user.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '201':
+          description: User created with the invited role. Does not start a session; call /auth/login next.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      email: { type: string }
+                      role: { type: string, enum: [admin, user] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /auth/login:
     post:
       tags: [Auth]
-      summary: Exchange email + password for a token.
+      summary: Exchange email + password for a session.
       security: []
       requestBody:
         required: true
@@ -111,10 +205,10 @@ paths:
   /auth/refresh:
     post:
       tags: [Auth]
-      summary: Refresh the current token.
+      summary: Refresh the current session.
       responses:
         '200':
-          description: New token issued. Cookie is refreshed.
+          description: Session refreshed. Cookie is re-issued.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResult' }
@@ -126,6 +220,18 @@ paths:
       summary: Clear the auth cookie.
       responses:
         '204': { $ref: '#/components/responses/NoContent' }
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Invalidate every session of the calling user (all devices) and clear the cookie.
+      description: >-
+        Rotates the server-side token key so every outstanding auth token for
+        the user — including sessions on other devices — becomes invalid
+        immediately. Plain logout only clears the local cookie.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   # ---------------------------------------------------------------------------
   # Novels
@@ -359,6 +465,23 @@ paths:
   /novels/{id}/cover:
     parameters:
       - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Novels]
+      summary: Download the stored cover (thumbnail when present) image.
+      description: >-
+        Cookie-authenticated serving of the novel's cover image. The cover and
+        thumbnail file fields are protected, so PocketBase's native
+        /api/files route requires a file token; this endpoint is the
+        replacement the novel's coverPath points at. Access follows novel
+        visibility (owner or is_public).
+      responses:
+        '200':
+          description: OK
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [Novels]
       summary: Upload a cover image.
@@ -1228,6 +1351,26 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/Prompt' }
+    delete:
+      tags: [Prompts]
+      summary: Reset the user's own override for the key (idempotent).
+      description: >-
+        Deletes the user's personal override so the admin global override (or
+        the embedded default when no global exists) applies again. Per-novel
+        prompts are untouched. Idempotent: without an own override it returns
+        200 with the already-effective prompt.
+      responses:
+        '200':
+          description: Effective prompt after reset.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Prompt' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ---------------------------------------------------------------------------
   # Providers
@@ -1673,10 +1816,13 @@ paths:
   # ---------------------------------------------------------------------------
   # Backup
   # ---------------------------------------------------------------------------
-  /backups/export:
+  /admin/backups/export:
     post:
-      tags: [Backup]
-      summary: Stream a fresh `backup-YYYYMMDD-HHMMSS.zip` of the data dir.
+      tags: [Admin]
+      summary: Stream a fresh `backup-YYYYMMDD-HHMMSS.zip` of the data dir (admin role required).
+      description: >-
+        The archive contains the whole data dir — every user's data and the
+        app encryption key — so the endpoint is restricted to the admin role.
       responses:
         '200':
           description: OK
@@ -1687,6 +1833,7 @@ paths:
           content:
             application/zip:
               schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ---------------------------------------------------------------------------
   # Browser workers & proxy
@@ -1823,6 +1970,252 @@ paths:
                         type: object
                         properties:
                           ok: { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # Admin (requires the admin role)
+  # ---------------------------------------------------------------------------
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List every user.
+      responses:
+        '200':
+          description: Users (newest first).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeList'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/AdminUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      summary: Promote or demote a user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, user] }
+      responses:
+        '200':
+          description: Updated user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Demoting the last admin is rejected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /admin/invitations:
+    get:
+      tags: [Admin]
+      summary: List invitations.
+      responses:
+        '200':
+          description: Invitations (newest first).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeList'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Invitation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Create an invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, user], default: user }
+      responses:
+        '201':
+          description: Created. The invitation URL carries the raw token (shown once; only its SHA-256 hash is stored). Expires in 7 days.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitation: { $ref: '#/components/schemas/Invitation' }
+                      invitationUrl: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Email already registered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /admin/invitations/{invitationId}:
+    delete:
+      tags: [Admin]
+      summary: Revoke an unused invitation.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/provider-keys:
+    get:
+      tags: [Admin]
+      summary: Provider catalog with shared-key status. Never returns key material.
+      responses:
+        '200':
+          description: Providers with configured/shared flags.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeList'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/SharedProviderKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/provider-keys/{providerKey}:
+    put:
+      tags: [Admin]
+      summary: Configure or update the shared provider key and its sharing flag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apiKey:
+                  type: string
+                  description: Required when configuring a provider for the first time; omit to change only `shared`.
+                shared: { type: boolean }
+      responses:
+        '200':
+          description: Stored (encrypted, never returned).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SharedProviderKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin]
+      summary: Delete the shared provider key.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/prompt-overrides:
+    get:
+      tags: [Admin]
+      summary: List global prompt overrides.
+      responses:
+        '200':
+          description: Overrides (may be empty).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeList'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/PromptOverride' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/prompts:
+    get:
+      tags: [Admin]
+      summary: List the effective prompts with admin overrides applied.
+      description: >-
+        The 5 known prompt slots (translation, title, refine, check, glossary)
+        with the admin global override applied on top of the embedded defaults,
+        plus a hasOverride flag. Same precedence the user sees, minus the
+        per-user layer (which the admin cannot edit).
+      responses:
+        '200':
+          description: Effective prompts.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeList'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/AdminPrompt' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/prompt-overrides/{promptKey}:
+    put:
+      tags: [Admin]
+      summary: Set the global override for a prompt key (translation, title, refine, check, glossary).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: object
+                  properties:
+                    systemPrompt: { type: string, maxLength: 20000 }
+                    userPrompt: { type: string, maxLength: 20000 }
+      responses:
+        '200':
+          description: Stored override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PromptOverride' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Admin]
+      summary: Remove the override so the embedded default applies again.
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ---------------------------------------------------------------------------
   # WebSocket (informational)
@@ -1999,6 +2392,7 @@ components:
         id: { type: string }
         email: { type: string, format: email }
         name: { type: string }
+        role: { type: string, enum: [admin, user] }
         theme:
           type: string
           enum: [light, dark, system]
@@ -2008,9 +2402,8 @@ components:
 
     AuthResult:
       type: object
-      required: [token, user]
+      required: [user]
       properties:
-        token: { type: string, description: PocketBase auth token. }
         user: { $ref: '#/components/schemas/User' }
 
     RegisterRequest:
@@ -2018,7 +2411,7 @@ components:
       required: [email, password]
       properties:
         email: { type: string, format: email }
-        password: { type: string, format: password, minLength: 6 }
+        password: { type: string, format: password, minLength: 8 }
         name: { type: string }
 
     LoginRequest:
@@ -2027,6 +2420,71 @@ components:
       properties:
         email: { type: string, format: email }
         password: { type: string, format: password }
+
+    EnvelopeList:
+      type: object
+      description: Canonical collection envelope.
+      required: [data]
+      properties:
+        data: { type: array, items: {} }
+        meta: { type: object }
+        links: { type: object }
+
+    AdminUser:
+      type: object
+      required: [id, email, role]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [admin, user] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    Invitation:
+      type: object
+      required: [id, email, role]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [admin, user] }
+        expiresAt: { type: string }
+        usedAt:
+          type: string
+          description: Empty/absent while the invitation is unused.
+        createdBy: { type: string }
+        createdAt: { type: string }
+
+    SharedProviderKey:
+      type: object
+      required: [provider, configured, shared]
+      properties:
+        provider: { type: string }
+        configured: { type: boolean }
+        shared: { type: boolean }
+        apiKeyUpdatedAt: { type: string }
+
+    PromptOverride:
+      type: object
+      required: [key]
+      properties:
+        key: { type: string, enum: [translation, title, refine, check, glossary] }
+        systemPrompt: { type: string }
+        userPrompt: { type: string }
+        updatedAt: { type: string }
+
+    AdminPrompt:
+      type: object
+      description: Effective prompt from the admin's perspective (embedded default + global override).
+      required: [key, systemPrompt, userPrompt, hasOverride]
+      properties:
+        key: { type: string, enum: [translation, title, refine, check, glossary] }
+        label: { type: string }
+        description: { type: string }
+        systemPrompt: { type: string }
+        userPrompt: { type: string }
+        hasOverride: { type: boolean }
+        updatedAt: { type: string }
 
     Novel:
       type: object

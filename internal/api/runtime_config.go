@@ -197,9 +197,9 @@ func applyGlobalPromptFallbacks(dst *promptSettings, prompts []store.Prompt) {
 	}
 }
 
-func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
+func (s *Server) newAIProvider(settings store.AISettings, sessionID string) (ai.Provider, error) {
 	if s.NewAIProvider != nil {
-		return s.NewAIProvider(settings)
+		return s.NewAIProvider(settings, sessionID)
 	}
 	provider := strings.TrimSpace(settings.Provider)
 	if provider == "" {
@@ -222,9 +222,15 @@ func (s *Server) newAIProvider(settings store.AISettings) (ai.Provider, error) {
 		if info.ID == "google" {
 			return &ai.GoogleProvider{APIKey: apiKey, Model: model, Timeout: timeout}, nil
 		}
-		return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, ProviderOptions: info.OptionsForModel(model), OpenRouter: info.ID == "openrouter"}, nil
+		// The OpenCode session groups a job's requests for prompt-cache
+		// optimization. Only opencode-go/opencode-zen consume it.
+		session := ""
+		if info.ID == "opencode-go" || info.ID == "opencode-zen" {
+			session = sessionID
+		}
+		return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, ProviderOptions: info.OptionsForModel(model), OpenRouter: info.ID == "openrouter", SessionID: session}, nil
 	}
-	return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout}, nil
+	return &ai.OpenAIProvider{APIKey: apiKey, BaseURL: baseURL, Model: model, Timeout: timeout, SessionID: sessionID}, nil
 }
 
 func effectiveModel(settings store.AISettings) string {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,8 +65,23 @@ type Server struct {
 	// chapter reorder/visibility/bulk-exclude which must also not race
 	// translate/download jobs.
 	redownloadLocks sync.Map
+	// bootstrapMu serializes the first-registration check+promote sequence so
+	// two concurrent registers on a fresh install cannot both observe an empty
+	// users table and both become admin (there is nothing to demote-guard
+	// against at that point, but exactly one admin is the invariant).
+	bootstrapMu sync.Mutex
+	// invitationMu serializes invitation redemption: the check-then-create
+	// sequence in accept must not race a second accept of the same token.
+	invitationMu sync.Mutex
+	// Rate limiters for the internet-exposed auth surface.
+	loginLimiter      *rateLimiter
+	invitationLimiter *rateLimiter
+	// wsLimiter caps WebSocket upgrade attempts per client IP so one peer
+	// cannot reconnect in a loop and starve the maxUnauthenticatedWorkers
+	// slots that legitimate browser workers need.
+	wsLimiter *rateLimiter
 	// NewAIProvider allows tests to inject a mock provider.
-	NewAIProvider func(store.AISettings) (ai.Provider, error)
+	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {
@@ -78,6 +94,9 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		importInfoCache:    make(map[string]importInfoCacheEntry),
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
+		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
+		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
+		wsLimiter:          newRateLimiter(16, 16), // 16 WS upgrades per minute per IP
 	}
 	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()
@@ -152,6 +171,40 @@ func Router(s *Server) http.Handler {
 }
 
 func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
+	// Security headers for every response. PocketBase already sets
+	// nosniff/X-Frame-Options; this overrides X-Frame-Options to DENY and adds
+	// CSP, Referrer-Policy, Permissions-Policy and HSTS (only over HTTPS, as
+	// detected from X-Forwarded-Proto behind a reverse proxy / tunnel).
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "securityHeaders",
+		Func: func(e *core.RequestEvent) error {
+			header := e.Response.Header()
+			header.Set("X-Frame-Options", "DENY")
+			header.Set("Referrer-Policy", "no-referrer")
+			header.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+			if strings.HasPrefix(e.Request.Header.Get("X-Forwarded-Proto"), "https") || e.Request.TLS != nil {
+				header.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			}
+			return e.Next()
+		},
+	})
+
+	// Block the PocketBase superuser dashboard. The embedded PB app registers
+	// its management routes for any request carrying superuser auth; when the
+	// server is exposed through a tunnel those must never be reachable, so the
+	// UI path always answers 404. Superuser API calls are additionally
+	// IP-restricted to loopback at startup (see cmd/server/main.go).
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "blockSuperuserUI",
+		Func: func(e *core.RequestEvent) error {
+			if hasPrefix(e.Request.URL.Path, "/_/") || e.Request.URL.Path == "/_" {
+				return e.NotFoundError("", nil)
+			}
+			return e.Next()
+		},
+	})
+
 	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
 	// Must run before any handler.
 	router.Bind(&hook.Handler[*core.RequestEvent]{

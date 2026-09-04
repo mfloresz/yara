@@ -11,7 +11,7 @@ import (
 //   {data: [...], meta: {total, page, per_page, has_more}, links: {self, next}}
 func TestV1NovelListEnvelope(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-envelope@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-envelope@example.com", "secret123", "Alice")
 	createNovel(t, env.handler, alice.Token, "Envolvente", "es", "en")
 
 	v1Resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
@@ -40,7 +40,7 @@ func TestV1NovelListEnvelope(t *testing.T) {
 // returns 201 Created plus a Location header pointing at the new resource.
 func TestV1NovelCreateReturns201AndLocation(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-create@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-create@example.com", "secret123", "Alice")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
 		"sourceTitle":    "V1",
@@ -60,7 +60,7 @@ func TestV1NovelCreateReturns201AndLocation(t *testing.T) {
 // TestV1NovelDeleteReturns204 verifies v1 DELETE returns 204 with no body.
 func TestV1NovelDeleteReturns204(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-delete@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-delete@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Para borrar", "es", "en")
 
 	resp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID, alice.Token, nil)
@@ -74,7 +74,7 @@ func TestV1NovelDeleteReturns204(t *testing.T) {
 // response payload (sparse fieldsets for lightweight lists).
 func TestV1NovelFieldsSparseFieldsets(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-fields@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-fields@example.com", "secret123", "Alice")
 	createNovel(t, env.handler, alice.Token, "Ligero", "en", "es")
 
 	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels?fields=id,sourceTitle,status", alice.Token, nil)
@@ -106,7 +106,7 @@ func TestV1NovelFieldsSparseFieldsets(t *testing.T) {
 // and links.
 func TestV1ChapterSummariesPagination(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-chapters@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-chapters@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Paginada", "es", "en")
 	for i := 1; i <= 3; i++ {
 		createChapter(t, env.handler, alice.Token, novel.ID, i)
@@ -138,7 +138,7 @@ func TestV1ChapterSummariesPagination(t *testing.T) {
 // /api/v1/* responses.
 func TestV1HeaderOnV1Routes(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-header@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-header@example.com", "secret123", "Alice")
 
 	v1Resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
 	assertStatus(t, v1Resp, http.StatusOK)
@@ -151,7 +151,7 @@ func TestV1HeaderOnV1Routes(t *testing.T) {
 // and POST /jobs/{id}/retry endpoints work and return the v1 envelope.
 func TestV1JobCancelAndRetryEndpoints(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-v1-jobs@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-v1-jobs@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Trabajos", "es", "en")
 
 	// Create a job directly in failed state (the in-process worker would

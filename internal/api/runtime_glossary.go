@@ -253,7 +253,7 @@ func (s *Server) resolveGlossaryProvider(job *store.Job, novel *store.Novel) (ai
 		aiSettings.Model = modelOverride
 	}
 
-	return s.newAIProvider(aiSettings)
+	return s.newAIProvider(aiSettings, ai.SessionForJob(job.ID))
 }
 
 func resolveGlossaryPrompt(prompts []store.Prompt) string {

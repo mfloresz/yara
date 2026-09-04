@@ -30,6 +30,7 @@ export const authState = {
   user,
   ready,
   isAuthenticated: computed(() => Boolean(user.value)),
+  isAdmin: computed(() => user.value?.role === "admin"),
 };
 
 export function getStoredTheme(): "light" | "dark" | "system" {

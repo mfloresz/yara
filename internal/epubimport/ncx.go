@@ -1,7 +1,6 @@
 package epubimport
 
 import (
-	"archive/zip"
 	"html"
 	"regexp"
 	"strings"
@@ -12,7 +11,7 @@ var (
 	reSpineToc    = regexp.MustCompile(`<spine[^>]*toc=["']([^"']+)["']`)
 )
 
-func parseNCXNavPoints(zr *zip.Reader, opfPath, opfXML string, manifestMap map[string]manifestItem) []ncxNavPoint {
+func parseNCXNavPoints(zb *zipBudget, opfPath, opfXML string, manifestMap map[string]manifestItem) []ncxNavPoint {
 	tocID := extractFirstMatch(reSpineToc, opfXML)
 	if tocID == "" {
 		return nil
@@ -24,7 +23,7 @@ func parseNCXNavPoints(zr *zip.Reader, opfPath, opfXML string, manifestMap map[s
 	}
 
 	ncxPath := resolveZipPath(opfPath, ncxItem.Href)
-	ncxBlob, err := readZipFile(zr, ncxPath)
+	ncxBlob, err := zb.readFile(ncxPath)
 	if err != nil {
 		return nil
 	}

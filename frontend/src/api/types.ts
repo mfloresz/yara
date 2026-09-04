@@ -46,14 +46,71 @@ export type AuthUser = {
   id: string;
   email: string;
   name?: string;
+  role?: "admin" | "user";
   theme: "light" | "dark" | "system";
   createdAt?: string;
   updatedAt?: string;
 };
 
 export type AuthResponse = {
-  token: string;
   user: AuthUser;
+};
+
+export type SetupStatus = {
+  needsSetup: boolean;
+};
+
+export type InvitationValidation = {
+  valid: boolean;
+  email?: string;
+  role?: string;
+  expiresAt?: string;
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  name?: string;
+  role: "admin" | "user";
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AdminInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt?: string;
+  usedAt?: string;
+  createdAt?: string;
+};
+
+export type AdminProviderKey = {
+  provider: string;
+  label: string;
+  enabled: boolean;
+  configured: boolean;
+  shared: boolean;
+  apiKeyUpdatedAt?: string;
+};
+
+export type AdminPromptOverride = {
+  key: string;
+  systemPrompt?: string;
+  userPrompt?: string;
+  updatedAt?: string;
+};
+
+// Effective prompt as seen by the admin: embedded default with the admin's
+// own global override applied on top, plus a flag to distinguish both cases.
+export type AdminEffectivePrompt = {
+  key: string;
+  label?: string;
+  description?: string;
+  systemPrompt: string;
+  userPrompt: string;
+  hasOverride: boolean;
+  updatedAt?: string;
 };
 
 export type ImportEpubResult = {
@@ -150,6 +207,8 @@ export type ProviderInfo = {
   enabled?: boolean;
   concurrency?: number;
   timeoutMs?: number;
+  sharedKeyAvailable?: boolean;
+  usingSharedKey?: boolean;
 };
 
 export type ProvidersResponse = {

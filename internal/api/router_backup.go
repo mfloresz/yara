@@ -10,19 +10,27 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
-	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerV1BackupRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
-	// POST is correct here: the server is generating and returning a fresh
-	// archive every time, so the action is not safe/idempotent in the GET
-	// sense (the body is non-deterministic with respect to disk state).
-	api.POST("/backups/export", backupDownload(s))
-}
-
+// backupDownload is mounted under the admin group (/api/v1/admin/backups/export)
+// because the archive streams the whole data dir — every user's data plus the
+// app encryption key — so it must never be reachable by a regular invited user.
+// POST is correct here: the server is generating and returning a fresh
+// archive every time, so the action is not safe/idempotent in the GET
+// sense (the body is non-deterministic with respect to disk state).
 func backupDownload(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		dataDir := s.Cfg.DataDir
+
+		// Checkpoint the WAL into data.db before streaming: the walker skips
+		// -wal/-shm files, so without a checkpoint the copied .db would miss
+		// recent writes. A failed checkpoint is non-fatal (the backup still
+		// streams) but is logged.
+		if _, err := s.Store.App.DB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute(); err != nil {
+			slog.Warn("backup checkpoint failed, streaming anyway", "error", err)
+		}
+
+		slog.Info("backup exported", "actorId", e.Auth.Id)
 
 		pr, pw := io.Pipe()
 

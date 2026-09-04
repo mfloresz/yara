@@ -28,6 +28,7 @@ The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). Whe
   - [Backup](#backup)
   - [Browser workers & proxy](#browser-workers--proxy)
   - [Worker auth](#worker-auth)
+  - [Admin](#admin)
 - [WebSocket](#websocket)
 
 ## Base URL & versioning
@@ -45,9 +46,9 @@ Every v1 response carries `X-API-Version: v1`.
 The API uses PocketBase-compatible auth tokens. Two ways to send a token:
 
 1. **HttpOnly cookie** — `auth.token=<token>`. This is the default after login. `Path=/`, `SameSite=Strict`, `Secure` when the request is HTTPS.
-2. **Authorization header** — `Authorization: Bearer <token>`. Used by the browser-worker extension and by CLI callers.
+2. **Authorization header** — `Authorization: Bearer <token>`. Accepted for callers that already hold a token (e.g. issued out-of-band); the browser-worker extension uses its own worker tokens instead.
 
-After authenticating, send the token in **either** form on every request to a non-public endpoint. The server checks the cookie first (if no Authorization header is present) via the `loadAuthFromCookie` middleware in `router_auth.go`.
+Login, register and refresh deliver the session token **only** in the `auth.token` cookie — never in the response body — so it stays unreadable to JavaScript. After authenticating, send the token in either form on every request to a non-public endpoint. The server checks the cookie first (if no Authorization header is present) via the `loadAuthFromCookie` middleware in `router_auth.go`.
 
 Public endpoints (no auth required):
 
@@ -182,24 +183,35 @@ v1 errors return `Content-Type: application/problem+json`:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/auth/register` | Create a new user. Returns `AuthResult` + sets `auth.token` cookie. Status 201. |
-| `POST` | `/api/v1/auth/login` | Exchange email + password for a token. Returns `AuthResult` + sets `auth.token` cookie. Status 200. |
-| `GET` | `/api/v1/auth/me` | Return the authenticated user. |
-| `POST` | `/api/v1/auth/refresh` | Refresh the current token. Returns a new `AuthResult` + sets cookie. |
-| `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. |
+| `POST` | `/api/v1/auth/register` | Create the **first** user (becomes admin). Status 201. Returns `403` once any user exists — registration is invitation-only afterwards. |
+| `GET` | `/api/v1/auth/setup-status` | `{ needsSetup }` — true while the install has no users. Public. |
+| `POST` | `/api/v1/auth/invitations/validate` | Validate an invitation token. Public. `{ valid, email?, role?, expiresAt? }`. |
+| `POST` | `/api/v1/auth/invitations/accept` | Redeem an invitation (`{ token, password }`), create the invited user. Status 201. Public. |
+| `POST` | `/api/v1/auth/login` | Exchange email + password for a session. Returns `{ user }` + sets `auth.token` cookie. Status 200. |
+| `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
+| `POST` | `/api/v1/auth/refresh` | Refresh the current session. Returns `{ user }` + re-issues the cookie. |
+| `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. The token itself stays valid until expiry — use logout-all to revoke it. |
+| `POST` | `/api/v1/auth/logout-all` | Invalidate every session of the calling user (all devices) by rotating the server-side token key, and clear the cookie. Status 204. |
+
+Register, login and the invitation endpoints are rate-limited per client IP
+(register/login: 5/min, invitations: 10/min; 429 + `Retry-After: 60` beyond
+that) and cap request bodies at 16 KB. Forwarded-IP headers
+(`CF-Connecting-IP`, `X-Forwarded-For`) are only honored for connections from
+loopback — the supported cloudflared-on-localhost deployment — so a direct
+caller cannot rotate its rate-limit key by spoofing them.
 
 `GET /api/v1/auth/me` returns the standard single-resource envelope:
 
 ```json
-{ "data": { "id": "...", "email": "alice@example.com", "name": "Alice", "theme": "system" } }
+{ "data": { "id": "...", "email": "alice@example.com", "name": "Alice", "role": "user", "theme": "system" } }
 ```
 
 ```json
 // POST /api/v1/auth/register
 // request
 { "email": "alice@example.com", "password": "secret123", "name": "Alice" }
-// response (201)
-{ "token": "eyJhbGciOi...", "user": { "id": "...", "email": "alice@example.com", "name": "Alice", "theme": "system" } }
+// response (201) — the session token is only set as the auth.token cookie
+{ "data": { "user": { "id": "...", "email": "alice@example.com", "name": "Alice", "role": "admin", "theme": "system" } } }
 ```
 
 ### Novels
@@ -216,6 +228,7 @@ v1 errors return `Content-Type: application/problem+json`:
 | `POST` | `/api/v1/novels/{id}/clone` | Duplicate the novel (translations, glossary, options). Returns 201 + `Location`. |
 | `PATCH` | `/api/v1/novels/{id}/visibility` | Body `{ "isPublic": true\|false }`. |
 | `POST` | `/api/v1/novels/{id}/cover` | `multipart/form-data` with `cover` field. Returns the updated novel. |
+| `GET` | `/api/v1/novels/{id}/cover` | Download the stored cover (thumbnail when present). Cookie-authenticated; the underlying file fields are protected so PocketBase's native `/api/files` route is not usable for covers. Access follows novel visibility (owner or `isPublic`). |
 | `POST` | `/api/v1/novels/{id}/recalculate-stats` | Recompute chapter counts and char counts. |
 | `GET` | `/api/v1/novels/{id}/full` | Return the novel + all chapters (heavy). |
 
@@ -352,6 +365,7 @@ v1 errors return `Content-Type: application/problem+json`:
 |---|---|---|
 | `GET` | `/api/v1/prompts` | List the user's prompts. |
 | `PUT` | `/api/v1/prompts/{key}` | Create or update a prompt. Body: `{ "label", "description", "prompt": { "systemPrompt", "userPrompt" }, "active" }`. |
+| `DELETE` | `/api/v1/prompts/{key}` | Reset the user's own prompt (idempotent): deletes the personal override so the admin global (or embedded default) applies again. Per-novel prompts are untouched. Status 200 with the effective prompt. |
 
 ```json
 // PUT /api/v1/prompts/translation
@@ -452,9 +466,9 @@ v1 errors return `Content-Type: application/problem+json`:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/backups/export` | Stream a `backup-YYYYMMDD-HHMMSS.zip` of the entire `data-dir`. `Content-Type: application/zip`. |
+| `POST` | `/api/v1/admin/backups/export` | **Admin role required.** Stream a `backup-YYYYMMDD-HHMMSS.zip` of the entire `data-dir` (includes the app encryption key). `Content-Type: application/zip`. |
 
-`POST` (not `GET`) because generating a fresh archive is not idempotent in the GET sense.
+`POST` (not `GET`) because generating a fresh archive is not idempotent in the GET sense. The endpoint lives under `/admin` because the archive contains every user's data.
 
 ### Browser workers & proxy
 
@@ -483,6 +497,34 @@ Browser-worker extension OAuth-style flow. The HTML pages are not part of the JS
 | `GET` | `/api/v1/worker-auth/tokens` | user | List the user's worker tokens. |
 | `POST` | `/api/v1/worker-auth/revoke/{tokenId}` | user | Revoke (disconnect, keep record). |
 | `POST` | `/api/v1/worker-auth/delete/{tokenId}` | user | Delete the record. |
+
+### Admin
+
+All `/api/v1/admin/*` routes require the authenticated user to have the
+`admin` role; everyone else gets `403` (`problem+json`).
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/admin/users` | List every user (id, email, name, role, dates). |
+| `PATCH` | `/api/v1/admin/users/{userId}` | `{ "role": "admin" \| "user" }`. Demoting the last admin returns 409. |
+| `GET` | `/api/v1/admin/invitations` | List invitations (email, role, expiry, used status). |
+| `POST` | `/api/v1/admin/invitations` | `{ "email", "role" }` → 201 with the shareable `invitationUrl` (raw token shown **once**; only its SHA-256 hash is stored; expires in 7 days). 409 if the email is already registered. |
+| `DELETE` | `/api/v1/admin/invitations/{invitationId}` | Revoke an unused invitation. 204. |
+| `GET` | `/api/v1/admin/provider-keys` | Provider catalog with `configured` / `shared` flags. Never returns key material. |
+| `PUT` | `/api/v1/admin/provider-keys/{providerKey}` | `{ "apiKey"?, "shared" }`. `apiKey` is required on first configuration; omit it to toggle sharing only. |
+| `DELETE` | `/api/v1/admin/provider-keys/{providerKey}` | Delete the shared key. 204. |
+| `GET` | `/api/v1/admin/prompts` | Effective prompts (embedded default + global override) with `hasOverride` flag. Same precedence the user sees, minus the per-user layer. |
+| `GET` | `/api/v1/admin/prompt-overrides` | List global prompt overrides. |
+| `PUT` | `/api/v1/admin/prompt-overrides/{promptKey}` | `{ "prompt": { "systemPrompt", "userPrompt" } }` for keys `translation`, `title`, `refine`, `check`, `glossary` (≤ 20 000 chars). |
+| `DELETE` | `/api/v1/admin/prompt-overrides/{promptKey}` | Remove the override so the embedded default applies. 204. |
+
+**Shared provider key resolution order:** the user's own configured key wins;
+when the user has none and the provider is marked `shared`, the admin's key
+is used. `GET /api/v1/providers` exposes `sharedKeyAvailable` and
+`usingSharedKey` per provider so clients can display it.
+
+**Prompt precedence:** embedded default < admin global override < user
+setting < per-novel prompt.
 
 ## WebSocket
 

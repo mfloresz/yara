@@ -174,7 +174,13 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 
 ## Operational gotchas
 
-- PocketBase is in-process. There is no external PB process, no separate admin port, and no `_/` admin UI exposed by this binary. The HTTP server only serves `/healthz`, `/ws/browser-worker` (unauthenticated WS), `/api/v1/*` plus the small set of public routes (`/api/auth/*`, `/api/worker-auth/*`, PocketBase's own `/api/collections/...` routes that the embedded app registers), plus the SPA fallback. Every `/api/v1/*` response carries `X-API-Version: v1` (see `## API versioning & conventions`).
+- PocketBase is in-process. There is no external PB process and no separate admin port. The HTTP server serves `/healthz`, `/ws/browser-worker` (unauthenticated WS), `/api/v1/*`, PocketBase's own `/api/collections/...` record routes (governed by per-collection rules), plus the SPA fallback. The PB superuser dashboard path `/_/` is answered **404** by a router middleware and superuser API access is IP-restricted to loopback at startup (see `cmd/server/main.go`) — do not remove these guards; they are what makes internet exposure safe (see `docs/exposure.md`).
+- Users have a `role` field (`admin` | `user`). The first registrant on a fresh install is promoted to admin (under `bootstrapMu`); afterwards registration requires an invitation. Pre-existing installs bootstrap an admin with `./translator-server -promote-admin <email>`.
+- Registration is invitation-only: the `invitations` collection stores only the SHA-256 hash of the token (crypto/rand 32 bytes, 7-day expiry, single use; redemption is serialized under `invitationMu`). Admin routes live in `internal/api/router_admin.go` under `/api/v1/admin/*` guarded by `requireAdmin()`; public invitation endpoints in `internal/api/router_invitations.go`.
+- Shared provider keys: `shared_provider_keys` collection + `internal/store/store_shared_providers.go`. Resolution order in `ResolveProviderAISettings`: user's own key > admin shared key (when the provider is marked `shared`) > none. The plaintext key never appears in any response.
+- Prompt precedence: embedded default < admin global override (`prompt_overrides` collection) < user setting (`user_prompt_settings`) < per-novel prompt. `DELETE /api/v1/prompts/{key}` resets the user's override.
+- Rate limiting: `internal/api/ratelimit.go` (in-memory token bucket, no deps). register/login 5/min/IP, invitation validate/accept 10/min/IP (429 + `Retry-After: 60`). The auth endpoints also cap bodies at 16 KB. Security headers (CSP, HSTS, etc.) are set in `registerRoutes` in `internal/api/router.go`.
+- Every `/api/v1/*` response carries `X-API-Version: v1` (see `## API versioning & conventions`).
 - The embedded `frontend/dist` is only used when `STATIC_DIR` env / `--static-dir` is empty. Set `STATIC_DIR` in dev only if you want the Go binary to serve files from disk instead of the embed; the normal Vite dev workflow does not need it.
 - API keys for AI providers are stored encrypted with AES-GCM. The encryptor prefers `APP_ENCRYPTION_KEY` (base64 or hex, exactly 32 bytes decoded). If unset, it generates a random key at `<data-dir>/app.key` on first start. To rotate, set the env var; existing data encrypted with a previous key will be unreadable.
 - API keys are write-only: the UI sends them to `PUT /api/v1/providers/{key}/key`; `GET /api/v1/providers` returns an `apiKeyConfigured` flag and never the secret. Tests assert on that flag, not the value.
@@ -370,7 +376,7 @@ v1 handlers use `v1Respond` / `v1RespondList` from `internal/api/v1_envelope.go`
 
 ## Where to look first when changing X
 
-- New HTTP route → `internal/api/router_v1.go` (wire-in via `registerV1Routes`) + a `router_*.go` file (handler). Public/unauthenticated routes go in `router.go` via `registerAuthRoutes` or `registerV1AuthRoutes`. See `## API versioning & conventions`.
+- New HTTP route → `internal/api/router_v1.go` (wire-in via `registerV1Routes`) + a `router_*.go` file (handler). Public/unauthenticated routes go in `router.go` via `registerAuthRoutes` or `registerV1AuthRoutes`. Admin-only routes go in `internal/api/router_admin.go` and are wrapped by `requireAdmin()` (mounted in `router_v1.go` via `authed.Group("/admin").Bind(requireAdmin())`). See `## API versioning & conventions`.
 - New persistence field → `internal/store/store_schema.go` (collection def) + relevant `store_*.go` (record mapping in `store_mapping.go` and persistence) + `internal/store/settings.go` (struct type if it's a domain object).
 - New AI provider → `internal/ai/registry.go` (catalog entry; sets `GoAIOptions` like `useResponsesAPI` and `strictJsonSchema`) and verify `internal/ai/openai.go` honors those options.
 - New job operation → extend the switch in `internal/api/runtime_worker.go` (`enqueueJob`) and add a `runtime_*.go` workflow file. Status transitions live in `store_jobs.go`; the worker respects `cancelled` / `done` / `failed` short-circuits.
@@ -390,6 +396,8 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 | `-data-dir` | `string` | `<binary-dir>/data` | PocketBase data directory. Falls back to `DATA_DIR` env. Resolved to absolute path. |
 | `-static-dir` | `string` | `""` (use embed) | Dev-only: serve frontend from disk instead of embed. Falls back to `STATIC_DIR` env. Also sets PocketBase `DefaultDev: true`. |
 | `-migrate-db` | `bool` | `false` | Run legacy database migration and exit. |
+| `-promote-admin` | `string` | `""` | Grant the admin role to the user with this email and exit. Bootstrap for pre-existing installs. |
+| `-public-url` | `string` | `""` (derive from request Host) | Public origin (e.g. `https://novels.example.com`) used for absolute URLs shown to admins (invitation links). Falls back to `PUBLIC_URL` env. Set it in production: the request Host is client-controlled. |
 | `-migrate-thumbnails` | `bool` | `false` | Generate thumbnails for existing covers and exit. |
 | `-version` | `bool` | `false` | Print version and exit. |
 
@@ -404,6 +412,7 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 | `ADDR` | `string` | `:5176` | Listen address. Only used if `-addr` flag is empty. |
 | `PORT` | `string` | `:5176` | Listen port. Only used if `-port` flag is empty. |
 | `DATA_DIR` | `string` | `<binary-dir>/data` | PocketBase data directory. Only used if `-data-dir` flag is empty. |
+| `PUBLIC_URL` | `string` | `""` (derive from request Host) | Public origin for absolute admin-facing URLs (invitation links). Only used if `-public-url` flag is empty. |
 | `VITE_API_URL` | `string` | `""` (same-origin) | Frontend only: overrides API base URL for the Vue SPA. |
 
 ### Build-time variables

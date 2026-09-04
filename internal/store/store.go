@@ -21,7 +21,23 @@ const (
 	EpubsCollection                = "epubs"
 	ReadingProgressCollection      = "reading_progress"
 	WorkerTokensCollection         = "worker_tokens"
+	InvitationsCollection          = "invitations"
+	SharedProviderKeysCollection   = "shared_provider_keys"
+	PromptOverridesCollection      = "prompt_overrides"
 )
+
+// ErrEmailTaken is returned when creating a user or invitation for an email
+// that is already registered.
+var ErrEmailTaken = errors.New("email already registered")
+
+// ErrInvitationUsed is returned when redeeming an invitation that was
+// already used. Handlers must NOT distinguish it from ErrNotFound when
+// responding to clients, to avoid leaking invitation state.
+var ErrInvitationUsed = errors.New("invitation already used")
+
+// ErrInvitationExpired is returned when redeeming an expired invitation.
+// Same client-masking rule as ErrInvitationUsed applies.
+var ErrInvitationExpired = errors.New("invitation expired")
 
 var ErrNotFound = errors.New("not found")
 var ErrForbidden = errors.New("forbidden")
@@ -93,6 +109,15 @@ func (s *Store) EnsureSchema() error {
 	if _, err := s.ensureWorkerTokensCollection(users); err != nil {
 		return err
 	}
+	if _, err := s.ensureInvitationsCollection(users); err != nil {
+		return err
+	}
+	if _, err := s.ensureSharedProviderKeysCollection(users); err != nil {
+		return err
+	}
+	if _, err := s.ensurePromptOverridesCollection(users); err != nil {
+		return err
+	}
 	if err := s.seedProviders(); err != nil {
 		return err
 	}
@@ -106,6 +131,22 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		{Key: "refine", Label: "Refinamiento", Description: "Prompt global para mejorar traducciones generadas.", SystemPrompt: DefaultRefineSystemPrompt, UserPrompt: DefaultRefineUserPrompt, Active: 1},
 		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt, Active: 1},
 		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: "", Active: 1},
+	}
+	// Admin global overrides form the layer between the embedded defaults and
+	// the user's own settings: embedded < admin global < user.
+	overrides, err := s.ListPromptOverrides()
+	if err != nil {
+		return nil, err
+	}
+	byOverrideKey := map[string]Prompt{}
+	for _, item := range overrides {
+		byOverrideKey[item.Key] = item
+	}
+	for i := range defaults {
+		if override := byOverrideKey[defaults[i].Key]; override.Key != "" {
+			defaults[i].SystemPrompt = defaultString(override.SystemPrompt, defaults[i].SystemPrompt)
+			defaults[i].UserPrompt = defaultString(override.UserPrompt, defaults[i].UserPrompt)
+		}
 	}
 	records, err := s.App.FindRecordsByFilter(UserPromptSettingsCollection, "owner = {:owner}", "", 20, 0, dbx.Params{"owner": userID})
 	if err != nil {
@@ -130,6 +171,16 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// DeleteUserPrompt removes the user's override for a prompt key so the admin
+// global (or the embedded default when no global exists) applies again.
+func (s *Store) DeleteUserPrompt(userID, key string) error {
+	record, err := s.App.FindFirstRecordByFilter(UserPromptSettingsCollection, "owner = {:owner} && key = {:key}", dbx.Params{"owner": userID, "key": key})
+	if err != nil {
+		return ErrNotFound
+	}
+	return s.App.Delete(record)
 }
 
 func (s *Store) UpsertPrompt(userID string, prompt Prompt) (Prompt, error) {

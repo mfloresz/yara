@@ -91,7 +91,7 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-import-url@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-import-url@example.com", "secret123", "Alice")
 
 	novelURL := "https://novelfire.net/book/test-novel"
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/import-from-url", alice.Token, map[string]any{
@@ -160,7 +160,10 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 		t.Errorf("imported novel not present in list")
 	}
 
+	// CoverPath now points at the authenticated cover route (the file fields
+	// are protected), so the request must carry the owner's token.
 	coverReq := httptest.NewRequest(http.MethodGet, importResp.Novel.CoverPath, nil)
+	coverReq.Header.Set("Authorization", "Bearer "+alice.Token)
 	coverRec := httptest.NewRecorder()
 	env.handler.ServeHTTP(coverRec, coverReq)
 	if coverRec.Code != http.StatusOK {
@@ -208,7 +211,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-preview-url@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-preview-url@example.com", "secret123", "Alice")
 
 	novelURL := "https://novelfire.net/book/test-novel"
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
@@ -249,7 +252,7 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 
 func TestPreviewUrlNovelRejectsUnsupportedHost(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-preview-bad@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-preview-bad@example.com", "secret123", "Alice")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
 		"url": "https://example.com/novel/foo",
@@ -261,7 +264,7 @@ func TestPreviewUrlNovelRejectsUnsupportedHost(t *testing.T) {
 
 func TestPreviewUrlNovelRejectsEmptyURL(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-preview-empty@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-preview-empty@example.com", "secret123", "Alice")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/preview-from-url", alice.Token, map[string]any{
 		"url": "",
@@ -299,7 +302,7 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-update-preview@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-update-preview@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -378,7 +381,7 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-update-ok@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-update-ok@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -455,7 +458,7 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-part-titles@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-part-titles@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -561,7 +564,7 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-decimal-chapters@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-decimal-chapters@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -683,7 +686,7 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-update-range@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-update-range@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -740,7 +743,7 @@ func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-update-queue@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-update-queue@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -768,7 +771,7 @@ func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
 
 func TestUpdateUrlPreviewRejectsNovelWithoutURL(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-update-nourl@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-update-nourl@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
@@ -810,7 +813,7 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-cache-test@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-cache-test@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -880,7 +883,7 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
 
-	alice := registerUser(t, env.handler, "alice-fallback-test@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-fallback-test@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
 	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
@@ -954,7 +957,7 @@ func TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent(t *testing.
 		return dl
 	}
 
-	alice := registerUser(t, env.handler, "alice-dl-cancel@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-dl-cancel@example.com", "secret123", "Alice")
 
 	// 3 chapters: chapter 1 is imported synchronously; chapters 2-3 become a
 	// background download job (chapter 2 saved first, then a 5s sleep before 3).

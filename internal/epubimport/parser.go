@@ -17,7 +17,9 @@ func Parse(blob []byte, filename string) (*Result, error) {
 		return nil, fmt.Errorf("invalid epub: %w", err)
 	}
 
-	containerXML, err := readZipFile(zr, "META-INF/container.xml")
+	zb := newZipBudget(zr)
+
+	containerXML, err := zb.readFile("META-INF/container.xml")
 	if err != nil {
 		return nil, fmt.Errorf("missing META-INF/container.xml: %w", err)
 	}
@@ -25,7 +27,7 @@ func Parse(blob []byte, filename string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	opfXML, err := readZipFile(zr, opfPath)
+	opfXML, err := zb.readFile(opfPath)
 	if err != nil {
 		return nil, fmt.Errorf("missing OPF package %q: %w", opfPath, err)
 	}
@@ -38,7 +40,7 @@ func Parse(blob []byte, filename string) (*Result, error) {
 		manifestMap[item.ID] = item
 	}
 
-	ncxNavPoints := parseNCXNavPoints(zr, opfPath, string(opfXML), manifestMap)
+	ncxNavPoints := parseNCXNavPoints(zb, opfPath, string(opfXML), manifestMap)
 
 	unmatchedLabels := make(map[string]bool)
 	for _, np := range ncxNavPoints {
@@ -63,7 +65,7 @@ func Parse(blob []byte, filename string) (*Result, error) {
 	coverID := parseCoverID(string(opfXML))
 	if cover := findCover(manifest, coverID); cover != nil {
 		coverPath := resolveZipPath(opfPath, cover.Href)
-		if coverBlob, err := readZipFile(zr, coverPath); err == nil && len(coverBlob) > 0 {
+		if coverBlob, err := zb.readFile(coverPath); err == nil && len(coverBlob) > 0 {
 			result.CoverBlob = coverBlob
 			result.CoverMime = firstNonEmpty(cover.MediaType, mime.TypeByExtension(path.Ext(cover.Href)))
 			if result.CoverMime == "" {
@@ -80,7 +82,7 @@ func Parse(blob []byte, filename string) (*Result, error) {
 			continue
 		}
 		htmlPath := resolveZipPath(opfPath, item.Href)
-		htmlBlob, err := readZipFile(zr, htmlPath)
+		htmlBlob, err := zb.readFile(htmlPath)
 		if err != nil {
 			continue
 		}

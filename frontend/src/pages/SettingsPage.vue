@@ -62,7 +62,8 @@
               />
               <div class="small muted" style="margin-top: 0.35rem">
                 <span v-if="providerConfigured">API key configurada{{ activeProvider?.apiKeyUpdatedAt ? ` · actualizada ${formatDate(activeProvider.apiKeyUpdatedAt)}` : '' }}</span>
-                <span v-else>No hay API key configurada para este provider.</span>
+                <span v-else-if="activeProvider?.sharedKeyAvailable">Clave compartida por el admin, puedes insertar manualmente tu propia apikey si así lo deseas.</span>
+                <span v-else>Ingrese Apikey</span>
               </div>
               <div class="row-wrap" style="margin-top: 0.75rem">
                 <n-button secondary :disabled="!providerApiKey.trim()" :loading="replacingKey" @click="replaceKey">Reemplazar key</n-button>
@@ -164,18 +165,17 @@
           </div>
         </n-card>
 
-        <n-card title="Backup" size="small">
+        <n-card title="Sesión" size="small">
           <div class="row-between">
             <div>
-              <div style="font-weight: 600">Descargar backup</div>
-              <div class="small muted">Descarga un archivo .zip con la base de datos y todos los datos del servidor.</div>
+              <div style="font-weight: 600">Cerrar sesión en todos los dispositivos</div>
+              <div class="small muted">
+                Invalida todos los tokens de tu cuenta, incluidas otras sesiones y navegadores. Este dispositivo también se desconecta.
+              </div>
             </div>
-            <a href="#" @click.prevent="downloadBackup" style="text-decoration: none">
-              <n-button secondary>
-                <template #icon><n-icon><DownloadOutline /></n-icon></template>
-                Descargar
-              </n-button>
-            </a>
+            <n-button secondary type="warning" :loading="loggingOutEverywhere" @click="logoutEverywhere">
+              Cerrar todas las sesiones
+            </n-button>
           </div>
         </n-card>
 
@@ -202,6 +202,10 @@
                 <div class="row-between">
                   <span class="small muted">Activo</span>
                   <n-switch v-model:value="prompt.active" />
+                </div>
+                <div class="row-between">
+                  <span class="small muted">Restablece tu personalización al valor global</span>
+                  <n-button size="small" quaternary :loading="resettingPrompt === prompt.key" @click="resetPrompt(prompt.key)">Restablecer</n-button>
                 </div>
               </div>
             </n-collapse-item>
@@ -268,7 +272,6 @@ import {
 } from "naive-ui";
 import {
   SaveOutline,
-  DownloadOutline,
   RefreshOutline,
   BanOutline,
   TrashOutline,
@@ -278,10 +281,12 @@ import FieldNumber from "@/components/FieldNumber.vue";
 import { applyTheme } from "@/app/auth";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
+import { useRouter } from "vue-router";
 import type { GeneralPromptRecord, ServerSettings, WorkerToken } from "@/api/types";
 
 const message = useMessage();
-const { api, loadProviders } = useAppServices();
+const router = useRouter();
+const { api, loadProviders, logoutAll } = useAppServices();
 const { providers, byId, loading: providersLoading, reload: reloadProviders } = useProviders();
 const loading = ref(true);
 const saving = ref(false);
@@ -300,6 +305,21 @@ const workerTokens = ref<WorkerToken[]>([]);
 const workerTokensLoading = ref(false);
 const revokingTokenId = ref<string | null>(null);
 const deletingTokenId = ref<string | null>(null);
+
+const loggingOutEverywhere = ref(false);
+
+async function logoutEverywhere() {
+  loggingOutEverywhere.value = true;
+  try {
+    await logoutAll();
+    message.success("Todas las sesiones fueron cerradas");
+    await router.push("/login");
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    loggingOutEverywhere.value = false;
+  }
+}
 
 const themeOptions = [
   { label: "Sistema", value: "system" },
@@ -409,36 +429,6 @@ async function deleteToken(tokenId: string) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     deletingTokenId.value = null;
-  }
-}
-
-// v1 backup endpoint accepts POST only (the body is non-deterministic and
-// the response is a streamed zip). POST and stream the response into a
-// blob the browser can save.
-async function downloadBackup() {
-  try {
-    const response = await fetch("/api/v1/backups/export", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    const fallbackName = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
-    const contentDisposition = response.headers.get("Content-Disposition") ?? "";
-    const match = contentDisposition.match(/filename="?([^";]+)"?/);
-    anchor.download = match?.[1] ?? fallbackName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    message.success("Backup descargado");
-  } catch (err) {
-    message.error(`Error al descargar backup: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -582,6 +572,21 @@ async function save() {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     saving.value = false;
+  }
+}
+
+const resettingPrompt = ref<string | null>(null);
+
+async function resetPrompt(key: GeneralPromptRecord["key"]) {
+  resettingPrompt.value = key;
+  try {
+    await api.prompts.reset(key);
+    prompts.value = await api.prompts.list();
+    message.success("Prompt restablecido al valor global");
+  } catch (err) {
+    message.error(`Error al restablecer: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    resettingPrompt.value = null;
   }
 }
 

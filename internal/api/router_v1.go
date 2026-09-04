@@ -33,15 +33,21 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	registerV1PromptRoutes(authed, s)
 	registerV1ProviderRoutes(authed, s)
 	registerV1SettingsRoutes(authed, s)
-	registerV1BackupRoutes(authed, s)
 	registerV1ProxyRoutes(authed, s)
 	registerV1WorkerAuthRoutes(authed, s)
+
+	// Admin panel surface. Every route requires the admin role.
+	registerV1AdminRoutes(authed.Group("/admin").Bind(requireAdmin()), s)
 }
 
 func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	auth := v1.Group("/auth")
-	auth.POST("/register", handleAuthRegister(s))
-	auth.POST("/login", handleAuthLogin(s))
+	// The unauthenticated auth surface is rate-limited per client IP and
+	// capped to tiny bodies: it is the brute-force target.
+	auth.POST("/register", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthRegister(s))))
+	auth.POST("/login", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthLogin(s))))
+	auth.GET("/setup-status", handleAuthSetupStatus(s))
+	registerV1InvitationPublicRoutes(auth, s)
 
 	authed := auth.Group("")
 	authed.Bind(loadAuthFromCookie())
@@ -49,4 +55,5 @@ func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	authed.GET("/me", handleAuthMe(s))
 	authed.POST("/refresh", handleAuthRefresh(s))
 	authed.POST("/logout", handleAuthLogout(s))
+	authed.POST("/logout-all", handleAuthLogoutAll(s))
 }

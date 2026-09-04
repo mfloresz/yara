@@ -92,6 +92,11 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.CreateRule = nil
 	c.Fields.Add(&core.TextField{Name: "name", Max: 120})
 	c.Fields.Add(&core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1})
+	// Hidden: only the Go store layer may read/write role. If it were
+	// visible, the users UpdateRule (self-update) would let any authenticated
+	// user PATCH their own record via PocketBase's native REST API and set
+	// role to admin.
+	c.Fields.Add(&core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, MaxSelect: 1, Hidden: true})
 	c.Fields.Add(&core.TextField{Name: "active_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
@@ -108,6 +113,9 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 	if err := s.ensureField(c, &core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1}); err != nil {
 		return nil, err
 	}
+	if err := s.ensureField(c, &core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, MaxSelect: 1, Hidden: true}); err != nil {
+		return nil, err
+	}
 	if err := s.ensureField(c, &core.TextField{Name: "active_provider", Max: 120}); err != nil {
 		return nil, err
 	}
@@ -116,6 +124,15 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 	}
 	if err := s.ensureField(c, &core.TextField{Name: "title_model", Max: 200}); err != nil {
 		return nil, err
+	}
+	// ensureField is a no-op for fields that already exist, so installs that
+	// gained the role field before it was hidden need an explicit flip. See
+	// the fresh-create path for why role must stay hidden.
+	if roleField := c.Fields.GetByName("role"); roleField != nil && !roleField.GetHidden() {
+		roleField.SetHidden(true)
+		if err := s.App.Save(c); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -271,8 +288,8 @@ func (s *Store) ensureNovelsCollection(users *core.Collection) (*core.Collection
 	c.Fields.Add(&core.EditorField{Name: "custom_commands"})
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"ongoing", "completed", "hiatus", "cancelled"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "tags"})
-	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1})
-	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1})
+	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1, Protected: true})
+	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1, Protected: true})
 	c.Fields.Add(&core.BoolField{Name: "is_public"})
 	c.Fields.Add(&core.NumberField{Name: "chapter_count"})
 	c.Fields.Add(&core.NumberField{Name: "translated_count"})
@@ -341,6 +358,23 @@ func (s *Store) migrateNovelsCollection(c *core.Collection) (*core.Collection, e
 			if err := s.App.Save(c); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// ensureField is a no-op for fields that already exist, so installs created
+	// before cover/thumbnail were protected need an explicit flip. Protected
+	// files require a file token on PocketBase's native /api/files route, so
+	// covers and thumbnails are only reachable through the authenticated
+	// /api/v1/novels/{id}/cover handler.
+	changed := false
+	for _, name := range []string{"cover", "thumbnail"} {
+		if f, ok := c.Fields.GetByName(name).(*core.FileField); ok && !f.Protected {
+			f.Protected = true
+			changed = true
+		}
+	}
+	if changed {
+		if err := s.App.Save(c); err != nil {
+			return nil, err
 		}
 	}
 	if err := s.App.Save(c); err != nil {
@@ -525,7 +559,7 @@ func (s *Store) ensureEpubsCollection(novels *core.Collection) (*core.Collection
 	c.Fields.Add(&core.SelectField{Name: "file_kind", Values: []string{"original", "translated"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "source_variant", Max: 64})
 	c.Fields.Add(&core.TextField{Name: "label", Max: 250})
-	c.Fields.Add(&core.FileField{Name: "file", Required: true, MaxSelect: 1, MaxSize: epubFileMaxSize})
+	c.Fields.Add(&core.FileField{Name: "file", Required: true, MaxSelect: 1, MaxSize: epubFileMaxSize, Protected: true})
 	addSystemDateFields(c)
 	c.AddIndex("idx_epubs_unique_variant", true, "novel,file_kind,source_variant", "")
 	if err := s.App.Save(c); err != nil {
@@ -536,15 +570,28 @@ func (s *Store) ensureEpubsCollection(novels *core.Collection) (*core.Collection
 
 // migrateEpubFileMaxSize raises the max upload size of the "file" field on
 // pre-existing epubs collections that were created before epubFileMaxSize
-// was introduced (they default to PocketBase's 5MB limit).
+// was introduced (they default to PocketBase's 5MB limit). It also flips the
+// field to Protected on pre-existing collections: epub files must only be
+// reachable through the authenticated /api/v1/epubs/{id}/download handler,
+// never through PocketBase's public /api/files route.
 func (s *Store) migrateEpubFileMaxSize(c *core.Collection) (*core.Collection, error) {
 	field, ok := c.Fields.GetByName("file").(*core.FileField)
-	if !ok || field.MaxSize >= epubFileMaxSize {
+	if !ok {
 		return c, nil
 	}
-	field.MaxSize = epubFileMaxSize
-	if err := s.App.Save(c); err != nil {
-		return nil, err
+	changed := false
+	if field.MaxSize < epubFileMaxSize {
+		field.MaxSize = epubFileMaxSize
+		changed = true
+	}
+	if !field.Protected {
+		field.Protected = true
+		changed = true
+	}
+	if changed {
+		if err := s.App.Save(c); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -592,6 +639,81 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 	addSystemDateFields(c)
 	c.AddIndex("idx_worker_tokens_hash", true, "token_hash", "")
 	c.AddIndex("idx_worker_tokens_owner", false, "owner", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// adminOnlyRule is the PocketBase collection rule used for admin-managed
+// collections (invitations, shared provider keys, prompt overrides). The Go
+// layer already guards the /api/v1/admin routes; these rules protect the
+// underlying data if PocketBase's own REST surface is ever hit directly.
+var adminOnlyRule = "@request.auth.id != '' && @collection.users.id = @request.auth.id && @collection.users.role = 'admin'"
+
+func (s *Store) ensureInvitationsCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(InvitationsCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(InvitationsCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = types.Pointer(adminOnlyRule)
+	c.Fields.Add(&core.TextField{Name: "email", Required: true, Max: 254})
+	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
+	c.Fields.Add(&core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, Required: true, MaxSelect: 1})
+	c.Fields.Add(&core.DateField{Name: "expires_at", Required: true})
+	c.Fields.Add(&core.DateField{Name: "used_at"})
+	c.Fields.Add(&core.RelationField{Name: "created_by", CollectionId: users.Id, MaxSelect: 1})
+	addSystemDateFields(c)
+	c.AddIndex("idx_invitations_token_hash", true, "token_hash", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensureSharedProviderKeysCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(SharedProviderKeysCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(SharedProviderKeysCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = nil
+	c.Fields.Add(&core.TextField{Name: "provider", Required: true, Max: 120})
+	c.Fields.Add(&core.TextField{Name: "api_key_encrypted"})
+	c.Fields.Add(&core.BoolField{Name: "api_key_configured"})
+	c.Fields.Add(&core.BoolField{Name: "shared"})
+	c.Fields.Add(&core.DateField{Name: "api_key_updated_at"})
+	c.Fields.Add(&core.RelationField{Name: "updated_by", CollectionId: users.Id, MaxSelect: 1})
+	c.AddIndex("idx_shared_provider_keys_provider", true, "provider", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensurePromptOverridesCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(PromptOverridesCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(PromptOverridesCollection)
+	c.ListRule = types.Pointer(adminOnlyRule)
+	c.ViewRule = types.Pointer(adminOnlyRule)
+	c.CreateRule = nil
+	c.UpdateRule = nil
+	c.DeleteRule = nil
+	c.Fields.Add(&core.TextField{Name: "key", Required: true, Max: 64})
+	c.Fields.Add(&core.EditorField{Name: "system_prompt"})
+	c.Fields.Add(&core.EditorField{Name: "user_prompt"})
+	c.Fields.Add(&core.RelationField{Name: "updated_by", CollectionId: users.Id, MaxSelect: 1})
+	addSystemDateFields(c)
+	c.AddIndex("idx_prompt_overrides_key", true, "key", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}

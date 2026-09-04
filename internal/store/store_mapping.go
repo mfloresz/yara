@@ -9,10 +9,18 @@ func userFromRecord(record *core.Record) User {
 		ID:        record.Id,
 		Email:     record.Email(),
 		Name:      record.GetString("name"),
+		Role:      userRoleFromRecord(record),
 		Theme:     defaultString(record.GetString("theme"), "system"),
 		CreatedAt: record.GetString("created"),
 		UpdatedAt: record.GetString("updated"),
 	}
+}
+
+func userRoleFromRecord(record *core.Record) string {
+	if record.GetString("role") == RoleAdmin {
+		return RoleAdmin
+	}
+	return RoleUser
 }
 
 func (s *Store) novelFromRecord(record *core.Record) Novel {
@@ -51,9 +59,9 @@ func (s *Store) novelFromRecord(record *core.Record) Novel {
 		Status:                  normalizeNovelStatus(record.GetString("status")),
 		Tags:                    jsonString(parseNovelTagsJSON(record.GetString("tags")), "[]"),
 		CoverFile:               coverFile,
-		CoverPath:               buildPBFileURL(NovelsCollection, record.Id, coverFile),
+		CoverPath:               novelCoverURL(record.Id, coverFile),
 		ThumbnailFile:           thumbFile,
-		ThumbnailPath:           buildPBFileURL(NovelsCollection, record.Id, thumbFile),
+		ThumbnailPath:           novelCoverURL(record.Id, thumbFile),
 		IsPublic:                record.GetBool("is_public"),
 		ChapterCount:            asInt(record.GetFloat("chapter_count"), 0),
 		TranslatedCount:         asInt(record.GetFloat("translated_count"), 0),

@@ -33,10 +33,16 @@ type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Name      string `json:"name,omitempty"`
+	Role      string `json:"role,omitempty"`
 	Theme     string `json:"theme"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
+
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
 
 type Prompt struct {
 	Key          string `json:"key,omitempty"`
@@ -49,18 +55,37 @@ type Prompt struct {
 	UpdatedAt    string `json:"updatedAt,omitempty"`
 }
 
+type Invitation struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	UsedAt    string `json:"usedAt,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+type SharedProviderKey struct {
+	Provider        string `json:"provider"`
+	Configured      bool   `json:"configured"`
+	Shared          bool   `json:"shared"`
+	APIKeyUpdatedAt string `json:"apiKeyUpdatedAt,omitempty"`
+}
+
 type ProviderSetting struct {
-	Provider         string   `json:"provider"`
-	Label            string   `json:"label"`
-	BaseURL          string   `json:"baseUrl"`
-	Model            string   `json:"model"`
-	Models           []string `json:"models,omitempty"`
-	Kind             string   `json:"kind"`
-	APIKeyConfigured bool     `json:"apiKeyConfigured"`
-	APIKeyUpdatedAt  string   `json:"apiKeyUpdatedAt,omitempty"`
-	Enabled          bool     `json:"enabled"`
-	TimeoutMs        int      `json:"timeoutMs,omitempty"`
-	Concurrency      int      `json:"concurrency,omitempty"`
+	Provider           string   `json:"provider"`
+	Label              string   `json:"label"`
+	BaseURL            string   `json:"baseUrl"`
+	Model              string   `json:"model"`
+	Models             []string `json:"models,omitempty"`
+	Kind               string   `json:"kind"`
+	APIKeyConfigured   bool     `json:"apiKeyConfigured"`
+	APIKeyUpdatedAt    string   `json:"apiKeyUpdatedAt,omitempty"`
+	Enabled            bool     `json:"enabled"`
+	TimeoutMs          int      `json:"timeoutMs,omitempty"`
+	Concurrency        int      `json:"concurrency,omitempty"`
+	SharedKeyAvailable bool     `json:"sharedKeyAvailable,omitempty"`
+	UsingSharedKey     bool     `json:"usingSharedKey,omitempty"`
 }
 
 type Novel struct {

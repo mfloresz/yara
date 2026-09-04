@@ -70,7 +70,7 @@ type providersPayload struct {
 
 func TestAuthRegisterAndFetchMe(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice@example.com", "secret123", "Alice")
 
 	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/auth/me", alice.Token, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -90,8 +90,8 @@ func TestAuthRegisterAndFetchMe(t *testing.T) {
 
 func TestNovelResponseIncludesOwnerIDAndChapterStatusRequiresOwnership(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob@example.com", "secret123", "Bob")
 
 	novelResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
 		"sourceTitle":    "Mi novela",
@@ -136,7 +136,7 @@ func TestNovelResponseIncludesOwnerIDAndChapterStatusRequiresOwnership(t *testin
 
 func TestChapterUpsertPreservesStatusWhenOmitted(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-preserve-status@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-preserve-status@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Estado", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -165,7 +165,7 @@ func TestChapterUpsertPreservesStatusWhenOmitted(t *testing.T) {
 
 func TestImportEpubPersistsCoverFile(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-cover@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-cover@example.com", "secret123", "Alice")
 
 	blob, err := os.ReadFile(filepath.Join("..", "..", "test", "epub.epub"))
 	if err != nil {
@@ -230,7 +230,7 @@ func TestImportEpubPersistsCoverFile(t *testing.T) {
 
 func TestImportZipIgnoresEmptyTranslatedFiles(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-zip-empty@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-zip-empty@example.com", "secret123", "Alice")
 
 	var zipBuf bytes.Buffer
 	zipWriter := zip.NewWriter(&zipBuf)
@@ -309,7 +309,7 @@ func TestImportZipIgnoresEmptyTranslatedFiles(t *testing.T) {
 
 func TestListNovelsSortByCreatedSucceeds(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-sort@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-sort@example.com", "secret123", "Alice")
 	createNovel(t, env.handler, alice.Token, "Ordenable", "en", "es")
 
 	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels", alice.Token, nil)
@@ -324,7 +324,7 @@ func TestListNovelsSortByCreatedSucceeds(t *testing.T) {
 
 func TestNovelCanUpdateFlag(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-canupdate@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-canupdate@example.com", "secret123", "Alice")
 
 	// Novel without a source URL is never updatable.
 	noURL := createNovel(t, env.handler, alice.Token, "Sin URL", "en", "es")
@@ -375,7 +375,7 @@ func TestNovelCanUpdateFlag(t *testing.T) {
 
 func TestListNovelsSorting(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-sorting@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-sorting@example.com", "secret123", "Alice")
 
 	createNovelFull := func(sourceTitle, targetTitle string) novelPayload {
 		t.Helper()
@@ -496,8 +496,8 @@ func TestListNovelsSorting(t *testing.T) {
 
 func TestImportedCoverIsPubliclyFetchable(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-public-cover@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-public-cover@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-public-cover@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-public-cover@example.com", "secret123", "Bob")
 
 	blob, err := os.ReadFile(filepath.Join("..", "..", "test", "epub.epub"))
 	if err != nil {
@@ -558,7 +558,7 @@ func TestImportedCoverIsPubliclyFetchable(t *testing.T) {
 
 func TestImportEpubWithLongDescriptionSucceeds(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-longdesc@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-longdesc@example.com", "secret123", "Alice")
 
 	matches, err := filepath.Glob(filepath.Join("..", "..", "test", "*.epub"))
 	if err != nil {
@@ -627,7 +627,7 @@ func TestImportEpubWithLongDescriptionSucceeds(t *testing.T) {
 
 func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-active-job@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-active-job@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo activo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -681,7 +681,7 @@ func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
 	oldQueue := env.server.translateQueue
 	env.server.translateQueue = make(chan string)
 	close(oldQueue)
-	alice := registerUser(t, env.handler, "alice-queue@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
@@ -719,7 +719,7 @@ func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) 
 	oldQueue := env.server.translateQueue
 	env.server.translateQueue = make(chan string)
 	close(oldQueue)
-	alice := registerUser(t, env.handler, "alice-novel-queue@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-novel-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	first := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 	second := createChapter(t, env.handler, alice.Token, novel.ID, 2)
@@ -753,7 +753,7 @@ func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) 
 
 func TestJobPatchStatusTransitions(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-transitions@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-transitions@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Transiciones", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 	ids, _ := json.Marshal([]string{chapter.ID})
@@ -807,7 +807,7 @@ func TestBatchTranslateQueueRejectionMarkedInResponse(t *testing.T) {
 	oldQueue := env.server.translateQueue
 	env.server.translateQueue = make(chan string)
 	close(oldQueue)
-	alice := registerUser(t, env.handler, "alice-batch-queue@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-batch-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Lote", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
 
@@ -856,8 +856,8 @@ func TestBatchTranslateQueueRejectionMarkedInResponse(t *testing.T) {
 
 func TestJobPatchRequiresOwner(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob@example.com", "secret123", "Bob")
 
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -907,7 +907,7 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 
 func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-delete-novel@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-delete-novel@example.com", "secret123", "Alice")
 
 	imported, err := env.store.ImportEpubNovel(&store.ImportEpubNovelInput{
 		OwnerID:        alice.User.ID,
@@ -975,14 +975,16 @@ func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	}
 
 	if imported.Novel.CoverPath != "" {
-		coverResp := doJSONRequest(t, env.handler, http.MethodGet, imported.Novel.CoverPath, "", nil)
+		// CoverPath points at the authenticated cover route; the owner's
+		// request must 404 because the novel (and its cover) are gone.
+		coverResp := doJSONRequest(t, env.handler, http.MethodGet, imported.Novel.CoverPath, alice.Token, nil)
 		assertStatus(t, coverResp, http.StatusNotFound)
 	}
 }
 
 func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice@example.com", "secret123", "Alice")
 	secret := "super-secret-api-key"
 
 	replaceResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/providers/venice/key", alice.Token, map[string]any{
@@ -1034,7 +1036,7 @@ func TestProviderAPIKeysAreWriteOnlyAndRevocable(t *testing.T) {
 
 func TestProviderConfiguredTimeoutMsIsRespected(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice@example.com", "secret123", "Alice")
 
 	updateResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/providers/venice", alice.Token, map[string]any{
 		"model":     "deepseek-v4-flash",
@@ -1069,7 +1071,7 @@ func TestProviderConfiguredTimeoutMsIsRespected(t *testing.T) {
 
 func TestExcludeChapterPreservesRecordAndUpdatesStats(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-exclude-chapter@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-exclude-chapter@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	chapter1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1155,7 +1157,7 @@ func TestExcludeChapterPreservesRecordAndUpdatesStats(t *testing.T) {
 
 func TestReorderChaptersUpdatesPositionsAtomically(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-reorder@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-reorder@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	chapters := make([]chapterPayload, 5)
@@ -1202,8 +1204,8 @@ func TestReorderChaptersUpdatesPositionsAtomically(t *testing.T) {
 
 func TestReorderRejectsInvalidLists(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-reorder-invalid@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-reorder-invalid@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-reorder-invalid@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-reorder-invalid@example.com", "secret123", "Bob")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	other := createNovel(t, env.handler, bob.Token, "Otra", "es", "en")
@@ -1236,7 +1238,7 @@ func TestReorderRejectsInvalidLists(t *testing.T) {
 
 func TestReorderRejectedDuringActiveJobs(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-reorder-active@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-reorder-active@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1257,8 +1259,8 @@ func TestReorderRejectedDuringActiveJobs(t *testing.T) {
 
 func TestExcludeAndRestoreChapter(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-visibility@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-visibility@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-visibility@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-visibility@example.com", "secret123", "Bob")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1298,8 +1300,8 @@ func TestExcludeAndRestoreChapter(t *testing.T) {
 
 func TestExcludedChaptersHiddenFromPublicReaders(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-public-excluded@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-public-excluded@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-public-excluded@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-public-excluded@example.com", "secret123", "Bob")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1351,7 +1353,7 @@ func TestExcludedChaptersHiddenFromPublicReaders(t *testing.T) {
 
 func TestPendingSelectionFollowsPositionOrder(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-pending-order@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-pending-order@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	chapters := make([]chapterPayload, 3)
@@ -1380,7 +1382,7 @@ func TestPendingSelectionFollowsPositionOrder(t *testing.T) {
 
 func TestExcludedChapterNotReportedAsGapOrRecreated(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-gaps@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-gaps@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	chapters := make([]chapterPayload, 5)
@@ -1426,7 +1428,7 @@ func TestExcludedChapterNotReportedAsGapOrRecreated(t *testing.T) {
 
 func TestExcludedChaptersExcludedFromJobsAndEligible(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-jobs-excluded@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-jobs-excluded@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1489,7 +1491,7 @@ func TestExcludedChaptersExcludedFromJobsAndEligible(t *testing.T) {
 
 func TestExclusionRejectedDuringActiveJobs(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-exclude-active@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-exclude-active@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1520,7 +1522,7 @@ func TestExclusionRejectedDuringActiveJobs(t *testing.T) {
 
 func TestChapterStatsExcludeExcludedChapters(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-stats-excluded@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-stats-excluded@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	c1 := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -1586,20 +1588,26 @@ func newAPITestEnv(t *testing.T) *apiTestEnv {
 	return &apiTestEnv{handler: Router(server), store: st, server: server}
 }
 
-func registerUser(t *testing.T, handler http.Handler, email, password, name string) authPayload {
+// registerUser creates a test user directly through the store. Registration
+// over HTTP is invitation-gated (and the first registrant becomes admin), so
+// tests that just need additional users bypass that flow; the invitation
+// lifecycle has its own dedicated tests.
+func registerUser(t *testing.T, env *apiTestEnv, email, password, name string) authPayload {
 	t.Helper()
-	resp := doJSONRequest(t, handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
-		"email":    email,
-		"password": password,
-		"name":     name,
-	})
-	assertStatus(t, resp, http.StatusCreated)
-	var out authPayload
-	decodeResponse(t, resp, &out)
-	if out.Token == "" {
-		t.Fatalf("expected auth token for %s", email)
+	result, err := env.store.CreateUser(email, password, name)
+	if err != nil {
+		t.Fatalf("create user %s: %v", email, err)
 	}
-	return out
+	return authPayload{Token: result.Token, User: result.User}
+}
+
+func promoteToAdmin(t *testing.T, env *apiTestEnv, user authPayload) authPayload {
+	t.Helper()
+	updated, err := env.store.UpdateUserRole(user.User.ID, store.RoleAdmin)
+	if err != nil {
+		t.Fatalf("promote %s to admin: %v", user.User.Email, err)
+	}
+	return authPayload{Token: user.Token, User: updated}
 }
 
 func createNovel(t *testing.T, handler http.Handler, token, title, sourceLanguage, targetLanguage string) novelPayload {
@@ -1617,7 +1625,7 @@ func createNovel(t *testing.T, handler http.Handler, token, title, sourceLanguag
 
 func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-clean@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-clean@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Limpieza", "es", "en")
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
@@ -1664,7 +1672,7 @@ func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
 
 func TestCleanPreviewBulkReturnsOnlyChangedChapters(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-preview@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-preview@example.com", "secret123", "Alice")
 
 	novel := createNovel(t, env.handler, alice.Token, "Vista Previa", "es", "en")
 
@@ -1925,7 +1933,7 @@ func listNovelFilterIDs(t *testing.T, env *apiTestEnv, token, query string) ([]s
 
 func TestListNovelsFilterByTag(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-tag@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-tag@example.com", "secret123", "Alice")
 
 	fantasia := createFilterNovel(t, env.handler, alice.Token, "Fantasía Novela", []string{"Fantasía"}, "", 0, 0, false)
 	shouted := createFilterNovel(t, env.handler, alice.Token, "Shouted Tag", []string{"FANTASÍA"}, "", 0, 0, false)
@@ -1954,8 +1962,8 @@ func TestListNovelsFilterByTag(t *testing.T) {
 
 func TestListNovelsFilterShared(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-shared@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-shared@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-shared@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-shared@example.com", "secret123", "Bob")
 
 	own := createFilterNovel(t, env.handler, alice.Token, "Propia", nil, "", 0, 0, false)
 	bobsPrivate := createFilterNovel(t, env.handler, bob.Token, "Privada de Bob", nil, "", 0, 0, false)
@@ -1988,7 +1996,7 @@ func TestListNovelsFilterShared(t *testing.T) {
 
 func TestListNovelsFilterProgress(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-progress@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-progress@example.com", "secret123", "Alice")
 
 	ongoing := createFilterNovel(t, env.handler, alice.Token, "En curso", nil, "ongoing", 5, 2, false)
 	completed := createFilterNovel(t, env.handler, alice.Token, "Completada", nil, "completed", 3, 3, false)
@@ -2028,8 +2036,8 @@ func TestListNovelsFilterProgress(t *testing.T) {
 
 func TestListNovelsFilterCombination(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-combo@example.com", "secret123", "Alice")
-	bob := registerUser(t, env.handler, "bob-combo@example.com", "secret123", "Bob")
+	alice := registerUser(t, env, "alice-combo@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-combo@example.com", "secret123", "Bob")
 
 	// Own, ongoing, tagged Alpha → matches all three filters.
 	match := createFilterNovel(t, env.handler, alice.Token, "Coincide", []string{"Alpha"}, "ongoing", 2, 1, false)
@@ -2072,7 +2080,7 @@ func TestListNovelsFilterCombination(t *testing.T) {
 
 func TestListNovelsFilterInvalidValuesFallBackToAll(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-invalid@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-invalid@example.com", "secret123", "Alice")
 
 	first := createFilterNovel(t, env.handler, alice.Token, "Primera", nil, "", 0, 0, false)
 	second := createFilterNovel(t, env.handler, alice.Token, "Segunda", nil, "", 0, 0, true)
@@ -2090,7 +2098,7 @@ func TestListNovelsFilterInvalidValuesFallBackToAll(t *testing.T) {
 
 func TestCreateNovelDedupesAccentTags(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-dedup@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-dedup@example.com", "secret123", "Alice")
 
 	// normalizeNovelTags dedup (test 13): Fantasía and fantasia collapse to one.
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
@@ -2126,7 +2134,7 @@ func TestCreateNovelDedupesAccentTags(t *testing.T) {
 
 func TestListNovelsFilterByTagPagination(t *testing.T) {
 	env := newAPITestEnv(t)
-	alice := registerUser(t, env.handler, "alice-tagpage@example.com", "secret123", "Alice")
+	alice := registerUser(t, env, "alice-tagpage@example.com", "secret123", "Alice")
 
 	// 5 tagged novels + 5 untagged. Sorted by title, the tagged novels land on
 	// both pages of the unfiltered order, so a DB-offset tag filter would skip

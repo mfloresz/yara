@@ -2,13 +2,14 @@ import { createRouter, createWebHistory } from "vue-router";
 import { authState } from "@/app/auth";
 
 const LoginPage = () => import("@/pages/LoginPage.vue");
-const RegisterPage = () => import("@/pages/RegisterPage.vue");
+const InvitePage = () => import("@/pages/InvitePage.vue");
 const DashboardPage = () => import("@/pages/DashboardPage.vue");
 const SettingsPage = () => import("@/pages/SettingsPage.vue");
 const OperationsPage = () => import("@/pages/OperationsPage.vue");
 const NovelDetailPage = () => import("@/pages/NovelDetailPage.vue");
 const ChapterPage = () => import("@/pages/ChapterPage.vue");
 const ReaderPage = () => import("@/pages/ReaderPage.vue");
+const AdminPage = () => import("@/pages/AdminPage.vue");
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -21,9 +22,19 @@ export const router = createRouter({
     },
     {
       path: "/register",
-      name: "register",
-      component: RegisterPage,
+      redirect: "/invite",
+    },
+    {
+      path: "/invite/:token?",
+      name: "invite",
+      component: InvitePage,
       meta: { guestOnly: true },
+    },
+    {
+      path: "/admin",
+      name: "admin",
+      component: AdminPage,
+      meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
       path: "/",
@@ -69,13 +80,26 @@ export const router = createRouter({
 });
 
 router.beforeEach((to) => {
+  // Fail closed while the session is still loading: never render protected
+  // content (in particular /admin) on an unverified role. The router is
+  // attached after restoreSession in main.ts, so this branch only covers
+  // programmatic edge navigations — the checks mirror the ready ones below.
   if (!authState.ready.value) {
+    if (to.meta.requiresAuth && !authState.isAuthenticated.value) {
+      return { name: "login", query: { redirect: to.fullPath } };
+    }
+    if (to.meta.requiresAdmin && !authState.isAdmin.value) {
+      return { name: "dashboard" };
+    }
     return true;
   }
   if (to.meta.requiresAuth && !authState.isAuthenticated.value) {
     return { name: "login", query: { redirect: to.fullPath } };
   }
   if (to.meta.guestOnly && authState.isAuthenticated.value) {
+    return { name: "dashboard" };
+  }
+  if (to.meta.requiresAdmin && !authState.isAdmin.value) {
     return { name: "dashboard" };
   }
   return true;
