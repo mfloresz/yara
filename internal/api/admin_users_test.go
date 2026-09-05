@@ -122,3 +122,27 @@ func TestPasswordResetLifecycle(t *testing.T) {
 	})
 	assertStatus(t, reuse, http.StatusBadRequest)
 }
+
+func TestPasswordResetBlockedUser(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	bob := registerUser(t, env, "bob@example.com", "secret123", "Bob")
+
+	block := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/admin/users/"+bob.User.ID+"/block", admin.Token, map[string]any{})
+	assertStatus(t, block, http.StatusOK)
+
+	created := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/admin/users/"+bob.User.ID+"/password-resets", admin.Token, map[string]any{})
+	assertStatus(t, created, http.StatusConflict)
+	if !strings.Contains(created.Body.String(), "user_blocked") {
+		t.Fatalf("expected user_blocked, got %s", created.Body.String())
+	}
+}
+
+func TestAdminDeleteUserInvalidMode(t *testing.T) {
+	env := newAPITestEnv(t)
+	admin := bootstrapAdmin(t, env, "admin@example.com")
+	bob := registerUser(t, env, "bob@example.com", "secret123", "Bob")
+
+	bad := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/admin/users/"+bob.User.ID, admin.Token, map[string]any{"mode": "nuke"})
+	assertStatus(t, bad, http.StatusBadRequest)
+}

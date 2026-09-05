@@ -92,15 +92,15 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.CreateRule = nil
 	c.Fields.Add(&core.TextField{Name: "name", Max: 120})
 	c.Fields.Add(&core.SelectField{Name: "theme", Values: []string{"light", "dark", "system"}, MaxSelect: 1})
-	// Hidden: only the Go store layer may read/write role. If it were
-	// visible, the users UpdateRule (self-update) would let any authenticated
-	// user PATCH their own record via PocketBase's native REST API and set
-	// role to admin.
+	// Hidden: only the Go store layer may read/write role and blocked. If they
+	// were visible, the users UpdateRule (self-update) would let any
+	// authenticated user PATCH their own record via PocketBase's native REST
+	// API and set role to admin or blocked to false.
 	c.Fields.Add(&core.SelectField{Name: "role", Values: []string{RoleAdmin, RoleUser}, MaxSelect: 1, Hidden: true})
 	c.Fields.Add(&core.TextField{Name: "active_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
-	c.Fields.Add(&core.BoolField{Name: "blocked"})
+	c.Fields.Add(&core.BoolField{Name: "blocked", Hidden: true})
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
@@ -126,14 +126,20 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 	if err := s.ensureField(c, &core.TextField{Name: "title_model", Max: 200}); err != nil {
 		return nil, err
 	}
-	if err := s.ensureField(c, &core.BoolField{Name: "blocked"}); err != nil {
+	if err := s.ensureField(c, &core.BoolField{Name: "blocked", Hidden: true}); err != nil {
 		return nil, err
 	}
 	// ensureField is a no-op for fields that already exist, so installs that
-	// gained the role field before it was hidden need an explicit flip. See
-	// the fresh-create path for why role must stay hidden.
+	// gained the role/blocked fields before they were hidden need an explicit
+	// flip. See the fresh-create path for why both must stay hidden.
 	if roleField := c.Fields.GetByName("role"); roleField != nil && !roleField.GetHidden() {
 		roleField.SetHidden(true)
+		if err := s.App.Save(c); err != nil {
+			return nil, err
+		}
+	}
+	if blockedField := c.Fields.GetByName("blocked"); blockedField != nil && !blockedField.GetHidden() {
+		blockedField.SetHidden(true)
 		if err := s.App.Save(c); err != nil {
 			return nil, err
 		}

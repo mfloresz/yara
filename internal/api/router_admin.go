@@ -326,7 +326,16 @@ func adminDeleteUser(s *Server) func(*core.RequestEvent) error {
 			TransferToUser  string `json:"transferToUserId"`
 			TransferToUser2 string `json:"transferTo"`
 		}{}
-		_ = e.BindBody(&body)
+		if err := e.BindBody(&body); err != nil {
+			// Backward compat: empty body means with-novels default.
+			// A malformed body with content is 400, never a silent delete.
+			if e.Request.ContentLength != 0 {
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid body")
+			}
+		}
+		if body.Mode != "" && body.Mode != "transfer" && body.Mode != "with-novels" {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid mode")
+		}
 		toUser := body.TransferToUser
 		if toUser == "" {
 			toUser = body.TransferToUser2
@@ -352,6 +361,9 @@ func adminCreatePasswordReset(s *Server) func(*core.RequestEvent) error {
 		userID := e.Request.PathValue("userId")
 		reset, plaintext, err := s.Store.CreatePasswordReset(e.Auth.Id, userID)
 		if err != nil {
+			if err == store.ErrForbidden {
+				return writeV1Error(e, http.StatusConflict, "user_blocked", "user is blocked")
+			}
 			return v1ServiceError(e, err)
 		}
 		slog.Info("password reset created", "actorId", e.Auth.Id, "userId", userID, "resetId", reset.ID)

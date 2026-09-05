@@ -513,7 +513,7 @@ All `/api/v1/admin/*` routes require the authenticated user to have the
 | `POST` | `/api/v1/admin/users/{userId}/block` | Block login/API/extensions and kill sessions. Cannot self-block or block the last admin. |
 | `POST` | `/api/v1/admin/users/{userId}/unblock` | Unblock a user. |
 | `DELETE` | `/api/v1/admin/users/{userId}` | `{ "mode": "with-novels" \| "transfer", "transferToUserId"? }` → 204. 409 for last admin or active jobs. |
-| `POST` | `/api/v1/admin/users/{userId}/password-resets` | Issue a single-use reset link → 201 `{ resetUrl, expiresAt }` (24h TTL). |
+| `POST` | `/api/v1/admin/users/{userId}/password-resets` | Issue a single-use reset link → 201 `{ resetUrl, expiresAt }` (24h TTL). 409 `user_blocked` if the user is blocked. |
 | `GET` | `/api/v1/admin/invitations` | List invitations (email, role, expiry, used status). |
 | `POST` | `/api/v1/admin/invitations` | `{ "email", "role" }` → 201 with the shareable `invitationUrl` (raw token shown **once**; only its SHA-256 hash is stored; expires in 7 days). 409 if the email is already registered. |
 | `DELETE` | `/api/v1/admin/invitations/{invitationId}` | Revoke an unused invitation. 204. |

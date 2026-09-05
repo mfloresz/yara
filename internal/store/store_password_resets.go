@@ -44,6 +44,9 @@ func (s *Store) CreatePasswordReset(createdBy, userID string) (*PasswordReset, s
 	if err != nil {
 		return nil, "", ErrNotFound
 	}
+	if user.GetBool("blocked") {
+		return nil, "", ErrForbidden
+	}
 	plaintext, hash, err := generateToken()
 	if err != nil {
 		return nil, "", err

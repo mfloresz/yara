@@ -107,10 +107,20 @@ export function createHttpClient(config: HttpClientConfig) {
     });
 
     if (!response.ok) {
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as ApiErrorPayload;
       if (response.status === 401) {
         clearAuth();
       }
-      throw new ApiError(`HTTP ${response.status}`, response.status);
+      if (response.status === 403 && payload.error?.code === "account_blocked") {
+        clearAuth();
+      }
+      throw new ApiError(
+        payload.error?.message ?? `HTTP ${response.status}`,
+        response.status,
+        payload.error?.code,
+      );
     }
 
     return response.blob();

@@ -2126,6 +2126,11 @@ paths:
                       expiresAt: { type: string }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: User is blocked.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /auth/password-reset/validate:
     post:
