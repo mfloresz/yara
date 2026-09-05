@@ -26,6 +26,22 @@ func requireAdmin() *hook.Handler[*core.RequestEvent] {
 	}
 }
 
+// rejectBlocked rejects authenticated requests from blocked users. Mounted on
+// every authed v1 group after RequireAuth so a block takes effect without
+// waiting for the JWT to expire (block also rotates the tokenKey, this is the
+// safety net for already-issued tokens).
+func rejectBlocked() *hook.Handler[*core.RequestEvent] {
+	return &hook.Handler[*core.RequestEvent]{
+		Id: "rejectBlocked",
+		Func: func(e *core.RequestEvent) error {
+			if e.Auth != nil && e.Auth.GetBool("blocked") {
+				return writeV1Error(e, http.StatusForbidden, "account_blocked", "account is blocked")
+			}
+			return e.Next()
+		},
+	}
+}
+
 // v1ServiceError maps store-level sentinel errors to v1 problem+json
 // responses for admin endpoints (notFoundOrForbidden doesn't know about
 // ErrLastAdmin / validation failures).
@@ -37,6 +53,8 @@ func v1ServiceError(e *core.RequestEvent, err error) error {
 		return writeV1Error(e, http.StatusForbidden, "forbidden", "forbidden")
 	case store.ErrLastAdmin:
 		return writeV1Error(e, http.StatusConflict, "last_admin", "at least one admin user is required")
+	case store.ErrActiveJobs:
+		return writeV1Error(e, http.StatusConflict, "active_jobs", "user has active jobs; cancel them first")
 	case store.ErrInvalidInput:
 		return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid input")
 	default:

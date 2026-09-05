@@ -10,6 +10,7 @@ const NovelDetailPage = () => import("@/pages/NovelDetailPage.vue");
 const ChapterPage = () => import("@/pages/ChapterPage.vue");
 const ReaderPage = () => import("@/pages/ReaderPage.vue");
 const AdminPage = () => import("@/pages/AdminPage.vue");
+const ResetPasswordPage = () => import("@/pages/ResetPasswordPage.vue");
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -28,6 +29,12 @@ export const router = createRouter({
       path: "/invite/:token?",
       name: "invite",
       component: InvitePage,
+      meta: { guestOnly: true },
+    },
+    {
+      path: "/reset-password/:token?",
+      name: "reset-password",
+      component: ResetPasswordPage,
       meta: { guestOnly: true },
     },
     {

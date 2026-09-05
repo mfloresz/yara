@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,11 +33,54 @@ func backupDownload(s *Server) func(*core.RequestEvent) error {
 
 		slog.Info("backup exported", "actorId", e.Auth.Id)
 
-		pr, pw := io.Pipe()
+		// Build the zip into a temp file OUTSIDE dataDir first (so the walker
+		// can never pick up its own output). Only after the archive closes
+		// cleanly do we send headers + Content-Length. The previous io.Pipe
+		// streaming sent 200 before knowing whether the walk would succeed,
+		// so a mid-walk failure or a cut connection produced a partial zip
+		// that still looked like a successful download — always missing the
+		// tail entries (storage/ sorts last).
+		tmp, err := os.CreateTemp("", "backup-*.zip")
+		if err != nil {
+			slog.Error("backup temp file failed", "error", err)
+			return e.InternalServerError("backup failed", err)
+		}
+		tmpName := tmp.Name()
+		files, werr := writeBackupZip(tmp, dataDir)
+		syncErr := tmp.Sync()
+		closeErr := tmp.Close()
+		if werr != nil {
+			os.Remove(tmpName)
+			slog.Error("backup walk failed", "error", werr)
+			return e.InternalServerError("backup failed", werr)
+		}
+		if syncErr != nil {
+			os.Remove(tmpName)
+			slog.Error("backup sync failed", "error", syncErr)
+			return e.InternalServerError("backup failed", syncErr)
+		}
+		if closeErr != nil {
+			os.Remove(tmpName)
+			slog.Error("backup close failed", "error", closeErr)
+			return e.InternalServerError("backup failed", closeErr)
+		}
+		st, err := os.Stat(tmpName)
+		if err != nil {
+			os.Remove(tmpName)
+			slog.Error("backup stat failed", "error", err)
+			return e.InternalServerError("backup failed", err)
+		}
+		slog.Info("backup built", "actorId", e.Auth.Id, "files", files, "bytes", st.Size())
 
-		go func() {
-			err := writeBackupZip(pw, dataDir)
-			pw.CloseWithError(err)
+		f, err := os.Open(tmpName)
+		if err != nil {
+			os.Remove(tmpName)
+			slog.Error("backup reopen failed", "error", err)
+			return e.InternalServerError("backup failed", err)
+		}
+		defer func() {
+			f.Close()
+			os.Remove(tmpName)
 		}()
 
 		filename := "backup-" + time.Now().Format("20060102-150405") + ".zip"
@@ -44,18 +88,16 @@ func backupDownload(s *Server) func(*core.RequestEvent) error {
 		e.Response.Header().Set("Content-Type", "application/zip")
 		e.Response.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 
-		if _, err := io.Copy(e.Response, pr); err != nil {
-			slog.Error("backup stream failed", "error", err)
-			return e.InternalServerError("backup stream failed", err)
-		}
-
+		// ServeContent sets Content-Length (and handles Range/If-Modified-Since),
+		// so a truncated transfer is detectable client-side via blob.size.
+		http.ServeContent(e.Response, e.Request, filename, st.ModTime(), f)
 		return nil
 	}
 }
 
-func writeBackupZip(pw *io.PipeWriter, dataDir string) error {
-	w := zip.NewWriter(pw)
-	defer w.Close()
+func writeBackupZip(w io.Writer, dataDir string) (int, error) {
+	zw := zip.NewWriter(w)
+	files := 0
 
 	err := filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -82,7 +124,7 @@ func writeBackupZip(pw *io.PipeWriter, dataDir string) error {
 			return err
 		}
 
-		f, err := w.Create(rel)
+		f, err := zw.Create(rel)
 		if err != nil {
 			return err
 		}
@@ -96,13 +138,17 @@ func writeBackupZip(pw *io.PipeWriter, dataDir string) error {
 		if copyErr != nil {
 			return copyErr
 		}
+		files++
 
 		return nil
 	})
 	if err != nil {
-		slog.Error("backup walk failed", "error", err)
-		return err
+		zw.Close()
+		return files, err
 	}
 
-	return w.Close()
+	if err := zw.Close(); err != nil {
+		return files, err
+	}
+	return files, nil
 }

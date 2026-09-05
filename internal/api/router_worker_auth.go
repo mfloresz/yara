@@ -323,6 +323,7 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conexión Autorizada</title>
+    <meta http-equiv="refresh" content="1;url={{.CallbackURL}}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -401,7 +402,7 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
         </div>
         <h1>Conexión Autorizada</h1>
         <p>{{.Label}} está conectada a tu cuenta.</p>
-        <div class="label">Puedes cerrar esta pestaña.</div>
+        <div class="label">Redirigiendo… si no avanza, <a class="btn" href="{{.CallbackURL}}">continuar</a>.</div>
     </div>
     <script>
         setTimeout(function() { window.location.href = "{{.CallbackURL}}"; }, 1000);

@@ -77,6 +77,9 @@ export function createHttpClient(config: HttpClientConfig) {
       if (response.status === 401) {
         clearAuth();
       }
+      if (response.status === 403 && payload.error?.code === "account_blocked") {
+        clearAuth();
+      }
       throw new ApiError(
         payload.error?.message ?? `HTTP ${response.status}`,
         response.status,
@@ -104,13 +107,56 @@ export function createHttpClient(config: HttpClientConfig) {
     });
 
     if (!response.ok) {
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as ApiErrorPayload;
       if (response.status === 401) {
         clearAuth();
       }
-      throw new ApiError(`HTTP ${response.status}`, response.status);
+      if (response.status === 403 && payload.error?.code === "account_blocked") {
+        clearAuth();
+      }
+      throw new ApiError(
+        payload.error?.message ?? `HTTP ${response.status}`,
+        response.status,
+        payload.error?.code,
+      );
     }
 
     return response.blob();
+  }
+
+  // DELETE with JSON body, for endpoints like admin user delete with a
+  // transfer target. fetch supports bodies on DELETE; the plain delete()
+  // helper above does not send one.
+  async function deleteWithBody<T>(path: string, body: object): Promise<T> {
+    const response = await fetch(`${config.baseUrl}${path}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as ApiErrorPayload;
+      if (response.status === 401) {
+        clearAuth();
+      }
+      if (response.status === 403 && payload.error?.code === "account_blocked") {
+        clearAuth();
+      }
+      throw new ApiError(
+        payload.error?.message ?? `HTTP ${response.status}`,
+        response.status,
+        payload.error?.code,
+      );
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    const responseBody = (await response.json()) as unknown;
+    return unwrapEnvelope<T>(responseBody);
   }
 
   return {
@@ -140,6 +186,7 @@ export function createHttpClient(config: HttpClientConfig) {
             : JSON.stringify(body ?? {}),
       }),
     delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+    deleteWithBody: deleteWithBody,
     downloadBlob: downloadBlob,
   };
 }

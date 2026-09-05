@@ -187,6 +187,8 @@ v1 errors return `Content-Type: application/problem+json`:
 | `GET` | `/api/v1/auth/setup-status` | `{ needsSetup }` — true while the install has no users. Public. |
 | `POST` | `/api/v1/auth/invitations/validate` | Validate an invitation token. Public. `{ valid, email?, role?, expiresAt? }`. |
 | `POST` | `/api/v1/auth/invitations/accept` | Redeem an invitation (`{ token, password }`), create the invited user. Status 201. Public. |
+| `POST` | `/api/v1/auth/password-reset/validate` | Validate a reset token. Public. `{ valid, email?, expiresAt? }` (never explains why invalid). |
+| `POST` | `/api/v1/auth/password-reset/accept` | Redeem a reset token (`{ token, password≥8 }`) → 200 `{ email }`. Kills all sessions + extension tokens; client clears auth and redirects to login. Public. |
 | `POST` | `/api/v1/auth/login` | Exchange email + password for a session. Returns `{ user }` + sets `auth.token` cookie. Status 200. |
 | `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
 | `POST` | `/api/v1/auth/refresh` | Refresh the current session. Returns `{ user }` + re-issues the cookie. |
@@ -505,8 +507,13 @@ All `/api/v1/admin/*` routes require the authenticated user to have the
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/admin/users` | List every user (id, email, name, role, dates). |
+| `GET` | `/api/v1/admin/users` | List every user (id, email, name, role, blocked, dates). |
 | `PATCH` | `/api/v1/admin/users/{userId}` | `{ "role": "admin" \| "user" }`. Demoting the last admin returns 409. |
+| `GET` | `/api/v1/admin/users/{userId}/stats` | Novel counts + owned novel list for the admin drawer (`ownedCount`, `sharedCount`, `novels[]`). |
+| `POST` | `/api/v1/admin/users/{userId}/block` | Block login/API/extensions and kill sessions. Cannot self-block or block the last admin. |
+| `POST` | `/api/v1/admin/users/{userId}/unblock` | Unblock a user. |
+| `DELETE` | `/api/v1/admin/users/{userId}` | `{ "mode": "with-novels" \| "transfer", "transferToUserId"? }` → 204. 409 for last admin or active jobs. |
+| `POST` | `/api/v1/admin/users/{userId}/password-resets` | Issue a single-use reset link → 201 `{ resetUrl, expiresAt }` (24h TTL). 409 `user_blocked` if the user is blocked. |
 | `GET` | `/api/v1/admin/invitations` | List invitations (email, role, expiry, used status). |
 | `POST` | `/api/v1/admin/invitations` | `{ "email", "role" }` → 201 with the shareable `invitationUrl` (raw token shown **once**; only its SHA-256 hash is stored; expires in 7 days). 409 if the email is already registered. |
 | `DELETE` | `/api/v1/admin/invitations/{invitationId}` | Revoke an unused invitation. 204. |

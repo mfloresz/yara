@@ -6,8 +6,10 @@ import type {
   AdminPromptOverride,
   AdminProviderKey,
   AdminUser,
+  AdminUserStats,
   AuthResponse,
   InvitationValidation,
+  PasswordResetValidation,
   SetupStatus,
   BatchCheckResponse,
   BatchUpdateResponse,
@@ -185,6 +187,18 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       login(input: { email: string; password: string }) {
         return http.post<AuthResponse>("/api/v1/auth/login", input);
       },
+      async validatePasswordReset(token: string): Promise<PasswordResetValidation> {
+        return http.post<PasswordResetValidation>(
+          "/api/v1/auth/password-reset/validate",
+          { token },
+        );
+      },
+      async acceptPasswordReset(input: { token: string; password: string }) {
+        return http.post<{ email: string }>(
+          "/api/v1/auth/password-reset/accept",
+          input,
+        );
+      },
       refresh() {
         return http.post<AuthResponse>("/api/v1/auth/refresh");
       },
@@ -203,6 +217,27 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       },
       async updateUserRole(userId: string, role: "admin" | "user") {
         return http.patch<AdminUser>(`/api/v1/admin/users/${userId}`, { role });
+      },
+      async getUserStats(userId: string): Promise<AdminUserStats> {
+        return http.get<AdminUserStats>(`/api/v1/admin/users/${userId}/stats`);
+      },
+      async blockUser(userId: string) {
+        return http.post<AdminUser>(`/api/v1/admin/users/${userId}/block`);
+      },
+      async unblockUser(userId: string) {
+        return http.post<AdminUser>(`/api/v1/admin/users/${userId}/unblock`);
+      },
+      async deleteUser(
+        userId: string,
+        input: { mode: "with-novels" | "transfer"; transferToUserId?: string },
+      ) {
+        return http.deleteWithBody<void>(`/api/v1/admin/users/${userId}`, input);
+      },
+      async createPasswordReset(userId: string) {
+        return http.post<{ resetUrl: string; expiresAt?: string }>(
+          `/api/v1/admin/users/${userId}/password-resets`,
+          {},
+        );
       },
       async listInvitations(): Promise<AdminInvitation[]> {
         const result = await http.get<unknown>("/api/v1/admin/invitations");

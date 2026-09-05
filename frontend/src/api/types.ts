@@ -72,6 +72,7 @@ export type AdminUser = {
   email: string;
   name?: string;
   role: "admin" | "user";
+  blocked?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -111,6 +112,28 @@ export type AdminEffectivePrompt = {
   userPrompt: string;
   hasOverride: boolean;
   updatedAt?: string;
+};
+
+export type AdminUserNovel = {
+  id: string;
+  sourceTitle: string;
+  targetTitle?: string;
+  isPublic: boolean;
+  status?: string;
+  chapterCount: number;
+};
+
+export type AdminUserStats = {
+  user: AdminUser;
+  ownedCount: number;
+  sharedCount: number;
+  novels: AdminUserNovel[];
+};
+
+export type PasswordResetValidation = {
+  valid: boolean;
+  email?: string;
+  expiresAt?: string;
 };
 
 export type ImportEpubResult = {
