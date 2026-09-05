@@ -4,11 +4,6 @@
 
 > **Your library + translation pipeline + reader.** A single Go binary with an embedded PocketBase and a Vue SPA that does it all: import novels, translate them with AI, refine the result, and read without friction.
 
-<p align="center">
-  <img src="docs/screenshots/03-biblioteca.png" alt="Yara library — cover grid" width="100%">
-</p>
-<p align="center"><em>Library · six sample novels with generated covers · light theme “The Quiet Shelf” (warm stone on bone paper)</em></p>
-
 ---
 
 ## What Yara is
@@ -24,12 +19,6 @@ Yara is the evolution of [novel-translator](https://github.com/mfloresz/novel-tr
 ### Android client
 
 [yara-app](https://github.com/mfloresz/yara-app) is the companion Android client. It connects to a running Yara server and brings the library and the reader to your phone without going through a browser.
-
----
-
-## ⚠️ Deployment: personal use only
-
-Yara is designed as a **personal application**, meant to run on your own machine or be reached from devices on the **same local network**. It is **not meant to be exposed to the internet**: there are currently no restrictions on user registration — anyone who can reach the server can create an account. Registration controls will be added in a future release; until then, keep Yara behind your LAN.
 
 ---
 

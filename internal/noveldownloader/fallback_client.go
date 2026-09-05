@@ -57,6 +57,23 @@ func (c *LazyFallbackClient) Fetch(ctx context.Context, url string) ([]byte, err
 
 	body, err := c.direct.Fetch(ctx, url)
 	if err == nil {
+		// Inkitt serves chapters past the free preview folded to anonymous
+		// readers: HTTP 200 with an empty div#chapterText. A logged-in
+		// browser session unfolds the content, so retry through the proxy
+		// when one is connected instead of handing the parser an empty page.
+		if IsInkittChapterURL(url) && hasWorker && hasInkittFoldedChapter(body) {
+			slog.Info("lazyFallback: direct inkitt chapter is folded, retrying in browser", "url", url)
+			proxy := c.checker.NewProxyHTTPClient()
+			result, proxyErr := proxy.Fetch(ctx, url)
+			if proxyErr == nil && !hasInkittFoldedChapter(result) {
+				slog.Info("lazyFallback: browser retry unfolded chapter", "url", url, "bodyLen", len(result))
+				return result, nil
+			}
+			if proxyErr == nil {
+				proxyErr = fmt.Errorf("browser response is still folded (inkitt login required in that browser)")
+			}
+			slog.Warn("lazyFallback: browser retry failed, keeping direct response", "url", url, "error", proxyErr)
+		}
 		// Detect the known 200-but-not-rendered response for SkyDemonOrder. If
 		// the browser is available, retry the project page through Livewire
 		// before the parser falls back to walking every chapter.

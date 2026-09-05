@@ -143,3 +143,66 @@ func TestIsSkyDemonOrderProjectURL(t *testing.T) {
 		}
 	}
 }
+
+const inkittFoldedChapterHTML = `<html><body><h2 class="chapter-head-title">EP 4</h2>` +
+	`<div class='story-page-text_folded'><div class='story-page-text' id='chapterText'>  </div></div></body></html>`
+
+const inkittUnfoldedChapterHTML = `<html><body><h2 class="chapter-head-title">EP 4</h2>` +
+	`<div class='story-page-text' id='chapterText'><p data-content="1">Real text.</p></div></div></body></html>`
+
+func TestLazyFallbackClientUnfoldsInkittChapterThroughBrowser(t *testing.T) {
+	direct := &fallbackTestClient{fetchResults: []fallbackFetchResult{{body: inkittFoldedChapterHTML}}}
+	proxy := &fallbackTestClient{fetchResults: []fallbackFetchResult{{body: inkittUnfoldedChapterHTML}}}
+	checker := &fallbackTestChecker{hasWorker: true, proxy: proxy}
+	client := NewLazyFallbackClient(direct, checker)
+
+	body, err := client.Fetch(context.Background(), "https://www.inkitt.com/stories/1579934/chapters/5")
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if string(body) != inkittUnfoldedChapterHTML {
+		t.Fatalf("Fetch() body = %q, want unfolded browser response", body)
+	}
+	if checker.proxyCalls != 1 {
+		t.Fatalf("proxy client calls = %d, want 1", checker.proxyCalls)
+	}
+}
+
+func TestLazyFallbackClientKeepsUnfoldedInkittChapter(t *testing.T) {
+	// Free-preview chapters are already unfolded for anonymous readers;
+	// the proxy must not be touched.
+	direct := &fallbackTestClient{fetchResults: []fallbackFetchResult{{body: inkittUnfoldedChapterHTML}}}
+	proxy := &fallbackTestClient{fetchResults: []fallbackFetchResult{{body: inkittUnfoldedChapterHTML}}}
+	checker := &fallbackTestChecker{hasWorker: true, proxy: proxy}
+	client := NewLazyFallbackClient(direct, checker)
+
+	body, err := client.Fetch(context.Background(), "https://www.inkitt.com/stories/1579934/chapters/2")
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if string(body) != inkittUnfoldedChapterHTML {
+		t.Fatalf("Fetch() body = %q, want direct response", body)
+	}
+	if checker.proxyCalls != 0 {
+		t.Fatalf("proxy client calls = %d, want 0", checker.proxyCalls)
+	}
+}
+
+func TestLazyFallbackClientKeepsFoldedInkittChapterWithoutWorker(t *testing.T) {
+	// Without a connected browser there is nothing to retry with; the
+	// parser then reports the actionable login error.
+	direct := &fallbackTestClient{fetchResults: []fallbackFetchResult{{body: inkittFoldedChapterHTML}}}
+	checker := &fallbackTestChecker{hasWorker: false}
+	client := NewLazyFallbackClient(direct, checker)
+
+	body, err := client.Fetch(context.Background(), "https://www.inkitt.com/stories/1579934/chapters/5")
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if string(body) != inkittFoldedChapterHTML {
+		t.Fatalf("Fetch() body = %q, want direct response", body)
+	}
+	if checker.proxyCalls != 0 {
+		t.Fatalf("proxy client calls = %d, want 0", checker.proxyCalls)
+	}
+}

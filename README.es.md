@@ -4,11 +4,6 @@
 
 > **Tu biblioteca + pipeline de traducción + lector.** Un único binario en Go con PocketBase embebido y una SPA en Vue que lo hace todo: importar novelas, traducirlas con IA, refinar el resultado y leer sin fricción.
 
-<p align="center">
-  <img src="docs/screenshots/03-biblioteca.png" alt="Biblioteca de Yara — grid de portadas" width="100%">
-</p>
-<p align="center"><em>Biblioteca · seis novelas de ejemplo con portadas generadas · tema claro “The Quiet Shelf” (warm stone sobre bone paper)</em></p>
-
 ---
 
 ## Qué es Yara
