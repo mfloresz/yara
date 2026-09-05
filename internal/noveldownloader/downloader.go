@@ -51,6 +51,7 @@ func NewDownloader() *Downloader {
 			NewLiteroticaParser(),
 			NewWTRLabParser(),
 			NewNovelArrowParser(),
+			NewWattpadParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -76,6 +77,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewLiteroticaParser(),
 			NewWTRLabParser(),
 			NewNovelArrowParser(),
+			NewWattpadParser(),
 		},
 		client: client,
 	}
