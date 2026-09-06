@@ -13,6 +13,7 @@
           <n-tag v-if="activeCheckJobs.length > 0" round size="small" type="info">{{ activeCheckJobs.length }} verificando</n-tag>
           <n-tag v-if="activeDownloadCount > 0" round size="small" type="warning">{{ activeDownloadCount }} descargando</n-tag>
           <n-tag v-if="activeTranslateCount > 0" round size="small" type="success">{{ activeTranslateCount }} traduciendo</n-tag>
+          <n-tag v-if="activeRefineCount > 0" round size="small" type="success">{{ activeRefineCount }} refinando</n-tag>
         </n-space>
       </n-flex>
 
@@ -248,7 +249,8 @@ function hasAnyActive(novelId: string): boolean {
 
 const activeCheckJobs = computed(() => activeJobs.value.filter((j) => j.operation === "check"));
 const activeDownloadCount = computed(() => activeJobs.value.filter((j) => j.operation === "download").length);
-const activeTranslateCount = computed(() => activeJobs.value.filter((j) => j.operation === "translate" || j.operation === "refine").length);
+const activeTranslateCount = computed(() => activeJobs.value.filter((j) => j.operation === "translate").length);
+const activeRefineCount = computed(() => activeJobs.value.filter((j) => j.operation === "refine").length);
 
 function isActualizable(novel: Novel): boolean {
   return novel.canUpdate;

@@ -100,7 +100,7 @@ export type TranslationJob = {
   id: string;
   novelId: string;
   status: TranslationJobStatus;
-  operation?: "translate" | "refine" | "download" | "check";
+  operation?: "translate" | "refine" | "download" | "check" | "generate-glossary";
   provider?: string;
   model?: string;
   totalChapters: number;
@@ -162,7 +162,7 @@ export type ChapterUpsertInput = {
 };
 
 export type TranslationJobOptions = {
-  operation?: "translate" | "refine" | "download" | "check";
+  operation?: "translate" | "refine" | "download" | "check" | "generate-glossary";
   provider?: string;
   model?: string;
 };

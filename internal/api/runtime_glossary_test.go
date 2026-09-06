@@ -1,9 +1,11 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"translator-server/internal/ai"
+	"translator-server/internal/store"
 )
 
 func TestMergeGlossaryEmpty(t *testing.T) {
@@ -144,5 +146,30 @@ func TestFlattenGlossaryOutputEmpty(t *testing.T) {
 	result := flattenGlossaryOutput(out)
 	if len(result) != 0 {
 		t.Errorf("expected 0 entries, got %d", len(result))
+	}
+}
+
+func TestBuildGlossaryBatches(t *testing.T) {
+	// ~100 tokens per chapter (400 chars / 4), limit 250 → 2 chapters per batch.
+	var chapters []store.Chapter
+	for i := 1; i <= 5; i++ {
+		chapters = append(chapters, store.Chapter{
+			ChapterOrder:    i,
+			OriginalContent: strings.Repeat("a", 400),
+		})
+	}
+	batches := buildGlossaryBatches(chapters, 250)
+	if len(batches) != 3 {
+		t.Fatalf("expected 3 batches, got %d", len(batches))
+	}
+	if len(batches[0].texts) != 2 || len(batches[2].texts) != 1 {
+		t.Errorf("unexpected batch sizes: %d, %d, %d", len(batches[0].texts), len(batches[1].texts), len(batches[2].texts))
+	}
+	if batches[0].chFrom != 1 || batches[0].chTo != 2 || batches[2].chFrom != 5 {
+		t.Errorf("unexpected batch ranges: %+v %+v", batches[0], batches[2])
+	}
+
+	if got := buildGlossaryBatches(nil, 250); len(got) != 0 {
+		t.Errorf("expected no batches for no chapters, got %d", len(got))
 	}
 }

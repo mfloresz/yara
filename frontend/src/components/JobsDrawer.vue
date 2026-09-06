@@ -10,7 +10,7 @@
           <n-icon :size="40" style="color: var(--text-tertiary)"><CheckmarkCircleOutline /></n-icon>
           <div>
             <h3 class="jobs-empty-title">Sin trabajos activos</h3>
-            <p class="muted small" style="margin: 0">Inicia una traducción o refinamiento desde una novela para ver el progreso aquí.</p>
+            <p class="muted small" style="margin: 0">Inicia un trabajo desde una novela —traducción, refinamiento, descarga o glosario— para ver el progreso aquí.</p>
           </div>
         </div>
 
@@ -49,15 +49,17 @@
             </div>
 
             <div class="stack-sm">
-              <div class="row-between small">
-                <span class="muted">Progreso</span>
-                <span>
-                  <strong>{{ job.completedChapters }}</strong>/{{ job.totalChapters }}
-                  <span v-if="job.failedChapters > 0" class="failed-chapters"> · {{ job.failedChapters }} fallidos</span>
-                </span>
-              </div>
-              <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="false" />
-              <n-spin v-else :size="16" />
+              <template v-if="jobShowsChapterProgress(job)">
+                <div class="row-between small">
+                  <span class="muted">Progreso</span>
+                  <span>
+                    <strong>{{ job.completedChapters }}</strong>/{{ job.totalChapters }}
+                    <span v-if="job.failedChapters > 0" class="failed-chapters"> · {{ job.failedChapters }} fallidos</span>
+                  </span>
+                </div>
+                <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="false" />
+                <n-spin v-else :size="16" />
+              </template>
               <div v-if="jobCurrentActivityLabel(job)" class="small muted">
                 {{ jobCurrentActivityLabel(job) }}
               </div>
@@ -129,6 +131,7 @@ import {
   autoSegmentLabel,
   jobFinishedChapterCount,
   jobHasStartedWork,
+  jobShowsChapterProgress,
   jobShowsCompletedProgress,
   jobProgress,
   jobCurrentActivityLabel,

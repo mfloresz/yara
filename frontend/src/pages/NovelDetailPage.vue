@@ -128,6 +128,7 @@
             @bulk-delete="onBulkDeleteChapters"
             @create="openCreateChapter"
             @import="bulkImportOpen = true"
+            @open="openChapterPreview"
             @update:page="chapterPage = $event"
           />
           <div v-if="excludedChapters.length > 0" class="stack-sm">
@@ -192,6 +193,14 @@
       :saving="chapterSaving"
       @update:open="chapterDialogOpen = $event"
       @save="saveChapter"
+    />
+
+    <ChapterPreviewDrawer
+      v-model:open="previewOpen"
+      :chapter="previewChapter"
+      :is-owner="isOwner"
+      :create-job="createChapterJob"
+      @job-created="onChapterJobCreated"
     />
 
     <BulkImportDialog
@@ -283,6 +292,7 @@ import UpdateUrlDialog from "@/features/novels/UpdateUrlDialog.vue";
 import ProjectSettingsDialog from "@/features/projects/ProjectSettingsDialog.vue";
 import NovelSidebar from "@/features/novels/NovelSidebar.vue";
 import NovelChapterDialog from "@/features/novels/NovelChapterDialog.vue";
+import ChapterPreviewDrawer from "@/features/novels/ChapterPreviewDrawer.vue";
 import DescriptionBlock from "@/features/novels/DescriptionBlock.vue";
 import ChaptersTab from "@/features/novels/tabs/ChaptersTab.vue";
 import TranslateTab from "@/features/novels/tabs/TranslateTab.vue";
@@ -373,6 +383,8 @@ const updateUrlOpen = ref(false);
 const chapterDialogOpen = ref(false);
 const chapterSaving = ref(false);
 const editingChapter = ref<Chapter | null>(null);
+const previewOpen = ref(false);
+const previewChapter = ref<ChapterSummary | null>(null);
 const pendingDeleteChapterId = ref<string | null>(null);
 const bulkDeleting = ref(false);
 
@@ -580,6 +592,28 @@ async function onUrlUpdated(pending?: number) {
 function openCreateChapter() {
   editingChapter.value = null;
   chapterDialogOpen.value = true;
+}
+
+function openChapterPreview(chapter: ChapterSummary) {
+  previewChapter.value = chapter;
+  previewOpen.value = true;
+}
+
+async function createChapterJob(chapterIds: string[], operation: "translate" | "refine") {
+  if (!novel.value) return;
+  await createJob(chapterIds, {
+    operation,
+    provider: novel.value.aiOptions.provider || undefined,
+    model: novel.value.aiOptions.model || undefined,
+  });
+}
+
+function onChapterJobCreated(chapterId: string) {
+  patchTranslateStatus([chapterId]);
+  if (previewChapter.value?.id === chapterId) {
+    previewChapter.value = chapterSummaries.value.find((chapter) => chapter.id === chapterId) ?? previewChapter.value;
+  }
+  markFailedJobsDirty();
 }
 
 async function saveChapter(payload: ChapterUpsertInput & { id?: string }) {

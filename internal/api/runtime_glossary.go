@@ -142,8 +142,17 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		return fmt.Errorf("no chapters in range")
 	}
 
+	// Progress units: one unit per batch in "batch" mode, a single unit in
+	// "together" mode. totalChapters doubles as the job's work-unit counter so
+	// the frontend drawer shows coherent progress for glossary jobs.
+	var batches []glossaryBatch
+	totalUnits := 1
+	if opts.Mode == "batch" {
+		batches = buildGlossaryBatches(selectedChapters, opts.MaxTokensPerBatch)
+		totalUnits = len(batches)
+	}
 	if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
-		"totalChapters": len(selectedChapters),
+		"totalChapters": totalUnits,
 	}); ue != nil {
 		slog.Warn("update job total chapters", "jobId", job.ID, "error", ue)
 	}
@@ -175,7 +184,7 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 	var allEntries []ai.GlossaryEntry
 
 	if opts.Mode == "batch" {
-		allEntries, err = s.processGlossaryBatch(ctx, provider, systemPrompt, selectedChapters, novel, existingTerms, job.ID, opts)
+		allEntries, err = s.processGlossaryBatch(ctx, provider, systemPrompt, batches, novel, existingTerms, job.ID)
 	} else {
 		allEntries, err = s.processGlossaryTogether(ctx, provider, systemPrompt, selectedChapters, novel, existingTerms, job.ID)
 	}
@@ -317,22 +326,25 @@ func (s *Server) processGlossaryTogether(ctx context.Context, provider ai.Provid
 	return flattenGlossaryOutput(result), nil
 }
 
-func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider, systemPrompt string, chapters []store.Chapter, novel *store.Novel, existingTerms []string, jobID string, opts glossaryJobOptions) ([]ai.GlossaryEntry, error) {
-	type textBatch struct {
-		texts  []string
-		chFrom int
-		chTo   int
-	}
+type glossaryBatch struct {
+	texts  []string
+	chFrom int
+	chTo   int
+}
 
-	var batches []textBatch
-	var currentBatch textBatch
+// buildGlossaryBatches groups chapters into batches whose estimated token
+// count stays under maxTokensPerBatch. Shared by the job processor (which
+// uses len(batches) as the job's progress total) and the batch runner.
+func buildGlossaryBatches(chapters []store.Chapter, maxTokensPerBatch int) []glossaryBatch {
+	var batches []glossaryBatch
+	var currentBatch glossaryBatch
 	var currentTokens int
 
 	for _, ch := range chapters {
 		chTokens := estimateTokens(ch.OriginalContent)
-		if len(currentBatch.texts) > 0 && currentTokens+chTokens > opts.MaxTokensPerBatch {
+		if len(currentBatch.texts) > 0 && currentTokens+chTokens > maxTokensPerBatch {
 			batches = append(batches, currentBatch)
-			currentBatch = textBatch{chFrom: ch.ChapterOrder, chTo: ch.ChapterOrder}
+			currentBatch = glossaryBatch{chFrom: ch.ChapterOrder, chTo: ch.ChapterOrder}
 			currentTokens = 0
 		}
 		if currentBatch.chFrom == 0 {
@@ -345,7 +357,10 @@ func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider,
 	if len(currentBatch.texts) > 0 {
 		batches = append(batches, currentBatch)
 	}
+	return batches
+}
 
+func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider, systemPrompt string, batches []glossaryBatch, novel *store.Novel, existingTerms []string, jobID string) ([]ai.GlossaryEntry, error) {
 	totalBatches := len(batches)
 	var allEntries []ai.GlossaryEntry
 	failedBatches := 0
@@ -377,6 +392,11 @@ func (s *Server) processGlossaryBatch(ctx context.Context, provider ai.Provider,
 			slog.Warn("glossary batch failed", "jobId", jobID, "batch", i+1, "total", totalBatches, "error", err)
 			failedBatches++
 			lastErr = err
+			if ue := s.Store.UpdateJob(jobID, map[string]interface{}{
+				"failedChapters": failedBatches,
+			}); ue != nil {
+				slog.Warn("update job failed batches", "jobId", jobID, "error", ue)
+			}
 			continue
 		}
 

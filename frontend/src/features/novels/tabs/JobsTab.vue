@@ -14,7 +14,10 @@
       <div class="stack-md">
         <div class="row-between">
           <div>
-            <div style="font-weight: 600">{{ job.completedChapters }}/{{ job.totalChapters }} completados · {{ job.failedChapters }} fallidos</div>
+            <div style="font-weight: 600">
+              <template v-if="jobShowsChapterProgress(job)">{{ job.completedChapters }}/{{ job.totalChapters }} completados · {{ job.failedChapters }} fallidos</template>
+              <template v-else>{{ operationLabel(job) }}</template>
+            </div>
             <div class="small muted">{{ job.provider || 'provider por defecto' }} · {{ job.model || 'model por defecto' }} · {{ formatDate(job.createdAt) }}</div>
           </div>
           <div class="row-wrap">
@@ -22,8 +25,10 @@
             <n-button v-if="job.status === 'running' || job.status === 'pending'" size="small" type="error" secondary @click="emit('cancel-job', job.id)">Cancelar</n-button>
           </div>
         </div>
-        <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="true" />
-        <n-progress v-else :show-indicator="false" :status="'info'" :percentage="100" />
+        <template v-if="jobShowsChapterProgress(job)">
+          <n-progress v-if="jobShowsCompletedProgress(job)" :percentage="jobProgress(job)" :show-indicator="true" />
+          <n-progress v-else :show-indicator="false" :status="'info'" :percentage="100" />
+        </template>
         <div v-if="jobCurrentActivityLabel(job)" class="small muted">
           {{ jobCurrentActivityLabel(job) }}
         </div>
@@ -80,9 +85,11 @@ import { chapterStatusLabel, resolvedChapterStatus } from "@/composables/useChap
 import {
   jobStatusLabel,
   jobTagType,
+  jobShowsChapterProgress,
   jobShowsCompletedProgress,
   jobProgress,
   jobCurrentActivityLabel,
+  operationLabel,
 } from "@/composables/useJobHelpers";
 
 const props = defineProps<{

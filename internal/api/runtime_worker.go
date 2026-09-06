@@ -382,6 +382,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		"status":        "running",
 		"totalChapters": len(opts.Chapters),
 		"errorMessage":  "",
+		"autoSegmentChapterTitle": "",
 	}); err != nil {
 		return fmt.Errorf("set job running: %w", err)
 	}
@@ -412,6 +413,14 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 				}
 				return err
 			}
+		}
+
+		// Report the in-flight chapter so the jobs drawer can show
+		// "Descargando capítulo: <título>" while the fetch runs.
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"autoSegmentChapterTitle": chInfo.Title,
+		}); ue != nil {
+			slog.Warn("update job current chapter", "jobId", job.ID, "error", ue)
 		}
 
 		ch, downloadErr := s.downloadChapterWithRetry(ctx, dl, proxyDL, parser, chInfo, job.ID, job.OwnerID)

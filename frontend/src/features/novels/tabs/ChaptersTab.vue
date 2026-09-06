@@ -15,6 +15,7 @@
       @bulk-delete="(event) => emit('bulk-delete', event)"
       @create="emit('create')"
       @import="emit('import')"
+      @open="(chapter) => emit('open', chapter)"
       @update:page="(p) => emit('update:page', p)"
     />
   </section>
@@ -44,5 +45,6 @@ const emit = defineEmits<{
   (e: "bulk-delete", event: Event): void;
   (e: "create"): void;
   (e: "import"): void;
+  (e: "open", chapter: ChapterSummary): void;
 }>();
 </script>

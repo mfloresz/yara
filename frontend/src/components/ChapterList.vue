@@ -86,14 +86,18 @@
             @update:checked="toggleSelected(item.chapter, $event)"
           />
 
-          <RouterLink
-            :to="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
+          <!-- Plain anchor (not RouterLink): RouterLink composes its own navigate
+               handler first, so @click.prevent still ends up navigating. Middle-click
+               / open-in-new-tab keeps working via the href. -->
+          <a
+            :href="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
             class="chapter-list-link"
-            :aria-label="`Editar capítulo ${chapterPosition(item.chapter)}: ${item.chapter.title}`"
+            :aria-label="`Ver capítulo ${chapterPosition(item.chapter)}: ${item.chapter.title}`"
+            @click.prevent="emit('open', item.chapter)"
           >
             <span class="chapter-list-order mono small muted">#{{ String(chapterPosition(item.chapter)).padStart(2, "0") }}</span>
             <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
-          </RouterLink>
+          </a>
 
           <n-tag
             :type="chapterTagType(resolvedStatus(item.chapter))"
@@ -142,7 +146,6 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink } from "vue-router";
 import { NButton, NCard, NCheckbox, NPagination, NSkeleton, NTag, NIcon, NPopconfirm } from "naive-ui";
 import {
   TrashOutline,
@@ -173,6 +176,7 @@ const emit = defineEmits<{
   (e: "bulk-delete", event: Event): void;
   (e: "create"): void;
   (e: "import"): void;
+  (e: "open", chapter: ChapterSummary): void;
 }>();
 
 const selectedIds = computed(() => new Set(props.selected.map((item) => item.id)));
