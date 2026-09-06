@@ -10,10 +10,20 @@
     </div>
 
     <div v-else class="stack-lg">
-      <n-button secondary @click="router.push(`/novels/${novelId}`)">
-        <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
-        Volver a capítulos
-      </n-button>
+      <n-button-group>
+        <n-button secondary :disabled="!prevChapter" @click="goToChapter(prevChapter)">
+          <template #icon><n-icon><ChevronBackOutline /></n-icon></template>
+          Anterior
+        </n-button>
+        <n-button secondary @click="router.push(`/novels/${novelId}`)">
+          <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+          Volver a capítulos
+        </n-button>
+        <n-button secondary :disabled="!nextChapter" @click="goToChapter(nextChapter)">
+          Siguiente
+          <template #icon><n-icon><ChevronForwardOutline /></n-icon></template>
+        </n-button>
+      </n-button-group>
 
       <div class="row-between">
         <div style="min-width: 0">
@@ -115,6 +125,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NButton,
+  NButtonGroup,
   NCard,
   NInput,
   NAlert,
@@ -126,6 +137,8 @@ import {
 } from "naive-ui";
 import {
   ArrowBackOutline,
+  ChevronBackOutline,
+  ChevronForwardOutline,
   SparklesOutline,
   ColorWandOutline,
   CheckmarkOutline,
@@ -137,6 +150,7 @@ import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useAppServices } from "@/app/services";
 import { chapterStatusLabel, chapterTagType } from "@/composables/useChapterStatus";
 import { chapterPosition, type Chapter, type Novel } from "@/domain";
+import type { ChapterSummary } from "@/api/types";
 import { emitJobChanged } from "@/utils/job-events";
 import { markdownToHtml } from "@/utils/markdown";
 
@@ -151,6 +165,7 @@ const novel = ref<Novel | null>(null);
 const novelLoading = ref(false);
 const chapter = ref<Chapter | null>(null);
 const chaptersLoading = ref(false);
+const chapterSummaries = ref<ChapterSummary[]>([]);
 
 const title = ref("");
 const translatedTitle = ref("");
@@ -260,6 +275,34 @@ watch([novelId, chapterId], () => {
   void loadNovel();
   void loadChapter();
 }, { immediate: true });
+
+watch(novelId, () => {
+  chapterSummaries.value = [];
+  if (!novelId.value) return;
+  api.chapters.list(novelId.value)
+    .then((items) => { chapterSummaries.value = items; })
+    .catch(() => { chapterSummaries.value = []; });
+}, { immediate: true });
+
+const sortedSummaries = computed(() =>
+  [...chapterSummaries.value].sort((a, b) => a.chapterOrder - b.chapterOrder),
+);
+
+const prevChapter = computed<ChapterSummary | null>(() => {
+  const idx = sortedSummaries.value.findIndex((c) => c.id === chapterId.value);
+  return idx > 0 ? sortedSummaries.value[idx - 1] : null;
+});
+
+const nextChapter = computed<ChapterSummary | null>(() => {
+  const idx = sortedSummaries.value.findIndex((c) => c.id === chapterId.value);
+  return idx >= 0 && idx < sortedSummaries.value.length - 1 ? sortedSummaries.value[idx + 1] : null;
+});
+
+function goToChapter(target: ChapterSummary | null) {
+  if (!target) return;
+  router.push(`/novels/${novelId.value}/chapters/${target.id}`);
+  window.scrollTo({ top: 0 });
+}
 
 watch(hasActive, (active, previous) => {
   if (!previous || active || chapter.value?.status !== "processing") return;
