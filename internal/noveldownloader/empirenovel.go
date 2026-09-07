@@ -97,13 +97,11 @@ func (p *empirenovelParser) ParseChapter(ctx context.Context, client HTTPClient,
 		return nil, err
 	}
 
-	// Title: h3 inside the content area
+	// Title: h3 inside the content area (legacy layout, still used by older
+	// chapters).
 	title := strings.TrimSpace(doc.Find(".mx-2 h3, .mx-sm-5 h3").Text())
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("h3").First().Text())
-	}
-	if title == "" {
-		title = strings.TrimSpace(doc.Find("h1").First().Text())
 	}
 
 	// Content: p tags inside the reader content area
@@ -115,7 +113,28 @@ func (p *empirenovelParser) ParseChapter(ctx context.Context, client HTTPClient,
 	// Remove non-content elements
 	contentSel.Find("script, style, noscript, iframe, nav, header, footer, .ads, .ad").Remove()
 
+	// New layout: there is no h3 and the page h1 is the (truncated) novel
+	// title, so the chapter title is the first line of the chapter content
+	// (e.g. <p><strong>Chapter 1263: ...</strong></p>).
+	titleFromFirstLine := false
+	if title == "" {
+		if first := contentSel.Find("p").First(); first.Length() > 0 {
+			if t := strings.TrimSpace(first.Text()); t != "" {
+				title = t
+				titleFromFirstLine = true
+			}
+		}
+	}
+	if title == "" {
+		if n := empireNovelChapterNumber(chapterURL); n > 0 {
+			title = "Chapter " + strconv.Itoa(n)
+		}
+	}
+
 	contentParts := extractParagraphs(contentSel)
+	if titleFromFirstLine && len(contentParts) > 0 {
+		contentParts = contentParts[1:]
+	}
 
 	// Fallback: extract all text if no paragraphs found
 	if len(contentParts) == 0 {
