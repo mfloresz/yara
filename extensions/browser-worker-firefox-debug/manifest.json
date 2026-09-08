@@ -16,7 +16,8 @@
     "activeTab",
     "storage",
     "scripting",
-    "alarms"
+    "alarms",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"

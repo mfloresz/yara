@@ -1,5 +1,6 @@
 import { MessageType, JobStatus, WorkerState, createMessage, parseMessage } from '../shared/protocol.js';
 import { getConfig, setConfig } from '../shared/storage.js';
+import { SUPPORTED_SITE_PATTERNS, yaraBaseUrl } from '../shared/supported-sites.js';
 
 let ws = null;
 let state = WorkerState.DISCONNECTED;
@@ -14,6 +15,59 @@ const log = (msg, ...args) => console.log(`[DebugWorker] ${msg}`, ...args);
 const warn = (msg, ...args) => console.warn(`[DebugWorker] ${msg}`, ...args);
 const err = (msg, ...args) => console.error(`[DebugWorker] ${msg}`, ...args);
 
+// ── "Añadir historia a Yara" context menu ────────────────────────────
+// Hardcoded supported-site list (see ../shared/supported-sites.js), no auth
+// needed in debug mode. Opens the debug server address with ?importUrl=<page>.
+const YARA_CONTEXT_MENU_ID = 'yara-add-story';
+
+function setupContextMenu() {
+  try {
+    if (!chrome.contextMenus) return;
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: YARA_CONTEXT_MENU_ID,
+        title: 'Añadir historia a Yara',
+        contexts: ['page'],
+        documentUrlPatterns: SUPPORTED_SITE_PATTERNS,
+      }, () => {
+        if (chrome.runtime.lastError) warn('Context menu creation failed:', chrome.runtime.lastError.message);
+      });
+    });
+  } catch (e) {
+    warn('Context menu setup failed:', e?.message || e);
+  }
+}
+
+async function openYaraWithUrl(pageUrl) {
+  const config = await getConfig();
+  const base = yaraBaseUrl(config.serverAddr);
+  const target = `${base}/?importUrl=${encodeURIComponent(pageUrl)}`;
+  try {
+    const tabs = await chrome.tabs.query({});
+    const existing = tabs.find((t) => t.url && t.url.startsWith(base));
+    if (existing) {
+      await chrome.tabs.update(existing.id, { url: target, active: true });
+      try { await chrome.windows.update(existing.windowId, { focused: true }); } catch { /* ignore */ }
+      return;
+    }
+  } catch (e) {
+    warn('Yara tab lookup failed, opening a new tab:', e?.message || e);
+  }
+  await chrome.tabs.create({ url: target });
+}
+
+try {
+  if (chrome.contextMenus && chrome.contextMenus.onClicked) {
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId !== YARA_CONTEXT_MENU_ID) return;
+      const pageUrl = info.pageUrl || tab?.url;
+      if (pageUrl) openYaraWithUrl(pageUrl).catch((e) => err('Open Yara failed:', e));
+    });
+  }
+} catch (e) {
+  warn('Context menu click listener failed:', e?.message || e);
+}
+
 const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MS = 20000;
 const STALE_THRESHOLD_MS = 60000;
@@ -25,6 +79,11 @@ async function init() {
   if (config.autoConnect) connect();
   chrome.runtime.onMessage.addListener(handleInternalMessage);
   chrome.alarms.onAlarm.addListener(onAlarm);
+  setupContextMenu();
+  try {
+    if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(setupContextMenu);
+    if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(setupContextMenu);
+  } catch { /* ignore */ }
   scheduleKeepAlive();
 }
 

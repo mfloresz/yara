@@ -38,7 +38,7 @@ import { SearchOutline } from "@vicons/ionicons5";
 import { useNovels } from "@/composables/useNovels";
 import type { PreviewUrlResult } from "@/api/types";
 
-const props = defineProps<{ open: boolean }>();
+const props = defineProps<{ open: boolean; initialUrl?: string }>();
 const emit = defineEmits<{
   "update:open": [value: boolean];
   "preview": [preview: PreviewUrlResult];
@@ -51,7 +51,7 @@ const visible = computed({
   set: (value) => emit("update:open", value),
 });
 
-const supportedSites = ["novelfire.net", "novelphoenix.com", "inkitt.com"];
+const supportedSites = ["novelfire.net", "novelphoenix.com", "fenrirealm.com", "floraegarden.com", "cherrymist.cafe", "empirenovel.com", "69shuba.com", "skynovels.net", "skydemonorder.com", "literotica.com", "wtr-lab.com", "novelarrow.com", "wattpad.com", "inkitt.com"];
 
 const url = ref("");
 const loading = ref(false);
@@ -64,7 +64,14 @@ function reset() {
 }
 
 watch(visible, (open) => {
-  if (open) reset();
+  if (!open) return;
+  reset();
+  // Deep-link from the browser extension (?importUrl=...): prefill and
+  // start the preview fetch immediately, same as a manual search click.
+  if (props.initialUrl?.trim()) {
+    url.value = props.initialUrl.trim();
+    void handleSearch();
+  }
 });
 
 async function handleSearch() {

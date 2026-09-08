@@ -275,6 +275,7 @@
 
     <ImportUrlDialog
       :open="importUrlOpen"
+      :initial-url="pendingImportUrl"
       @update:open="importUrlOpen = $event"
       @preview="onUrlPreviewed"
     />
@@ -601,6 +602,7 @@ const importOpen = ref(false);
 const importZipOpen = ref(false);
 const importUrlOpen = ref(false);
 const importUrlConfirmOpen = ref(false);
+const pendingImportUrl = ref<string | undefined>(undefined);
 const urlPreview = ref<PreviewUrlResult | null>(null);
 const importing = ref(false);
 const importPreviewLoading = ref(false);
@@ -709,8 +711,32 @@ function isSharedNovel(novel: Novel) {
 onMounted(() => {
   restorePreferences(auth.user.value?.id);
   applyFiltersFromRoute();
+  consumeImportUrlQuery();
   void loadLibrary();
 });
+
+// Deep-link from the browser extension context menu (?importUrl=...).
+// Opens the import dialog prefilled and auto-starts the preview fetch,
+// then strips the param so back/forward navigation doesn't reopen it.
+function consumeImportUrlQuery() {
+  const raw = route.query.importUrl;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string" || !value.trim()) return;
+  pendingImportUrl.value = value.trim();
+  importUrlConfirmOpen.value = false;
+  urlPreview.value = null;
+  importUrlOpen.value = true;
+  const query = { ...route.query };
+  delete query.importUrl;
+  void router.replace({ path: "/", query });
+}
+
+watch(
+  () => route.query.importUrl,
+  (value) => {
+    if (typeof value === "string" && value.trim()) consumeImportUrlQuery();
+  },
+);
 
 // Back/forward navigation: re-apply the filter state encoded in the URL and
 // reload (the composable's signature cache skips the fetch when nothing changed).
