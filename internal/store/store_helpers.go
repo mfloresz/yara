@@ -39,9 +39,15 @@ func normalizeTranslation(cfg TranslationDefaults) TranslationDefaults {
 // novelCoverURL points at the authenticated cover handler instead of
 // PocketBase's native /api/files route, because cover/thumbnail files are
 // Protected (see ensureNovelsCollection) and require a file token there.
+// When the novel has no stored file it still returns the per-novel cover URL:
+// the handler serves the bundled default cover (assets/no_cover.jpg) so every
+// novel always has a displayable image without duplicating bytes per record.
 func novelCoverURL(novelID, fileName string) string {
 	if strings.TrimSpace(fileName) == "" {
-		return ""
+		if strings.TrimSpace(novelID) == "" {
+			return ""
+		}
+		return fmt.Sprintf("/api/v1/novels/%s/cover", novelID)
 	}
 	return fmt.Sprintf("/api/v1/novels/%s/cover", novelID)
 }

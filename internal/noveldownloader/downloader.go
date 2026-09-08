@@ -53,6 +53,7 @@ func NewDownloader() *Downloader {
 			NewNovelArrowParser(),
 			NewWattpadParser(),
 			NewInkittParser(),
+			NewGaydemonParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -80,6 +81,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewNovelArrowParser(),
 			NewWattpadParser(),
 			NewInkittParser(),
+			NewGaydemonParser(),
 		},
 		client: client,
 	}

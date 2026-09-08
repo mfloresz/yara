@@ -65,6 +65,12 @@ func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
 				}
 			}
 		}
+		// Novels without a stored cover export with the bundled default so
+		// the EPUB always has a portada instead of none.
+		if len(coverBytes) == 0 {
+			coverBytes = DefaultCoverBytes
+			coverMime = DefaultCoverMime
+		}
 
 		epubChapters := buildEpubChapters(chapters, body.Source)
 		if len(epubChapters) == 0 {

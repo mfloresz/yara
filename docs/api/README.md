@@ -230,7 +230,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `POST` | `/api/v1/novels/{id}/clone` | Duplicate the novel (translations, glossary, options). Returns 201 + `Location`. |
 | `PATCH` | `/api/v1/novels/{id}/visibility` | Body `{ "isPublic": true\|false }`. |
 | `POST` | `/api/v1/novels/{id}/cover` | `multipart/form-data` with `cover` field. Returns the updated novel. |
-| `GET` | `/api/v1/novels/{id}/cover` | Download the stored cover (thumbnail when present). Cookie-authenticated; the underlying file fields are protected so PocketBase's native `/api/files` route is not usable for covers. Access follows novel visibility (owner or `isPublic`). |
+| `GET` | `/api/v1/novels/{id}/cover` | Download the stored cover (thumbnail when present). Cookie-authenticated; the underlying file fields are protected so PocketBase's native `/api/files` route is not usable for covers. Access follows novel visibility (owner or `isPublic`). Novels without a stored cover get the bundled default image. |
 | `POST` | `/api/v1/novels/{id}/recalculate-stats` | Recompute chapter counts and char counts. |
 | `GET` | `/api/v1/novels/{id}/full` | Return the novel + all chapters (heavy). |
 

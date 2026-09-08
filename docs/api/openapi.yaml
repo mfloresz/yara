@@ -473,7 +473,8 @@ paths:
         thumbnail file fields are protected, so PocketBase's native
         /api/files route requires a file token; this endpoint is the
         replacement the novel's coverPath points at. Access follows novel
-        visibility (owner or is_public).
+        visibility (owner or is_public). Novels without a stored cover get
+        the bundled default image, so coverPath is always usable.
       responses:
         '200':
           description: OK
