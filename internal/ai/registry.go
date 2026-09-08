@@ -127,6 +127,23 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
+		ID:      "inferx",
+		Name:    "InferX",
+		BaseURL: "https://model.inferx.net/endpoints/v1",
+		Models: []string{
+			"deepseek-v4-flash-0731",
+			"gemma-4-31B-it-fp8",
+			"Qwen3.6-35B-A3B-FP8",
+		},
+		DefaultModel: "deepseek-v4-flash-0731",
+		OpenAICompat: true,
+		GoAIOptions: map[string]any{
+			"useResponsesAPI":  false,
+			"strictJsonSchema": true,
+		},
+	},
+
+	{
 		ID:           "lmstudio",
 		Name:         "LM Studio",
 		BaseURL:      "http://localhost:1234/v1",

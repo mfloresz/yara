@@ -144,7 +144,7 @@ Anti-references: no dense "admin dashboard" look, and no mobile-as-afterthought 
 |---|---|
 | Backend | Go 1.26, embedded PocketBase, `goai` for OpenAI-compatible providers, `log/slog` |
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
-| AI | 7 registered providers: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `lmstudio`, `google` — keys stored with AES-GCM |
+| AI | 8 registered providers: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — keys stored with AES-GCM |
 | Persistence | SQLite (via PocketBase), idempotent schema in `store_schema.go`, `--migrate-db` flag for breaking changes |
 | Scraper | `internal/noveldownloader` — 11 parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow); `RequiresBrowser()` marks the ones behind Cloudflare |
 | EPUB | `internal/epubimport` + `internal/epubexport` (pure packages, no HTTP/store dependencies) |
