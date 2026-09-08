@@ -147,6 +147,8 @@
           <template #icon><n-icon :size="20"><LogOutOutline /></n-icon></template>
           <span>Cerrar sesión</span>
         </n-button>
+        <n-divider style="margin: 0.5rem 0;" />
+        <div class="mobile-nav-version">{{ serverVersion ? `Yara v${serverVersion}` : "Yara…" }}</div>
       </n-drawer-content>
     </n-drawer>
 
@@ -180,10 +182,12 @@ import {
 import JobsDrawer from "@/components/JobsDrawer.vue";
 import { applyTheme, getStoredTheme } from "@/app/auth";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
+import { useServerVersion } from "@/composables/useServerVersion";
 import { useAppServices } from "@/app/services";
 
 const router = useRouter();
 const { hasActive } = useActiveJobStatus();
+const { version: serverVersion } = useServerVersion();
 const { auth, logout } = useAppServices();
 const jobsOpen = ref(false);
 const mobileNavOpen = ref(false);
@@ -225,6 +229,12 @@ const userMenuDropdownItems = computed(() => {
     items.push({ label: "Administración", key: "admin" });
   }
   items.push({ label: "Cerrar sesión", key: "logout" });
+  items.push({ type: "divider", key: "d-version" });
+  items.push({
+    label: serverVersion.value ? `Yara v${serverVersion.value}` : "Yara…",
+    key: "version",
+    disabled: true,
+  });
   return items;
 });
 
@@ -371,5 +381,12 @@ function handleMobileNav(command?: () => void) {
   font-weight: 600;
   padding: 0.125rem 0.5rem;
   border-radius: var(--radius-pill);
+}
+
+.mobile-nav-version {
+  padding: 0.25rem 0.75rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted, #8a8a8a);
+  text-align: center;
 }
 </style>

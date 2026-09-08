@@ -617,6 +617,26 @@ func TestGlobalPromptOverridesAndReset(t *testing.T) {
 	}
 }
 
+func TestHealthzExposesVersion(t *testing.T) {
+	env := newAPITestEnv(t)
+	env.server.Version = "v9.9.9-test"
+
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/healthz", "", nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	var body struct {
+		Ok      bool   `json:"ok"`
+		Version string `json:"version"`
+	}
+	decodeRaw(t, resp, &body)
+	if !body.Ok {
+		t.Fatalf("expected ok=true, got %v (%s)", body.Ok, resp.Body.String())
+	}
+	if body.Version != "v9.9.9-test" {
+		t.Fatalf("expected version v9.9.9-test, got %q", body.Version)
+	}
+}
+
 func TestSecurityHeaders(t *testing.T) {
 	env := newAPITestEnv(t)
 

@@ -55,7 +55,7 @@ Public endpoints (no auth required):
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `GET /api/worker-auth/authorize` and `/api/worker-auth/callback` (the extension OAuth flow)
-- `GET /healthz`
+- `GET /healthz` — `{ok: true, version: "<build>"}`, público y sin auth. `version` es `main.Version` (ldflags) con fallback `"dev".
 - `GET /ws/browser-worker` (WebSocket, authenticates in-band)
 
 ## Envelope, pagination, fields

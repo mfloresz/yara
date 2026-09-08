@@ -87,7 +87,7 @@ func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
 	provider, err := server.newAIProvider(store.AISettings{
 		Provider: "opencode-go",
 		APIKey:   "test-key",
-		Model:    "muse-spark-1.2-contributor",
+		Model:    "muse-spark-1.3-contributor",
 	}, "session-abc")
 	if err != nil {
 		t.Fatalf("new AI provider: %v", err)
@@ -97,10 +97,10 @@ func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
 		t.Fatalf("expected *ai.OpenAIProvider, got %T", provider)
 	}
 	if got, _ := op.ProviderOptions["useResponsesAPI"].(bool); !got {
-		t.Fatal("expected muse-spark-1.2-contributor on opencode-go to use the responses API")
+		t.Fatal("expected muse-spark-1.3-contributor on opencode-go to use the responses API")
 	}
 	if got, _ := op.ProviderOptions["strictJsonSchema"].(bool); !got {
-		t.Fatal("expected strict JSON schema to remain enabled for muse-spark-1.2-contributor")
+		t.Fatal("expected strict JSON schema to remain enabled for muse-spark-1.3-contributor")
 	}
 }
 

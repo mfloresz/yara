@@ -96,7 +96,7 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: medium)": true,
 		"mimo-v2.5":                  true,
 		"deepseek-v4-flash":          true,
-		"muse-spark-1.2-contributor": true,
+		"muse-spark-1.3-contributor": true,
 		"ox-alpha-free":              true,
 	}
 	if len(info.Models) != len(wantModels) {
@@ -107,8 +107,8 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 			t.Fatalf("unexpected model %q in opencode-go", m)
 		}
 	}
-	if got, _ := info.ModelOptions["muse-spark-1.2-contributor"]["useResponsesAPI"].(bool); !got {
-		t.Fatal("muse-spark-1.2-contributor on opencode-go should use the responses API")
+	if got, _ := info.ModelOptions["muse-spark-1.3-contributor"]["useResponsesAPI"].(bool); !got {
+		t.Fatal("muse-spark-1.3-contributor on opencode-go should use the responses API")
 	}
 }
 
@@ -155,7 +155,7 @@ func TestOpenCodeGoMuseSparkUsesResponsesAPI(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
-		if body["model"] != "muse-spark-1.2-contributor" {
+		if body["model"] != "muse-spark-1.3-contributor" {
 			t.Fatalf("unexpected model: %v", body["model"])
 		}
 		if _, ok := body["input"]; !ok {
@@ -165,14 +165,14 @@ func TestOpenCodeGoMuseSparkUsesResponsesAPI(t *testing.T) {
 			t.Fatalf("responses request must not carry a chat-completions messages array: %v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"test","model":"muse-spark-1.2-contributor","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
+		_, _ = w.Write([]byte(`{"id":"test","model":"muse-spark-1.3-contributor","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
 	}))
 	defer srv.Close()
 
 	provider := &OpenAIProvider{
 		APIKey:  "test-key",
 		BaseURL: srv.URL,
-		Model:   "muse-spark-1.2-contributor",
+		Model:   "muse-spark-1.3-contributor",
 		ProviderOptions: map[string]any{
 			"useResponsesAPI": true,
 		},

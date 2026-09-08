@@ -44,6 +44,7 @@ type pendingBrowserJob struct {
 type Server struct {
 	Store                  *store.Store
 	Cfg                    *config.Config
+	Version                string
 	downloadQueue          chan string
 	translateQueue         chan string
 	workerWG               sync.WaitGroup
@@ -88,6 +89,7 @@ func New(st *store.Store, cfg *config.Config) *Server {
 	s := &Server{
 		Store:              st,
 		Cfg:                cfg,
+		Version:            "dev",
 		queuedJobs:         map[string]struct{}{},
 		jobCancels:         map[string]context.CancelFunc{},
 		previewCache:       make(map[string]previewCacheEntry),
@@ -221,7 +223,11 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	})
 
 	router.GET("/healthz", func(e *core.RequestEvent) error {
-		return e.JSON(http.StatusOK, map[string]any{"ok": true})
+		version := s.Version
+		if version == "" {
+			version = "dev"
+		}
+		return e.JSON(http.StatusOK, map[string]any{"ok": true, "version": version})
 	})
 
 	// The browser-worker WebSocket must be reachable before the worker has a

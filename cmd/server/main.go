@@ -102,6 +102,7 @@ func main() {
 	}
 
 	server := api.New(st, cfg)
+	server.Version = Version
 	handler := api.Router(server)
 
 	slog.Info("translator-server listening", "addr", cfg.Addr, "dataDir", cfg.DataDir)
