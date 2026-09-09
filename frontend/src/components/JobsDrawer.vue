@@ -1,6 +1,6 @@
 <template>
   <n-drawer :show="visible" :width="drawerWidth" placement="right" @update:show="$emit('update:visible', $event)">
-    <n-drawer-content>
+    <n-drawer-content closable>
       <template #header>
         <span class="jobs-header">Trabajos activos</span>
       </template>
