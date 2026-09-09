@@ -225,6 +225,9 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"google/gemini-3.5-flash-lite",
 		"tencent/hy-mt2-30b-a3b",
 		"tencent/hy-mt2-1.8b",
+		"mistralai/ministral-8b-2512",
+		"mistralai/mistral-small-2603",
+		"mistralai/ministral-14b-2512",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
