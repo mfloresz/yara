@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.30.0] - 2026-09-10
+
+### What's new
+
+- Added opt-in `?neighbors=true` to `GET /api/v1/novels/{id}/chapters/{chapterId}`: the response gains `neighbors: {prev, next}` chapter summaries in reading order (`position`) resolved with two indexed queries, so prev/next navigation no longer needs the full chapter list. Excluded chapters are never neighbors, and legacy rows with `position = 0` fall back to `chapter_order`. Fully backward compatible — the shape is unchanged without the parameter.
+- Reworked the reader layout: the chapter sidebar/drawer and its background batch loading are gone, replaced by a bottom navigation bar (previous / chapter list / next). The full chapter list now loads on demand in a modal, and keyboard navigation (arrows, Escape) is preserved. The chapter edit page also navigates via `?neighbors=true` instead of fetching the whole list.
+
+### Fixes
+
+- Fixed the import-from-URL confirm dialog showing a broken cover image: failed cover loads now fall back to the placeholder.
+
 ## [v0.21.0] - 2026-08-24
 
 ### What's new
@@ -161,7 +172,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.0...HEAD
+[v0.30.0]: https://github.com/mfloresz/yara/compare/v0.29.1...v0.30.0
 [v0.21.0]: https://github.com/mfloresz/yara/compare/v0.20.0...v0.21.0
 [v0.20.0]: https://github.com/mfloresz/yara/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/mfloresz/yara/compare/v0.18.0...v0.19.0
