@@ -11,6 +11,120 @@
 
 - Fixed the import-from-URL confirm dialog showing a broken cover image: failed cover loads now fall back to the placeholder.
 
+## [v0.29.1] - 2026-09-10
+
+### What's new
+
+- Added the `deepseek-flash` model to the provider catalog; removed the `ox-alpha-free` provider.
+- The version shown in the UI no longer carries the `v` prefix (displays `0.29.1` instead of `v0.29.1`).
+
+### Housekeeping
+
+- Documented the release steps in `AGENTS.md` (annotated tags, push, GitHub Release via `gh`).
+
+## [v0.29.0] - 2026-09-09
+
+### What's new
+
+- New Yara branding: a `Y` logo (`docs/yara.svg`), new favicon, regenerated PNG icons, and fresh icons for all four browser-worker extensions; the app shell uses the new mark.
+- Shared cover fallback: novels without a cover now resolve to the cacheable `/no_cover.jpg` instead of N authenticated requests, with graceful fallback on image errors (cards, sidebar, settings).
+- Browser tab titles: pages now set `Yara - <title>`, using the novel name on detail, chapter, and reader pages.
+- Operations page: split `Estado` into `Actualización` and `Traducción` columns with tooltips and counts, same-language (`origen=destino`) handling, and translation-ratio sorting.
+- Chapter preview drawer shows the translated title with the original as subtitle when they differ; the clean tab keeps a single Preview → Apply flow.
+- Added `gaydemon.com` to the browser-worker extension site lists; Firefox manifest renamed to `Yara Browser Worker`.
+
+## [v0.28.1] - 2026-09-09
+
+### What's new
+
+- Added Mistral `Ministral 8B` / `14B` and `Mistral Small 2603` to the OpenRouter provider catalog.
+
+### Fixes
+
+- Fixed the JobsDrawer content not being closable.
+
+## [v0.28.0] - 2026-09-08
+
+### What's new
+
+- The server version is now exposed via `GET /healthz` (`{ok, version}`, injected at build time) and shown in the UI user menu and mobile nav.
+- Added the `gaydemon` novel downloader parser.
+- Novels without a cover now get a default cover fallback.
+- Updated the `muse-spark` model to `1.3` on the `opencode-go` provider.
+
+## [v0.27.0] - 2026-09-08
+
+### What's new
+
+- Browser-worker extensions (all four variants) gained an `Añadir historia a Yara` context-menu item that deep-links the dashboard import dialog via `?importUrl=`.
+
+## [v0.26.0] - 2026-09-07
+
+### What's new
+
+- Added the `InferX` OpenAI-compatible AI provider.
+
+## [v0.25.1] - 2026-09-06
+
+### Fixes
+
+- Fixed the Empirenovel parser taking the chapter title from the first content line.
+
+## [v0.25.0] - 2026-09-06
+
+### What's new
+
+- Added a chapter preview drawer opened from the chapter list.
+- More truthful job progress: glossary jobs report batch-based progress, download jobs show the in-flight chapter title, and the Operations page splits the active refine count into its own badge.
+- Added prev/next chapter navigation on the chapter edit page.
+
+## [v0.24.0] - 2026-09-05
+
+### ⚠️ Breaking changes
+
+- Registration is now invitation-only: on a fresh install the first registrant is promoted to admin; afterwards new users need an invitation link. Bootstrap pre-existing installs with `./translator-server -promote-admin <email>`.
+
+### What's new
+
+- User roles (`admin` | `user`) with first-admin bootstrap and a locked-down PocketBase superuser surface.
+- Admin panel (`/admin`): users, invitations, shared provider keys, and global prompt overrides; invite redemption page (`/invite/:token`).
+- Admin-shared provider API keys with a per-provider sharing toggle (own key wins, then the shared key).
+- Admin global prompt overrides with per-user reset (precedence: default < admin global < user < per-novel).
+- Account management: password reset, user blocking, and deletion; `logout-all` revokes every session.
+- Security hardening: rate limiting on auth endpoints, security headers (CSP, HSTS, …), protected cover file fields behind an ownership-checked `/cover` route, admin-only backup export, browser-worker connection caps, 25 MB zip-bomb caps on EPUB/cover imports, and HTTP server timeouts.
+- Added Wattpad and Inkitt novel downloader parsers.
+- More reliable backup downloads and worker-auth auto-redirect.
+
+### Fixes
+
+- Closed admin self-promotion and remediated auth review findings.
+
+### Housekeeping
+
+- Documented roles, invitations, shared keys, and the admin surface in `docs/api/`.
+
+## [v0.23.0] - 2026-09-02
+
+### ⚠️ Breaking changes
+
+- Only `/api/v1/*` remains: the legacy aliases (`/api/db/*`, `/api/user/*`, `/api/epubs/*`, `/api/backup/*`, `/api/browser-workers`, `/api/proxy/*`, `/api/defaults`, `/api/translation-jobs/*`) were removed. Reload the SPA to pick up the new frontend.
+- Chapter deletes are now logical exclusions, restorable via the visibility endpoint. Run once with `--migrate-chapter-positions` to backfill the new `position` field on existing chapters.
+
+### What's new
+
+- Canonical versioned REST API: `/api/v1/*` with the `{data, meta, links}` envelope, `application/problem+json` errors, `201 + Location` on creates, `204` on deletes, `202` on async jobs, `?page&per_page` pagination, and `?fields=` sparse fieldsets; OpenAPI 3.1 spec plus human docs under `docs/api/`.
+- Chapter ordering: a `position` field with atomic append/reorder endpoints (rejected while jobs are active) and logical exclusion with restore.
+- Library filters on `GET /api/v1/novels`: `tag`, `shared`, `progress`; novel detail tags act as clickable filters.
+- Operations page: bulk delete, owner filter, and translated/total chapter counts with tooltips in the status column.
+- Dashboard library header with inline search; novel detail page split into composables.
+- Project README rewritten as Yara with a Spanish translation and screenshots; AGPL-3.0 license added.
+
+## [v0.22.0] - 2026-08-24
+
+### What's new
+
+- Operations page status column now shows translated/total chapter counts with tooltips.
+
 ## [v0.21.0] - 2026-08-24
 
 ### What's new
@@ -174,6 +288,17 @@
 
 [Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.0...HEAD
 [v0.30.0]: https://github.com/mfloresz/yara/compare/v0.29.1...v0.30.0
+[v0.29.1]: https://github.com/mfloresz/yara/compare/v0.29.0...v0.29.1
+[v0.29.0]: https://github.com/mfloresz/yara/compare/v0.28.1...v0.29.0
+[v0.28.1]: https://github.com/mfloresz/yara/compare/v0.28.0...v0.28.1
+[v0.28.0]: https://github.com/mfloresz/yara/compare/v0.27.0...v0.28.0
+[v0.27.0]: https://github.com/mfloresz/yara/compare/v0.26.0...v0.27.0
+[v0.26.0]: https://github.com/mfloresz/yara/compare/v0.25.1...v0.26.0
+[v0.25.1]: https://github.com/mfloresz/yara/compare/v0.25.0...v0.25.1
+[v0.25.0]: https://github.com/mfloresz/yara/compare/v0.24.0...v0.25.0
+[v0.24.0]: https://github.com/mfloresz/yara/compare/v0.23.0...v0.24.0
+[v0.23.0]: https://github.com/mfloresz/yara/compare/v0.22.0...v0.23.0
+[v0.22.0]: https://github.com/mfloresz/yara/compare/v0.21.0...v0.22.0
 [v0.21.0]: https://github.com/mfloresz/yara/compare/v0.20.0...v0.21.0
 [v0.20.0]: https://github.com/mfloresz/yara/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/mfloresz/yara/compare/v0.18.0...v0.19.0

@@ -117,7 +117,7 @@ When uncertain whether a release should be PATCH or MINOR, ask instead of assumi
 "Prepare a release" means:
 - determine the next version
 - review commits since the previous release
-- write the changelog
+- update `CHANGELOG.md` (prepend a `## [vX.Y.Z] - YYYY-MM-DD` entry and add the compare link at the bottom; this is what keeps the in-repo changelog from lagging behind the tags)
 - commit the version bump (if the project has a version reference)
 - create the release tag
 
@@ -142,11 +142,12 @@ When asked "create release vX.Y.Z", the agent should:
 
 1. **Determine version** — Run `git tag -l 'v*' --sort=-v:refname | head -1` to find the current version. Use the version provided by the user (e.g. `v0.2.0`).
 2. **Review changes** — Run `git log --oneline vPREV..HEAD` and `git diff --stat vPREV..HEAD` to understand what changed.
-3. **Stage & commit** — `git add -A` then `git commit -m "chore: prepare release vX.Y.Z"`.
-4. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"` (annotated tag only, never lightweight).
-5. **Push** — `git push origin main --tags`.
-6. **Generate changelog** — Write the changelog for the GitHub Release. See `## Changelog` below.
-7. **Create GitHub Release** — `gh release create vX.Y.Z --title "vX.Y.Z" --notes "<changelog>"`. Pushing the `v*` tag alone is NOT sufficient — the agent must always create the GitHub Release via `gh` so the notes are published and visible.
+3. **Update `CHANGELOG.md`** — Prepend a `## [vX.Y.Z] - YYYY-MM-DD` entry (sections in order: ⚠️ Breaking changes, What's new, Fixes, Housekeeping; no empty sections) and add the `vPREV...vX.Y.Z` compare link at the bottom. The GitHub Release notes reuse this entry, so write it user-focused and in English.
+4. **Stage & commit** — `git add -A` then `git commit -m "chore: prepare release vX.Y.Z"` (this commit carries the `CHANGELOG.md` update).
+5. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"` (annotated tag only, never lightweight).
+6. **Push** — `git push origin main --tags`.
+7. **Generate changelog** — Reuse the `CHANGELOG.md` entry written in step 3 for the GitHub Release notes. See `## Changelog` below.
+8. **Create GitHub Release** — `gh release create vX.Y.Z --title "vX.Y.Z" --notes "<changelog>"`. Pushing the `v*` tag alone is NOT sufficient — the agent must always create the GitHub Release via `gh` so the notes are published and visible.
 
 ## Changelog
 
