@@ -148,7 +148,7 @@
           <span>Cerrar sesión</span>
         </n-button>
         <n-divider style="margin: 0.5rem 0;" />
-        <div class="mobile-nav-version">{{ serverVersion ? `Yara v${serverVersion}` : "Yara…" }}</div>
+        <div class="mobile-nav-version">{{ serverVersion ? `Yara ${serverVersion}` : "Yara…" }}</div>
       </n-drawer-content>
     </n-drawer>
 
@@ -230,7 +230,7 @@ const userMenuDropdownItems = computed(() => {
   items.push({ label: "Cerrar sesión", key: "logout" });
   items.push({ type: "divider", key: "d-version" });
   items.push({
-    label: serverVersion.value ? `Yara v${serverVersion.value}` : "Yara…",
+    label: serverVersion.value ? `Yara ${serverVersion.value}` : "Yara…",
     key: "version",
     disabled: true,
   });

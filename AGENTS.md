@@ -146,6 +146,7 @@ When asked "create release vX.Y.Z", the agent should:
 4. **Tag** — `git tag -a vX.Y.Z -m "Release vX.Y.Z"` (annotated tag only, never lightweight).
 5. **Push** — `git push origin main --tags`.
 6. **Generate changelog** — Write the changelog for the GitHub Release. See `## Changelog` below.
+7. **Create GitHub Release** — `gh release create vX.Y.Z --title "vX.Y.Z" --notes "<changelog>"`. Pushing the `v*` tag alone is NOT sufficient — the agent must always create the GitHub Release via `gh` so the notes are published and visible.
 
 ## Changelog
 

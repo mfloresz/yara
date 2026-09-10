@@ -96,8 +96,8 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: medium)": true,
 		"mimo-v2.5":                  true,
 		"deepseek-v4-flash":          true,
+		"deepseek-flash":             true,
 		"muse-spark-1.3-contributor": true,
-		"ox-alpha-free":              true,
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
