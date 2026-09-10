@@ -95,8 +95,7 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: low)":    true,
 		"openai/gpt-5.6-luna (reasoning: medium)": true,
 		"mimo-v2.5":                  true,
-		"deepseek-v4-flash":          true,
-		"deepseek-flash":             true,
+		"deepseek-v4.1-flash":             true,
 		"muse-spark-1.3-contributor": true,
 	}
 	if len(info.Models) != len(wantModels) {
