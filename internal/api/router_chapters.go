@@ -333,11 +333,31 @@ func (sharedChapterHandlers) chapterStats(s *Server) func(*core.RequestEvent) er
 
 func (sharedChapterHandlers) get(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), e.Request.PathValue("chapterId"))
+		novelID := e.Request.PathValue("novelId")
+		chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, novelID, e.Request.PathValue("chapterId"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
+		// Opt-in neighbors in reading order (position): two indexed LIMIT 1
+		// queries, so prev/next navigation no longer needs the full list.
+		if firstQuery(e.Request.URL.Query(), "neighbors") != "true" {
+			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
+		}
+		prev, next, err := s.Store.GetChapterNeighborsAccessible(e.Auth.Id, novelID, chapter.ID)
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		var prevRecord, nextRecord any
+		if prev != nil {
+			prevRecord = chapterSummaryRecord(*prev)
+		}
+		if next != nil {
+			nextRecord = chapterSummaryRecord(*next)
+		}
+		return v1RespondWithNeighbors(e, http.StatusOK, chapterRecord(*chapter), &v1Neighbors{
+			Prev: prevRecord,
+			Next: nextRecord,
+		}, e.Request.URL.Path)
 	}
 }
 

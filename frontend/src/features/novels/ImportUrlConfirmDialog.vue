@@ -4,7 +4,13 @@
       <div class="col-metadata">
         <div v-if="preview" class="preview-card">
           <div class="preview-cover">
-            <img v-if="preview.coverURL" :src="preview.coverURL" :alt="preview.title" referrerpolicy="no-referrer" />
+            <img
+              v-if="preview.coverURL && !coverFailed"
+              :src="preview.coverURL"
+              :alt="preview.title"
+              referrerpolicy="no-referrer"
+              @error="coverFailed = true"
+            />
             <div v-else class="cover-placeholder">
               <n-icon :size="24"><ImageOutline /></n-icon>
             </div>
@@ -137,6 +143,7 @@ const startChapter = ref(1);
 const endChapter = ref(1);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const coverFailed = ref(false);
 
 function reset() {
   mode.value = "all";
@@ -146,6 +153,7 @@ function reset() {
   endChapter.value = 1;
   loading.value = false;
   error.value = null;
+  coverFailed.value = false;
 }
 
 watch(visible, (open) => {
@@ -157,6 +165,7 @@ watch(visible, (open) => {
 watch(
   () => props.preview,
   (preview) => {
+    coverFailed.value = false;
     if (preview) {
       endChapter.value = preview.totalChapters;
     }

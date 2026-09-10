@@ -12,10 +12,18 @@ import (
 // pagination; offset pagination (page/per_page) is also supported and emitted
 // in meta.
 type v1Envelope struct {
-	Data  any         `json:"data"`
-	Meta  *v1Meta     `json:"meta,omitempty"`
-	Links *v1Links    `json:"links,omitempty"`
-	Error *v1ErrorObj `json:"error,omitempty"`
+	Data      any          `json:"data"`
+	Neighbors *v1Neighbors `json:"neighbors,omitempty"`
+	Meta      *v1Meta      `json:"meta,omitempty"`
+	Links     *v1Links     `json:"links,omitempty"`
+	Error     *v1ErrorObj  `json:"error,omitempty"`
+}
+
+// v1Neighbors carries the previous/next chapter summaries in reading order
+// (position). Only set on single-chapter responses with ?neighbors=true.
+type v1Neighbors struct {
+	Prev any `json:"prev"`
+	Next any `json:"next"`
 }
 
 type v1Meta struct {
@@ -113,6 +121,16 @@ func v1Respond(e *core.RequestEvent, status int, data any, meta *v1Meta, links *
 	if links != nil {
 		body.Links = links
 	}
+	e.Response.Header().Set("Content-Type", "application/json")
+	e.Response.WriteHeader(status)
+	return json.NewEncoder(e.Response).Encode(body)
+}
+
+// v1RespondWithNeighbors: single-resource envelope plus the prev/next
+// neighbors and a self link. Additive: without ?neighbors=true callers keep
+// using v1Respond and the shape is unchanged.
+func v1RespondWithNeighbors(e *core.RequestEvent, status int, data any, neighbors *v1Neighbors, self string) error {
+	body := v1Envelope{Data: data, Neighbors: neighbors, Links: &v1Links{Self: self}}
 	e.Response.Header().Set("Content-Type", "application/json")
 	e.Response.WriteHeader(status)
 	return json.NewEncoder(e.Response).Encode(body)

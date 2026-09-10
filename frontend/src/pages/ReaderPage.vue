@@ -15,15 +15,7 @@
         >
           <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
         </n-button>
-        <n-button
-          quaternary
-          circle
-          class="reader-menu-btn"
-          aria-label="Menú de capítulos"
-          @click="drawerOpen = !drawerOpen"
-        >
-          <template #icon><n-icon><MenuOutline /></n-icon></template>
-        </n-button>
+
       </div>
       <div class="reader-header-title-group">
         <h1 class="reader-header-title">{{ novel ? getNovelDisplayTitle(novel) : 'Lector' }}</h1>
@@ -40,34 +32,6 @@
     </header>
 
     <div class="reader-layout">
-      <div
-        v-if="drawerOpen && !desktop"
-        class="reader-drawer-overlay"
-        @click="drawerOpen = false"
-      />
-      <nav v-if="desktop || drawerOpen" class="reader-sidebar">
-        <div class="reader-sidebar-header" v-if="!desktop">
-          <button class="reader-drawer-close" @click="drawerOpen = false">✕</button>
-        </div>
-        <ul class="reader-sidebar-list">
-          <li v-for="(item, index) in summarySlots" :key="item?.id || index">
-            <button
-              v-if="item"
-              type="button"
-              class="reader-sidebar-link"
-              :class="{ active: item.id === activeChapterId }"
-              @click="selectChapter(item.id)"
-              :disabled="!summaryHasVariantContent(item)"
-            >
-              <span class="reader-ch-title">{{ summaryDisplayTitle(item) }}</span>
-            </button>
-            <div v-else class="reader-sidebar-skeleton">
-              <n-skeleton width="100%" height="1rem" />
-            </div>
-          </li>
-        </ul>
-      </nav>
-
       <main ref="scrollContainer" class="reader-main">
         <n-card v-if="showEmpty">
           <div class="reader-empty-state">
@@ -108,59 +72,79 @@
             <div class="reader-chapter-ornament">❧ ✦ ❧</div>
           </header>
           <div class="reader-body markdown-preview" v-html="markdownToHtml(activeChapterContent)" />
-
-          <nav class="reader-chapter-nav" aria-label="Navegación entre capítulos">
-            <n-button
-              v-if="previousChapterId"
-              secondary
-              class="reader-nav-prev"
-              @click="selectChapter(previousChapterId)"
-            >
-              <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
-              Anterior
-            </n-button>
-            <span v-else class="reader-nav-spacer" />
-            <n-button
-              v-if="nextChapterId"
-              type="primary"
-              class="reader-nav-next"
-              @click="selectChapter(nextChapterId)"
-            >
-              Siguiente
-              <template #icon><n-icon><ArrowForwardOutline /></n-icon></template>
-            </n-button>
-            <span v-else class="reader-nav-spacer" />
-          </nav>
         </article>
       </main>
     </div>
 
-    <div
-      v-if="drawerOpen && !desktop"
-      class="reader-drawer-overlay-mobile"
-      :class="{ open: drawerOpen && !desktop }"
-      @click="drawerOpen = false"
-    />
-    <nav class="reader-drawer" :class="{ open: drawerOpen && !desktop }">
-      <div class="reader-drawer-header">
-        <h2>Contenido</h2>
-        <button class="reader-drawer-close" @click="drawerOpen = false">✕</button>
+    <nav class="reader-bottombar" aria-label="Navegación entre capítulos">
+      <div class="reader-bottombar-inner">
+      <n-button
+        secondary
+        circle
+        class="reader-bottombar-arrow"
+        aria-label="Capítulo anterior"
+        :disabled="!previousChapterId"
+        @click="previousChapterId && selectChapter(previousChapterId)"
+      >
+        <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
+      </n-button>
+      <n-button
+        secondary
+        class="reader-bottombar-list"
+        aria-label="Abrir lista de capítulos"
+        @click="openChapterList"
+      >
+        <span class="reader-bottombar-list-label">{{ bottomBarLabel }}</span>
+      </n-button>
+      <n-button
+        secondary
+        circle
+        class="reader-bottombar-arrow"
+        aria-label="Capítulo siguiente"
+        :disabled="!nextChapterId"
+        @click="nextChapterId && selectChapter(nextChapterId)"
+      >
+        <template #icon><n-icon><ArrowForwardOutline /></n-icon></template>
+      </n-button>
       </div>
-      <ul class="reader-sidebar-list">
-        <li v-for="(item, index) in summarySlots" :key="item?.id || index">
+    </nav>
+
+    <n-modal
+      v-model:show="listModalOpen"
+      preset="card"
+      title="Capítulos"
+      class="reader-list-modal"
+      :bordered="false"
+      role="dialog"
+      aria-modal="true"
+    >
+      <n-input
+        v-model:value="listSearch"
+        clearable
+        placeholder="Buscar capítulos…"
+        class="reader-list-search"
+      />
+      <div v-if="summariesLoading" class="reader-list-loading">
+        <n-skeleton text :repeat="6" />
+      </div>
+      <p v-else-if="filteredSummaries.length === 0" class="muted">Sin resultados.</p>
+      <ul v-else class="reader-list">
+        <li v-for="item in filteredSummaries" :key="item.id">
           <button
-            v-if="item"
             type="button"
-            class="reader-sidebar-link"
+            class="reader-list-link"
             :class="{ active: item.id === activeChapterId }"
-            @click="selectChapter(item.id); drawerOpen = false"
             :disabled="!summaryHasVariantContent(item)"
+            @click="selectChapterFromList(item.id)"
           >
             <span class="reader-ch-title">{{ summaryDisplayTitle(item) }}</span>
           </button>
         </li>
       </ul>
-    </nav>
+      <template #footer>
+        <div class="reader-list-footer muted">{{ visibleSummaries.length }} capítulos</div>
+      </template>
+    </n-modal>
 
     <div class="reader-settings-popover" :class="{ open: settingsOpen }">
       <div class="reader-settings-row">
@@ -216,11 +200,12 @@ import {
   NButton,
   NCard,
   NIcon,
+  NInput,
+  NModal,
   NSkeleton,
 } from "naive-ui";
 import {
   ArrowBackOutline,
-  MenuOutline,
   SettingsOutline,
   ArrowForwardOutline,
   EyeOutline,
@@ -269,17 +254,21 @@ const variant = ref<"translated" | "original">(saved?.variant ?? "translated");
 nextTick(() => applyTypography());
 const activeChapterId = ref<string | null>(null);
 const activeChapter = ref<Chapter | null>(null);
-const drawerOpen = ref(false);
 const settingsOpen = ref(false);
 const progress = ref(0);
-const desktop = ref(window.innerWidth >= 720);
 const scrollContainer = ref<HTMLElement | null>(null);
-const summaryLoading = ref(false);
 const chapterLoading = ref(false);
-const summarySlots = ref<(ChapterSummary | null)[]>([]);
-const SUMMARY_BATCH_SIZE = 50;
-let backgroundLoadToken = 0;
-let pendingSavedChapterRestore = false;
+// Lista completa de summaries: carga diferida (lazy) y cacheada por novela.
+// El capítulo activo se pide directo por id, sin esperar a la lista.
+const allSummaries = ref<ChapterSummary[]>([]);
+const summariesLoading = ref(false);
+const summariesLoaded = ref(false);
+const listModalOpen = ref(false);
+const listSearch = ref("");
+let summariesToken = 0;
+// Vecinos del capítulo activo (?neighbors=true, orden position): activan ←/→
+// al instante sin esperar a la lista. Cuando la lista ya está cacheada,
+// prev/next se resuelven sobre ella para respetar la variante activa.
 
 const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 16));
 const lineHeight = ref(saved?.lineHeight ?? 1.5);
@@ -300,9 +289,7 @@ const stats = computed(() => ({
   totalChapters: novel.value?.chapterCount ?? 0,
 }));
 
-const loadedSummaries = computed(() =>
-  summarySlots.value.filter((item): item is ChapterSummary => Boolean(item)),
-);
+const loadedSummaries = computed(() => allSummaries.value);
 const visibleSummaries = computed(() =>
   loadedSummaries.value.filter((item) => summaryHasVariantContent(item)),
 );
@@ -316,34 +303,55 @@ const activeChapterContent = computed(() => {
 const activeVisibleIndex = computed(() =>
   visibleSummaries.value.findIndex((item) => item.id === activeChapterId.value),
 );
-const previousChapterId = computed(() =>
-  activeVisibleIndex.value > 0 ? visibleSummaries.value[activeVisibleIndex.value - 1]?.id ?? null : null,
-);
-const nextChapterId = computed(() => {
-  if (activeVisibleIndex.value < 0) return null;
-  return visibleSummaries.value[activeVisibleIndex.value + 1]?.id ?? null;
+const prevNeighbor = ref<ChapterSummary | null>(null);
+const nextNeighbor = ref<ChapterSummary | null>(null);
+const previousChapterId = computed(() => {
+  if (summariesLoaded.value) {
+    return activeVisibleIndex.value > 0 ? visibleSummaries.value[activeVisibleIndex.value - 1]?.id ?? null : null;
+  }
+  return prevNeighbor.value?.id ?? null;
 });
+const nextChapterId = computed(() => {
+  if (summariesLoaded.value) {
+    if (activeVisibleIndex.value < 0) return null;
+    return visibleSummaries.value[activeVisibleIndex.value + 1]?.id ?? null;
+  }
+  return nextNeighbor.value?.id ?? null;
+});
+const filteredSummaries = computed(() => {
+  const q = listSearch.value.trim().toLowerCase();
+  if (!q) return visibleSummaries.value;
+  return visibleSummaries.value.filter((item) =>
+    summaryDisplayTitle(item).toLowerCase().includes(q),
+  );
+});
+const bottomBarLabel = computed(() =>
+  activeChapter.value ? chapterDisplayTitle(activeChapter.value) : "Capítulos",
+);
 const showEmpty = computed(() =>
-  !chapterLoading.value && stats.value.totalChapters > 0 && visibleSummaries.value.length === 0,
+  !chapterLoading.value && !summariesLoading.value && summariesLoaded.value &&
+  stats.value.totalChapters > 0 && visibleSummaries.value.length === 0,
 );
 
 onMounted(() => {
   void initializeReader();
-  window.addEventListener("resize", handleResize);
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("click", handleClickOutside);
   window.addEventListener("scroll", updateProgress, { passive: true });
 });
 
 onBeforeUnmount(() => {
-  backgroundLoadToken++;
-  window.removeEventListener("resize", handleResize);
+  summariesToken++;
   document.removeEventListener("keydown", onKeydown);
   document.removeEventListener("click", handleClickOutside);
   window.removeEventListener("scroll", updateProgress);
 });
 
-watch([activeChapterId, variant], () => {
+// selectChapter es la única vía para cambiar de capítulo (fija id + carga).
+// No hay watcher sobre activeChapterId: evita doble fetch.
+
+watch(variant, () => {
+  // El capítulo ya trae todas las variantes; cambiar de idioma no refetchea.
   if (!activeChapterId.value) {
     void selectFirstAvailableChapter();
     return;
@@ -353,7 +361,9 @@ watch([activeChapterId, variant], () => {
     void selectFirstAvailableChapter();
     return;
   }
-  void loadActiveChapter(activeChapterId.value);
+  if (activeChapter.value && !chapterHasVariantContent(activeChapter.value)) {
+    void selectFirstAvailableChapter();
+  }
 });
 
 let initialScrollRestored = false;
@@ -374,12 +384,17 @@ watch(activeChapter, async () => {
 });
 
 watch(novelId, () => {
-  backgroundLoadToken++;
+  summariesToken++;
   initialScrollRestored = false;
-  pendingSavedChapterRestore = false;
-  summarySlots.value = [];
+  allSummaries.value = [];
+  summariesLoaded.value = false;
+  summariesLoading.value = false;
+  listModalOpen.value = false;
+  listSearch.value = "";
   activeChapterId.value = null;
   activeChapter.value = null;
+  prevNeighbor.value = null;
+  nextNeighbor.value = null;
   void initializeReader();
 });
 
@@ -446,62 +461,55 @@ async function loadCurrentNovel() {
   }
 }
 
-async function initializeReader() {
-  if (!novelId.value) return;
-  const token = ++backgroundLoadToken;
-  await loadCurrentNovel();
-  if (token !== backgroundLoadToken) return;
-  summarySlots.value = Array.from({ length: stats.value.totalChapters }, () => null);
-  const initialBatch = Math.min(SUMMARY_BATCH_SIZE, stats.value.totalChapters);
-  const apiTotal = await loadSummaryRange(0, initialBatch);
-  if (token !== backgroundLoadToken) return;
-  if (apiTotal > summarySlots.value.length) {
-    summarySlots.value = Array.from({ length: apiTotal }, (_, i) =>
-      i < summarySlots.value.length ? summarySlots.value[i] : null,
-    );
+function chapterHasVariantContent(chapter: Chapter) {
+  if (variant.value === "translated") {
+    return Boolean(chapter.refinedContent || chapter.translatedContent);
   }
-  await loadReadingProgress();
-  if (token !== backgroundLoadToken) return;
-  const savedCh = savedChapterId.value;
-  const savedSummary = savedCh
-    ? loadedSummaries.value.find((item) => item.id === savedCh)
-    : null;
-  if (savedSummary && summaryHasVariantContent(savedSummary)) {
-    await selectChapter(savedCh!);
-  } else {
-    await selectFirstAvailableChapter();
-    if (savedCh) pendingSavedChapterRestore = true;
-  }
-  if (token !== backgroundLoadToken) return;
-  startAutoSave();
-  if (summarySlots.value.length > initialBatch) {
-    void loadRemainingSummariesInBackground(token);
-  }
+  return Boolean(chapter.originalContent);
 }
 
-async function loadSummaryRange(first: number, last: number): Promise<number> {
-  if (!novelId.value || stats.value.totalChapters === 0) return 0;
-  const safeFirst = Math.max(0, first);
-  const safeLast = Math.min(last, stats.value.totalChapters);
-  if (safeFirst >= safeLast) return 0;
-  let apiTotal = 0;
-  summaryLoading.value = true;
-  try {
-    for (let offset = safeFirst; offset < safeLast; offset += SUMMARY_BATCH_SIZE) {
-      const limit = Math.min(SUMMARY_BATCH_SIZE, safeLast - offset);
-      const result = await api.chapters.listSummaries(novelId.value, { offset, limit });
-      if (offset === 0 && result.total > 0) apiTotal = result.total;
-      result.items.forEach((item, index) => {
-        const slotIndex = offset + index;
-        if (slotIndex < summarySlots.value.length) {
-          summarySlots.value[slotIndex] = item;
-        }
-      });
+async function initializeReader() {
+  if (!novelId.value) return;
+  const token = ++summariesToken;
+  chapterLoading.value = true;
+  await loadCurrentNovel();
+  if (token !== summariesToken) return;
+  // Progreso y contenido se piden directo por id: la lista no bloquea.
+  await loadReadingProgress();
+  if (token !== summariesToken) return;
+  const savedCh = savedChapterId.value;
+  if (savedCh) {
+    activeChapterId.value = savedCh;
+    await loadActiveChapter(savedCh);
+    if (token !== summariesToken) return;
+    if (!activeChapter.value || !chapterHasVariantContent(activeChapter.value)) {
+      await selectFirstAvailableChapter();
     }
+  } else {
+    await selectFirstAvailableChapter();
+  }
+  if (token !== summariesToken) return;
+  startAutoSave();
+  // La lista completa llega en fondo para activar ←/→ y el modal.
+  void ensureSummaries();
+}
+
+// Trae la lista completa en una sola petición (mismo patrón que
+// ChapterPage para resolver vecinos) y la cachea por novela.
+async function ensureSummaries(): Promise<void> {
+  if (!novelId.value || summariesLoaded.value || summariesLoading.value) return;
+  const token = summariesToken;
+  summariesLoading.value = true;
+  try {
+    const items = await api.chapters.list(novelId.value);
+    if (token !== summariesToken) return;
+    allSummaries.value = items;
+    summariesLoaded.value = true;
   } catch {
+    if (token !== summariesToken) return;
     const cached = await getCachedNovel(novelId.value);
     if (cached) {
-      const summaries = cached.chapters
+      allSummaries.value = cached.chapters
         .slice()
         .filter((c) => !c.excluded)
         .sort((a, b) => {
@@ -510,67 +518,34 @@ async function loadSummaryRange(first: number, last: number): Promise<number> {
           return pa - pb;
         })
         .map(chapterToSummary);
-      summarySlots.value = summaries;
-      apiTotal = summaries.length;
+      summariesLoaded.value = true;
     }
   } finally {
-    summaryLoading.value = false;
+    if (token === summariesToken) summariesLoading.value = false;
   }
-  return apiTotal;
 }
 
-async function loadRemainingSummariesInBackground(token: number) {
-  const total = summarySlots.value.length;
-  for (let offset = SUMMARY_BATCH_SIZE; offset < total; offset += SUMMARY_BATCH_SIZE) {
-    if (token !== backgroundLoadToken || !novelId.value) return;
-    const limit = Math.min(SUMMARY_BATCH_SIZE, total - offset);
-    let retries = 3;
-    while (retries > 0) {
-      if (token !== backgroundLoadToken || !novelId.value) return;
-      try {
-        const result = await api.chapters.listSummaries(novelId.value, { offset, limit });
-        if (token !== backgroundLoadToken) return;
-        result.items.forEach((item, index) => {
-          const slotIndex = offset + index;
-          if (slotIndex < summarySlots.value.length) {
-            summarySlots.value[slotIndex] = item;
-          }
-        });
-        break;
-      } catch {
-        retries--;
-        if (retries === 0) return;
-        await new Promise<void>((resolve) => setTimeout(resolve, 1000 * (3 - retries)));
-      }
-    }
-    if (pendingSavedChapterRestore && savedChapterId.value) {
-      const savedNow = loadedSummaries.value.find((item) => item.id === savedChapterId.value);
-      if (savedNow && summaryHasVariantContent(savedNow)) {
-        pendingSavedChapterRestore = false;
-        await selectChapter(savedChapterId.value);
-        continue;
-      }
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+async function openChapterList() {
+  listModalOpen.value = true;
+  await ensureSummaries();
+}
+
+async function selectChapterFromList(chapterId: string) {
+  listModalOpen.value = false;
+  await selectChapter(chapterId);
 }
 
 async function selectFirstAvailableChapter() {
+  if (!summariesLoaded.value) await ensureSummaries();
   const firstAvailable = loadedSummaries.value.find((item) => summaryHasVariantContent(item));
   if (firstAvailable) {
     await selectChapter(firstAvailable.id);
     return;
   }
-  if (summarySlots.value.length > SUMMARY_BATCH_SIZE) {
-    await loadSummaryRange(0, Math.min(SUMMARY_BATCH_SIZE * 2, summarySlots.value.length));
-    const expandedAvailable = loadedSummaries.value.find((item) => summaryHasVariantContent(item));
-    if (expandedAvailable) {
-      await selectChapter(expandedAvailable.id);
-      return;
-    }
-  }
   activeChapterId.value = null;
   activeChapter.value = null;
+  prevNeighbor.value = null;
+  nextNeighbor.value = null;
 }
 
 async function selectChapter(chapterId: string) {
@@ -582,37 +557,45 @@ async function loadActiveChapter(chapterId: string) {
   if (!novelId.value) return;
   chapterLoading.value = true;
   try {
-    activeChapter.value = await api.chapters.get(novelId.value, chapterId);
+    const { chapter, prev, next } = await api.chapters.getWithNeighbors(novelId.value, chapterId);
+    activeChapter.value = chapter;
+    prevNeighbor.value = prev;
+    nextNeighbor.value = next;
+    if (chapter) return;
+    const cached = await getCachedNovel(novelId.value);
+    activeChapter.value = cached?.chapters.find((c) => c.id === chapterId) ?? null;
+    prevNeighbor.value = null;
+    nextNeighbor.value = null;
   } catch {
     const cached = await getCachedNovel(novelId.value);
     activeChapter.value = cached?.chapters.find((chapter) => chapter.id === chapterId) ?? null;
+    prevNeighbor.value = null;
+    nextNeighbor.value = null;
   } finally {
     chapterLoading.value = false;
   }
 }
 
-function handleResize() {
-  desktop.value = window.innerWidth >= 720;
-  if (desktop.value) drawerOpen.value = false;
-}
-
-function updateProgress() {
-  const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
-  const scrollRange = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-  progress.value = scrollRange > 0 ? Math.min(100, (scrollTop / scrollRange) * 100) : 0;
-}
-
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    listModalOpen.value = false;
+    settingsOpen.value = false;
+    return;
+  }
+  if (listModalOpen.value) return;
   if (event.key === "ArrowRight" || event.key === "ArrowDown") {
     event.preventDefault();
     if (nextChapterId.value) selectChapter(nextChapterId.value);
   } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
     event.preventDefault();
     if (previousChapterId.value) selectChapter(previousChapterId.value);
-  } else if (event.key === "Escape") {
-    drawerOpen.value = false;
-    settingsOpen.value = false;
   }
+}
+
+function updateProgress() {
+  const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+  const scrollRange = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+  progress.value = scrollRange > 0 ? Math.min(100, (scrollTop / scrollRange) * 100) : 0;
 }
 
 function handleClickOutside(event: MouseEvent) {
@@ -711,13 +694,11 @@ function applyTypography() {
   gap: 4px;
 }
 
-.reader-back-btn,
-.reader-menu-btn {
+.reader-back-btn {
   color: var(--foreground) !important;
 }
 
-.reader-back-btn:hover,
-.reader-menu-btn:hover {
+.reader-back-btn:hover {
   background: var(--surface-muted) !important;
 }
 
@@ -758,53 +739,73 @@ function applyTypography() {
   z-index: 1;
 }
 
-/* ── Sidebar ── */
-.reader-sidebar {
-  width: 272px;
-  min-width: 272px;
-  background: var(--surface-elevated);
-  color: var(--foreground);
-  padding: 0 0 32px;
-  height: calc(100vh - 62px);
-  position: sticky;
-  top: 62px;
-  overflow-y: auto;
-  border-right: 1px solid var(--divide);
+/* ── Bottom bar ── */
+.reader-bottombar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: color-mix(in oklab, var(--surface-elevated) 92%, var(--background));
+  border-top: 1px solid var(--divide);
+  backdrop-filter: blur(14px);
 }
 
-.reader-sidebar-header {
-  padding: 22px 22px 14px;
-  border-bottom: 1px solid var(--divide);
-  margin-bottom: 8px;
+.reader-bottombar-inner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: calc(var(--reader-content-w) - 128px);
+  margin: 0 auto;
 }
 
-.reader-sidebar-header h2 {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--text-secondary);
-  font-weight: 600;
-  margin: 0;
+.reader-bottombar-arrow {
+  flex-shrink: 0;
 }
 
-.reader-sidebar-list {
+.reader-bottombar-list {
+  flex: 1;
+  min-width: 0;
+}
+
+.reader-bottombar-list-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Chapter list modal ── */
+.reader-list-modal {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+}
+
+.reader-list-search {
+  margin-bottom: 12px;
+}
+
+.reader-list {
   list-style: none;
   padding: 0;
   margin: 0;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 
-.reader-sidebar-list li {
+.reader-list li {
   border-bottom: 1px solid var(--divide);
 }
 
-.reader-sidebar-list li:last-child {
+.reader-list li:last-child {
   border-bottom: none;
 }
 
-.reader-sidebar-link {
+.reader-list-link {
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -824,6 +825,36 @@ function applyTypography() {
   text-align: left;
 }
 
+.reader-list-link:hover {
+  background: var(--surface-muted);
+  color: var(--foreground);
+}
+
+.reader-list-link.active {
+  background: var(--surface-muted);
+  color: var(--foreground);
+  border-left-color: var(--accent-link);
+}
+
+.reader-list-link.active .reader-ch-title {
+  color: var(--foreground);
+}
+
+.reader-list-link:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.reader-list-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reader-list-footer {
+  text-align: center;
+}
+
 .reader-ch-title {
   flex: 1;
   min-width: 0;
@@ -833,36 +864,12 @@ function applyTypography() {
   color: inherit;
 }
 
-.reader-sidebar-link:hover {
-  background: var(--surface-muted);
-  color: var(--foreground);
-}
-
-.reader-sidebar-link.active {
-  background: var(--surface-muted);
-  color: var(--foreground);
-  border-left-color: var(--accent-link);
-}
-
-.reader-sidebar-link.active .reader-ch-title {
-  color: var(--foreground);
-}
-
-.reader-sidebar-link:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.reader-sidebar-skeleton {
-  padding: 12px 22px;
-}
-
 /* ── Main content ── */
 .reader-main {
   flex: 1;
   max-width: var(--reader-content-w);
   margin: 0 auto;
-  padding: 56px 64px 100px;
+  padding: 56px 64px 150px;
   min-width: 0;
   background: var(--background);
 }
@@ -1031,84 +1038,6 @@ function applyTypography() {
   padding: 1rem 0;
 }
 
-/* ── Drawer overlay (mobile) ── */
-.reader-drawer-overlay {
-  display: none;
-}
-
-.reader-drawer-overlay-mobile {
-  position: fixed;
-  inset: 0;
-  background: var(--surface-overlay);
-  z-index: 200;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-/* ── Drawer (mobile) ── */
-.reader-drawer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 300px;
-  max-width: 80vw;
-  height: 100vh;
-  background: var(--surface-elevated);
-  z-index: 201;
-  transform: translateX(-100%);
-  transition: transform 0.3s ease;
-  overflow-y: auto;
-  padding: 0 0 32px;
-  color: var(--foreground);
-  border-right: 1px solid var(--divide);
-}
-
-.reader-drawer.open {
-  transform: translateX(0);
-  box-shadow: 2px 0 24px color-mix(in oklab, var(--foreground) 18%, transparent);
-}
-
-.reader-drawer-overlay-mobile.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.reader-drawer-header {
-  padding: 20px 22px 14px;
-  border-bottom: 1px solid var(--divide);
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.reader-drawer-header h2 {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--text-secondary);
-  font-weight: 600;
-  margin: 0;
-}
-
-.reader-drawer-close {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 1.2em;
-  padding: 4px 8px;
-  line-height: 1;
-  transition: color 0.15s, background 0.15s;
-  border-radius: var(--radius-sm);
-}
-
-.reader-drawer-close:hover {
-  color: var(--foreground);
-  background: var(--surface-muted);
-}
-
 /* ── Settings popover ── */
 .reader-settings-popover {
   display: none;
@@ -1237,27 +1166,10 @@ function applyTypography() {
   font-weight: 600;
 }
 
-/* ── Desktop safety: hide mobile-only elements ── */
-@media (min-width: 721px) {
-  .reader-menu-btn,
-  .reader-drawer,
-  .reader-drawer-overlay-mobile {
-    display: none !important;
-  }
-}
-
 /* ── Responsive: mobile ── */
 @media (max-width: 720px) {
-  .reader-sidebar {
-    display: none;
-  }
-
-  .reader-menu-btn {
-    display: flex !important;
-  }
-
   .reader-main {
-    padding: 30px 22px 60px;
+    padding: 30px 22px 130px;
   }
 
   .reader-header {
@@ -1276,37 +1188,13 @@ function applyTypography() {
 
 @media (max-width: 480px) {
   .reader-main {
-    padding: 24px 16px 50px;
+    padding: 24px 16px 120px;
   }
 
   .reader-header-title {
     font-size: 0.92em;
     max-width: 160px;
   }
-}
-
-/* ── Chapter navigation (prev/next) ── */
-.reader-chapter-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-top: 64px;
-  padding-top: 32px;
-  border-top: 1px solid var(--divide);
-}
-
-.reader-nav-spacer {
-  flex: 1;
-}
-
-.reader-nav-next:not(:first-child) {
-  margin-left: auto;
-}
-
-.reader-chapter-nav:has(.reader-nav-prev:only-child),
-.reader-chapter-nav:has(.reader-nav-next:only-child) {
-  justify-content: center;
 }
 
 /* ── Footnotes ── */
@@ -1386,16 +1274,4 @@ function applyTypography() {
   box-shadow: 0 0 0 2px var(--accent-link);
 }
 
-@media (max-width: 480px) {
-  .reader-chapter-nav {
-    flex-direction: column;
-  }
-  .reader-nav-spacer {
-    display: none;
-  }
-  .reader-chapter-nav .reader-nav-prev,
-  .reader-chapter-nav .reader-nav-next {
-    width: 100%;
-  }
-}
 </style>

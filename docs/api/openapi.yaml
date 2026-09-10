@@ -766,6 +766,14 @@ paths:
     get:
       tags: [Chapters]
       summary: Get one chapter (full record).
+      parameters:
+        - name: neighbors
+          in: query
+          required: false
+          description: When `true`, include the previous/next visible chapters in reading order (`position`) as `neighbors: {prev, next}` plus a `links.self` URL. Two indexed queries — no full list needed for prev/next navigation.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: OK
@@ -777,6 +785,12 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/Chapter' }
+                      neighbors:
+                        type: object
+                        description: Only present with `?neighbors=true`. Null when there is no previous/next chapter.
+                        properties:
+                          prev: { $ref: '#/components/schemas/ChapterSummary' }
+                          next: { $ref: '#/components/schemas/ChapterSummary' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Chapters]

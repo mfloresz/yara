@@ -94,8 +94,10 @@ export function createHttpClient(config: HttpClientConfig) {
     const body = (await response.json()) as unknown;
     // Collections come back as {data, meta, links} — keep the full envelope
     // so callers can pass it to `unwrapCollection` and read meta. Single
-    // resources come back as {data: <resource>} — strip to `data`.
-    if (isPlainObject(body) && "data" in body && "meta" in body) {
+    // resources come back as {data: <resource>} — strip to `data`, except
+    // when `neighbors` is present (?neighbors=true): keep the envelope so
+    // the caller can read both the chapter and its prev/next summaries.
+    if (isPlainObject(body) && "data" in body && ("meta" in body || "neighbors" in body)) {
       return body as T;
     }
     return unwrapEnvelope<T>(body);

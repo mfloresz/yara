@@ -269,7 +269,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `GET` | `/api/v1/novels/{id}/chapter-stats` | Aggregate char counts. |
 | `GET` | `/api/v1/novels/{id}/chapters/gaps` | Detect missing chapter numbers. Also returns `excludedOrders`. |
 | `GET` | `/api/v1/novels/{id}/chapters/excluded` | List logically excluded chapters. |
-| `GET` | `/api/v1/novels/{id}/chapters/{chapterId}` | Get one chapter (full record). |
+| `GET` | `/api/v1/novels/{id}/chapters/{chapterId}` | Get one chapter (full record). `?neighbors=true` adds `neighbors: {prev, next}` summaries in reading order (`position`) for prev/next navigation without the full list. |
 | `POST` | `/api/v1/novels/{id}/chapters` | Upsert a chapter. Accepts an optional `position`. Returns 201 + `Location`. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/order` | Reorder chapters. Body `{ "chapterIds": ["id1", "id2"] }`. 409 if jobs are active on the novel. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/{chapterId}/visibility` | Toggle logical exclusion. Body `{ "excluded": true \| false }`. |

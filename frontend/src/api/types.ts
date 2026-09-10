@@ -26,6 +26,7 @@ export type V1ErrorBody = {
 
 export type V1Envelope = {
   data?: unknown;
+  neighbors?: { prev: ChapterSummary | null; next: ChapterSummary | null };
   meta?: V1CollectionMeta;
   links?: V1Links;
   error?: V1ErrorBody;

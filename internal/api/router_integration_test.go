@@ -163,6 +163,76 @@ func TestChapterUpsertPreservesStatusWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestChapterGetWithNeighbors(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-neighbors@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Vecinos", "es", "en")
+	first := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	middle := createChapter(t, env.handler, alice.Token, novel.ID, 2)
+	last := createChapter(t, env.handler, alice.Token, novel.ID, 3)
+
+	get := func(id, query string) *httptest.ResponseRecorder {
+		resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+id+query, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		return resp
+	}
+
+	var mid struct {
+		Data      chapterPayload  `json:"data"`
+		Neighbors struct {
+			Prev *chapterPayload `json:"prev"`
+			Next *chapterPayload `json:"next"`
+		} `json:"neighbors"`
+	}
+	decodeRaw(t, get(middle.ID, "?neighbors=true"), &mid)
+	if mid.Data.ID != middle.ID {
+		t.Fatalf("expected chapter %q, got %q", middle.ID, mid.Data.ID)
+	}
+	if mid.Neighbors.Prev == nil || mid.Neighbors.Prev.ID != first.ID {
+		t.Fatalf("expected prev %q, got %+v", first.ID, mid.Neighbors.Prev)
+	}
+	if mid.Neighbors.Next == nil || mid.Neighbors.Next.ID != last.ID {
+		t.Fatalf("expected next %q, got %+v", last.ID, mid.Neighbors.Next)
+	}
+
+	var edge struct {
+		Data      chapterPayload  `json:"data"`
+		Neighbors struct {
+			Prev *chapterPayload `json:"prev"`
+			Next *chapterPayload `json:"next"`
+		} `json:"neighbors"`
+	}
+	decodeRaw(t, get(first.ID, "?neighbors=true"), &edge)
+	if edge.Neighbors.Prev != nil {
+		t.Fatalf("expected null prev on first chapter, got %q", edge.Neighbors.Prev.ID)
+	}
+	if edge.Neighbors.Next == nil || edge.Neighbors.Next.ID != middle.ID {
+		t.Fatalf("expected next %q, got %+v", middle.ID, edge.Neighbors.Next)
+	}
+
+	edge = struct {
+		Data      chapterPayload  `json:"data"`
+		Neighbors struct {
+			Prev *chapterPayload `json:"prev"`
+			Next *chapterPayload `json:"next"`
+		} `json:"neighbors"`
+	}{}
+	decodeRaw(t, get(last.ID, "?neighbors=true"), &edge)
+	if edge.Neighbors.Next != nil {
+		t.Fatalf("expected null next on last chapter, got %q", edge.Neighbors.Next.ID)
+	}
+	if edge.Neighbors.Prev == nil || edge.Neighbors.Prev.ID != middle.ID {
+		t.Fatalf("expected prev %q, got %+v", middle.ID, edge.Neighbors.Prev)
+	}
+
+	var plain map[string]any
+	decodeRaw(t, get(middle.ID, ""), &plain)
+	if _, ok := plain["neighbors"]; ok {
+		t.Fatal("expected no neighbors key without ?neighbors=true")
+	}
+}
+
 func TestImportEpubPersistsCoverFile(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-cover@example.com", "secret123", "Alice")

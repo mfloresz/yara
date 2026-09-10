@@ -671,6 +671,30 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           `/api/v1/novels/${novelId}/chapters/${chapterId}`,
         );
       },
+      // Chapter + prev/next summaries in reading order (position) in a
+      // single request. Use it for prev/next navigation so the full list
+      // is only fetched when the chapter picker modal opens.
+      async getWithNeighbors(novelId: string, chapterId: string): Promise<{
+        chapter: Chapter | null;
+        prev: ChapterSummary | null;
+        next: ChapterSummary | null;
+      }> {
+        const result = await http.get<unknown>(
+          `/api/v1/novels/${novelId}/chapters/${chapterId}?neighbors=true`,
+        );
+        if (typeof result === "object" && result !== null && !Array.isArray(result) && "data" in result) {
+          const envelope = result as {
+            data: Chapter | null;
+            neighbors?: { prev?: ChapterSummary | null; next?: ChapterSummary | null };
+          };
+          return {
+            chapter: envelope.data ?? null,
+            prev: envelope.neighbors?.prev ?? null,
+            next: envelope.neighbors?.next ?? null,
+          };
+        }
+        return { chapter: (result as Chapter | null) ?? null, prev: null, next: null };
+      },
       upsert(novelId: string, chapter: ChapterUpsertInput) {
         return http.post<Chapter>(
           `/api/v1/novels/${novelId}/chapters`,

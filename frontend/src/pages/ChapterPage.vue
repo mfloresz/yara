@@ -167,7 +167,10 @@ const novelLoading = ref(false);
 useDocumentTitle(() => (novel.value ? getNovelDisplayTitle(novel.value) : null));
 const chapter = ref<Chapter | null>(null);
 const chaptersLoading = ref(false);
-const chapterSummaries = ref<ChapterSummary[]>([]);
+// Prev/next llegan con el propio capítulo (?neighbors=true, orden position).
+// Ya no se pide la lista completa para navegar.
+const prevNeighbor = ref<ChapterSummary | null>(null);
+const nextNeighbor = ref<ChapterSummary | null>(null);
 
 const title = ref("");
 const translatedTitle = ref("");
@@ -254,15 +257,21 @@ function markChapterProcessing() {
 async function loadChapter(options: { replaceOriginalFields?: boolean } = {}) {
   if (!novelId.value || !chapterId.value) {
     chapter.value = null;
+    prevNeighbor.value = null;
+    nextNeighbor.value = null;
     return null;
   }
   chaptersLoading.value = true;
   try {
-    const next = await api.chapters.get(novelId.value, chapterId.value);
+    const { chapter: next, prev, next: nextSummary } = await api.chapters.getWithNeighbors(novelId.value, chapterId.value);
     if (!next) {
       chapter.value = null;
+      prevNeighbor.value = null;
+      nextNeighbor.value = null;
       return null;
     }
+    prevNeighbor.value = prev;
+    nextNeighbor.value = nextSummary;
     syncChapterFields(next, options);
     return chapter.value;
   } finally {
@@ -278,27 +287,9 @@ watch([novelId, chapterId], () => {
   void loadChapter();
 }, { immediate: true });
 
-watch(novelId, () => {
-  chapterSummaries.value = [];
-  if (!novelId.value) return;
-  api.chapters.list(novelId.value)
-    .then((items) => { chapterSummaries.value = items; })
-    .catch(() => { chapterSummaries.value = []; });
-}, { immediate: true });
+const prevChapter = computed<ChapterSummary | null>(() => prevNeighbor.value);
 
-const sortedSummaries = computed(() =>
-  [...chapterSummaries.value].sort((a, b) => a.chapterOrder - b.chapterOrder),
-);
-
-const prevChapter = computed<ChapterSummary | null>(() => {
-  const idx = sortedSummaries.value.findIndex((c) => c.id === chapterId.value);
-  return idx > 0 ? sortedSummaries.value[idx - 1] : null;
-});
-
-const nextChapter = computed<ChapterSummary | null>(() => {
-  const idx = sortedSummaries.value.findIndex((c) => c.id === chapterId.value);
-  return idx >= 0 && idx < sortedSummaries.value.length - 1 ? sortedSummaries.value[idx + 1] : null;
-});
+const nextChapter = computed<ChapterSummary | null>(() => nextNeighbor.value);
 
 function goToChapter(target: ChapterSummary | null) {
   if (!target) return;

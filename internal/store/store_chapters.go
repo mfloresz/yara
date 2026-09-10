@@ -207,6 +207,37 @@ func (s *Store) GetChapterAccessible(userID, novelID, chapterID string) (*Chapte
 	return &chapter, nil
 }
 
+// GetChapterNeighborsAccessible returns the previous/next visible chapters in
+// reading order (position, the user-controlled order). Excluded chapters are
+// never neighbors. Each lookup is a single indexed query with LIMIT 1, so
+// resolving neighbors costs O(log n) instead of loading the full list.
+func (s *Store) GetChapterNeighborsAccessible(userID, novelID, chapterID string) (prev, next *ChapterSummary, err error) {
+	current, err := s.GetChapterAccessible(userID, novelID, chapterID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Legacy rows may still carry position = 0 (pre-migration); fall back to
+	// chapter_order comparisons so neighbors still resolve for them.
+	key := "position"
+	cur := current.Position
+	if cur <= 0 {
+		key = "chapter_order"
+		cur = current.ChapterOrder
+	}
+	findOne := func(filter, sort string, params dbx.Params) *ChapterSummary {
+		records, qerr := s.App.FindRecordsByFilter(ChaptersCollection, filter, sort, 1, 0, params)
+		if qerr != nil || len(records) == 0 {
+			return nil
+		}
+		summary := chapterSummaryFromRecord(records[0])
+		return &summary
+	}
+	base := dbx.Params{"novel": novelID, "cur": cur}
+	prev = findOne("novel = {:novel} && excluded = false && "+key+" < {:cur} && "+key+" > 0", "-"+key, base)
+	next = findOne("novel = {:novel} && excluded = false && "+key+" > {:cur}", "+"+key, base)
+	return prev, next, nil
+}
+
 func (s *Store) UpsertChapter(userID, novelID string, chapter *Chapter) (*Chapter, error) {
 	return s.upsertChapter(userID, novelID, chapter, true)
 }
