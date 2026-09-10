@@ -316,6 +316,7 @@ import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useTranslationJobs } from "@/composables/useTranslationJobs";
 import { useOfflineCache } from "@/composables/useOfflineCache";
 import { useChapterSummaries } from "@/composables/useChapterSummaries";
+import { useDocumentTitle } from "@/composables/useDocumentTitle";
 import {
   chapterPosition,
   getNovelDisplayAuthor,
@@ -419,6 +420,7 @@ function chapterToSummary(chapter: Chapter): ChapterSummary {
 
 const novelLoading = ref(true);
 const novel = ref<Novel | null>(null);
+useDocumentTitle(() => (novel.value ? getNovelDisplayTitle(novel.value) : null));
 const isOwner = computed(() => novel.value?.ownerId === auth.user.value?.id);
 const visibleTabs = computed(() => (isOwner.value ? tabs : tabs.filter((tab) => tab.value === "chapters")));
 const chapterStats = computed(() => ({

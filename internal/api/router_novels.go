@@ -286,8 +286,10 @@ func (sharedNovelHandlers) cover(s *Server) func(*core.RequestEvent) error {
 // coverImage serves the stored cover/thumbnail file. cover and thumbnail are
 // Protected file fields, so PocketBase's native /api/files route requires a
 // file token; this cookie-authenticated handler is the replacement the
-// frontend's coverPath points at. Novels without a stored cover get the
-// bundled default (assets/no_cover.jpg) so coverPath is never dead.
+// frontend's coverPath points at. Novels without a stored cover get
+// coverPath === "" and the frontend shows its bundled default; the handler
+// still serves the bundled default (assets/no_cover.jpg) for those per-novel
+// URLs as a compat fallback so old clients never see a dead image.
 func (sharedNovelHandlers) coverImage(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		novelID := e.Request.PathValue("id")

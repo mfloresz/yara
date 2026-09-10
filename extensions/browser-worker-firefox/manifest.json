@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Yara Browser Worker (Firefox)",
-  "version": "1.0.0",
+  "name": "Yara Browser Worker",
+  "version": "1.0.1",
   "description": "Browser proxy for Yara - fetches pages through real browser to bypass Cloudflare (Firefox)",
   "browser_specific_settings": {
     "gecko": {
-      "id": "{720e4198-2455-4bf5-b973-378a8368a6a4}",
+      "id": "{960af93a-08d6-481e-ac0e-26cc8f8a872e}",
       "data_collection_permissions": {
         "required": ["websiteContent", "authenticationInfo"]
       }

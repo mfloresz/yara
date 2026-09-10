@@ -1,10 +1,7 @@
 <template>
   <aside class="novel-sidebar">
     <div class="novel-cover-large">
-      <img v-if="novel.coverPath" :src="novel.coverPath" :alt="`Portada de ${getNovelDisplayTitle(novel)}`" loading="lazy" />
-      <div v-else class="novel-cover-placeholder-large">
-        <n-icon :size="40"><ImageOutline /></n-icon>
-      </div>
+      <img :src="coverSrc(novel.coverPath)" :alt="`Portada de ${getNovelDisplayTitle(novel)}`" loading="lazy" @error="onCoverError" />
     </div>
 
     <div class="novel-sidebar-actions">
@@ -53,11 +50,11 @@ import {
   CloudDownloadOutline,
   CopyOutline,
   GlobeOutline,
-  ImageOutline,
   RefreshOutline,
   SettingsOutline,
 } from "@vicons/ionicons5";
 import { getNovelDisplayTitle, type Novel, type NovelStatus } from "@/domain";
+import { coverSrc, onCoverError } from "@/utils/cover";
 
 defineProps<{
   novel: Novel;
@@ -124,16 +121,6 @@ function novelStatusType(status: NovelStatus) {
   aspect-ratio: 2 / 3;
   object-fit: cover;
   display: block;
-}
-
-.novel-cover-placeholder-large {
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-  font-size: 2.5rem;
 }
 
 .novel-sidebar-actions {

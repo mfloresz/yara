@@ -26,7 +26,7 @@ Firefox extension (Manifest V3) that proxies HTTP requests through a real browse
 |--------|--------|---------|
 | Manifest | `extensions/browser-worker-chrome/` | `extensions/browser-worker-firefox/` |
 | Storage key | `yara_browser_worker` | `yara_browser_worker_firefox` |
-| Extension ID | Chrome-generated | `{720e4198-2455-4bf5-b973-378a8368a6a4}` |
+| Extension ID | Chrome-generated | `{960af93a-08d6-481e-ac0e-26cc8f8a872e}` |
 | Install method | Load unpacked in `chrome://extensions` | Temporary add-on in `about:debugging` |
 
 ## Features

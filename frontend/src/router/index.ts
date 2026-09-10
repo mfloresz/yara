@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { authState } from "@/app/auth";
+import { setDocumentTitle } from "@/composables/useDocumentTitle";
 
 const LoginPage = () => import("@/pages/LoginPage.vue");
 const InvitePage = () => import("@/pages/InvitePage.vue");
@@ -41,7 +42,7 @@ export const router = createRouter({
       path: "/admin",
       name: "admin",
       component: AdminPage,
-      meta: { requiresAuth: true, requiresAdmin: true },
+      meta: { requiresAuth: true, requiresAdmin: true, title: "Admin" },
     },
     {
       path: "/",
@@ -53,13 +54,13 @@ export const router = createRouter({
       path: "/settings",
       name: "settings",
       component: SettingsPage,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: "Ajustes" },
     },
     {
       path: "/operations",
       name: "operations",
       component: OperationsPage,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: "Operaciones" },
     },
     {
       path: "/novels/:novelId",
@@ -110,4 +111,13 @@ router.beforeEach((to) => {
     return { name: "dashboard" };
   }
   return true;
+});
+
+// Static titles live here; novel-scoped routes (detail, chapter edition,
+// reader) set `Yara - <novel title>` from their own page once the novel loads.
+const DYNAMIC_TITLE_ROUTES = new Set(["novel-detail", "chapter-detail", "reader"]);
+
+router.afterEach((to) => {
+  if (to.name != null && DYNAMIC_TITLE_ROUTES.has(String(to.name))) return;
+  setDocumentTitle(typeof to.meta.title === "string" ? to.meta.title : null);
 });

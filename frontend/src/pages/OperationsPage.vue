@@ -273,7 +273,20 @@ function hasNewChapters(novel: Novel): boolean {
   return false;
 }
 
+function isSameLanguage(novel: Novel): boolean {
+  const a = (novel.sourceLanguage || "").trim().toLowerCase();
+  const b = (novel.targetLanguage || "").trim().toLowerCase();
+  return !!a && a === b;
+}
+
+function translationRatio(novel: Novel): number {
+  if (isSameLanguage(novel)) return 1;
+  if (!novel.chapterCount) return 1;
+  return novel.translatedCount / novel.chapterCount;
+}
+
 function hasPendingTranslation(novel: Novel): boolean {
+  if (isSameLanguage(novel)) return false;
   return novel.chapterCount > 0 && novel.translatedCount < novel.chapterCount;
 }
 
@@ -329,7 +342,8 @@ const columns: DataTableColumns<Novel> = [
   {
     title: "Novela",
     key: "sourceTitle",
-    width: 420,
+    width: 250,
+    ellipsis: { tooltip: true },
     sorter: (a, b) => a.sourceTitle.localeCompare(b.sourceTitle),
     render(row) {
       const needsBrowser = row.requiresBrowser === true;
@@ -346,7 +360,7 @@ const columns: DataTableColumns<Novel> = [
               { align: "center", wrap: false, size: 4, style: "min-width:0; flex:1" },
               {
                 default: () => [
-                  h(NEllipsis, { style: "max-width: 100%; font-weight: 600; font-size: 13px" }, { default: () => row.sourceTitle }),
+                  h(NEllipsis, { tooltip: true, style: "max-width: 100%; font-weight: 600; font-size: 13px" }, { default: () => row.sourceTitle }),
                   needsBrowser
                     ? h(
                         NTooltip,
@@ -367,29 +381,62 @@ const columns: DataTableColumns<Novel> = [
     },
   },
   {
-    title: () =>
-      h(
-        NFlex,
-        { justify: "center", size: 4, align: "center", wrap: false },
-        {
-          default: () => [
-            h("span", { style: "font-size: 12px; font-weight: 600" }, "Estado"),
-            h(NText, { depth: "3", style: "font-size: 11px" }, { default: () => "·" }),
-            h(NText, { depth: "3", style: "font-size: 11px" }, { default: () => String(filteredNovels.value.length) }),
-          ],
-        },
-      ),
-    key: "status",
-    width: 170,
+    title: "Actualización",
+    key: "updateStatus",
+    width: 140,
     align: "center",
     render(row) {
       const downloadJob = activeJobForNovel(row.id, "download");
-      const translateJob = activeJobForNovel(row.id, "translate") || activeJobForNovel(row.id, "refine");
       const checkJob = activeJobForNovel(row.id, "check");
 
-      const renderStatus = (
+      const renderUpdate = (
         tagType: "default" | "success" | "warning" | "info" | "error",
         tagText: string,
+        tooltip: string,
+      ) =>
+        h(
+          NTooltip,
+          {},
+          {
+            trigger: () =>
+              h(NTag, { type: tagType, size: "tiny", round: true }, { default: () => tagText }),
+            default: () => tooltip,
+          },
+        );
+
+      if (downloadJob) return renderUpdate("warning", jobStatusLabel(downloadJob), "Descargando capítulos nuevos");
+      if (checkJob) return renderUpdate("info", jobStatusLabel(checkJob), "Verificando novedades en el origen");
+      if (updateResults.value.has(row.id)) {
+        const r = updateResults.value.get(row.id)!;
+        return renderUpdate(r.error ? "error" : "success", updateResultsLabel(row), r.error ? r.error : "Resultado de la última verificación");
+      }
+      const checkLabel = persistedCheckLabel(row);
+      if (checkLabel)
+        return renderUpdate(
+          checkLabel === "Al día" ? "success" : "info",
+          checkLabel,
+          checkLabel === "Al día" ? "Sin novedades en la última verificación" : `${row.lastCheckNewChapters} capítulos nuevos detectados`,
+        );
+      if (isActualizable(row) && row.status !== "completed")
+        return renderUpdate("warning", "Actualizable", "Tiene URL actualizable, pendiente de verificar");
+      if (row.status === "completed") return renderUpdate("info", "Completada", "Novela marcada como completada");
+      return renderUpdate("default", "—", "Sin URL actualizable");
+    },
+  },
+  {
+    title: "Traducción",
+    key: "translationStatus",
+    width: 140,
+    align: "center",
+    sorter: (a, b) => translationRatio(a) - translationRatio(b),
+    render(row) {
+      const translateJob = activeJobForNovel(row.id, "translate") || activeJobForNovel(row.id, "refine");
+
+      const renderTrans = (
+        tagType: "default" | "success" | "warning" | "info" | "error",
+        tagText: string,
+        tooltip: string,
+        showCounts: boolean,
       ) =>
         h(
           NTooltip,
@@ -402,7 +449,7 @@ const columns: DataTableColumns<Novel> = [
                 {
                   default: () => [
                     h(NTag, { type: tagType, size: "tiny", round: true }, { default: () => tagText }),
-                    row.chapterCount > 0
+                    showCounts && row.chapterCount > 0
                       ? h(
                           NText,
                           { depth: "3", style: "font-size: 11px; line-height: 1.1; white-space: nowrap" },
@@ -414,26 +461,38 @@ const columns: DataTableColumns<Novel> = [
                   ],
                 },
               ),
-            default: () =>
-              row.chapterCount > 0
-                ? `${row.translatedCount} de ${row.chapterCount} capítulos traducidos (${row.chapterCount - row.translatedCount} pendientes)`
-                : "Sin capítulos",
+            default: () => tooltip,
           },
         );
 
-      if (downloadJob) return renderStatus("warning", jobStatusLabel(downloadJob));
-      if (checkJob) return renderStatus("info", jobStatusLabel(checkJob));
-      if (translateJob) return renderStatus("info", jobStatusLabel(translateJob));
-      if (updateResults.value.has(row.id)) {
-        const r = updateResults.value.get(row.id)!;
-        return renderStatus(r.error ? "error" : "success", updateResultsLabel(row));
-      }
-      const checkLabel = persistedCheckLabel(row);
-      if (checkLabel) return renderStatus(checkLabel === "Al día" ? "success" : "info", checkLabel);
-      if (isActualizable(row) && row.status !== "completed") return renderStatus("warning", "Actualizable");
-      if (row.status === "completed") return renderStatus("info", "Completada");
-      if (hasPendingTranslation(row)) return renderStatus("info", `${row.chapterCount - row.translatedCount} pend.`);
-      return renderStatus("success", "Al día");
+      if (translateJob)
+        return renderTrans(
+          "info",
+          jobStatusLabel(translateJob),
+          `${row.translatedCount} de ${row.chapterCount} capítulos traducidos`,
+          true,
+        );
+      if (isSameLanguage(row))
+        return renderTrans(
+          "default",
+          "--",
+          `Origen (${row.sourceLanguage}) = destino (${row.targetLanguage}), no requiere traducción`,
+          false,
+        );
+      if (row.chapterCount === 0) return renderTrans("default", "—", "Sin capítulos", false);
+      if (hasPendingTranslation(row))
+        return renderTrans(
+          "info",
+          `${row.chapterCount - row.translatedCount} pend.`,
+          `${row.translatedCount} de ${row.chapterCount} capítulos traducidos (${row.chapterCount - row.translatedCount} pendientes)`,
+          true,
+        );
+      return renderTrans(
+        "success",
+        "Al día",
+        `${row.translatedCount} de ${row.chapterCount} capítulos traducidos`,
+        true,
+      );
     },
   },
   {

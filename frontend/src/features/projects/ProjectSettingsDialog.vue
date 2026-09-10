@@ -50,15 +50,11 @@
               <div v-if="coverEditable" class="cover-editor compact">
                 <div class="cover-preview-tiny" @click="triggerFileInput">
                   <img
-                    v-if="displayCoverUrl"
-                    :src="displayCoverUrl"
+                    :src="displayCoverUrl || DEFAULT_COVER_URL"
                     alt="Portada"
                     loading="lazy"
-                    @error="onCoverImageError"
+                    @error="onCoverImgError"
                   />
-                  <div v-else class="cover-placeholder">
-                    <n-icon :size="20"><ImageOutline /></n-icon>
-                  </div>
                   <div class="cover-overlay">
                     {{ displayCoverUrl ? 'Cambiar' : 'Subir' }}
                   </div>
@@ -836,7 +832,6 @@ import {
 import {
   AddOutline,
   TrashOutline,
-  ImageOutline,
   ArrowForwardOutline,
   BookOutline,
   ListOutline,
@@ -859,6 +854,7 @@ import { emitJobChanged } from "@/utils/job-events";
 import { safeUuid } from "@/utils/safe-uuid";
 import { ensureGlossaryIds } from "@/utils/project-settings";
 import { LANGUAGES } from "@/config/languages";
+import { DEFAULT_COVER_URL, onCoverError } from "@/utils/cover";
 import type { RedownloadFromUrlResult } from "@/api/types";
 
 const props = defineProps<{
@@ -1004,8 +1000,12 @@ function removeCover() {
   onRemoveCover();
 }
 
-function onCoverImageError() {
-  localCoverUrl.value = undefined;
+function onCoverImgError(event: Event) {
+  if (localCoverUrl.value) {
+    URL.revokeObjectURL(localCoverUrl.value);
+    localCoverUrl.value = undefined;
+  }
+  onCoverError(event);
 }
 
 function buildSeriesOptions(query: string, available: string[]) {
@@ -1709,8 +1709,6 @@ async function save() {
 }
 
 .cover-preview-tiny:hover .cover-overlay { opacity: 1; }
-
-.cover-placeholder { color: var(--text-tertiary); }
 
 .identity-fields { flex: 1; min-width: 0; }
 

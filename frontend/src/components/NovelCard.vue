@@ -7,14 +7,11 @@
     >
       <div class="library-cover">
         <img
-          v-if="novel.coverPath"
-          :src="novel.coverPath"
+          :src="coverSrc(novel.coverPath)"
           :alt="`Portada de ${getNovelDisplayTitle(novel)}`"
           loading="lazy"
+          @error="onCoverError"
         />
-        <div v-else class="library-cover-placeholder">
-          <n-icon :size="40"><ImageOutline /></n-icon>
-        </div>
         <span v-if="shared" class="shared-badge" aria-label="Novela compartida">
           <n-icon :size="13"><ShareSocialOutline /></n-icon>
           Compartida
@@ -43,8 +40,9 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
 import { NIcon } from "naive-ui";
-import { ImageOutline, ShareSocialOutline } from "@vicons/ionicons5";
+import { ShareSocialOutline } from "@vicons/ionicons5";
 import { getNovelDisplayTitle, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
+import { coverSrc, onCoverError } from "@/utils/cover";
 
 defineProps<{
   novel: Novel;
@@ -92,15 +90,6 @@ defineProps<{
   height: 100%;
   object-fit: cover;
   display: block;
-}
-
-.library-cover-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
 }
 
 .shared-badge {

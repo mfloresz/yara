@@ -8,7 +8,7 @@
           <slot name="back-button" />
           <RouterLink to="/" class="app-brand" aria-label="Yara - Inicio">
             <span class="app-brand-icon" aria-hidden="true">
-              <n-icon :size="20"><BookOutline /></n-icon>
+              <img src="/favicon.svg" alt="" width="30" height="30" />
             </span>
             <span class="app-brand-text">Yara</span>
           </RouterLink>
@@ -165,7 +165,6 @@ import { computed, ref, h } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { NButton, NIcon, NDropdown, NDrawer, NDrawerContent, NDivider, NBadge } from "naive-ui";
 import {
-  BookOutline,
   TimeOutline,
   FlashOutline,
   DesktopOutline,
@@ -342,8 +341,13 @@ function handleMobileNav(command?: () => void) {
   width: 1.875rem;
   height: 1.875rem;
   border-radius: var(--radius-sm);
-  background: var(--btn-primary-bg);
-  color: var(--btn-primary-fg);
+  overflow: hidden;
+}
+
+.app-brand-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .app-brand-text {

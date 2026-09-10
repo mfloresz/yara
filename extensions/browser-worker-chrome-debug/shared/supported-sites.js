@@ -17,6 +17,7 @@ export const SUPPORTED_SITE_HOSTS = [
   'novelarrow.com',
   'wattpad.com',
   'inkitt.com',
+  'gaydemon.com',
 ];
 
 // Match patterns for chrome.contextMenus documentUrlPatterns. Both the bare

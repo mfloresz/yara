@@ -52,13 +52,9 @@
             <span>{{ eligibleChapters.length }} capítulos con contenido</span>
           </div>
           <div class="row-wrap">
-            <n-button :loading="previewLoading" :disabled="selectedIds.size === 0" @click="previewSelected">
+            <n-button type="primary" :loading="previewLoading" :disabled="selectedIds.size === 0" @click="previewSelected">
               <template #icon><n-icon><EyeOutline /></n-icon></template>
               Previsualizar ({{ selectedIds.size }})
-            </n-button>
-            <n-button type="primary" :loading="applying" :disabled="selectedIds.size === 0" @click="applyToSelected">
-              <template #icon><n-icon><SaveOutline /></n-icon></template>
-              Aplicar a {{ selectedIds.size }} capítulos
             </n-button>
           </div>
         </div>
@@ -136,7 +132,7 @@
 <script setup lang="ts">
 import { computed, toRef } from "vue";
 import { useMessage, NAlert, NButton, NCard, NCheckbox, NInput, NModal, NSelect, NSkeleton, NSwitch, NTag, NIcon } from "naive-ui";
-import { EyeOutline, SaveOutline } from "@vicons/ionicons5";
+import { EyeOutline } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
 import { chapterPosition } from "@/domain";
 import { CLEAN_MODE_DESCRIPTIONS, CLEAN_MODE_LABELS, type CleanMode } from "@/utils/cleaner";
@@ -247,10 +243,6 @@ async function apply(chapterIds: string[]) {
   } finally {
     applying.value = false;
   }
-}
-
-function applyToSelected() {
-  void apply(Array.from(selectedIds.value));
 }
 
 function applyFromPreview() {

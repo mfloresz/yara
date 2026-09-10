@@ -474,7 +474,9 @@ paths:
         /api/files route requires a file token; this endpoint is the
         replacement the novel's coverPath points at. Access follows novel
         visibility (owner or is_public). Novels without a stored cover get
-        the bundled default image, so coverPath is always usable.
+        coverPath === "" and the frontend shows its bundled default image;
+        the endpoint still serves the bundled default for those per-novel
+        URLs as a compat fallback.
       responses:
         '200':
           description: OK
@@ -2704,7 +2706,7 @@ components:
         status:
           type: string
           enum: [ongoing, completed, hiatus, dropped]
-        coverPath: { type: string, description: Thumbnail path; falls back to the full cover. }
+        coverPath: { type: string, description: Thumbnail path; falls back to the full cover. Empty when the novel has no stored cover (frontend shows its bundled default). }
         isPublic: { type: boolean }
         chapterCount: { type: integer }
         translatedCount: { type: integer }

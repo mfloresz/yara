@@ -8,8 +8,11 @@
     <n-drawer-content closable>
       <template #header>
         <div class="chapter-preview-header">
-          <span v-if="chapter" class="mono small muted">#{{ String(chapterPosition(chapter)).padStart(2, "0") }}</span>
-          <span class="chapter-preview-title">{{ chapter?.title }}</span>
+          <div class="chapter-preview-title-row">
+            <span v-if="chapter" class="mono small muted">#{{ String(chapterPosition(chapter)).padStart(2, "0") }}</span>
+            <span class="chapter-preview-title">{{ displayTitle }}</span>
+          </div>
+          <span v-if="showOriginalSubtitle" class="small muted chapter-preview-subtitle">{{ chapter?.title }}</span>
         </div>
       </template>
 
@@ -111,6 +114,16 @@ const jobLoading = ref<"translate" | "refine" | null>(null);
 
 const status = computed(() => (props.chapter ? resolvedChapterStatus(props.chapter) : "pending"));
 
+const translatedTitle = computed(
+  () => fullChapter.value?.translatedTitle?.trim() || props.chapter?.translatedTitle?.trim() || "",
+);
+
+const displayTitle = computed(() => translatedTitle.value || props.chapter?.title || "");
+
+const showOriginalSubtitle = computed(
+  () => !!translatedTitle.value && !!props.chapter?.title && translatedTitle.value !== props.chapter.title,
+);
+
 const hasAnyContent = computed(() =>
   !!(fullChapter.value?.originalContent || fullChapter.value?.translatedContent || fullChapter.value?.refinedContent),
 );
@@ -185,6 +198,13 @@ function editChapter() {
 <style scoped>
 .chapter-preview-header {
   display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.chapter-preview-title-row {
+  display: flex;
   align-items: baseline;
   gap: 0.5rem;
   min-width: 0;
@@ -192,6 +212,12 @@ function editChapter() {
 
 .chapter-preview-title {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-preview-subtitle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

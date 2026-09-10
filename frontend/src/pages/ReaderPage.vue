@@ -231,6 +231,7 @@ import { useAppServices } from "@/app/services";
 import { STORAGE_KEYS } from "@/app/storage-keys";
 import { useNovels } from "@/composables/useNovels";
 import { getNovelDisplayTitle, type Chapter, type Novel } from "@/domain";
+import { useDocumentTitle } from "@/composables/useDocumentTitle";
 import { markdownToHtml } from "@/utils/markdown";
 import { useReadingProgress } from "@/composables/useReadingProgress";
 import { useOfflineCache } from "@/composables/useOfflineCache";
@@ -284,6 +285,7 @@ const fontSize = ref(saved?.fontSize ?? (isMobile ? 13 : 16));
 const lineHeight = ref(saved?.lineHeight ?? 1.5);
 const contentWidth = ref(saved?.contentWidth ?? 900);
 const novel = ref<Novel | null>(null);
+useDocumentTitle(() => (novel.value ? getNovelDisplayTitle(novel.value) : null));
 
 applyTypography();
 const {
