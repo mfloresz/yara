@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.30.1] - 2026-09-10
+
+### Fixes
+
+- Fixed the `opencode-go` provider model catalog: replaced the stale `deepseek-v4-flash` / `deepseek-flash` entries with `deepseek-v4.1-flash`.
+
 ## [v0.30.0] - 2026-09-10
 
 ### What's new
@@ -286,7 +292,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.1...HEAD
+[v0.30.1]: https://github.com/mfloresz/yara/compare/v0.30.0...v0.30.1
 [v0.30.0]: https://github.com/mfloresz/yara/compare/v0.29.1...v0.30.0
 [v0.29.1]: https://github.com/mfloresz/yara/compare/v0.29.0...v0.29.1
 [v0.29.0]: https://github.com/mfloresz/yara/compare/v0.28.1...v0.29.0
