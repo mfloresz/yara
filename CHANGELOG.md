@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.30.2] - 2026-09-12
+
+### Fixes
+
+- Fixed the `floraegarden` parser listing premium/locked chapters: it now skips chapters flagged `_premium` and returns only free ones (e.g. `kingdom-of-the-abyss` lists 77 instead of 282).
+
 ## [v0.30.1] - 2026-09-10
 
 ### Fixes
@@ -293,6 +299,7 @@
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
 [Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.1...HEAD
+[v0.30.2]: https://github.com/mfloresz/yara/compare/v0.30.1...v0.30.2
 [v0.30.1]: https://github.com/mfloresz/yara/compare/v0.30.0...v0.30.1
 [v0.30.0]: https://github.com/mfloresz/yara/compare/v0.29.1...v0.30.0
 [v0.29.1]: https://github.com/mfloresz/yara/compare/v0.29.0...v0.29.1
