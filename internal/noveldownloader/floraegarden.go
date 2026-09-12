@@ -120,8 +120,8 @@ func (p *floraegardenParser) GetNovelInfo(ctx context.Context, client HTTPClient
 		})
 	}
 
-	// Chapters from the story page
-	info.Chapters = fictioneerExtractChapters(doc, floraeGardenBaseURL, floraeGardenChapterRe, false)
+	// Chapters from the story page (skip premium/locked chapters — only free ones are downloadable)
+	info.Chapters = fictioneerExtractChapters(doc, floraeGardenBaseURL, floraeGardenChapterRe, true)
 
 	// Fallback: RSS feed if no chapters found on page
 	if len(info.Chapters) == 0 {
@@ -137,7 +137,7 @@ func (p *floraegardenParser) GetNovelInfo(ctx context.Context, client HTTPClient
 }
 
 func (p *floraegardenParser) GetChapterURLs(ctx context.Context, client HTTPClient, doc *goquery.Document, url string) ([]ChapterURL, error) {
-	chapters := fictioneerExtractChapters(doc, floraeGardenBaseURL, floraeGardenChapterRe, false)
+	chapters := fictioneerExtractChapters(doc, floraeGardenBaseURL, floraeGardenChapterRe, true)
 	if len(chapters) > 0 {
 		return chapters, nil
 	}
