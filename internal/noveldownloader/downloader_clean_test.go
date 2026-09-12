@@ -113,6 +113,30 @@ func TestStripLeadingTitle(t *testing.T) {
 			chapterTitle: "",
 			expected:     "Some content\n\nMore content.",
 		},
+		{
+			name:         "leading heading with different text is kept (POV marker)",
+			input:        "#### Julian\n\nWhen I saw Vanessa calling.",
+			chapterTitle: "Chapter 1",
+			expected:     "#### Julian\n\nWhen I saw Vanessa calling.",
+		},
+		{
+			name:         "leading heading alone with different text is kept",
+			input:        "#### Julian",
+			chapterTitle: "Chapter 1",
+			expected:     "#### Julian",
+		},
+		{
+			name:         "leading heading matching title with numeric prefix is stripped",
+			input:        "## 1. Chapter 1\n\nContent.",
+			chapterTitle: "Chapter 1",
+			expected:     "Content.",
+		},
+		{
+			name:         "leading heading with empty chapter title is kept",
+			input:        "# Chapter 1\n\nContent.",
+			chapterTitle: "",
+			expected:     "# Chapter 1\n\nContent.",
+		},
 	}
 
 	for _, tt := range tests {

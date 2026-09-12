@@ -179,7 +179,10 @@ func (p *gaydemonParser) extractChapters(doc *goquery.Document, pageURL string) 
 	return chapters
 }
 
-// storyContent extracts the story body as <p>…</p> paragraphs, skipping the
+// storyContent extracts the story body preserving document order. Besides
+// <p> paragraphs it keeps <h1>-<h6> POV/scene headings (e.g. the
+// "Julian"/"Alexis" <h4> markers gaydemon stories use to switch narrators),
+// <blockquote>/<li> text as paragraphs, and <hr> scene breaks. Skips the
 // trailing author-contact boilerplate ("To get in touch with the author…").
 func (p *gaydemonParser) storyContent(doc *goquery.Document) string {
 	contentSel := doc.Find("div.story-text[itemprop='articleBody']")
@@ -191,13 +194,63 @@ func (p *gaydemonParser) storyContent(doc *goquery.Document) string {
 	}
 	contentSel.Find("script, style, noscript, iframe, nav, header, footer").Remove()
 	var parts []string
-	contentSel.Find("p").Each(func(_ int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if text == "" || strings.HasPrefix(text, "To get in touch with the author") {
-			return
+	contentSel.Children().Each(func(_ int, s *goquery.Selection) {
+		tag := goquery.NodeName(s)
+		switch tag {
+		case "hr":
+			parts = append(parts, "<hr>")
+		case "h1", "h2", "h3", "h4", "h5", "h6":
+			text := strings.TrimSpace(s.Text())
+			if text == "" {
+				return
+			}
+			parts = append(parts, "<"+tag+">"+text+"</"+tag+">")
+		case "p", "blockquote", "li", "pre":
+			text := strings.TrimSpace(s.Text())
+			if text == "" || strings.HasPrefix(text, "To get in touch with the author") {
+				return
+			}
+			parts = append(parts, "<p>"+text+"</p>")
+		case "ul", "ol":
+			s.Find("li").Each(func(_ int, li *goquery.Selection) {
+				text := strings.TrimSpace(li.Text())
+				if text != "" {
+					parts = append(parts, "<p>"+text+"</p>")
+				}
+			})
+		case "div", "section", "article":
+			// Wrapper without its own text: unwrap nested blocks in order.
+			if s.Find("p, h1, h2, h3, h4, h5, h6, blockquote, li").Length() > 0 {
+				s.Find("p, h1, h2, h3, h4, h5, h6, blockquote, li").Each(func(_ int, inner *goquery.Selection) {
+					innerTag := goquery.NodeName(inner)
+					text := strings.TrimSpace(inner.Text())
+					if text == "" || strings.HasPrefix(text, "To get in touch with the author") {
+						return
+					}
+					switch innerTag {
+					case "h1", "h2", "h3", "h4", "h5", "h6":
+						parts = append(parts, "<"+innerTag+">"+text+"</"+innerTag+">")
+					default:
+						parts = append(parts, "<p>"+text+"</p>")
+					}
+				})
+				return
+			}
+			if text := strings.TrimSpace(s.Text()); text != "" && !strings.HasPrefix(text, "To get in touch with the author") {
+				parts = append(parts, "<p>"+text+"</p>")
+			}
 		}
-		parts = append(parts, "<p>"+text+"</p>")
 	})
+	if len(parts) == 0 {
+		// Fallback for markup without element children (bare text nodes).
+		if text := strings.TrimSpace(contentSel.Text()); text != "" {
+				for _, line := range strings.Split(text, "\n") {
+					if line = strings.TrimSpace(line); line != "" {
+						parts = append(parts, "<p>"+line+"</p>")
+					}
+				}
+		}
+	}
 	return strings.Join(parts, "\n")
 }
 

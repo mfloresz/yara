@@ -3,10 +3,13 @@ package noveldownloader
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	md "github.com/JohannesKaufmann/html-to-markdown/v2"
 )
 
 const gaydemonStoryHTML = `<!doctype html><html><head>
@@ -201,8 +204,7 @@ func TestGaydemonParseChapter(t *testing.T) {
 	}
 }
 
-func TestGaydemonParseChapterSkipsContactBoilerplate(t *testing.T) {
-	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestGaydemonParseChapterSkipsContactBoilerplate(t *testing.T) {	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, gaydemonStoryHTML)
 	}))
@@ -227,8 +229,89 @@ func TestGaydemonParseChapterSkipsContactBoilerplate(t *testing.T) {
 	}
 }
 
-func TestGaydemonRegisteredInDownloader(t *testing.T) {
-	dl := NewDownloader()
+func TestGaydemonParseChapterKeepsPovHeadings(t *testing.T) {
+	const povHTML = `<!doctype html><html><body>
+<article id="story">
+<div class="textify story-text" itemprop="articleBody">
+<h4>Julian</h4>
+<p>Julian opens the scene.</p>
+<hr>
+<h4>Alexis</h4>
+<p>Alexis answers back.</p>
+</div>
+</article>
+</body></html>`
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, povHTML)
+	}))
+	defer mock.Close()
+
+	client := NewHTTPClient()
+	p := &gaydemonParser{}
+	url := mock.URL + "/stories/Be_My_Companion_Part_One_37536.html"
+
+	chapter, err := p.ParseChapter(context.Background(), client, url)
+	if err != nil {
+		t.Fatalf("ParseChapter: %v", err)
+	}
+	for _, want := range []string{"<h4>Julian</h4>", "<p>Julian opens the scene.</p>", "<h4>Alexis</h4>", "<p>Alexis answers back.</p>"} {
+		if !strings.Contains(chapter.Content, want) {
+			t.Errorf("content missing %q: %q", want, chapter.Content)
+		}
+	}
+	// Headings must stay in document order, not appended at the end.
+	julian := strings.Index(chapter.Content, "Julian opens the scene.")
+	alexisHeading := strings.Index(chapter.Content, "<h4>Alexis</h4>")
+	alexis := strings.Index(chapter.Content, "Alexis answers back.")
+	if !(julian < alexisHeading && alexisHeading < alexis) {
+		t.Errorf("POV headings out of order: %q", chapter.Content)
+	}
+}
+
+// TestGaydemonDownloadChainKeepsFirstPovHeading locks the full download
+// chain for a chapter that opens with a POV heading: parser HTML ->
+// HTML-to-markdown conversion -> cleanMarkdown -> stripLeadingTitle.
+// The "#### Julian" heading must survive because it does not match the
+// chapter title (regression: stripLeadingTitle used to drop any leading
+// "# "…"#### " heading unconditionally).
+func TestGaydemonDownloadChainKeepsFirstPovHeading(t *testing.T) {
+	const povHTML = `<!doctype html><html><body>
+<article id="story">
+<div class="textify story-text" itemprop="articleBody">
+<h4>Julian</h4>
+<p>When I saw Vanessa calling, I knew what it was about.</p>
+</div>
+</article>
+</body></html>`
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, povHTML)
+	}))
+	defer mock.Close()
+
+	client := NewHTTPClient()
+	p := &gaydemonParser{}
+	chapterURL := mock.URL + "/stories/Be_My_Companion_Part_One_37536.html"
+
+	chapter, err := p.ParseChapter(context.Background(), client, chapterURL)
+	if err != nil {
+		t.Fatalf("ParseChapter: %v", err)
+	}
+	markdown, err := md.ConvertString(chapter.Content)
+	if err != nil {
+		t.Fatalf("ConvertString: %v", err)
+	}
+	stored := stripLeadingTitle(cleanMarkdown(html.UnescapeString(markdown)), "Chapter 1")
+	if !strings.Contains(stored, "Julian") {
+		t.Errorf("first POV heading lost in download chain, stored = %q", stored)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stored), "#### Julian") {
+		t.Errorf("stored content should start with the POV heading, stored = %q", stored)
+	}
+}
+
+func TestGaydemonRegisteredInDownloader(t *testing.T) {	dl := NewDownloader()
 	p := dl.FindParser("https://www.gaydemon.com/stories/In_need_of_the_family_s_affection_45653.html")
 	if p == nil {
 		t.Fatal("no parser found for gaydemon URL")

@@ -208,12 +208,13 @@ func (d *Downloader) SleepBetweenChapters(ctx context.Context) error {
 	}
 }
 
-// stripLeadingTitle removes a markdown heading from the first line of
-// content when it looks like a duplicate of the chapter title.
-// Some sites (novelfire) inject the chapter title as a heading inside the
-// content body, causing a duplicate title in the stored content.
-// It also removes the first line if it matches the chapter title (with or
-// without numeric prefixes like "1." or "01.").
+// stripLeadingTitle removes the first line of content when it duplicates the
+// chapter title: either a markdown heading whose text matches the title
+// (some sites like novelfire inject the chapter title as a heading inside
+// the content body) or a plain-text first line matching the title (with or
+// without numeric prefixes like "1." or "01."). A leading heading whose
+// text does NOT match the title (e.g. a "#### Julian" POV marker) is story
+// content and must be kept.
 func stripLeadingTitle(content, chapterTitle string) string {
 	trimmed := strings.TrimLeft(content, "\n\t ")
 	if trimmed == "" {
@@ -223,23 +224,36 @@ func stripLeadingTitle(content, chapterTitle string) string {
 	// cause us to miss a heading on the first non-empty line.
 	lines := strings.SplitN(trimmed, "\n", 2)
 	first := strings.TrimSpace(lines[0])
-	if strings.HasPrefix(first, "# ") ||
-		strings.HasPrefix(first, "## ") ||
-		strings.HasPrefix(first, "### ") ||
-		strings.HasPrefix(first, "#### ") {
-		if len(lines) > 1 {
-			return strings.TrimSpace(lines[1])
+	rest := ""
+	if len(lines) > 1 {
+		rest = strings.TrimSpace(lines[1])
+	}
+	// A leading markdown heading is only a duplicated title when its text
+	// matches the chapter title; otherwise it is story content (e.g. a POV
+	// marker like "#### Julian") and must be kept.
+	if heading, ok := markdownHeadingText(first); ok {
+		if chapterTitle != "" && matchesTitle(heading, chapterTitle) {
+			return rest
 		}
-		return ""
+		return content
 	}
 	// Check if the first line matches the chapter title (exact or without numeric prefix)
 	if chapterTitle != "" && matchesTitle(first, chapterTitle) {
-		if len(lines) > 1 {
-			return strings.TrimSpace(lines[1])
-		}
-		return ""
+		return rest
 	}
 	return content
+}
+
+// markdownHeadingText returns the text of a leading "# "…"#### " markdown
+// heading. Five or more hashes are not treated as headings (a "##### "
+// first line is kept verbatim, even when it matches the chapter title).
+func markdownHeadingText(line string) (string, bool) {
+	for _, prefix := range []string{"#### ", "### ", "## ", "# "} {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+		}
+	}
+	return "", false
 }
 
 // matchesTitle checks if text matches the chapter title, either exactly

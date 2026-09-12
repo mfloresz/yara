@@ -35,7 +35,7 @@ Layout:
 
 All commands are run from the repo root unless noted.
 
-- `make build` — builds the frontend (`npm install && npm run build`) then compiles `bin/translator-server` with `CGO_ENABLED=0` and `-trimpath -ldflags="-s -w"`. The build is CGO-disabled on purpose so it can be cross-compiled.
+- `make build` — builds the frontend (`npm install && npm run build`) then compiles `bin/translator-server-linux-amd64-<VERSION>` (e.g. `bin/translator-server-linux-amd64-dev` with the default `VERSION=dev`) with `CGO_ENABLED=0` and `-trimpath -ldflags="-s -w"`. The build is CGO-disabled on purpose so it can be cross-compiled. **Run that versioned binary** (check `ls -l bin/` for the exact name) — a stale `bin/translator-server` from an older layout will silently run old code.
 - `make android` — same, with `GOOS=android GOARCH=arm64`, output `bin/translator-server-android-arm64`. For Termux; pair with `--data-dir $HOME/data` and a high port (e.g. 5176).
 - `make compress` — wraps the built binary with UPX (must be installed).
 - `make dev` — prints the two-terminal instructions; does not start anything.
