@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.30.3] - 2026-09-12
+
+### Fixes
+
+- Fixed the `gaydemon` parser dropping POV/scene headings (e.g. `#### Julian`): headings, blockquotes, lists, and section breaks are now preserved in document order instead of extracting paragraphs only.
+- Fixed chapter cleaning stripping a leading heading unconditionally: it now strips it only when the heading text matches the chapter title.
+
 ## [v0.30.2] - 2026-09-12
 
 ### Fixes
@@ -298,7 +305,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.3...HEAD
+[v0.30.3]: https://github.com/mfloresz/yara/compare/v0.30.2...v0.30.3
 [v0.30.2]: https://github.com/mfloresz/yara/compare/v0.30.1...v0.30.2
 [v0.30.1]: https://github.com/mfloresz/yara/compare/v0.30.0...v0.30.1
 [v0.30.0]: https://github.com/mfloresz/yara/compare/v0.29.1...v0.30.0
