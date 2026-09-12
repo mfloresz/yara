@@ -227,6 +227,7 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"mistralai/ministral-8b-2512",
 		"mistralai/mistral-small-2603",
 		"mistralai/ministral-14b-2512",
+		"inception/mercury-2.5",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)

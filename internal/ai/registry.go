@@ -61,6 +61,7 @@ var knownProviders = []ProviderInfo{
 			"mistralai/ministral-8b-2512",
 			"mistralai/mistral-small-2603",
 			"mistralai/ministral-14b-2512",
+			"inception/mercury-2.5",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
