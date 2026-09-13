@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.31.1] - 2026-09-13
+
+### Fixes
+
+- Fixed the `webnovel` parser misclassifying chapter URLs prefixed with a U+FEFF marker (`%EF%BB%BF`): such links are now recognized as chapters instead of falling back to book info.
+
 ## [v0.31.0] - 2026-09-13
 
 ### What's new
@@ -318,7 +324,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.31.1...HEAD
+[v0.31.1]: https://github.com/mfloresz/yara/compare/v0.31.0...v0.31.1
 [v0.31.0]: https://github.com/mfloresz/yara/compare/v0.30.4...v0.31.0
 [v0.30.4]: https://github.com/mfloresz/yara/compare/v0.30.3...v0.30.4
 [v0.30.3]: https://github.com/mfloresz/yara/compare/v0.30.2...v0.30.3
