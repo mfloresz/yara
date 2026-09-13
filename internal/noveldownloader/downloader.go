@@ -54,6 +54,7 @@ func NewDownloader() *Downloader {
 			NewWattpadParser(),
 			NewInkittParser(),
 			NewGaydemonParser(),
+			NewChrysanthemumGardenParser(),
 		},
 		client:          NewHTTPClient(),
 		MinChapterDelay: DefaultMinChapterDelay,
@@ -82,6 +83,7 @@ func NewDownloaderWithClient(client HTTPClient) *Downloader {
 			NewWattpadParser(),
 			NewInkittParser(),
 			NewGaydemonParser(),
+			NewChrysanthemumGardenParser(),
 		},
 		client: client,
 	}

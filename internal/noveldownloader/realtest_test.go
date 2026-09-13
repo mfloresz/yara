@@ -2,6 +2,7 @@ package noveldownloader
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -864,4 +865,75 @@ func TestRealInkittChapter(t *testing.T) {
 		t.Logf("content=%q", chapter.Content)
 		t.Logf("markdown=%q", chapter.Markdown)
 	}
+}
+
+func TestRealChrysanthemumGarden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://chrysanthemumgarden.com/novel-tl/arnpc/"
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+	t.Logf("parser: %s (requiresBrowser=%v)", parser.Name(), parser.RequiresBrowser())
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q", info.Title)
+	t.Logf("author=%q", info.Author)
+	t.Logf("coverURL=%q", info.CoverURL)
+	t.Logf("totalChapters=%d", len(info.Chapters))
+	desc := info.Description
+	if len(desc) > 300 {
+		desc = desc[:300] + "..."
+	}
+	t.Logf("descriptionLen=%d descPreview=%q", len(info.Description), desc)
+	if info.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(info.Chapters) == 0 {
+		t.Fatalf("no chapters found")
+	}
+	t.Logf("first: %s -> %s", info.Chapters[0].Title, info.Chapters[0].URL)
+	t.Logf("last: %s -> %s", info.Chapters[len(info.Chapters)-1].Title, info.Chapters[len(info.Chapters)-1].URL)
+}
+
+func TestRealChrysanthemumGardenChapter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://chrysanthemumgarden.com/novel-tl/arnpc/arnpc-1/"
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	chapter, err := dl.DownloadChapter(ctx, url)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("title=%q contentLen=%d markdownLen=%d", chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if chapter.Title == "" {
+		t.Errorf("empty title")
+	}
+	if len(chapter.Markdown) < 500 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+	}
+	// Scrape-protection noise must be gone from the decoded text.
+	for _, noise := range []string{"Story translated by Chrysanthemum Garden.", "CG Scrape Protection"} {
+		if strings.Contains(chapter.Markdown, noise) {
+			t.Errorf("markdown leaked noise %q", noise)
+		}
+	}
+	preview := chapter.Markdown
+	if len(preview) > 400 {
+		preview = preview[:400] + "..."
+	}
+	t.Logf("preview=%q", preview)
 }
