@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.31.0] - 2026-09-13
+
+### What's new
+
+- Added the `chrysanthemumgarden` novel downloader parser (`chrysanthemumgarden.com/novel-tl/`): supports import-from-URL and chapter downloads, including its font-obfuscated content, and registers the site in all browser-worker extensions.
+- Added the `webnovel` novel downloader parser (`webnovel.com`): supports import-from-URL and chapter downloads and appears in the import dialog site list.
+
 ## [v0.30.4] - 2026-09-12
 
 ### Fixes
@@ -311,7 +318,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.30.4...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.31.0...HEAD
+[v0.31.0]: https://github.com/mfloresz/yara/compare/v0.30.4...v0.31.0
 [v0.30.4]: https://github.com/mfloresz/yara/compare/v0.30.3...v0.30.4
 [v0.30.3]: https://github.com/mfloresz/yara/compare/v0.30.2...v0.30.3
 [v0.30.2]: https://github.com/mfloresz/yara/compare/v0.30.1...v0.30.2
