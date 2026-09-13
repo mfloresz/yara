@@ -937,3 +937,45 @@ func TestRealChrysanthemumGardenChapter(t *testing.T) {
 	}
 	t.Logf("preview=%q", preview)
 }
+
+func TestRealWebnovel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://www.webnovel.com/es/book/bl-the-northern-grand-duke%E2%80%99s-hamster-(novel-translation)_32842037100534205"
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+	t.Logf("parser: %s", parser.Name())
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q author=%q coverURL=%q totalChapters=%d",
+		info.Title, info.Author, info.CoverURL, len(info.Chapters))
+	if info.Title == "" || info.Author == "" || info.CoverURL == "" || len(info.Chapters) == 0 {
+		t.Fatalf("incomplete novel info: %+v", info)
+	}
+	for i, ch := range info.Chapters {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  - %s -> %s", ch.Title, ch.URL)
+	}
+
+	chapter, err := dl.DownloadChapter(ctx, info.Chapters[0].URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("chapter title=%q contentLen=%d markdownLen=%d",
+		chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if len(chapter.Markdown) < 500 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+	}
+}
