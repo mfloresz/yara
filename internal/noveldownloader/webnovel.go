@@ -73,7 +73,12 @@ func webnovelParseURL(rawURL string) (string, webnovelURLKind, bool) {
 	if bookID == "" {
 		return "", webnovelURLInvalid, false
 	}
-	if strings.Contains(u.Path, "/chapter-") {
+	// Some catalog hrefs prefix the chapter slug with a U+FEFF marker
+	// (%EF%BB%BF), e.g. /%EF%BB%BFchapter-72_<id>, which decodes to
+	// /\ufeffchapter-... in u.Path and breaks a literal "/chapter-" match.
+	// Strip it before classifying; the marker is zero-width so removal is safe.
+	normalizedPath := strings.ReplaceAll(u.Path, "\ufeff", "")
+	if strings.Contains(normalizedPath, "/chapter-") {
 		return bookID, webnovelURLChapter, true
 	}
 	return bookID, webnovelURLBook, true

@@ -112,6 +112,7 @@ func TestWebnovelCanHandle(t *testing.T) {
 		{"https://www.webnovel.com/book/32842037100534205/catalog", true},
 		{"https://www.webnovel.com/es/book/slug_32842037100534205/chapter-1_88176479329909946", true},
 		{"https://www.webnovel.com/es/book/slug_32842037100534205/chapter-17%EF%BB%BF_88200944134702551", true},
+		{"https://www.webnovel.com/book/bl-the-northern-grand-duke%E2%80%99s-hamster-(novel-translation)_32842037100534205/%EF%BB%BFchapter-72_88726383454383240", true},
 		{"https://m.webnovel.com/book/32842037100534205", true},
 		{"https://www.webnovel.com/es/search?keywords=hamster", false},
 		{"https://www.webnovel.com/", false},
@@ -136,6 +137,7 @@ func TestWebnovelParseURL(t *testing.T) {
 		{"https://www.webnovel.com/book/32842037100534205/catalog", "32842037100534205", webnovelURLBook},
 		{"https://www.webnovel.com/es/book/slug_32842037100534205/chapter-1_88176479329909946", "32842037100534205", webnovelURLChapter},
 		{"https://www.webnovel.com/es/book/slug_32842037100534205/chapter-17%EF%BB%BF_88200944134702551", "32842037100534205", webnovelURLChapter},
+		{"https://www.webnovel.com/book/bl-the-northern-grand-duke%E2%80%99s-hamster-(novel-translation)_32842037100534205/%EF%BB%BFchapter-72_88726383454383240", "32842037100534205", webnovelURLChapter},
 	}
 	for _, tc := range cases {
 		bookID, kind, ok := webnovelParseURL(tc.url)
@@ -231,6 +233,22 @@ func TestWebnovelParseChapter(t *testing.T) {
 	}
 	if !strings.Contains(ch.Content, "<em>Squeak!</em>") {
 		t.Errorf("emphasis lost in content:\n%s", ch.Content)
+	}
+}
+
+func TestWebnovelParseChapterWithFEFFPrefix(t *testing.T) {
+	p := NewWebnovelParser()
+	ctx := context.Background()
+	// Regression: catalog hrefs can prefix the slug with %EF%BB%BF
+	// (e.g. /%EF%BB%BFchapter-72_<id>); ParseChapter must accept it.
+	fefURL := "https://www.webnovel.com/book/bl-the-northern-grand-duke%E2%80%99s-hamster-(novel-translation)_" + webnovelStubBookID + "/%EF%BB%BFchapter-72_88726383454383240"
+	client := &webnovelStubClient{responses: map[string]string{fefURL: webnovelStubChapterPage}}
+	ch, err := p.ParseChapter(ctx, client, fefURL)
+	if err != nil {
+		t.Fatalf("ParseChapter with FEFF prefix: %v", err)
+	}
+	if strings.Count(ch.Content, "<p>") != 2 {
+		t.Errorf("expected 2 paragraphs, got content:\n%s", ch.Content)
 	}
 }
 
