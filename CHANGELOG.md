@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.32.0] - 2026-09-15
+
+### What's new
+
+- Added a rich text editor to the chapter page: edit chapter content with a formatting toolbar alongside the existing plain-text and Markdown modes (content is saved back as Markdown).
+
+### Fixes
+
+- Fixed duplicate `chapter_order` collisions when importing multi-part source chapters (parts sharing one site number no longer fail on the unique index; new chapters claim distinct orders).
+
 ## [v0.31.1] - 2026-09-13
 
 ### Fixes
@@ -324,7 +334,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.31.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.32.0...HEAD
+[v0.32.0]: https://github.com/mfloresz/yara/compare/v0.31.1...v0.32.0
 [v0.31.1]: https://github.com/mfloresz/yara/compare/v0.31.0...v0.31.1
 [v0.31.0]: https://github.com/mfloresz/yara/compare/v0.30.4...v0.31.0
 [v0.30.4]: https://github.com/mfloresz/yara/compare/v0.30.3...v0.30.4
