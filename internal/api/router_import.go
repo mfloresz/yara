@@ -511,22 +511,39 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		newAvailable := 0
 		firstNew := 0
 		lastNew := 0
-		for _, ch := range info.Chapters {
+		// seen mirrors the orders updateFromURL will claim so multi-part
+		// chapters sharing one site number (e.g. "... 23-1", "... 23-2")
+		// count with distinct orders. accounted marks site numbers whose
+		// stored first part was seen in this batch, proving a same-number
+		// entry with a new title is another part (not a rename, which stays
+		// skipped for the redownload path).
+		seen := make(map[int]bool, len(existingOrders)+len(info.Chapters))
+		for o := range existingOrders {
+			seen[o] = true
+		}
+		accounted := make(map[int]bool, len(info.Chapters))
+		seenTitles := make(map[string]bool, len(info.Chapters))
+		for i, ch := range info.Chapters {
 			chNum := chapterOrderOf(ch)
-			if chNum > 0 && existingOrders[chNum] {
+			if ch.Title != "" && (existingTitles[ch.Title] || seenTitles[ch.Title]) {
+				if chNum > 0 {
+					accounted[chNum] = true
+				}
 				continue
 			}
-			if existingTitles[ch.Title] {
+			if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
 				continue
 			}
+			if ch.Title != "" {
+				seenTitles[ch.Title] = true
+			}
+			pos := claimChapterOrder(seen, chNum, i+1)
 			newAvailable++
-			if chNum > 0 {
-				if firstNew == 0 || chNum < firstNew {
-					firstNew = chNum
-				}
-				if chNum > lastNew {
-					lastNew = chNum
-				}
+			if firstNew == 0 || pos < firstNew {
+				firstNew = pos
+			}
+			if pos > lastNew {
+				lastNew = pos
 			}
 		}
 		if err := s.Store.UpdateNovelCheckResult(novelID, time.Now().Format(time.RFC3339), newAvailable); err != nil {
@@ -596,12 +613,20 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			return e.InternalServerError("failed to check existing chapters", err)
 		}
 		sourceToDownload := make([]int, 0)
+		// accounted tracks site numbers whose stored first part was seen in
+		// this batch (same rule as checkPreview): a same-number entry with a
+		// new title is another part, not a rename.
+		accounted := make(map[int]bool)
+		batchTitles := make(map[string]bool)
 		for i, ch := range chapters {
 			chNum := chapterOrderOf(ch)
-			if chNum > 0 && existingOrders[chNum] {
+			if ch.Title != "" && (existingTitles[ch.Title] || batchTitles[ch.Title]) {
+				if chNum > 0 {
+					accounted[chNum] = true
+				}
 				continue
 			}
-			if existingTitles[ch.Title] {
+			if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
 				continue
 			}
 			pos := chNum
@@ -614,6 +639,9 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			if body.EndChapter > 0 && pos > body.EndChapter {
 				continue
 			}
+			if ch.Title != "" {
+				batchTitles[ch.Title] = true
+			}
 			sourceToDownload = append(sourceToDownload, i)
 		}
 		if len(sourceToDownload) == 0 {
@@ -621,26 +649,26 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 				return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
 		downloadChapters := make([]store.DownloadChapterInfo, 0, len(sourceToDownload))
+		// seen starts from what is stored so multi-part chapters sharing one
+		// site number get distinct orders via claimChapterOrder.
+		seen := make(map[int]bool, len(existingOrders)+len(sourceToDownload))
+		for o := range existingOrders {
+			seen[o] = true
+		}
 		for _, srcIdx := range sourceToDownload {
 			ch := chapters[srcIdx]
 			chTitle := ch.Title
 			if chTitle == "" {
 				chTitle = fmt.Sprintf("Capítulo %d", srcIdx+1)
 			}
-			chOrder := chapterOrderOf(ch)
-			if chOrder <= 0 {
-				chOrder = srcIdx + 1
-			}
+		chOrder := claimChapterOrder(seen, chapterOrderOf(ch), srcIdx+1)
 			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
 				URL:   ch.URL,
 				Title: chTitle,
 				Order: chOrder,
 			})
 		}
-		firstNewOrder := chapterOrderOf(chapters[sourceToDownload[0]])
-		if firstNewOrder <= 0 {
-			firstNewOrder = sourceToDownload[0] + 1
-		}
+		firstNewOrder := downloadChapters[0].Order
 		optionsJSON, _ := json.Marshal(map[string]any{
 			"url":            novel.URL,
 			"chapters":       downloadChapters,
@@ -886,37 +914,40 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 			firstNew := 0
 			lastNew := 0
 			startOrder := 0
+			seen := make(map[int]bool, len(existingOrders)+len(info.Chapters))
+			for o := range existingOrders {
+				seen[o] = true
+			}
+			accounted := make(map[int]bool)
+			batchTitles := make(map[string]bool)
 			for srcIdx, ch := range info.Chapters {
 				chNum := chapterOrderOf(ch)
-				if chNum > 0 && existingOrders[chNum] {
+				if ch.Title != "" && (existingTitles[ch.Title] || batchTitles[ch.Title]) {
+					if chNum > 0 {
+						accounted[chNum] = true
+					}
 					continue
 				}
-				if existingTitles[ch.Title] {
+				if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
 					continue
 				}
+				if ch.Title != "" {
+					batchTitles[ch.Title] = true
+				}
+				chOrder := claimChapterOrder(seen, chNum, srcIdx+1)
 				newAvailable++
-				pos := chNum
-				if pos <= 0 {
-					pos = srcIdx + 1
-				}
 				if startOrder == 0 {
-					startOrder = pos
+					startOrder = chOrder
 				}
-				if chNum > 0 {
-					if firstNew == 0 || chNum < firstNew {
-						firstNew = chNum
-					}
-					if chNum > lastNew {
-						lastNew = chNum
-					}
+				if firstNew == 0 || chOrder < firstNew {
+					firstNew = chOrder
+				}
+				if chOrder > lastNew {
+					lastNew = chOrder
 				}
 				chTitle := ch.Title
 				if chTitle == "" {
-					chTitle = fmt.Sprintf("Capítulo %d", pos)
-				}
-				chOrder := chapterOrderOf(ch)
-				if chOrder <= 0 {
-					chOrder = pos
+					chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 				}
 				newCh = append(newCh, store.DownloadChapterInfo{
 					URL:   ch.URL,
@@ -1297,6 +1328,34 @@ func chapterOrderOf(ch noveldownloader.ChapterURL) int {
 	return extractChapterOrder(ch.Title)
 }
 
+// claimChapterOrder resolves the (novel, chapter_order) unique collision caused
+// by multi-part source chapters (e.g. "ASFTB 23 ... 1" and "ASFTB 23 ... 2"
+// both parse to 23 via the first-number regex). The first claimant keeps the
+// site number; later duplicates get the positional fallback when free,
+// otherwise max(seen)+1. The returned order is marked in seen, so callers must
+// seed seen as a copy of GetExistingChapterOrders and reuse the same map for
+// the whole batch. ponytail: O(n) scan for max on collision only; batches are
+// small (tens of chapters) so no index structure needed.
+func claimChapterOrder(seen map[int]bool, want, fallback int) int {
+	if want > 0 && !seen[want] {
+		seen[want] = true
+		return want
+	}
+	if fallback > 0 && !seen[fallback] {
+		seen[fallback] = true
+		return fallback
+	}
+	next := fallback
+	if next <= 0 {
+		next = 1
+	}
+	for seen[next] {
+		next++
+	}
+	seen[next] = true
+	return next
+}
+
 func extractChapterTitle(content, filename string) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
 	first = strings.TrimSpace(first)
@@ -1347,6 +1406,7 @@ type redownloadPlan struct {
 // shifted.
 func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store.Chapter, byTitle map[string]store.Chapter, startChapter, endChapter int) redownloadPlan {
 	plan := redownloadPlan{chapters: make([]store.DownloadChapterInfo, 0)}
+	scheduled := make(map[string]bool, len(chapters))
 	for i, ch := range chapters {
 		chNum := chapterOrderOf(ch)
 		if chNum <= 0 {
@@ -1366,6 +1426,14 @@ func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store
 			// Not downloaded yet — new chapters are handled by update-from-url.
 			continue
 		}
+		if scheduled[existingCh.ID] {
+			// Another source entry (e.g. the second part sharing this site
+			// number) already targets this record. Scheduling it again
+			// would overwrite the first part's content with the second's.
+			// The missing part is recovered via update-from-url instead.
+			continue
+		}
+		scheduled[existingCh.ID] = true
 		chTitle := ch.Title
 		if chTitle == "" {
 			chTitle = existingCh.Title

@@ -402,6 +402,21 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	if parser == nil && s.HasBrowserWorkerForUser(job.OwnerID) {
 		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, job.OwnerID))
 	}
+	// Last line of defense for jobs enqueued before the multi-part planning
+	// fix (or any planner that emits duplicate orders): seed claimed orders
+	// from what is already stored so a repeated site number never hits the
+	// (novel, chapter_order) unique index. Re-downloads update by ID and are
+	// exempt. If the lookup fails, fall back to in-job dedup only.
+	claimed := make(map[int]bool, len(opts.Chapters))
+	if !opts.ReDownload {
+		if existing, err := s.Store.GetExistingChapterOrders(job.OwnerID, job.NovelID); err != nil {
+			slog.Warn("download job without existing-order snapshot", "jobId", job.ID, "error", err)
+		} else {
+			for o := range existing {
+				claimed[o] = true
+			}
+		}
+	}
 	for idx, chInfo := range opts.Chapters {
 		if err := ctx.Err(); err != nil {
 			break
@@ -435,6 +450,17 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			chOrder := chInfo.Order
 			if chOrder <= 0 {
 				chOrder = opts.StartOrder + idx
+			}
+			if !opts.ReDownload {
+				if claimed[chOrder] {
+					fixed := chOrder + 1
+					for claimed[fixed] {
+						fixed++
+					}
+					slog.Warn("download job duplicate order reassigned", "jobId", job.ID, "chapter", chInfo.Title, "from", chOrder, "to", fixed)
+					chOrder = fixed
+				}
+				claimed[chOrder] = true
 			}
 			chTitle := ch.Title
 			if chTitle == "" {
