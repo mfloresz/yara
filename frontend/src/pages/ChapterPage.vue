@@ -96,6 +96,7 @@
               <div class="row-wrap">
                 <n-radio-group :value="contentViewMode[panel.id]" @update:value="setPanelMode(panel.id, $event)">
                   <n-radio-button value="plain">Texto plano</n-radio-button>
+                  <n-radio-button value="rich">Editor</n-radio-button>
                   <n-radio-button value="markdown">Markdown</n-radio-button>
                 </n-radio-group>
               </div>
@@ -109,6 +110,9 @@
                 :style="{ fontFamily: 'monospace' }"
                 @update:value="panel.onChange($event)"
               />
+            </template>
+            <template v-else-if="contentViewMode[panel.id] === 'rich'">
+              <RichTextEditor :key="`${panel.id}-${chapter?.id}`" :model-value="panel.value" @update:model-value="panel.onChange($event)" />
             </template>
             <template v-else>
               <div class="markdown-preview" style="border: 1px solid var(--divide); border-radius: 12px; padding: 1rem; min-height: 220px" v-html="markdownToHtml(panel.value || panel.placeholder)" />
@@ -145,6 +149,7 @@ import {
   SaveOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import RichTextEditor from "@/components/RichTextEditor.vue";
 import { useNovels } from "@/composables/useNovels";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useAppServices } from "@/app/services";
@@ -181,7 +186,8 @@ const saving = ref(false);
 const translateLoading = ref(false);
 const refineLoading = ref(false);
 const error = ref<string | null>(null);
-const contentViewMode = reactive<Record<"original" | "translated" | "refined", "plain" | "markdown">>({
+type PanelMode = "plain" | "rich" | "markdown";
+const contentViewMode = reactive<Record<"original" | "translated" | "refined", PanelMode>>({
   original: "plain",
   translated: "plain",
   refined: "plain",
@@ -371,7 +377,7 @@ async function handleMarkDone() {
   }
 }
 
-function setPanelMode(id: "original" | "translated" | "refined", mode: "plain" | "markdown") {
+function setPanelMode(id: "original" | "translated" | "refined", mode: PanelMode) {
   contentViewMode[id] = mode;
 }
 </script>
