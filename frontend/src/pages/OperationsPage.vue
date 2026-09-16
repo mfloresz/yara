@@ -1,112 +1,50 @@
 <template>
   <AppLayout>
-    <n-space vertical size="large">
-      <!-- Header -->
-      <n-flex justify="space-between" align="center" wrap :size="12">
-        <n-space vertical :size="2">
-          <n-h1 style="margin: 0; font-size: 1.35rem">Operaciones</n-h1>
-          <n-text depth="3" style="font-size: 13px">Verifica, descarga y traduce solo lo que selecciones.</n-text>
-        </n-space>
-        <n-space :size="8" wrap>
-          <n-tag round size="small" type="info">{{ filteredNovels.length }} en vista</n-tag>
-          <n-tag v-if="actualizableCount > 0" round size="small" type="warning">{{ actualizableCount }} actualizables</n-tag>
-          <n-tag v-if="activeCheckJobs.length > 0" round size="small" type="info">{{ activeCheckJobs.length }} verificando</n-tag>
-          <n-tag v-if="activeDownloadCount > 0" round size="small" type="warning">{{ activeDownloadCount }} descargando</n-tag>
-          <n-tag v-if="activeTranslateCount > 0" round size="small" type="success">{{ activeTranslateCount }} traduciendo</n-tag>
-          <n-tag v-if="activeRefineCount > 0" round size="small" type="success">{{ activeRefineCount }} refinando</n-tag>
-        </n-space>
-      </n-flex>
+    <div class="stack-lg ops-page">
+      <!-- Header: mismo patrón page-header que Biblioteca -->
+      <header class="page-header">
+        <div class="page-context">
+          <h1 class="page-title">Operaciones</h1>
+          <p class="muted small ops-subtitle" aria-live="polite">{{ subtitle }}</p>
+        </div>
+        <div class="page-actions">
+          <n-input
+            v-model:value="searchQuery"
+            clearable
+            placeholder="Buscar título o autor"
+            class="search-input"
+            :input-props="{ type: 'search', inputmode: 'search', enterkeyhint: 'search' }"
+            aria-label="Buscar novelas"
+          >
+            <template #prefix><n-icon><SearchOutline /></n-icon></template>
+          </n-input>
+        </div>
+      </header>
 
-      <!-- Toolbar granular -->
-      <n-card size="small" content-style="padding: 10px 12px;">
-        <n-flex justify="space-between" align="center" wrap :size="12">
-          <n-flex :size="8" wrap align="center">
-            <n-input
-              v-model:value="searchQuery"
-              clearable
-              placeholder="Buscar título o autor"
-              style="width: 210px"
-              size="small"
-            >
-              <template #prefix><n-icon><SearchOutline /></n-icon></template>
-            </n-input>
-            <n-select
-              v-model:value="filter"
-              :options="filterOptions"
-              style="width: 170px"
-              size="small"
-            />
-            <n-button size="tiny" quaternary @click="selectActualizable">Seleccionar actualizables</n-button>
-            <n-button v-if="selectedRowKeys.length > 0" size="tiny" quaternary @click="selectedRowKeys = []">Limpiar</n-button>
-          </n-flex>
-
-          <n-flex :size="8" wrap align="center">
-            <n-tooltip trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  secondary
-                  :loading="checkingSelected"
-                  :disabled="selectedActualizableIds.length === 0"
-                  @click="handleCheckSelected"
-                >
-                  <template #icon><n-icon><RefreshOutline /></n-icon></template>
-                  Verificar{{ selectedActualizableIds.length ? ` (${selectedActualizableIds.length})` : '' }}
-                </n-button>
-              </template>
-              Verifica novedades solo en las seleccionadas
-            </n-tooltip>
-
-            <n-tooltip trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  :loading="bulkDownloading"
-                  :disabled="selectedWithUpdatesIds.length === 0"
-                  @click="handleDownloadSelected"
-                >
-                  <template #icon><n-icon><DownloadOutline /></n-icon></template>
-                  Descargar{{ selectedWithUpdatesIds.length ? ` (${selectedWithUpdatesIds.length})` : '' }}
-                </n-button>
-              </template>
-              Descarga los capítulos nuevos ya detectados
-            </n-tooltip>
-
-            <n-tooltip trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  type="primary"
-                  :loading="translatingSelected"
-                  :disabled="selectedTranslatableIds.length === 0"
-                  @click="handleTranslateSelected"
-                >
-                  <template #icon><n-icon><PlayOutline /></n-icon></template>
-                  Traducir{{ selectedTranslatableIds.length ? ` (${selectedTranslatableIds.length})` : '' }}
-                </n-button>
-              </template>
-              Traduce los pendientes de las seleccionadas
-            </n-tooltip>
-
-            <n-tooltip trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  type="error"
-                  ghost
-                  :loading="deletingSelected"
-                  :disabled="selectedRowKeys.length === 0"
-                  @click="handleDeleteSelected"
-                >
-                  <template #icon><n-icon><TrashOutline /></n-icon></template>
-                  Eliminar{{ selectedRowKeys.length ? ` (${selectedRowKeys.length})` : '' }}
-                </n-button>
-              </template>
-              Elimina las novelas seleccionadas y todos sus datos asociados
-            </n-tooltip>
-          </n-flex>
-        </n-flex>
-      </n-card>
+      <!-- Filtros visibles con conteos + ayudas de selección -->
+      <div class="ops-filters" role="group" aria-label="Filtrar novelas">
+        <div class="ops-chips">
+          <n-button
+            v-for="opt in filterOptionsWithCounts"
+            :key="opt.value"
+            size="small"
+            round
+            :type="filter === opt.value ? 'primary' : 'default'"
+            :secondary="filter !== opt.value"
+            :aria-pressed="filter === opt.value"
+            class="ops-chip"
+            @click="filter = opt.value"
+          >
+            {{ opt.label }} ({{ opt.count }})
+          </n-button>
+        </div>
+        <div class="ops-filter-helpers">
+          <n-button size="tiny" quaternary @click="selectActualizable">Seleccionar actualizables</n-button>
+          <n-button v-if="selectedRowKeys.length > 0" size="tiny" quaternary @click="selectedRowKeys = []">
+            Limpiar ({{ selectedRowKeys.length }})
+          </n-button>
+        </div>
+      </div>
 
       <n-card v-if="loading" content-style="padding: 12px;">
         <n-space vertical :size="8">
@@ -116,57 +54,100 @@
 
       <n-alert v-else-if="error" type="error" :title="error" show-icon closable @close="error = null" />
 
-      <n-empty v-else-if="filteredNovels.length === 0" description="No hay novelas para este filtro" style="padding: 1.5rem 0" />
+      <n-card v-else-if="filteredNovels.length === 0" role="status">
+        <div class="empty-state">
+          <div>
+            <h2 class="empty-state-title">{{ emptyState.title }}</h2>
+            <p class="muted empty-state-body">{{ emptyState.body }}</p>
+          </div>
+          <div class="empty-state-actions">
+            <n-button secondary size="small" @click="clearFilters">Limpiar filtros</n-button>
+          </div>
+        </div>
+      </n-card>
 
       <template v-else>
-        <n-data-table
-          :columns="columns"
-          :data="filteredNovels"
-          :row-key="(row: Novel) => row.id"
-          :checked-row-keys="selectedRowKeys"
-          :pagination="pagination"
-          :bordered="false"
-          single-line
-          size="small"
-          :row-props="rowProps"
-          @update:checked-row-keys="selectedRowKeys = $event as string[]"
-        />
+        <!-- Desktop: tabla compacta (selección + novela + estado + iconos) -->
+        <div class="ops-table-wrap">
+          <n-data-table
+            :columns="columns"
+            :data="filteredNovels"
+            :row-key="(row: Novel) => row.id"
+            :checked-row-keys="selectedRowKeys"
+            :pagination="pagination"
+            :bordered="false"
+            single-line
+            size="small"
+            :row-props="rowProps"
+            aria-label="Novelas para operar"
+            @update:checked-row-keys="selectedRowKeys = $event as string[]"
+          />
+        </div>
 
-        <n-card v-if="selectedRowKeys.length > 0" size="small" style="position: sticky; bottom: 12px; z-index: 1" content-style="padding: 10px 12px;">
-          <n-flex justify="space-between" align="center" wrap :size="10">
-            <n-text depth="3" style="font-size: 12px">
-              {{ selectedRowKeys.length }} sel. · {{ selectedWithUpdatesIds.length }} con novedades · {{ selectedTranslatableIds.length }} por traducir · {{ selectedActualizableIds.length }} verificables
-            </n-text>
-            <n-flex :size="8">
-              <n-button size="tiny" secondary :loading="checkingSelected" :disabled="selectedActualizableIds.length === 0" @click="handleCheckSelected">Verificar</n-button>
-              <n-button size="tiny" :loading="bulkDownloading" :disabled="selectedWithUpdatesIds.length === 0" @click="handleDownloadSelected">Descargar</n-button>
-              <n-button size="tiny" type="primary" :loading="translatingSelected" :disabled="selectedTranslatableIds.length === 0" @click="handleTranslateSelected">Traducir</n-button>
-              <n-button size="tiny" type="error" ghost :loading="deletingSelected" :disabled="selectedRowKeys.length === 0" @click="handleDeleteSelected">Eliminar</n-button>
-            </n-flex>
-          </n-flex>
-        </n-card>
+        <!-- Móvil: cards apiladas a 44px, misma data y acciones -->
+        <div class="ops-cards" role="list" aria-label="Novelas para operar">
+          <OperationsCard
+            v-for="novel in pagedNovels"
+            :key="novel.id"
+            :novel="novel"
+            :checked="selectedRowKeys.includes(novel.id)"
+            :status="statusFor(novel)"
+            @update:checked="setChecked(novel.id, $event)"
+            @check="handleUpdateNovel(novel)"
+            @download="handleDownloadSingle(novel)"
+            @translate="handleTranslateNovel(novel)"
+          />
+        </div>
+        <div class="ops-cards-pagination">
+          <n-pagination
+            :page="pagination.page"
+            :page-size="pagination.pageSize"
+            :item-count="filteredNovels.length"
+            :page-sizes="[25, 50, 100]"
+            show-size-picker
+            size="small"
+            @update:page="pagination.page = $event"
+            @update:page-size="pagination.pageSize = $event; pagination.page = 1;"
+          />
+        </div>
+
+        <!-- Única barra de acción en lote: solo con selección -->
+        <OperationsActionBar
+          v-if="selectedRowKeys.length > 0"
+          :selected-count="selectedRowKeys.length"
+          :with-updates="selectedWithUpdatesIds.length"
+          :translatable="selectedTranslatableIds.length"
+          :actualizable="selectedActualizableIds.length"
+          :checking="checkingSelected"
+          :downloading="bulkDownloading"
+          :translating="translatingSelected"
+          :deleting="deletingSelected"
+          @verify="handleCheckSelected"
+          @download="handleDownloadSelected"
+          @translate="handleTranslateSelected"
+          @remove="handleDeleteSelected"
+          @clear="selectedRowKeys = []"
+        />
       </template>
-    </n-space>
+    </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import {
   NAlert,
   NButton,
   NCard,
   NDataTable,
-  NEmpty,
   NFlex,
-  NH1,
   NIcon,
   NInput,
-  NSelect,
+  NPagination,
   NSkeleton,
   NSpace,
   NTag,
-  NText,
   NTooltip,
   NAvatar,
   NEllipsis,
@@ -174,24 +155,30 @@ import {
   useMessage,
   type DataTableColumns,
 } from "naive-ui";
-import {
-  DownloadOutline,
-  GlobeOutline,
-  PlayOutline,
-  RefreshOutline,
-  SearchOutline,
-  TrashOutline,
-} from "@vicons/ionicons5";
+import { GlobeOutline, SearchOutline } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import OperationsActionBar from "@/components/operations/OperationsActionBar.vue";
+import OperationsCard from "@/components/operations/OperationsCard.vue";
+import OperationsOriginTag from "@/components/operations/OperationsOriginTag.vue";
+import OperationsRowActions from "@/components/operations/OperationsRowActions.vue";
+import OperationsTranslation from "@/components/operations/OperationsTranslation.vue";
 import { useAppServices } from "@/app/services";
 import { authState } from "@/app/auth";
 import { useActiveJobs } from "@/composables/useActiveJobs";
-import { jobStatusLabel } from "@/composables/useJobHelpers";
+import {
+  buildNovelOperationStatus,
+  hasAnyActive as hasAnyActiveNovel,
+  hasNewChapters,
+  hasPendingTranslation,
+  isActualizable,
+  isSameLanguage,
+  translationRatio,
+  type NovelJobContext,
+} from "@/composables/useOperationDisplay";
 import { emitJobChanged } from "@/utils/job-events";
 import type { Novel, TranslationJob } from "@/domain";
 
 const PAGE_SIZE = 200;
-const PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 
 type FilterValue = "all" | "actualizable" | "updates" | "completed" | "active";
 
@@ -217,14 +204,6 @@ const pendingDeleteTitles = ref<Map<string, string>>(new Map());
 
 const updateResults = ref<Map<string, { added: number; error?: string }>>(new Map());
 
-const filterOptions = [
-  { label: "Todas", value: "all" },
-  { label: "Actualizable", value: "actualizable" },
-  { label: "Con novedades", value: "updates" },
-  { label: "Activas", value: "active" },
-  { label: "Completadas", value: "completed" },
-];
-
 const pagination = reactive({
   page: 1,
   pageSize: 30,
@@ -244,61 +223,73 @@ function activeJobForNovel(novelId: string, operation: string): TranslationJob |
 }
 
 function hasAnyActive(novelId: string): boolean {
-  return !!activeJobForNovel(novelId, "check") || !!activeJobForNovel(novelId, "download") || !!activeJobForNovel(novelId, "translate") || !!activeJobForNovel(novelId, "refine");
+  return hasAnyActiveNovel(novelId, activeJobs.value);
 }
 
-const activeCheckJobs = computed(() => activeJobs.value.filter((j) => j.operation === "check"));
-const activeDownloadCount = computed(() => activeJobs.value.filter((j) => j.operation === "download").length);
-const activeTranslateCount = computed(() => activeJobs.value.filter((j) => j.operation === "translate").length);
-const activeRefineCount = computed(() => activeJobs.value.filter((j) => j.operation === "refine").length);
+const filterCounts = computed(() => ({
+  all: novels.value.length,
+  actualizable: novels.value.filter((n) => isActualizable(n) && n.status !== "completed").length,
+  updates: novels.value.filter((n) => hasNewChapters(n)).length,
+  active: novels.value.filter((n) => hasAnyActive(n.id)).length,
+  completed: novels.value.filter((n) => n.status === "completed").length,
+}));
 
-function isActualizable(novel: Novel): boolean {
-  return novel.canUpdate;
+const filterOptionsWithCounts = computed(() => [
+  { label: "Todas", value: "all" as FilterValue, count: filterCounts.value.all },
+  { label: "Actualizables", value: "actualizable" as FilterValue, count: filterCounts.value.actualizable },
+  { label: "Con novedades", value: "updates" as FilterValue, count: filterCounts.value.updates },
+  { label: "Activas", value: "active" as FilterValue, count: filterCounts.value.active },
+  { label: "Completadas", value: "completed" as FilterValue, count: filterCounts.value.completed },
+]);
+
+const subtitle = computed(() => {
+  const parts = [`${filteredNovels.value.length} en vista`];
+  if (filterCounts.value.updates > 0) parts.push(`${filterCounts.value.updates} con novedades`);
+  if (filterCounts.value.active > 0) parts.push(`${filterCounts.value.active} activas`);
+  else if (filterCounts.value.actualizable > 0) parts.push(`${filterCounts.value.actualizable} actualizables`);
+  return parts.join(" · ");
+});
+
+const emptyState = computed(() => {
+  if (searchQuery.value.trim()) {
+    return {
+      title: "Sin coincidencias",
+      body: `No se encontraron novelas para «${searchQuery.value.trim()}». Prueba con otro término o limpia los filtros.`,
+    };
+  }
+  switch (filter.value) {
+    case "updates":
+      return {
+        title: "Sin novedades",
+        body: "Ninguna novela tiene capítulos nuevos detectados. Verifica las actualizables para buscar novedades.",
+      };
+    case "actualizable":
+      return {
+        title: "Nada que verificar",
+        body: "No hay novelas con URL actualizable pendientes. Todas están al día o completadas.",
+      };
+    case "active":
+      return {
+        title: "Sin trabajos activos",
+        body: "No hay verificaciones, descargas ni traducciones en curso ahora mismo.",
+      };
+    case "completed":
+      return {
+        title: "Sin completadas",
+        body: "Todavía no hay novelas marcadas como completadas.",
+      };
+    default:
+      return {
+        title: "Sin novelas",
+        body: "Importa una novela para empezar a operar con ella.",
+      };
+  }
+});
+
+function clearFilters() {
+  searchQuery.value = "";
+  filter.value = "all";
 }
-
-function isCheckStale(novel: Novel): boolean {
-  if (!novel.lastCheckedAt) return true;
-  const checkedAt = new Date(novel.lastCheckedAt).getTime();
-  return Date.now() - checkedAt > PREVIEW_CACHE_TTL_MS;
-}
-
-function persistedCheckLabel(novel: Novel): string {
-  if (!novel.lastCheckedAt || isCheckStale(novel)) return "";
-  if ((novel.lastCheckNewChapters ?? 0) === 0) return "Al día";
-  return `+${novel.lastCheckNewChapters}`;
-}
-
-function hasNewChapters(novel: Novel): boolean {
-  if (!isCheckStale(novel)) return (novel.lastCheckNewChapters ?? 0) > 0;
-  return false;
-}
-
-function isSameLanguage(novel: Novel): boolean {
-  const a = (novel.sourceLanguage || "").trim().toLowerCase();
-  const b = (novel.targetLanguage || "").trim().toLowerCase();
-  return !!a && a === b;
-}
-
-function translationRatio(novel: Novel): number {
-  if (isSameLanguage(novel)) return 1;
-  if (!novel.chapterCount) return 1;
-  return novel.translatedCount / novel.chapterCount;
-}
-
-function hasPendingTranslation(novel: Novel): boolean {
-  if (isSameLanguage(novel)) return false;
-  return novel.chapterCount > 0 && novel.translatedCount < novel.chapterCount;
-}
-
-function updateResultsLabel(novel: Novel): string {
-  const r = updateResults.value.get(novel.id);
-  if (!r) return "";
-  if (r.error) return "Error";
-  if (r.added === 0) return "Al día";
-  return `+${r.added} descargados`;
-}
-
-const actualizableCount = computed(() => novels.value.filter((n) => isActualizable(n) && n.status !== "completed").length);
 
 const filteredNovels = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
@@ -320,6 +311,11 @@ const filteredNovels = computed(() => {
   }
 });
 
+const pagedNovels = computed(() => {
+  const start = (pagination.page - 1) * pagination.pageSize;
+  return filteredNovels.value.slice(start, start + pagination.pageSize);
+});
+
 const selectedNovels = computed(() => selectedRowKeys.value.map((id) => novels.value.find((n) => n.id === id)).filter(Boolean) as Novel[]);
 
 const selectedActualizableIds = computed(() => selectedNovels.value.filter((n) => isActualizable(n) && n.status !== "completed" && !hasAnyActive(n.id)).map((n) => n.id));
@@ -331,18 +327,35 @@ function selectActualizable() {
   if (selectedRowKeys.value.length === 0) message.info("No hay novelas actualizables seleccionables en esta vista.");
 }
 
+function setChecked(id: string, checked: boolean) {
+  if (checked && !selectedRowKeys.value.includes(id)) selectedRowKeys.value.push(id);
+  else if (!checked) selectedRowKeys.value = selectedRowKeys.value.filter((k) => k !== id);
+}
+
 watch([filter, searchQuery], () => {
   pagination.page = 1;
 });
 
-const rowProps = () => ({ style: "height: 44px;" });
+const rowProps = () => ({ style: "height: 52px;" });
+
+function jobContextFor(novelId: string): NovelJobContext {
+  return {
+    checkJob: activeJobForNovel(novelId, "check"),
+    downloadJob: activeJobForNovel(novelId, "download"),
+    translateJob: activeJobForNovel(novelId, "translate") || activeJobForNovel(novelId, "refine"),
+    updateResult: updateResults.value.get(novelId),
+  };
+}
+
+function statusFor(novel: Novel) {
+  return buildNovelOperationStatus(novel, jobContextFor(novel.id));
+}
 
 const columns: DataTableColumns<Novel> = [
   { type: "selection", width: 36 },
   {
     title: "Novela",
     key: "sourceTitle",
-    width: 250,
     ellipsis: { tooltip: true },
     sorter: (a, b) => a.sourceTitle.localeCompare(b.sourceTitle),
     render(row) {
@@ -353,25 +366,34 @@ const columns: DataTableColumns<Novel> = [
         {
           default: () => [
             row.coverPath
-              ? h(NAvatar, { size: 28, src: row.coverPath, style: "border-radius: 6px; flex-shrink:0" })
-              : h(NAvatar, { size: 28, style: "border-radius: 6px; flex-shrink:0; font-size: 10px" }, { default: () => row.sourceTitle.slice(0, 2).toUpperCase() }),
+              ? h(NAvatar, { size: 32, src: row.coverPath, style: "border-radius: 8px; flex-shrink:0" })
+              : h(NAvatar, { size: 32, style: "border-radius: 8px; flex-shrink:0; font-size: 11px" }, { default: () => row.sourceTitle.slice(0, 2).toUpperCase() }),
             h(
               NFlex,
-              { align: "center", wrap: false, size: 4, style: "min-width:0; flex:1" },
+              { vertical: true, size: 0, style: "min-width:0; flex:1" },
               {
                 default: () => [
-                  h(NEllipsis, { tooltip: true, style: "max-width: 100%; font-weight: 600; font-size: 13px" }, { default: () => row.sourceTitle }),
-                  needsBrowser
-                    ? h(
-                        NTooltip,
-                        {},
-                        {
-                          trigger: () =>
-                            h(NIcon, { size: 13, style: "color: var(--warning); flex-shrink:0; cursor: help", component: GlobeOutline } as unknown as Record<string, unknown>),
-                          default: () => "Requiere extensión de navegador (Cloudflare). Instala el worker para verificar/descargar.",
-                        },
-                      )
-                    : null,
+                  h(
+                    NFlex,
+                    { align: "center", wrap: false, size: 4, style: "min-width:0" },
+                    {
+                      default: () => [
+                        h(RouterLink, { to: `/novels/${row.id}`, class: "ops-novel-link" }, { default: () => h(NEllipsis, { tooltip: true, style: "max-width: 100%" }, { default: () => row.sourceTitle }) }),
+                        needsBrowser
+                          ? h(
+                              NTooltip,
+                              {},
+                              {
+                                trigger: () =>
+                                  h(NIcon, { size: 13, style: "color: var(--warning); flex-shrink:0; cursor: help", component: GlobeOutline } as unknown as Record<string, unknown>, { "aria-label": "Requiere extensión de navegador" }),
+                                default: () => "Requiere extensión de navegador (Cloudflare). Instala el worker para verificar/descargar.",
+                              },
+                            )
+                          : null,
+                      ],
+                    },
+                  ),
+                  h(NEllipsis, { tooltip: true, style: "max-width: 100%; font-size: 12px; color: var(--text-tertiary)" }, { default: () => row.sourceAuthor || "Autor desconocido" }),
                 ],
               },
             ),
@@ -381,187 +403,53 @@ const columns: DataTableColumns<Novel> = [
     },
   },
   {
-    title: "Actualización",
-    key: "updateStatus",
-    width: 140,
+    title: "Origen",
+    key: "originStatus",
+    width: 135,
     align: "center",
     render(row) {
-      const downloadJob = activeJobForNovel(row.id, "download");
-      const checkJob = activeJobForNovel(row.id, "check");
-
-      const renderUpdate = (
-        tagType: "default" | "success" | "warning" | "info" | "error",
-        tagText: string,
-        tooltip: string,
-      ) =>
-        h(
-          NTooltip,
-          {},
-          {
-            trigger: () =>
-              h(NTag, { type: tagType, size: "tiny", round: true }, { default: () => tagText }),
-            default: () => tooltip,
-          },
-        );
-
-      if (downloadJob) return renderUpdate("warning", jobStatusLabel(downloadJob), "Descargando capítulos nuevos");
-      if (checkJob) return renderUpdate("info", jobStatusLabel(checkJob), "Verificando novedades en el origen");
-      if (updateResults.value.has(row.id)) {
-        const r = updateResults.value.get(row.id)!;
-        return renderUpdate(r.error ? "error" : "success", updateResultsLabel(row), r.error ? r.error : "Resultado de la última verificación");
-      }
-      const checkLabel = persistedCheckLabel(row);
-      if (checkLabel)
-        return renderUpdate(
-          checkLabel === "Al día" ? "success" : "info",
-          checkLabel,
-          checkLabel === "Al día" ? "Sin novedades en la última verificación" : `${row.lastCheckNewChapters} capítulos nuevos detectados`,
-        );
-      if (isActualizable(row) && row.status !== "completed")
-        return renderUpdate("warning", "Actualizable", "Tiene URL actualizable, pendiente de verificar");
-      if (row.status === "completed") return renderUpdate("info", "Completada", "Novela marcada como completada");
-      return renderUpdate("default", "—", "Sin URL actualizable");
+      const s = statusFor(row);
+      return h(OperationsOriginTag, {
+        type: s.origin.type,
+        text: s.origin.text,
+        tip: s.origin.tip,
+      });
     },
   },
   {
     title: "Traducción",
     key: "translationStatus",
-    width: 140,
+    width: 165,
     align: "center",
     sorter: (a, b) => translationRatio(a) - translationRatio(b),
     render(row) {
-      const translateJob = activeJobForNovel(row.id, "translate") || activeJobForNovel(row.id, "refine");
-
-      const renderTrans = (
-        tagType: "default" | "success" | "warning" | "info" | "error",
-        tagText: string,
-        tooltip: string,
-        showCounts: boolean,
-      ) =>
-        h(
-          NTooltip,
-          {},
-          {
-            trigger: () =>
-              h(
-                NFlex,
-                { vertical: true, size: 2, align: "center", justify: "center" },
-                {
-                  default: () => [
-                    h(NTag, { type: tagType, size: "tiny", round: true }, { default: () => tagText }),
-                    showCounts && row.chapterCount > 0
-                      ? h(
-                          NText,
-                          { depth: "3", style: "font-size: 11px; line-height: 1.1; white-space: nowrap" },
-                          {
-                            default: () => `${row.translatedCount} / ${row.chapterCount}`,
-                          },
-                        )
-                      : null,
-                  ],
-                },
-              ),
-            default: () => tooltip,
-          },
-        );
-
-      if (translateJob)
-        return renderTrans(
-          "info",
-          jobStatusLabel(translateJob),
-          `${row.translatedCount} de ${row.chapterCount} capítulos traducidos`,
-          true,
-        );
-      if (isSameLanguage(row))
-        return renderTrans(
-          "default",
-          "--",
-          `Origen (${row.sourceLanguage}) = destino (${row.targetLanguage}), no requiere traducción`,
-          false,
-        );
-      if (row.chapterCount === 0) return renderTrans("default", "—", "Sin capítulos", false);
-      if (hasPendingTranslation(row))
-        return renderTrans(
-          "info",
-          `${row.chapterCount - row.translatedCount} pend.`,
-          `${row.translatedCount} de ${row.chapterCount} capítulos traducidos (${row.chapterCount - row.translatedCount} pendientes)`,
-          true,
-        );
-      return renderTrans(
-        "success",
-        "Al día",
-        `${row.translatedCount} de ${row.chapterCount} capítulos traducidos`,
-        true,
-      );
+      const s = statusFor(row);
+      return h(OperationsTranslation, { status: s.translation });
     },
   },
   {
     title: "Acciones",
     key: "actions",
-    width: 330,
+    width: 150,
     align: "right",
     render(row) {
-      const translateJob = activeJobForNovel(row.id, "translate") || activeJobForNovel(row.id, "refine");
-      const downloadJob = activeJobForNovel(row.id, "download");
-      const checkJob = activeJobForNovel(row.id, "check");
-      const canCheck = isActualizable(row) && row.status !== "completed";
-      const canDownload = hasNewChapters(row);
-      const canTranslate = hasPendingTranslation(row);
-      return h(
-        NFlex,
-        { justify: "end", size: 6, wrap: false, align: "center" },
-        {
-          default: () => [
-            h(
-              NButton,
-              {
-                size: "tiny",
-                secondary: true,
-                loading: !!checkJob,
-                disabled: !canCheck || (!!downloadJob || !!translateJob),
-                style: "min-width: 92px",
-                onClick: () => handleUpdateNovel(row),
-              },
-              {
-                icon: () => h(NIcon, null, { default: () => h(RefreshOutline) }),
-                default: () => (checkJob ? jobStatusLabel(checkJob) : "Verificar"),
-              },
-            ),
-            h(
-              NButton,
-              {
-                size: "tiny",
-                type: canDownload ? "warning" : "default",
-                secondary: !canDownload || !!downloadJob,
-                loading: !!downloadJob,
-                disabled: (!canDownload && !downloadJob) || !!checkJob || !!translateJob,
-                style: "min-width: 112px",
-                onClick: () => handleDownloadSingle(row),
-              },
-              {
-                icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
-                default: () => (downloadJob ? jobStatusLabel(downloadJob) : canDownload ? `Descargar +${row.lastCheckNewChapters}` : "Descargar"),
-              },
-            ),
-            h(
-              NButton,
-              {
-                size: "tiny",
-                type: canTranslate ? "primary" : "default",
-                secondary: !canTranslate,
-                loading: !!translateJob,
-                disabled: (!canTranslate && !translateJob) || !!checkJob || !!downloadJob,
-                style: "min-width: 96px",
-                onClick: () => handleTranslateNovel(row),
-              },
-              {
-                icon: () => h(NIcon, null, { default: () => h(PlayOutline) }),
-                default: () => (translateJob ? jobStatusLabel(translateJob) : "Traducir"),
-              },
-            ),
-          ],
-        },
-      );
+      const s = statusFor(row);
+      return h(OperationsRowActions, {
+        canDownload: s.canDownload,
+        canTranslate: s.canTranslate,
+        checkLabel: s.checkLabel,
+        downloadLabel: s.downloadLabel,
+        translateLabel: s.translateLabel,
+        checkBusy: s.checkBusy,
+        downloadBusy: s.downloadBusy,
+        translateBusy: s.translateBusy,
+        checkDisabled: s.checkDisabled,
+        downloadDisabled: s.downloadDisabled,
+        translateDisabled: s.translateDisabled,
+        onCheck: () => handleUpdateNovel(row),
+        onDownload: () => handleDownloadSingle(row),
+        onTranslate: () => handleTranslateNovel(row),
+      });
     },
   },
 ];
@@ -697,6 +585,10 @@ async function handleTranslateNovel(novel: Novel) {
     message.info("No hay capítulos pendientes por traducir.");
     return;
   }
+  if (isSameLanguage(novel)) {
+    message.info("Origen y destino son el mismo idioma, no requiere traducción.");
+    return;
+  }
   try {
     await api.novels.batchTranslate([{ novelId: novel.id }]);
     emitJobChanged();
@@ -822,12 +714,173 @@ onMounted(loadNovels);
 </script>
 
 <style scoped>
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem clamp(1rem, 3vw, 2rem);
+  flex-wrap: wrap;
+}
+
+.page-context {
+  flex: 0 1 auto;
+  min-width: 7rem;
+  padding-top: 0.6rem;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ops-subtitle {
+  margin: 0.125rem 0 0;
+}
+
+.page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  width: clamp(12rem, 22vw, 17rem);
+}
+
+.ops-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ops-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ops-chip {
+  min-height: 36px;
+}
+
+.ops-filter-helpers {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.ops-cards {
+  display: none;
+}
+
+.ops-cards-pagination {
+  display: none;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1rem;
+  padding: 2rem 1rem;
+}
+
+.empty-state-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.125rem;
+}
+
+.empty-state-body {
+  margin: 0;
+  max-width: 52ch;
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+:deep(.ops-novel-link) {
+  font-weight: 600;
+  font-size: 13px;
+  color: inherit;
+  min-width: 0;
+}
+
+:deep(.ops-novel-link:hover) {
+  color: var(--accent-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 :deep(.n-data-table-td) {
   padding-top: 6px !important;
   padding-bottom: 6px !important;
 }
+
 :deep(.n-data-table-th) {
   padding-top: 8px !important;
   padding-bottom: 8px !important;
+}
+
+@media (max-width: 820px) {
+  .page-header {
+    display: block;
+  }
+
+  .page-context {
+    padding-top: 0;
+    margin-bottom: 0.75rem;
+  }
+
+  .page-actions {
+    justify-content: flex-start;
+  }
+
+  .search-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .page-title {
+    font-size: 1.5rem;
+  }
+}
+
+/* Móvil: cards en lugar de tabla */
+@media (max-width: 768px) {
+  .ops-table-wrap {
+    display: none;
+  }
+
+  .ops-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ops-cards-pagination {
+    display: flex;
+    justify-content: center;
+    padding-top: 0.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ops-chip,
+  .search-input {
+    transition: none;
+  }
 }
 </style>
