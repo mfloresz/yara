@@ -71,22 +71,18 @@ export function useChapterSummaries(
   }
 
   function computeGaps(chapters: Chapter[]): ChapterGap[] {
-    const sorted = [...chapters].sort((a, b) => chapterPosition(a) - chapterPosition(b));
+    // Gaps live in source-number space, so sort by chapterOrder — never by
+    // reading position, which the user can reorder at will.
+    const sorted = [...chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
     const gaps: ChapterGap[] = [];
     if (sorted.length === 0) return gaps;
     let expected = 1;
-    let gapStart: number | null = null;
     for (const ch of sorted) {
+      if (ch.chapterOrder < expected) continue;
       if (ch.chapterOrder > expected) {
-        if (gapStart === null) gapStart = expected;
-      } else if (gapStart !== null && ch.chapterOrder === expected) {
-        gaps.push({ from: gapStart, to: expected - 1, count: expected - gapStart });
-        gapStart = null;
+        gaps.push({ from: expected, to: ch.chapterOrder - 1, count: ch.chapterOrder - expected });
       }
       expected = ch.chapterOrder + 1;
-    }
-    if (gapStart !== null) {
-      gaps.push({ from: gapStart, to: expected - 1, count: expected - gapStart });
     }
     return gaps;
   }

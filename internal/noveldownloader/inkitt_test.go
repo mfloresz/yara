@@ -228,3 +228,33 @@ func TestHasInkittFoldedChapter(t *testing.T) {
 		t.Error("unfolded chapter page misdetected as folded")
 	}
 }
+
+func TestInkittParseChapterBrSeparated(t *testing.T) {
+	// Regression: /stories/1126892/chapters/159 carries no <p> tags; the
+	// paragraphs are separated by <br><br> inside div#chapterText.
+	p := NewInkittParser()
+	client := &inkittStubClient{
+		getResponses: map[string][]byte{},
+		documents: map[string]string{
+			"https://www.inkitt.com/stories/1126892/chapters/159": `<html><body>
+<h2 class="chapter-head-title">• 159 •</h2>
+<div class="story-page-text" id="chapterText">
+<b><i>Tobías</i></b>&nbsp;<br><br>Me encontraba en el patio.<br><br>—Muy bien, cuéntame —me preguntó Andy.<br><br>
+</div>
+</body></html>`,
+		},
+	}
+	ch, err := p.ParseChapter(context.Background(), client, "https://www.inkitt.com/stories/1126892/chapters/159")
+	if err != nil {
+		t.Fatalf("ParseChapter: %v", err)
+	}
+	for _, want := range []string{
+		"Tobías",
+		"Me encontraba en el patio.",
+		"me preguntó Andy",
+	} {
+		if !strings.Contains(ch.Content, want) {
+			t.Errorf("content missing %q:\n%s", want, ch.Content)
+		}
+	}
+}

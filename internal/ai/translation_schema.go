@@ -42,7 +42,7 @@ func buildTranslationContentSystemPrompt(in TranslateTextInput) string {
 		"The user message contains only the chapter body or current segment as plain text.",
 		"Translate only that content.",
 		"Return only the translated text.",
-		"Do not return JSON, labels, markdown, notes, or commentary.",
+		"Do not return JSON, labels, notes, or commentary.",
 	)
 	return strings.Join(instructions, "\n\n")
 }
