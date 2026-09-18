@@ -115,6 +115,7 @@
       title="Capítulos"
       class="reader-list-modal"
       :bordered="false"
+      :auto-focus="false"
       role="dialog"
       aria-modal="true"
     >

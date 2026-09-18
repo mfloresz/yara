@@ -313,6 +313,14 @@ func inkittExtractChapters(doc *goquery.Document, pageURL string) []ChapterURL {
 	return chapters
 }
 
+// inkittBrRe splits <br>-separated chapter bodies (some chapters carry no
+// <p> tags and separate paragraphs with double <br> instead).
+var inkittBrRe = regexp.MustCompile(`(?i)<br\s*/?>`)
+
+// inkittTagRe strips tags to decide whether a <br>-separated chunk carries
+// visible text (e.g. a lone "&nbsp;" does not).
+var inkittTagRe = regexp.MustCompile(`<[^>]+>`)
+
 // inkittChapterContent extracts the chapter body, preserving inline markup
 // (<i>, <b>) so the downstream html-to-markdown conversion keeps emphasis.
 func inkittChapterContent(doc *goquery.Document) string {
@@ -332,6 +340,26 @@ func inkittChapterContent(doc *goquery.Document) string {
 		}
 		parts = append(parts, "<p>"+strings.TrimSpace(inner)+"</p>")
 	})
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	// Fallback: chapters like /stories/1126892/chapters/159 separate
+	// paragraphs with <br><br> and contain no <p> tags at all.
+	inner, err := sel.Html()
+	if err != nil {
+		return ""
+	}
+	for _, chunk := range inkittBrRe.Split(inner, -1) {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
+		}
+		visible := strings.TrimSpace(strings.ReplaceAll(inkittTagRe.ReplaceAllString(chunk, ""), "&nbsp;", ""))
+		if visible == "" {
+			continue
+		}
+		parts = append(parts, "<p>"+chunk+"</p>")
+	}
 	return strings.Join(parts, "\n")
 }
 
