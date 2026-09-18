@@ -8,6 +8,9 @@
           <n-icon :size="14"><WarningOutline /></n-icon>
           {{ totalMissingChapters === 1 ? 'Falta 1 capítulo' : `Faltan ${totalMissingChapters} capítulos` }}
         </span>
+        <span v-if="showSourceGaps" class="small muted" :title="missingSourceRangesTitle">
+          {{ missingSourceRanges }}
+        </span>
         <span v-if="selected.length > 0" class="small muted">{{ selected.length }} seleccionados</span>
       </div>
       <div v-if="isOwner" class="chapter-list-actions">
@@ -96,6 +99,12 @@
             @click.prevent="emit('open', item.chapter)"
           >
             <span class="chapter-list-order mono small muted">#{{ String(chapterPosition(item.chapter)).padStart(2, "0") }}</span>
+            <span
+              v-if="chapterPosition(item.chapter) !== item.chapter.chapterOrder"
+              class="chapter-list-source mono small muted"
+              :title="`Número de capítulo fuente: ${item.chapter.chapterOrder}`"
+              >Nº {{ item.chapter.chapterOrder }}</span
+            >
             <span class="chapter-list-title line-clamp-2">{{ item.chapter.title }}</span>
           </a>
 
@@ -188,34 +197,67 @@ const totalMissingChapters = computed(() => {
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
 
+/**
+ * Reading order (position) vs source numbering (chapterOrder) diverge as soon
+ * as the user reorders or inserts a late import mid-list. Source gaps only
+ * make sense in source-number space, so inline gap rows are rendered only
+ * when both numberings agree on this page. Otherwise the global badge plus
+ * the exact missing source ranges below cover it, with no phantom rows.
+ */
+const isDiverged = computed(() => props.chapters.some((c) => chapterPosition(c) !== c.chapterOrder));
+
+const showSourceGaps = computed(
+  () => isDiverged.value && !!props.gaps && props.gaps.length > 0,
+);
+
+const missingSourceRanges = computed(() =>
+  [...(props.gaps ?? [])]
+    .sort((a, b) => a.from - b.from)
+    .map((g) => (g.from === g.to ? `Nº ${g.from}` : `Nº ${g.from}–${g.to}`))
+    .join(" · "),
+);
+
+const missingSourceRangesTitle = computed(
+  () => `Números de capítulo fuente ausentes: ${missingSourceRanges.value}`,
+);
+
 type MergedItem =
   | { type: "chapter"; chapter: ChapterSummary; key: string }
   | { type: "gap"; gap: { from: number; to: number; count: number }; key: string };
 
 const mergedItems = computed<MergedItem[]>(() => {
-  if (!props.gaps || props.gaps.length === 0) {
-    return props.chapters.map((ch) => ({ type: "chapter", chapter: ch, key: ch.id }));
+  const chaptersOnly = () =>
+    props.chapters.map((ch) => ({ type: "chapter", chapter: ch, key: ch.id }) as MergedItem);
+  if (!props.gaps || props.gaps.length === 0 || isDiverged.value) {
+    return chaptersOnly();
   }
+  // Here reading order == source order, so the page items arrive sorted by
+  // chapterOrder. Only backend gaps (computed over the full table) are
+  // rendered — never invented from the page slice. The cursor starts at the
+  // first item so later pages don't re-print earlier gaps, and gaps
+  // straddling the page start are clamped to the visible remainder.
   const items: MergedItem[] = [];
   const sortedGaps = [...props.gaps].sort((a, b) => a.from - b.from);
-  let lastOrder = 0;
+  const firstOrder = props.chapters[0]?.chapterOrder ?? 1;
+  let lastOrder = firstOrder - 1;
 
   for (const chapter of props.chapters) {
     for (const gap of sortedGaps) {
-      if (gap.from >= lastOrder + 1 && gap.from <= chapter.chapterOrder) {
-        items.push({ type: "gap", gap, key: `gap-${gap.from}` });
-        lastOrder = gap.to;
+      if (gap.to < lastOrder + 1) continue;
+      if (gap.from <= chapter.chapterOrder) {
+        const from = Math.max(gap.from, lastOrder + 1, firstOrder);
+        if (from <= gap.to) {
+          items.push({
+            type: "gap",
+            gap: { from, to: gap.to, count: gap.to - from + 1 },
+            key: `gap-${gap.from}`,
+          });
+          lastOrder = gap.to;
+        }
       }
     }
-    if (chapter.chapterOrder > lastOrder + 1) {
-      items.push({
-        type: "gap",
-        gap: { from: lastOrder + 1, to: chapter.chapterOrder - 1, count: chapter.chapterOrder - lastOrder - 1 },
-        key: `gap-${lastOrder + 1}`,
-      });
-    }
     items.push({ type: "chapter", chapter, key: chapter.id });
-    lastOrder = chapter.chapterOrder;
+    lastOrder = Math.max(lastOrder, chapter.chapterOrder);
   }
 
   return items;
@@ -352,6 +394,15 @@ function clearSelection() {
   flex-shrink: 0;
   min-width: 4.5ch;
   font-size: 0.8125rem;
+}
+
+.chapter-list-source {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  padding: 0.0625rem 0.375rem;
+  border: 1px solid var(--divide);
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .chapter-list-title {
