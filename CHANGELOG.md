@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.33.0] - 2026-09-18
+
+### What's new
+
+- Reworked the chapter page into a single-surface workspace with tabs, dirty tracking, and a bottom action bar.
+- Restructured the settings page into a sectioned layout with navigation, dirty-state tracking, a save indicator, improved token management, and a mobile save bar.
+- Translation output no longer forbids Markdown, so source formatting (emphasis and structure) is preserved instead of stripped.
+- The chapter list now shows a source-number badge (`Nº`) when the source number differs from the reading position.
+
+### Fixes
+
+- Fixed gap detection to use source numbering (`chapterOrder`) instead of reading position: gaps stay correct after reordering, phantom inline gap rows are suppressed when orderings diverge (missing ranges are shown as a badge instead), and page rendering is clamped to backend-computed gaps.
+- Fixed the `inkitt` parser dropping chapters with no `<p>` tags: `<br>`-separated bodies are now split into paragraphs.
+- Fixed the reader chapter-list modal stealing focus on open.
+
+### Housekeeping
+
+- Refactored the operations page into reusable components (`OperationsActionBar`, `OperationsCard`, `OperationsRowActions`, `OperationsTranslation`, `OperationsOriginTag`) with composable-driven display logic.
+- Extracted reusable settings components (`ProviderKeyField`, `SettingsRow`, `SettingsSection`).
+
 ## [v0.32.0] - 2026-09-15
 
 ### What's new
@@ -334,7 +354,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.33.0...HEAD
+[v0.33.0]: https://github.com/mfloresz/yara/compare/v0.32.0...v0.33.0
 [v0.32.0]: https://github.com/mfloresz/yara/compare/v0.31.1...v0.32.0
 [v0.31.1]: https://github.com/mfloresz/yara/compare/v0.31.0...v0.31.1
 [v0.31.0]: https://github.com/mfloresz/yara/compare/v0.30.4...v0.31.0
