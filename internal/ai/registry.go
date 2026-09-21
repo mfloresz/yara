@@ -135,6 +135,7 @@ var knownProviders = []ProviderInfo{
 		BaseURL: "https://model.inferx.net/endpoints/v1",
 		Models: []string{
 			"deepseek-v4-flash-0731",
+			"deepseek-v4.1-flash",
 			"gemma-4-31B-it-fp8",
 			"Qwen3.6-35B-A3B-FP8",
 		},

@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.33.1] - 2026-09-21
+
+### Fixes
+
+- Added the `deepseek-v4.1-flash` model to the `inferx` provider catalog.
+
 ## [v0.33.0] - 2026-09-18
 
 ### What's new
@@ -354,7 +360,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.33.1...HEAD
+[v0.33.1]: https://github.com/mfloresz/yara/compare/v0.33.0...v0.33.1
 [v0.33.0]: https://github.com/mfloresz/yara/compare/v0.32.0...v0.33.0
 [v0.32.0]: https://github.com/mfloresz/yara/compare/v0.31.1...v0.32.0
 [v0.31.1]: https://github.com/mfloresz/yara/compare/v0.31.0...v0.31.1
