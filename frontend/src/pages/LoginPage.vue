@@ -102,10 +102,15 @@
           <!-- Instalación fresca: la primera cuenta es administradora. -->
           <template v-if="needsSetup">
             <h1 class="panel-title">Configuración inicial</h1>
-            <n-alert type="info" title="Sin usuarios todavía">
-              Esta instalación aún no tiene usuarios. La primera cuenta creada se
-              convertirá en administrador.
-            </n-alert>
+            <div class="how-box">
+              <p class="small how-title">
+                <n-icon :component="InformationCircleOutline" /> Sin usuarios todavía
+              </p>
+              <p class="small muted how-text">
+                Esta instalación aún no tiene usuarios. La primera cuenta creada se
+                convertirá en administrador.
+              </p>
+            </div>
             <form class="login-form" @submit.prevent="submitSetup">
               <div>
                 <label class="small muted" for="setup-name">Nombre</label>
@@ -144,83 +149,25 @@
               Yara es una aplicación privada. Necesitas una invitación para crear una cuenta.
             </p>
 
-            <!-- Paso 1: pegar y validar el enlace. -->
-            <template v-if="!inviteToken || !inviteValidation?.valid">
-              <div class="how-box">
-                <p class="small how-title">
-                  <n-icon :component="InformationCircleOutline" /> ¿Cómo funciona?
-                </p>
-                <ol class="small muted how-list">
-                  <li>Un administrador te envía un enlace de invitación.</li>
-                  <li>Validamos que sea válido y no esté vencido ni usado.</li>
-                  <li>Sólo te pedimos elegir una contraseña.</li>
-                </ol>
-              </div>
-              <form class="login-form" @submit.prevent="submitInviteToken">
-                <div>
-                  <label class="small muted" for="invite-link">Enlace de invitación</label>
-                  <n-input
-                    id="invite-link"
-                    v-model:value="manualToken"
-                    placeholder="Pega aquí el enlace que te compartieron"
-                  >
-                    <template #prefix>
-                      <n-icon :component="LinkOutline" />
-                    </template>
-                  </n-input>
-                </div>
-                <n-alert
-                  v-if="inviteValidation && !inviteValidation.valid"
-                  type="error"
-                  title="Invitación no válida"
-                >
-                  El enlace es incorrecto, ya fue usado o ha expirado.
-                </n-alert>
-                <n-alert v-if="inviteError" type="error" :title="inviteError" />
-                <n-button
-                  type="primary"
-                  block
-                  attr-type="submit"
-                  class="pill-btn touch-target"
-                  :loading="inviteLoading"
-                >
-                  Validar enlace
-                </n-button>
-              </form>
-            </template>
-
-            <!-- Paso 2: enlace válido → elegir contraseña. -->
-            <template v-else>
-              <n-alert type="success" :title="`Invitación para ${inviteValidation.email}`">
-                Elige una contraseña para completar tu cuenta.
-              </n-alert>
-              <form class="login-form" @submit.prevent="submitInviteAccept">
-                <div>
-                  <label class="small muted" for="invite-password">Contraseña</label>
-                  <n-input
-                    id="invite-password"
-                    v-model:value="invitePassword"
-                    type="password"
-                    show-password-on="click"
-                    placeholder="Mínimo 8 caracteres"
-                  >
-                    <template #prefix>
-                      <n-icon :component="LockClosedOutline" />
-                    </template>
-                  </n-input>
-                </div>
-                <n-alert v-if="inviteError" type="error" :title="inviteError" />
-                <n-button
-                  type="primary"
-                  block
-                  attr-type="submit"
-                  class="pill-btn touch-target"
-                  :loading="inviteLoading"
-                >
-                  Crear cuenta
-                </n-button>
-              </form>
-            </template>
+            <!-- Solo explicación: el canje vive en /invite. -->
+            <div class="how-box">
+              <p class="small how-title">
+                <n-icon :component="InformationCircleOutline" /> ¿Cómo funciona?
+              </p>
+              <ol class="small muted how-list">
+                <li>Un administrador te envía un enlace de invitación.</li>
+                <li>Abre el enlace: te lleva a la página de invitación.</li>
+                <li>Sólo te pedimos elegir una contraseña.</li>
+              </ol>
+            </div>
+            <n-button
+              type="primary"
+              block
+              class="pill-btn touch-target"
+              @click="router.push('/invite')"
+            >
+              Tengo un enlace de invitación
+            </n-button>
           </template>
 
           <footer class="panel-footer small muted">
@@ -242,11 +189,9 @@ import { NAlert, NButton, NCheckbox, NIcon, NInput } from "naive-ui";
 import {
   ArrowBackOutline,
   InformationCircleOutline,
-  LinkOutline,
   LockClosedOutline,
   MailOutline,
 } from "@vicons/ionicons5";
-import type { InvitationValidation } from "@/api/types";
 import { useAppServices } from "@/app/services";
 
 type PanelView = "login" | "invite";
@@ -269,14 +214,10 @@ const loginLoading = ref(false);
 const loginError = ref<string | null>(null);
 const loginInfo = ref<string | null>(null);
 
-// --- Invitación ---
+// --- Invitación / setup ---
 const needsSetup = ref(false);
 const inviteLoading = ref(false);
 const inviteError = ref<string | null>(null);
-const manualToken = ref("");
-const inviteToken = ref("");
-const inviteValidation = ref<InvitationValidation | null>(null);
-const invitePassword = ref("");
 const setupName = ref("");
 const setupEmail = ref("");
 const setupPassword = ref("");
@@ -331,53 +272,6 @@ async function submitLogin() {
     loginError.value = err instanceof Error ? err.message : String(err);
   } finally {
     loginLoading.value = false;
-  }
-}
-
-function extractToken(input: string): string {
-  const trimmed = input.trim();
-  const marker = "/invite/";
-  const idx = trimmed.indexOf(marker);
-  if (idx >= 0) {
-    return trimmed.slice(idx + marker.length).replace(/\/+$/, "");
-  }
-  return trimmed;
-}
-
-async function submitInviteToken() {
-  inviteToken.value = extractToken(manualToken.value);
-  if (!inviteToken.value) {
-    inviteError.value = "Introduce un enlace o código de invitación";
-    return;
-  }
-  inviteError.value = null;
-  inviteLoading.value = true;
-  try {
-    inviteValidation.value = await api.auth.validateInvitation(inviteToken.value);
-  } catch (err) {
-    inviteError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    inviteLoading.value = false;
-  }
-}
-
-async function submitInviteAccept() {
-  inviteLoading.value = true;
-  inviteError.value = null;
-  try {
-    await api.auth.acceptInvitation({ token: inviteToken.value, password: invitePassword.value });
-    // La invitación no inicia sesión: el usuario entra con su nueva cuenta.
-    email.value = inviteValidation.value?.email ?? "";
-    loginInfo.value = "Cuenta creada. Inicia sesión con tu nueva contraseña.";
-    invitePassword.value = "";
-    inviteValidation.value = null;
-    inviteToken.value = "";
-    manualToken.value = "";
-    switchView("login");
-  } catch (err) {
-    inviteError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    inviteLoading.value = false;
   }
 }
 
@@ -592,6 +486,10 @@ async function submitSetup() {
   gap: 0.25rem;
 }
 
+.how-text {
+  margin: 0;
+}
+
 .link-btn {
   background: none;
   border: none;
@@ -638,33 +536,138 @@ async function submitSetup() {
 }
 
 @media (max-width: 860px) {
+  /* Móvil: la imagen pasa a ser fondo completo y el formulario un card
+     central opaque (Bone Paper, sin glass). La vista queda bloqueada a
+     100dvh sin scroll: el card se compacta para caber. */
+  .login-page {
+    height: 100dvh;
+    overflow: hidden;
+    background: #141413;
+  }
+
   .login-shell {
+    position: relative;
     grid-template-columns: 1fr;
-    height: auto;
+    place-items: center;
+    height: 100dvh;
     min-height: 100dvh;
-    overflow: visible;
+    overflow: hidden;
+    padding:
+      calc(1rem + env(safe-area-inset-top))
+      1rem
+      calc(1rem + env(safe-area-inset-bottom));
   }
 
+  /* Fondo a sangre: ocupa todo el viewport detrás del card. */
   .login-visual {
-    min-height: 30dvh;
+    position: absolute;
+    inset: 0;
+    min-height: 0;
   }
 
+  /* El texto sobre foto competiría con el card: se oculta en móvil. */
   .visual-content {
-    padding: 1.5rem 1.25rem;
+    display: none;
   }
 
-  .visual-quote {
-    font-size: 1rem;
+  /* Scrim uniforme para que la foto no compita con el card. */
+  .visual-scrim {
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(in oklab, #141413 62%, transparent) 0%,
+        color-mix(in oklab, #141413 48%, transparent) 50%,
+        color-mix(in oklab, #141413 66%, transparent) 100%
+      );
   }
 
+  /* Card central: superficie elevada opaca, borde 1px, sin sombra
+     (Flat-Except-The-Book). */
   .login-panel {
-    justify-content: flex-start;
-    overflow: visible;
-    padding: 2rem 1.25rem;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 400px;
+    max-height: calc(
+      100dvh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)
+    );
+    overflow: hidden;
+    justify-content: center;
+    background: var(--surface-elevated);
+    border: 1px solid var(--divide);
+    border-radius: var(--radius-xl);
+    padding: 1.25rem 1.25rem 1rem;
+  }
+
+  .panel-view {
+    gap: 0.625rem;
+    margin: 0;
+    max-width: none;
   }
 
   .brand-word {
     font-size: 1.5rem;
+  }
+
+  .tagline {
+    font-size: 0.875rem;
+  }
+
+  .login-form {
+    gap: 0.75rem;
+  }
+
+  .how-box {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .how-title {
+    margin-bottom: 0.375rem;
+  }
+
+  .how-list {
+    gap: 0.125rem;
+  }
+
+  .panel-footer {
+    margin-top: 0.25rem;
+  }
+}
+
+/* Viewports bajos (landscape, teclado abierto): compactar más antes
+   que introducir scroll. */
+@media (max-width: 860px) and (max-height: 700px) {
+  .login-panel {
+    padding: 1rem 1.125rem 0.875rem;
+  }
+
+  .panel-view {
+    gap: 0.5rem;
+  }
+
+  .login-form {
+    gap: 0.625rem;
+  }
+
+  .tagline,
+  .invite-sub {
+    display: none;
+  }
+
+  .how-box {
+    display: none;
+  }
+
+  .panel-footer {
+    margin-top: 0;
+  }
+}
+
+/* Último recurso en landscape muy bajo: scroll interno del card,
+   la página sigue sin hacer scroll. */
+@media (max-width: 860px) and (max-height: 460px) {
+  .login-panel {
+    overflow-y: auto;
   }
 }
 
