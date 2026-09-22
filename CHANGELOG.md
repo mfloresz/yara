@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.35.0] - 2026-09-22
+
+### What's new
+
+- Added `POST /api/v1/novels/{id}/translate-description`: synchronous AI translation of the novel synopsis using the project's resolved AI settings, translation prompt and glossary. Nothing is persisted — the project settings dialog fills the target description draft via a new "Traducir" button and the user saves normally.
+- The reader now falls back to the original content (session-only, with a warning toast) when the requested translation is not available yet, instead of showing an empty state.
+
+### Fixes
+
+- Blocked PocketBase native auth routes (`/api/collections/*/auth-*`, `/api/oauth2-redirect`) with 404, so `/api/v1/auth/*` is the only auth surface.
+- Added a global rate-limit backstop (600 req/min/IP with `429` + `Retry-After`) on every route.
+
 ## [v0.34.0] - 2026-09-21
 
 ### What's new
@@ -366,7 +378,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.35.0...HEAD
+[v0.35.0]: https://github.com/mfloresz/yara/compare/v0.34.0...v0.35.0
 [v0.34.0]: https://github.com/mfloresz/yara/compare/v0.33.1...v0.34.0
 [v0.33.1]: https://github.com/mfloresz/yara/compare/v0.33.0...v0.33.1
 [v0.33.0]: https://github.com/mfloresz/yara/compare/v0.32.0...v0.33.0
