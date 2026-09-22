@@ -13,18 +13,26 @@ import (
 )
 
 func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJobConfig, error) {
-	appSettings, err := s.Store.GetAppSettings(job.OwnerID)
+	return s.resolveNovelConfig(job.OwnerID, novel, job.Provider, job.Model)
+}
+
+// resolveNovelConfig resolves the effective AI/prompt/translation settings for
+// a novel. providerOverride/modelOverride come from a job when the caller is a
+// job worker; synchronous handlers pass them empty so resolution falls back to
+// the novel's AI options and then the user's global settings.
+func (s *Server) resolveNovelConfig(userID string, novel *store.Novel, providerOverride, modelOverride string) (resolvedJobConfig, error) {
+	appSettings, err := s.Store.GetAppSettings(userID)
 	if err != nil {
 		return resolvedJobConfig{}, fmt.Errorf("get app settings: %w", err)
 	}
-	translation, err := s.Store.GetTranslationDefaults(job.OwnerID)
+	translation, err := s.Store.GetTranslationDefaults(userID)
 	if err != nil {
 		return resolvedJobConfig{}, fmt.Errorf("get translation defaults: %w", err)
 	}
 	cfg := resolvedJobConfig{Translation: translation}
 
 	providerKey := appSettings.AI.Provider
-	modelOverride := appSettings.AI.Model
+	model := appSettings.AI.Model
 	titleProviderKey := appSettings.TitleProvider
 	titleModelOverride := appSettings.TitleModel
 	if novel != nil && strings.TrimSpace(novel.Glossary) != "" {
@@ -39,7 +47,7 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 				providerKey = strings.TrimSpace(aiOptions.Provider)
 			}
 			if strings.TrimSpace(aiOptions.Model) != "" {
-				modelOverride = strings.TrimSpace(aiOptions.Model)
+				model = strings.TrimSpace(aiOptions.Model)
 			}
 			if aiOptions.TitleEnabled != nil {
 				if *aiOptions.TitleEnabled {
@@ -56,19 +64,19 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 			}
 		}
 	}
-	if strings.TrimSpace(job.Provider) != "" {
-		providerKey = strings.TrimSpace(job.Provider)
+	if strings.TrimSpace(providerOverride) != "" {
+		providerKey = strings.TrimSpace(providerOverride)
 	}
-	if strings.TrimSpace(job.Model) != "" {
-		modelOverride = strings.TrimSpace(job.Model)
+	if strings.TrimSpace(modelOverride) != "" {
+		model = strings.TrimSpace(modelOverride)
 	}
-	cfg.AI, err = s.Store.ResolveProviderAISettings(job.OwnerID, providerKey)
+	cfg.AI, err = s.Store.ResolveProviderAISettings(userID, providerKey)
 	if err != nil {
 		return resolvedJobConfig{}, fmt.Errorf("resolve provider AI settings: %w", err)
 	}
-	if strings.TrimSpace(modelOverride) != "" {
-		cfg.AI.Model = strings.TrimSpace(modelOverride)
-		cfg.AI.CustomModel = strings.TrimSpace(modelOverride)
+	if strings.TrimSpace(model) != "" {
+		cfg.AI.Model = strings.TrimSpace(model)
+		cfg.AI.CustomModel = strings.TrimSpace(model)
 	}
 	if novel != nil && strings.TrimSpace(novel.AIOptions) != "" {
 		var aiOptions novelAIOptions
@@ -104,7 +112,7 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 			}
 		}
 	}
-	prompts, err := s.Store.GetEffectivePrompts(job.OwnerID, novel)
+	prompts, err := s.Store.GetEffectivePrompts(userID, novel)
 	if err != nil {
 		return resolvedJobConfig{}, fmt.Errorf("get effective prompts: %w", err)
 	}
@@ -116,7 +124,7 @@ func (s *Server) resolveJobConfig(novel *store.Novel, job *store.Job) (resolvedJ
 		}
 	}
 	if strings.TrimSpace(titleProviderKey) != "" {
-		titleAI, err := s.Store.ResolveProviderAISettings(job.OwnerID, titleProviderKey)
+		titleAI, err := s.Store.ResolveProviderAISettings(userID, titleProviderKey)
 		if err != nil {
 			slog.Warn("failed to resolve title provider, will use content provider", "provider", titleProviderKey, "err", err)
 		} else {

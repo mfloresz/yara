@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
+	"translator-server/internal/ai"
 	"translator-server/internal/store"
 )
 
@@ -359,6 +363,88 @@ func (sharedNovelHandlers) seriesSuggestions(s *Server) func(*core.RequestEvent)
 	}
 }
 
+// maxDescriptionChars mirrors the frontend maxlength on the description
+// fields. Longer input is rejected instead of being silently truncated so the
+// model never sees a different text than what the user pasted.
+const maxDescriptionChars = 6000
+
+// translateDescription: POST /novels/{id}/translate-description
+// Body { sourceText }, response { translatedText }. Synchronous one-shot
+// translation of the novel synopsis using the novel's resolved AI settings
+// (novel AI options → user global settings) and the effective translation
+// prompt + glossary. Nothing is persisted: the caller fills its draft and
+// saves through PATCH /novels/{id}, so a translation is only a preview until
+// the user hits save.
+func (sharedNovelHandlers) translateDescription(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("id"))
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+
+		var body struct {
+			SourceText string `json:"sourceText"`
+		}
+		if err := e.BindBody(&body); err != nil {
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", "invalid body")
+		}
+		sourceText := strings.TrimSpace(body.SourceText)
+		if sourceText == "" {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "sourceText is required")
+		}
+		if len([]rune(sourceText)) > maxDescriptionChars {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "sourceText exceeds the maximum length")
+		}
+
+		cfg, err := s.resolveNovelConfig(e.Auth.Id, novel, "", "")
+		if err != nil {
+			slog.Error("resolve novel config for description translation", "novelId", novel.ID, "error", err)
+			return writeV1Error(e, http.StatusInternalServerError, "config_error", "failed to resolve AI settings")
+		}
+		provider, err := s.newAIProvider(cfg.AI, ai.SessionForJob(novel.ID))
+		if err != nil {
+			slog.Warn("description translation without usable AI provider", "novelId", novel.ID, "error", err)
+			return writeV1Error(e, http.StatusBadGateway, "ai_not_configured", "no AI provider is configured for this project")
+		}
+
+		systemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, map[string]string{
+			"{SOURCE_LANG}": novel.SourceLanguage,
+			"{TARGET_LANG}": novel.TargetLanguage,
+			"{GLOSSARY}":    formatGlossary(cfg.Glossary),
+			"{TEXT}":        "",
+		}))
+		// The translation prompt is written for chapter content; tell the model
+		// this request is a synopsis so it does not invent chapter structure.
+		systemPrompt += "\n\nThis request is the novel's description (synopsis), not chapter content: translate it faithfully and return only the translated description."
+
+		timeout := time.Duration(cfg.AI.TimeoutMs) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 90 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(e.Request.Context(), timeout)
+		defer cancel()
+
+		translated, err := provider.TranslateText(ctx, ai.TranslateTextInput{
+			SystemPrompt:    systemPrompt,
+			TextToTranslate: sourceText,
+			SourceLanguage:  novel.SourceLanguage,
+			TargetLanguage:  novel.TargetLanguage,
+		})
+		if err != nil {
+			// Log the provider error server-side only: upstream errors can carry
+			// credentials (e.g. keys embedded in request URLs) that must never be
+			// echoed back, especially when the key belongs to a shared admin key.
+			slog.Error("description translation failed", "novelId", novel.ID, "error", err)
+			return writeV1Error(e, http.StatusBadGateway, "ai_request_failed", "the AI provider could not translate the description")
+		}
+		translated = strings.TrimSpace(translated)
+		if translated == "" {
+			return writeV1Error(e, http.StatusBadGateway, "ai_request_failed", "the AI provider returned an empty translation")
+		}
+		return v1Respond(e, http.StatusOK, map[string]any{"translatedText": translated}, nil, nil)
+	}
+}
+
 func containsField(fields []string, target string) bool {
 	for _, f := range fields {
 		if strings.TrimSpace(f) == target {
@@ -375,6 +461,7 @@ func registerV1NovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 	api.GET("/novels/series/suggestions", sharedNovels.seriesSuggestions(s))
 	api.GET("/novels/{id}", sharedNovels.get(s))
 	api.POST("/novels/{id}/recalculate-stats", sharedNovels.recalculateStats(s))
+	api.POST("/novels/{id}/translate-description", sharedNovels.translateDescription(s))
 	api.PATCH("/novels/{id}", sharedNovels.patch(s))
 	api.POST("/novels/{id}/cover", sharedNovels.cover(s))
 	api.GET("/novels/{id}/cover", sharedNovels.coverImage(s))

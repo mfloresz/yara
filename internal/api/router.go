@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,24 +43,24 @@ type pendingBrowserJob struct {
 }
 
 type Server struct {
-	Store                  *store.Store
-	Cfg                    *config.Config
-	Version                string
-	downloadQueue          chan string
-	translateQueue         chan string
-	workerWG               sync.WaitGroup
-	queuedJobs             map[string]struct{}
-	queueMu                sync.Mutex
-	cancelMu               sync.Mutex
-	jobCancels             map[string]context.CancelFunc
-	DownloaderFactory      func(userID string) *noveldownloader.Downloader
-	previewCacheMu         sync.RWMutex
-	previewCache           map[string]previewCacheEntry
-	importInfoCacheMu      sync.RWMutex
-	importInfoCache        map[string]importInfoCacheEntry
-	browserQueue           chan BrowserJob
-	pendingBrowserJobs     map[string]*pendingBrowserJob
-	pendingBrowserJobsMu   sync.Mutex
+	Store                *store.Store
+	Cfg                  *config.Config
+	Version              string
+	downloadQueue        chan string
+	translateQueue       chan string
+	workerWG             sync.WaitGroup
+	queuedJobs           map[string]struct{}
+	queueMu              sync.Mutex
+	cancelMu             sync.Mutex
+	jobCancels           map[string]context.CancelFunc
+	DownloaderFactory    func(userID string) *noveldownloader.Downloader
+	previewCacheMu       sync.RWMutex
+	previewCache         map[string]previewCacheEntry
+	importInfoCacheMu    sync.RWMutex
+	importInfoCache      map[string]importInfoCacheEntry
+	browserQueue         chan BrowserJob
+	pendingBrowserJobs   map[string]*pendingBrowserJob
+	pendingBrowserJobsMu sync.Mutex
 	// redownloadLocks serializes the check+create+enqueue sequence of
 	// redownload-from-url per novel, so two concurrent requests cannot both pass
 	// the active-jobs check and create competing redownload jobs. Reused for
@@ -81,6 +82,11 @@ type Server struct {
 	// cannot reconnect in a loop and starve the maxUnauthenticatedWorkers
 	// slots that legitimate browser workers need.
 	wsLimiter *rateLimiter
+	// globalLimiter is the backstop under the endpoint-specific limiters: it
+	// caps total requests per client IP across every route, covering the
+	// authenticated surface and PocketBase's native record CRUD, which have
+	// no per-endpoint limit of their own.
+	globalLimiter *rateLimiter
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }
@@ -96,9 +102,10 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		importInfoCache:    make(map[string]importInfoCacheEntry),
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
-		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
-		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
-		wsLimiter:          newRateLimiter(16, 16), // 16 WS upgrades per minute per IP
+		loginLimiter:       newRateLimiter(5, 5),     // 5 attempts per minute per IP
+		invitationLimiter:  newRateLimiter(10, 10),   // 10 redemptions per minute per IP
+		wsLimiter:          newRateLimiter(16, 16),   // 16 WS upgrades per minute per IP
+		globalLimiter:      newRateLimiter(600, 600), // global backstop: 600 requests per minute per IP
 	}
 	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()
@@ -207,6 +214,26 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 		},
 	})
 
+	// Block PocketBase's native record-auth API. The app ships its own
+	// rate-limited /api/v1/auth/* flow, and PocketBase's built-in rate limits
+	// ship disabled (this app never enables them), so these routes would
+	// otherwise be an unthrottled password brute-force path that bypasses
+	// loginLimiter. Closing them also makes a superuser token unobtainable
+	// over HTTP, which is the real guard for PocketBase's superuser-only
+	// management routes (/api/settings, /api/backups, /api/logs, /api/crons,
+	// collection management): the loopback SuperuserIPs whitelist set in
+	// cmd/server/main.go is satisfied by every request that arrives through
+	// cloudflared, so behind the tunnel it cannot be relied on by itself.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "blockNativePocketBaseAuth",
+		Func: func(e *core.RequestEvent) error {
+			if isNativeAuthPath(e.Request.URL.Path) {
+				return e.NotFoundError("", nil)
+			}
+			return e.Next()
+		},
+	})
+
 	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
 	// Must run before any handler.
 	router.Bind(&hook.Handler[*core.RequestEvent]{
@@ -219,6 +246,24 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 				e.Response.Header().Set("X-API-Version", "v1")
 			}
 			return nil
+		},
+	})
+
+	// Global per-IP rate limit: the backstop under the endpoint-specific
+	// auth limiters, covering every other route (authenticated API, native
+	// record CRUD, static assets). Keys follow the same trust rules as the
+	// auth limiter (clientKeyForRateLimit): behind cloudflared every real
+	// client gets its own bucket; on a direct connection only the socket
+	// address is trusted, so the key cannot be spoofed.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "globalRateLimit",
+		Func: func(e *core.RequestEvent) error {
+			if !s.globalLimiter.allow(clientKeyForRateLimit(e.Request)) {
+				slog.Warn("global rate limit exceeded", "path", e.Request.URL.Path)
+				e.Response.Header().Set("Retry-After", "60")
+				return writeV1Error(e, http.StatusTooManyRequests, "rate_limited", "too many requests, try again later")
+			}
+			return e.Next()
 		},
 	})
 
@@ -245,4 +290,36 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	registerWorkerAuthPublicRoutes(router, s)
 	registerV1Routes(router, s)
 	registerStaticHandler(router, s.Cfg.StaticDir)
+}
+
+// isNativeAuthPath reports whether path belongs to PocketBase's native
+// record-auth API (/api/collections/{collection}/{action} plus the global
+// oauth2 redirect). Those routes are disabled by blockNativePocketBaseAuth:
+// the app only authenticates through the rate-limited /api/v1/auth/* flow.
+// The prefix match on "auth-" future-proofs new auth actions PocketBase may
+// add; the explicit list covers the non-"auth-" members of the family
+// (otp/password-reset/verification/email-change/impersonate).
+func isNativeAuthPath(path string) bool {
+	if path == "/api/oauth2-redirect" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, "/api/collections/")
+	if !ok {
+		return false
+	}
+	slash := strings.Index(rest, "/")
+	if slash < 0 || slash == len(rest)-1 {
+		return false
+	}
+	action := rest[slash+1:]
+	if i := strings.Index(action, "/"); i >= 0 {
+		action = action[:i] // strip any trailing /{id} segment (impersonate/{id})
+	}
+	switch action {
+	case "auth-methods", "request-otp", "request-password-reset", "confirm-password-reset",
+		"request-verification", "confirm-verification", "request-email-change",
+		"confirm-email-change", "impersonate":
+		return true
+	}
+	return strings.HasPrefix(action, "auth-")
 }

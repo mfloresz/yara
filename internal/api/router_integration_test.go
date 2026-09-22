@@ -3,7 +3,9 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase"
+	"translator-server/internal/ai"
 	"translator-server/internal/config"
 	"translator-server/internal/secure"
 	"translator-server/internal/store"
@@ -2247,5 +2250,106 @@ func TestListNovelsFilterByTagPagination(t *testing.T) {
 	}
 	if !reflect.DeepEqual(seen, taggedIDs) {
 		t.Fatalf("expected all 5 tagged novels across pages, got %v (want %v)", seen, taggedIDs)
+	}
+}
+
+// stubTranslateProvider records the last TranslateTextInput and returns a
+// canned result (or error) so the metadata translation endpoint can be tested
+// without a real AI provider.
+type stubTranslateProvider struct {
+	last   ai.TranslateTextInput
+	result string
+	err    error
+}
+
+func (p *stubTranslateProvider) TranslateTitle(ctx context.Context, in ai.TranslateTitleInput) (string, error) {
+	return "", nil
+}
+
+func (p *stubTranslateProvider) TranslateText(ctx context.Context, in ai.TranslateTextInput) (string, error) {
+	p.last = in
+	return p.result, p.err
+}
+
+func (p *stubTranslateProvider) Refine(ctx context.Context, in ai.RefineInput) (ai.RefineOutput, error) {
+	return ai.RefineOutput{}, nil
+}
+
+func (p *stubTranslateProvider) Check(ctx context.Context, in ai.CheckInput) (ai.CheckOutput, error) {
+	return ai.CheckOutput{OK: true}, nil
+}
+
+func (p *stubTranslateProvider) GenerateGlossary(ctx context.Context, in ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {
+	return ai.GenerateGlossaryOutput{}, nil
+}
+
+func TestTranslateDescription(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-translate-desc@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Novela Sinopsis", "en", "es")
+
+	stub := &stubTranslateProvider{result: "  Sinopsis traducida.  "}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return stub, nil
+	}
+
+	path := "/api/v1/novels/" + novel.ID + "/translate-description"
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, path, alice.Token, map[string]any{
+		"sourceText": "A long English synopsis.",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	if ct := resp.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON content type, got %q", ct)
+	}
+	var out struct {
+		TranslatedText string `json:"translatedText"`
+	}
+	decodeData(t, resp, &out)
+	if out.TranslatedText != "Sinopsis traducida." {
+		t.Fatalf("unexpected translatedText %q", out.TranslatedText)
+	}
+	if stub.last.TextToTranslate != "A long English synopsis." {
+		t.Fatalf("provider got wrong text: %q", stub.last.TextToTranslate)
+	}
+	if stub.last.SourceLanguage != "en" || stub.last.TargetLanguage != "es" {
+		t.Fatalf("provider got wrong languages: %q -> %q", stub.last.SourceLanguage, stub.last.TargetLanguage)
+	}
+	if !strings.Contains(stub.last.SystemPrompt, "synopsis") {
+		t.Fatalf("system prompt missing synopsis instruction: %q", stub.last.SystemPrompt)
+	}
+
+	// Blank source text is rejected before any provider call.
+	resp = doJSONRequest(t, env.handler, http.MethodPost, path, alice.Token, map[string]any{
+		"sourceText": "   ",
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	// Another user's novel: 403 without touching the provider.
+	bob := registerUser(t, env, "bob-translate-desc@example.com", "secret123", "Bob")
+	resp = doJSONRequest(t, env.handler, http.MethodPost, path, bob.Token, map[string]any{
+		"sourceText": "A long English synopsis.",
+	})
+	assertStatus(t, resp, http.StatusForbidden)
+
+	// Provider failures surface as 502 with a generic message; the upstream
+	// error (which may embed credentials) must not leak into the response.
+	stub.result = ""
+	stub.err = errors.New("upstream exploded with secret-key-xyz")
+	resp = doJSONRequest(t, env.handler, http.MethodPost, path, alice.Token, map[string]any{
+		"sourceText": "A long English synopsis.",
+	})
+	assertStatus(t, resp, http.StatusBadGateway)
+	if strings.Contains(resp.Body.String(), "secret-key-xyz") {
+		t.Fatalf("upstream error leaked to the client: %s", resp.Body.String())
+	}
+	var errEnvelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeRaw(t, resp, &errEnvelope)
+	if errEnvelope.Error.Code != "ai_request_failed" {
+		t.Fatalf("unexpected error code %q", errEnvelope.Error.Code)
 	}
 }

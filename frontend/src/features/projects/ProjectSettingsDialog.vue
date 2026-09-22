@@ -186,7 +186,9 @@
                     </div>
                   </div>
                   <div class="form-group">
-                    <label class="lbl" for="novel-source-desc">Descripción</label>
+                    <div class="lbl-row">
+                      <label class="lbl" for="novel-source-desc">Descripción</label>
+                    </div>
                     <n-input
                       id="novel-source-desc"
                       size="small"
@@ -266,7 +268,33 @@
                     </div>
                   </div>
                   <div class="form-group">
-                    <label class="lbl" for="novel-target-desc">Descripción</label>
+                    <div class="lbl-row">
+                      <label class="lbl" for="novel-target-desc">Descripción</label>
+                      <n-tooltip trigger="hover" placement="top">
+                        <template #trigger>
+                          <span class="lbl-action">
+                            <n-button
+                              class="desc-translate-btn"
+                              size="tiny"
+                              quaternary
+                              :loading="translatingDesc"
+                              :disabled="!sourceDescriptionText || translatingDesc"
+                              @click="translateDescription"
+                            >
+                              <template #icon>
+                                <n-icon :size="13"><LanguageOutline /></n-icon>
+                              </template>
+                              Traducir
+                            </n-button>
+                          </span>
+                        </template>
+                        {{
+                          sourceDescriptionText
+                            ? "Traducir la descripción de origen con IA al idioma destino"
+                            : "Escribe primero una descripción de origen"
+                        }}
+                      </n-tooltip>
+                    </div>
                     <n-input
                       id="novel-target-desc"
                       size="small"
@@ -1280,6 +1308,43 @@ function copySourceToTarget() {
   message.success("Metadatos copiados a destino", { duration: 1800 });
 }
 
+const translatingDesc = ref(false);
+
+const sourceDescriptionText = computed(() =>
+  (novelDraft.value.sourceDescription ?? "").trim(),
+);
+
+// Traduce la descripción de origen con el proveedor de IA del proyecto y
+// rellena el campo de destino. No persiste nada: el borrador queda "sucio" y
+// el usuario guarda con el botón Guardar.
+async function translateDescription() {
+  const source = sourceDescriptionText.value;
+  if (!source || translatingDesc.value) return;
+  translatingDesc.value = true;
+  try {
+    const translated = (
+      await api.novels.translateDescription(props.novel.id, source)
+    ).trim();
+    if (!translated) {
+      message.warning("El proveedor devolvió una traducción vacía.", {
+        duration: 3000,
+      });
+      return;
+    }
+    novelDraft.value.targetDescription = translated.slice(0, 5000);
+    message.success("Descripción traducida — recuerda guardar los cambios", {
+      duration: 2500,
+    });
+  } catch (err) {
+    message.error(
+      `No se pudo traducir la descripción: ${err instanceof Error ? err.message : String(err)}`,
+      { duration: 5000 },
+    );
+  } finally {
+    translatingDesc.value = false;
+  }
+}
+
 async function resetDraft() {
   const base = JSON.parse(JSON.stringify(props.novel)) as Novel;
   base.glossary = ensureGlossaryIds(base.glossary);
@@ -1619,6 +1684,35 @@ async function save() {
   letter-spacing: 0.01em;
 }
 
+/* Fila de etiqueta con acción a la derecha (p. ej. "Traducir" en la
+   descripción de destino). Se usa también en la etiqueta de origen para que
+   ambas filas tengan la misma altura y los textareas sigan alineados. */
+.lbl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 26px;
+  margin-bottom: 0.15rem;
+}
+
+.lbl-row .lbl {
+  margin-bottom: 0;
+}
+
+.lbl-action {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Altura fija para que la fila de etiqueta pese igual en origen y destino
+   (los textareas siguen alineados) y para un target de clic consistente. */
+.desc-translate-btn {
+  height: 26px;
+}
+
 .form-group { min-width: 0; }
 
 .field-grid-2 {
@@ -1897,6 +1991,11 @@ async function save() {
 @media (max-width: 800px) {
   .desktop-only { display: none !important; }
   .mobile-only { display: block !important; }
+
+  /* Target táctil más holgado para el botón de traducir; la fila crece con
+     él para que origen y destino sigan alineados. */
+  .lbl-row { min-height: 40px; }
+  .desc-translate-btn { height: 40px; padding: 0 0.75rem; }
 
   .meta-split {
     grid-template-columns: 1fr;

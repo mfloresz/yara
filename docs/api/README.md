@@ -232,6 +232,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `POST` | `/api/v1/novels/{id}/cover` | `multipart/form-data` with `cover` field. Returns the updated novel. |
 | `GET` | `/api/v1/novels/{id}/cover` | Download the stored cover (thumbnail when present). Cookie-authenticated; the underlying file fields are protected so PocketBase's native `/api/files` route is not usable for covers. Access follows novel visibility (owner or `isPublic`). Novels without a stored cover get `coverPath === ""` and the frontend shows its bundled default image; the endpoint still serves the bundled default for those per-novel URLs as a compat fallback. |
 | `POST` | `/api/v1/novels/{id}/recalculate-stats` | Recompute chapter counts and char counts. |
+| `POST` | `/api/v1/novels/{id}/translate-description` | Body `{ "sourceText": "..." }` (≤6000 chars). Synchronously translates the description with the project's AI provider (effective prompt + glossary) and returns `{ "translatedText": "..." }`. Nothing is persisted — save through `PATCH /api/v1/novels/{id}`. 502 + `ai_not_configured`/`ai_request_failed` when no provider is usable or the upstream call fails. |
 | `GET` | `/api/v1/novels/{id}/full` | Return the novel + all chapters (heavy). |
 
 ```json

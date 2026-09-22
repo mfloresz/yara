@@ -211,3 +211,66 @@ func multipartBody(t *testing.T, buf *bytes.Buffer, field, filename string, blob
 	}
 	return mw
 }
+
+// PocketBase's native record-auth endpoints are disabled: PocketBase's
+// built-in rate limits ship disabled, so leaving them alive would give an
+// attacker an unthrottled password brute-force path that bypasses the
+// /api/v1/auth/login limiter. Even with valid credentials they must not
+// exist — including the superuser collection, whose token would unlock the
+// superuser-only management routes (/api/settings, /api/backups, ...).
+func TestNativePocketBaseAuthDisabled(t *testing.T) {
+	env := newAPITestEnv(t)
+	user := registerUser(t, env, "native-auth@example.com", "secret123", "Native")
+
+	for _, path := range []string{
+		"/api/collections/users/auth-with-password",
+		"/api/collections/users/auth-refresh",
+		"/api/collections/users/request-password-reset",
+		"/api/collections/users/auth-methods",
+		"/api/collections/_superusers/auth-with-password",
+		"/api/oauth2-redirect",
+	} {
+		method := http.MethodPost
+		if path == "/api/collections/users/auth-methods" || path == "/api/oauth2-redirect" {
+			method = http.MethodGet
+		}
+		resp := doJSONRequest(t, env.handler, method, path, "", nil)
+		assertStatus(t, resp, http.StatusNotFound)
+	}
+
+	// The block is scoped to the auth family: the rules-protected native
+	// record CRUD must keep working (locks in that /api/collections/* itself
+	// is not blanket-blocked).
+	self := doJSONRequest(t, env.handler, http.MethodGet, "/api/collections/users/records/"+user.User.ID, user.Token, nil)
+	assertStatus(t, self, http.StatusOK)
+
+	// Superuser records stay hidden behind PocketBase's own collection rules.
+	su := doJSONRequest(t, env.handler, http.MethodGet, "/api/collections/_superusers/records", user.Token, nil)
+	if su.Code == http.StatusOK && !strings.Contains(su.Body.String(), `"totalItems":0`) {
+		t.Fatalf("superuser records leaked to a regular user: %s", su.Body.String())
+	}
+}
+
+// The global limiter is the backstop for every route: after the per-IP burst
+// (600) is exhausted, further requests must429 with Retry-After instead of
+// reaching the handler, and it must never fire before the burst is used up.
+func TestGlobalRateLimitBackstop(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	allowed := 0
+	for i := 0; i < 700; i++ {
+		resp := doJSONRequest(t, env.handler, http.MethodGet, "/healthz", "", nil)
+		if resp.Code == http.StatusTooManyRequests {
+			if resp.Header().Get("Retry-After") == "" {
+				t.Fatal("expected Retry-After header on globally rate-limited response")
+			}
+			if allowed < 600 {
+				t.Fatalf("global rate limit fired after only %d requests, expected the full 600 burst", allowed)
+			}
+			return
+		}
+		assertStatus(t, resp, http.StatusOK)
+		allowed++
+	}
+	t.Fatalf("expected the global rate limit to trigger within 700 requests, got %d allowed", allowed)
+}

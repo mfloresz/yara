@@ -12,7 +12,18 @@ These protections are built in — no reverse-proxy configuration needed:
   is IP-restricted to loopback at startup.
 - Registration requires an invitation once the first (admin) user exists.
 - Rate limiting: register/login 5/min per IP, invitation validate/accept
-  10/min per IP (429 + `Retry-After: 60`).
+  10/min per IP (429 + `Retry-After: 60`), plus a **global backstop of
+  600 requests/min per IP on every route** (429 + `Retry-After: 60`).
+- PocketBase's native record-auth API (`/api/collections/*/auth-*`,
+  `/api/oauth2-redirect`) answers **404**: login, refresh and password
+  reset only exist under the rate-limited `/api/v1/auth/*`. PocketBase's
+  built-in rate limits ship disabled, so those routes would otherwise be
+  an unthrottled password brute-force path. This also makes a superuser
+  token unobtainable over HTTP, which is what really keeps PocketBase's
+  superuser-only management routes (`/api/settings`, `/api/backups`,
+  `/api/logs`, `/api/crons`, collection management) closed — the loopback
+  `SuperuserIPs` whitelist is satisfied by every request that arrives via
+  cloudflared, so it cannot be the only guard behind the tunnel.
 - Auth endpoints cap request bodies at 16 KB.
 - Security headers on every response: CSP (`script-src 'self'`),
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
@@ -60,6 +71,13 @@ These protections are built in — no reverse-proxy configuration needed:
    ```bash
    ./translator-server --addr 127.0.0.1:5176 --data-dir "$HOME/data"
    ```
+
+   The default `-addr :5176` binds **all interfaces**: on a host with a
+   public IP, running the binary without flags exposes the plain-HTTP
+   server directly and bypasses the tunnel entirely. Binding all
+   interfaces is only acceptable when the port cannot be reached from the
+   internet (home LAN, Termux accessed by the device's IP) — and in that
+   case the port must never be forwarded from the router.
 
 4. **Create the tunnel** (cloudflared installed and authenticated):
 
@@ -140,3 +158,5 @@ everyone out under a brute-force attempt (shared 5/min bucket).
   brute-force defense.
 - Audit logging goes to stdout as structured slog lines (no persistent audit
   collection); ship them if you need retention.
+- `GET /healthz` reports the build version (the UI sidebar shows it):
+  minor fingerprinting, deliberate.

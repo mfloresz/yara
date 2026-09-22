@@ -597,6 +597,13 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         if (to > 0) params.set("to", String(to));
         return http.get(`/api/v1/novels/${novelId}/glossary/estimate-tokens?${params}`);
       },
+      async translateDescription(novelId: string, sourceText: string): Promise<string> {
+        const result = await http.post<{ translatedText: string }>(
+          `/api/v1/novels/${novelId}/translate-description`,
+          { sourceText },
+        );
+        return result?.translatedText ?? "";
+      },
     },
     chapters: {
       async list(novelId: string): Promise<ChapterSummary[]> {

@@ -529,6 +529,53 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/Novel' }
 
+  /novels/{id}/translate-description:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Novels]
+      summary: Translate the source description with the configured AI provider.
+      description: >-
+        Synchronous one-shot translation of sourceText from the novel's source
+        language into its target language, using the project's resolved AI
+        settings (novel AI options, then user global settings) and the
+        effective translation prompt including the glossary. The result is not
+        persisted: clients fill their draft and save through
+        PATCH /novels/{id}. Errors: ai_not_configured (no provider or API key
+        available) and ai_request_failed (upstream call failed or returned
+        empty text), both as 502.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceText]
+              properties:
+                sourceText: { type: string, minLength: 1, maxLength: 6000 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [translatedText]
+                        properties:
+                          translatedText: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: The AI provider is not configured or the upstream translation failed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /novels/{id}/full:
     parameters:
       - $ref: '#/components/parameters/IdParam'
@@ -2515,7 +2562,7 @@ components:
           properties:
             code:
               type: string
-              enum: [bad_request, unauthorized, forbidden, not_found, conflict, queue_full, internal_error]
+              enum: [bad_request, unauthorized, forbidden, not_found, conflict, queue_full, internal_error, validation_failed, ai_not_configured, ai_request_failed, config_error]
             message: { type: string }
             details:
               type: array

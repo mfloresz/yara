@@ -37,7 +37,7 @@
           <div class="reader-empty-state">
             <h2>Sin contenido</h2>
             <p class="muted">
-              <template v-if="variant === 'translated' && stats.totalChapters > 0">
+              <template v-if="effectiveVariant === 'translated' && stats.totalChapters > 0">
                 No hay capítulos traducidos todavía. Puedes cambiar a originales.
               </template>
               <template v-else>
@@ -45,7 +45,7 @@
               </template>
             </p>
             <div class="reader-empty-actions">
-              <n-button v-if="variant === 'translated' && stats.totalChapters > 0" secondary @click="variant = 'original'">
+              <n-button v-if="effectiveVariant === 'translated' && stats.totalChapters > 0" secondary @click="variant = 'original'">
                 <template #icon><n-icon><EyeOutline /></n-icon></template>
                 Ver originales
               </n-button>
@@ -204,6 +204,7 @@ import {
   NInput,
   NModal,
   NSkeleton,
+  useMessage,
 } from "naive-ui";
 import {
   ArrowBackOutline,
@@ -251,6 +252,15 @@ function saveReaderSettings() {
 const isMobile = window.innerWidth < 720;
 const saved = loadReaderSettings();
 const variant = ref<"translated" | "original">(saved?.variant ?? "translated");
+const message = useMessage();
+// Fallback en memoria: si el ajuste pide traducción pero no existe, se
+// muestra el original solo mientras dure la sesión en este lector. Nunca
+// se escribe en `variant`, así que el ajuste persistido sigue intacto y al
+// salir del componente (unmount o cambio de novela) el flag muere solo.
+const fallbackToOriginal = ref(false);
+const effectiveVariant = computed<"translated" | "original">(() =>
+  variant.value === "translated" && fallbackToOriginal.value ? "original" : variant.value,
+);
 
 nextTick(() => applyTypography());
 const activeChapterId = ref<string | null>(null);
@@ -296,7 +306,7 @@ const visibleSummaries = computed(() =>
 );
 const activeChapterContent = computed(() => {
   if (!activeChapter.value) return "";
-  if (variant.value === "translated") {
+  if (effectiveVariant.value === "translated") {
     return activeChapter.value.refinedContent || activeChapter.value.translatedContent || "";
   }
   return activeChapter.value.originalContent || "";
@@ -352,6 +362,9 @@ onBeforeUnmount(() => {
 // No hay watcher sobre activeChapterId: evita doble fetch.
 
 watch(variant, () => {
+  // Cambio manual del usuario: descarta el fallback para darle prioridad a
+  // su elección. Si resulta que tampoco hay traducción, vuelve a activarse.
+  fallbackToOriginal.value = false;
   // El capítulo ya trae todas las variantes; cambiar de idioma no refetchea.
   if (!activeChapterId.value) {
     void selectFirstAvailableChapter();
@@ -387,6 +400,8 @@ watch(activeChapter, async () => {
 watch(novelId, () => {
   summariesToken++;
   initialScrollRestored = false;
+  // Nueva novela: el fallback es por sesión/lector, no debe arrastrarse.
+  fallbackToOriginal.value = false;
   allSummaries.value = [];
   summariesLoaded.value = false;
   summariesLoading.value = false;
@@ -424,20 +439,20 @@ function chapterToSummary(chapter: Chapter): ChapterSummary {
 }
 
 function summaryHasVariantContent(summary: ChapterSummary) {
-  return variant.value === "translated"
+  return effectiveVariant.value === "translated"
     ? summary.hasRefinedContent || summary.hasTranslatedContent
     : summary.hasOriginalContent;
 }
 
 function summaryDisplayTitle(summary: ChapterSummary) {
-  if (variant.value === "translated" && summary.translatedTitle?.trim()) {
+  if (effectiveVariant.value === "translated" && summary.translatedTitle?.trim()) {
     return summary.translatedTitle;
   }
   return summary.title;
 }
 
 function chapterDisplayTitle(chapter: Chapter) {
-  if (variant.value === "translated" && chapter.translatedTitle?.trim()) {
+  if (effectiveVariant.value === "translated" && chapter.translatedTitle?.trim()) {
     return chapter.translatedTitle;
   }
   return chapter.title;
@@ -463,10 +478,29 @@ async function loadCurrentNovel() {
 }
 
 function chapterHasVariantContent(chapter: Chapter) {
-  if (variant.value === "translated") {
+  if (effectiveVariant.value === "translated") {
     return Boolean(chapter.refinedContent || chapter.translatedContent);
   }
   return Boolean(chapter.originalContent);
+}
+
+// Activa el fallback de SOLO lectura (no persiste) la primera vez que se
+// detecta que la traducción pedida no existe. El toast se dispara una vez
+// por sesión: si ya hay fallback activo, no vuelve a insistir.
+function activateOriginalFallback() {
+  if (fallbackToOriginal.value) return;
+  fallbackToOriginal.value = true;
+  message.warning("La traducción no está disponible todavía. Mostrando el contenido original.", {
+    duration: 4000,
+  });
+}
+
+// Evalúa el capítulo recién cargado. Si el ajuste pide traducción y este
+// capítulo no tiene, activa el fallback de sesión (sin tocar el ajuste).
+function checkTranslationFallback(chapter: Chapter | null) {
+  if (variant.value !== "translated" || fallbackToOriginal.value) return;
+  if (!chapter || chapterHasVariantContent(chapter)) return;
+  activateOriginalFallback();
 }
 
 async function initializeReader() {
@@ -538,7 +572,13 @@ async function selectChapterFromList(chapterId: string) {
 
 async function selectFirstAvailableChapter() {
   if (!summariesLoaded.value) await ensureSummaries();
-  const firstAvailable = loadedSummaries.value.find((item) => summaryHasVariantContent(item));
+  let firstAvailable = loadedSummaries.value.find((item) => summaryHasVariantContent(item));
+  // Ni un solo capítulo tiene la traducción pedida: en lugar de quedarse
+  // vacío, cae al original (sesión) y busca el primer capítulo con original.
+  if (!firstAvailable && variant.value === "translated" && !fallbackToOriginal.value) {
+    activateOriginalFallback();
+    firstAvailable = loadedSummaries.value.find((item) => item.hasOriginalContent);
+  }
   if (firstAvailable) {
     await selectChapter(firstAvailable.id);
     return;
@@ -562,14 +602,17 @@ async function loadActiveChapter(chapterId: string) {
     activeChapter.value = chapter;
     prevNeighbor.value = prev;
     nextNeighbor.value = next;
+    checkTranslationFallback(chapter);
     if (chapter) return;
     const cached = await getCachedNovel(novelId.value);
     activeChapter.value = cached?.chapters.find((c) => c.id === chapterId) ?? null;
+    checkTranslationFallback(activeChapter.value);
     prevNeighbor.value = null;
     nextNeighbor.value = null;
   } catch {
     const cached = await getCachedNovel(novelId.value);
     activeChapter.value = cached?.chapters.find((chapter) => chapter.id === chapterId) ?? null;
+    checkTranslationFallback(activeChapter.value);
     prevNeighbor.value = null;
     nextNeighbor.value = null;
   } finally {
