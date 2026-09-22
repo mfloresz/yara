@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.34.0] - 2026-09-21
+
+### What's new
+
+- Added the `getinkspired.com` novel downloader parser: story metadata and the chapter list come from the page's JSON-LD (with HTML fallbacks for the header, author row and table of contents), and chapter bodies are extracted paragraph by paragraph so inline formatting survives the markdown conversion. The site sits behind Cloudflare, so it needs the browser-worker extension. The site now appears in the import dialog list and in all four browser-worker extensions.
+
 ## [v0.33.1] - 2026-09-21
 
 ### Fixes
@@ -360,7 +366,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.34.0...HEAD
+[v0.34.0]: https://github.com/mfloresz/yara/compare/v0.33.1...v0.34.0
 [v0.33.1]: https://github.com/mfloresz/yara/compare/v0.33.0...v0.33.1
 [v0.33.0]: https://github.com/mfloresz/yara/compare/v0.32.0...v0.33.0
 [v0.32.0]: https://github.com/mfloresz/yara/compare/v0.31.1...v0.32.0
