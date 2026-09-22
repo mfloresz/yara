@@ -19,6 +19,7 @@ export const SUPPORTED_SITE_HOSTS = [
   'inkitt.com',
   'gaydemon.com',
   'chrysanthemumgarden.com',
+  'getinkspired.com',
 ];
 
 // Match patterns for chrome.contextMenus documentUrlPatterns. Both the bare

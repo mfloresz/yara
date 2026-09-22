@@ -51,7 +51,7 @@ const visible = computed({
   set: (value) => emit("update:open", value),
 });
 
-const supportedSites = ["novelfire.net", "novelphoenix.com", "fenrirealm.com", "floraegarden.com", "cherrymist.cafe", "empirenovel.com", "69shuba.com", "skynovels.net", "skydemonorder.com", "literotica.com", "wtr-lab.com", "novelarrow.com", "wattpad.com", "webnovel.com", "inkitt.com"];
+const supportedSites = ["novelfire.net", "novelphoenix.com", "fenrirealm.com", "floraegarden.com", "cherrymist.cafe", "empirenovel.com", "69shuba.com", "skynovels.net", "skydemonorder.com", "literotica.com", "wtr-lab.com", "novelarrow.com", "wattpad.com", "webnovel.com", "inkitt.com", "getinkspired.com"];
 
 const url = ref("");
 const loading = ref(false);
