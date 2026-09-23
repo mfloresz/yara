@@ -153,6 +153,10 @@ select {
     min-height: 100vh;
     background: var(--background);
     color: var(--foreground);
+    /* Last-resort guard: a wide header child must never push the whole page
+       into horizontal scroll. `clip` (not `hidden`) keeps `position: sticky`
+       working. */
+    overflow-x: clip;
 }
 
 .page-container {

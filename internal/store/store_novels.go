@@ -89,9 +89,29 @@ func normalizeListPagination(limit, offset int) (int, int) {
 // GET /api/v1/novels. All values default to "no filter" and are validated by
 // normalizeListNovelOptions.
 type ListNovelOptions struct {
-	Tag      string // "" = no filter; exact match, case/accent-insensitive
-	Shared   string // "all" | "own" | "shared"
-	Progress string // "all" | "translated" | "completed" | "ongoing"
+	Tag         string // "" = no filter; exact match, case/accent-insensitive
+	Shared      string // "all" | "own" | "shared"
+	Progress    string // "all" | "translated" | "completed" | "ongoing"
+	SearchField string // "all" | "title" | "author" | "series"; scopes ?q matching
+}
+
+// Search field values accepted by GET /api/v1/novels (?q&field=).
+const (
+	SearchFieldAll    = "all"
+	SearchFieldTitle  = "title"
+	SearchFieldAuthor = "author"
+	SearchFieldSeries = "series"
+)
+
+// normalizeSearchField validates a ?field= value, mapping unknown values to
+// the "all fields" default instead of erroring (same leniency as shared/progress).
+func normalizeSearchField(field string) string {
+	switch field {
+	case SearchFieldTitle, SearchFieldAuthor, SearchFieldSeries:
+		return field
+	default:
+		return SearchFieldAll
+	}
 }
 
 // normalizeListNovelOptions validates option values, mapping unknown values to
@@ -108,6 +128,7 @@ func normalizeListNovelOptions(opts ListNovelOptions) ListNovelOptions {
 		opts.Progress = "all"
 	}
 	opts.Tag = strings.TrimSpace(opts.Tag)
+	opts.SearchField = normalizeSearchField(strings.TrimSpace(opts.SearchField))
 	return opts
 }
 
@@ -204,7 +225,10 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 }
 
 // SearchNovels searches novels by title, author, or series matching the given query.
-// Supports pagination via limit/offset, scoped to novels the user owns or are public.
+// opts.SearchField scopes the match: "title" (source/target title), "author"
+// (source/target author), "series" (source/target series), or "all" (default:
+// title + author + series). Supports pagination via limit/offset, scoped to
+// novels the user owns or are public.
 func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
@@ -216,9 +240,17 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortFi
 
 	// Search across title, author, and series fields (both source and target)
 	// Note: field names must match the schema exactly (snake_case, not camelCase)
-	filter := buildScopeFilter(opts) + " && " +
-		"(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
+	matchClause := "(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
 		"target_title ~ {:q} || target_author ~ {:q} || target_series ~ {:q})"
+	switch opts.SearchField {
+	case SearchFieldTitle:
+		matchClause = "(source_title ~ {:q} || target_title ~ {:q})"
+	case SearchFieldAuthor:
+		matchClause = "(source_author ~ {:q} || target_author ~ {:q})"
+	case SearchFieldSeries:
+		matchClause = "(source_series ~ {:q} || target_series ~ {:q})"
+	}
+	filter := buildScopeFilter(opts) + " && " + matchClause
 
 	if opts.Tag == "" && sortField == string(NovelSortCreated) {
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.

@@ -250,6 +250,17 @@ paths:
         - name: q
           in: query
           schema: { type: string }
+        - name: field
+          in: query
+          description: >
+            Scopes `q` matching. `title` matches source/target title,
+            `author` matches source/target author, `series` matches
+            source/target series, `all` matches all of them. Invalid values
+            fall back to `all`. Ignored without `q`.
+          schema:
+            type: string
+            enum: [all, title, author, series]
+            default: all
         - name: tag
           in: query
           description: >

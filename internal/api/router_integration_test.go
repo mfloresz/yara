@@ -2169,6 +2169,60 @@ func TestListNovelsFilterInvalidValuesFallBackToAll(t *testing.T) {
 	}
 }
 
+func TestListNovelsSearchField(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-field@example.com", "secret123", "Alice")
+
+	create := func(title, author, series string) novelPayload {
+		t.Helper()
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+			"sourceTitle":    title,
+			"sourceAuthor":   author,
+			"sourceSeries":   series,
+			"sourceLanguage": "en",
+			"targetLanguage": "es",
+		})
+		assertStatus(t, resp, http.StatusCreated)
+		var novel novelPayload
+		decodeData(t, resp, &novel)
+		return novel
+	}
+
+	titleNovel := create("Dragón Rojo", "Ana Pérez", "Crónicas del Norte")
+	authorNovel := create("Otra Historia", "Dragón Autor", "Saga Azul")
+	seriesNovel := create("Tercera Vía", "Carlos Ruiz", "Dragón Legendario")
+	targetNovel := create("Cuarta Parte", "Elena Vidal", "Saga Verde")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+targetNovel.ID, alice.Token, map[string]any{"targetTitle": "Dragón Final"})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	assertIDs := func(query string, want ...string) {
+		t.Helper()
+		ids, _, _ := listNovelFilterIDs(t, env, alice.Token, query)
+		if len(ids) != len(want) {
+			t.Fatalf("query %q: expected %v, got %v", query, want, ids)
+		}
+		set := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			set[id] = true
+		}
+		for _, id := range want {
+			if !set[id] {
+				t.Fatalf("query %q: expected %v, got %v", query, want, ids)
+			}
+		}
+	}
+
+	// field=title matches source and target titles only.
+	assertIDs("q=Drag%C3%B3n&field=title&sort=title", titleNovel.ID, targetNovel.ID)
+	// field=author matches source and target authors only.
+	assertIDs("q=Drag%C3%B3n&field=author&sort=title", authorNovel.ID)
+	// field=series matches source and target series only.
+	assertIDs("q=Drag%C3%B3n&field=series&sort=title", seriesNovel.ID)
+	// No field (or invalid field) searches title + author + series.
+	assertIDs("q=Drag%C3%B3n&sort=title", titleNovel.ID, authorNovel.ID, seriesNovel.ID, targetNovel.ID)
+	assertIDs("q=Drag%C3%B3n&field=weird&sort=title", titleNovel.ID, authorNovel.ID, seriesNovel.ID, targetNovel.ID)
+}
+
 func TestCreateNovelDedupesAccentTags(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-dedup@example.com", "secret123", "Alice")
