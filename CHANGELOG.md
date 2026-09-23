@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.36.0] - 2026-09-23
+
+### What's new
+
+- Added global novel search in the app header: jump to any novel from anywhere with field-scoped matching (title, author, series, or all) and keyboard navigation.
+- Added the `?field=` filter to `GET /api/v1/novels` (`all` | `title` | `author` | `series`, default `all`): scopes `?q` matching to the selected fields. Invalid values fall back to `all` and it is ignored without `?q`.
+- Redesigned the auth pages (login, invite, reset password) with a split login-shell layout and a visual hero panel.
+- Added a theme switcher to the user menu.
+
+### Housekeeping
+
+- Extracted `AppHeader` into a standalone component with new `useTheme` and `useUserMenu` composables.
+- Removed the client-side search from the dashboard: the novel list now always shows all novels, filtered only by the library filters.
+
 ## [v0.35.0] - 2026-09-22
 
 ### What's new
@@ -378,7 +392,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.36.0...HEAD
+[v0.36.0]: https://github.com/mfloresz/yara/compare/v0.35.0...v0.36.0
 [v0.35.0]: https://github.com/mfloresz/yara/compare/v0.34.0...v0.35.0
 [v0.34.0]: https://github.com/mfloresz/yara/compare/v0.33.1...v0.34.0
 [v0.33.1]: https://github.com/mfloresz/yara/compare/v0.33.0...v0.33.1
