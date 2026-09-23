@@ -11,6 +11,10 @@
         </RouterLink>
       </div>
 
+      <div class="app-topbar-center">
+        <GlobalNovelSearch />
+      </div>
+
       <div class="app-topbar-end">
         <n-button
           :secondary="hasActive"
@@ -140,6 +144,7 @@ import {
   LogOutOutline,
 } from "@vicons/ionicons5";
 import JobsDrawer from "@/components/JobsDrawer.vue";
+import GlobalNovelSearch from "@/components/GlobalNovelSearch.vue";
 import ThemeSwitcher from "@/components/ThemeSwitcher.vue";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
 import { useServerVersion } from "@/composables/useServerVersion";
@@ -185,6 +190,14 @@ function handleMobileNav(command?: () => void) {
   display: flex;
   align-items: center;
   gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.app-topbar-center {
+  flex: 1;
+  min-width: 0;
+  max-width: 30rem;
+  margin-inline: auto;
 }
 
 .app-brand {
@@ -233,6 +246,16 @@ function handleMobileNav(command?: () => void) {
   margin-bottom: 0.375rem;
 }
 
+@media (max-width: 900px) {
+  .app-topbar-inner {
+    gap: 0.5rem;
+  }
+
+  .app-topbar-center {
+    max-width: none;
+  }
+}
+
 @media (max-width: 768px) {
   .app-topbar-inner {
     min-height: 52px;
@@ -240,6 +263,16 @@ function handleMobileNav(command?: () => void) {
 
   .app-brand-text {
     display: none;
+  }
+
+  .app-topbar-center {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: none;
+    /* margin-left:auto (with margin-right reset from the desktop
+       margin-inline:auto) pushes the loupe right, directly before the
+       action buttons. No order swap: DOM order already places it there. */
+    margin: 0 0 0 auto;
   }
 }
 </style>

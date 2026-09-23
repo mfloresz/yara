@@ -22,7 +22,8 @@ type sharedNovelHandlers struct{}
 
 var sharedNovels = sharedNovelHandlers{}
 
-// listNovels: GET /novels. Supports ?q, ?sort, ?order, ?limit, ?offset (and
+// listNovels: GET /novels. Supports ?q, ?field (title|author|series|all,
+// default all; scopes ?q matching), ?sort, ?order, ?limit, ?offset (and
 // ?page&per_page on v1). Optional filters: ?tag (exact match,
 // case/accent-insensitive), ?shared (all|own|shared), ?progress
 // (all|translated|completed|ongoing). Invalid filter values fall back to
@@ -39,9 +40,10 @@ func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 		sortParam := firstQuery(q, "sort")
 		orderParam := firstQuery(q, "order")
 		opts := store.ListNovelOptions{
-			Tag:      firstQuery(q, "tag"),
-			Shared:   firstQuery(q, "shared"),
-			Progress: firstQuery(q, "progress"),
+			Tag:         firstQuery(q, "tag"),
+			Shared:      firstQuery(q, "shared"),
+			Progress:    firstQuery(q, "progress"),
+			SearchField: firstQuery(q, "field"),
 		}
 
 		var list []store.Novel

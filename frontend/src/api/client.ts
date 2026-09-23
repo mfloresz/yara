@@ -445,6 +445,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           select?: string[];
           fields?: string;
           q?: string;
+          field?: "all" | "title" | "author" | "series";
           sort?: "title" | "created" | "lastRead";
           order?: "asc" | "desc";
           tag?: string;
@@ -464,6 +465,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           per_page: params.perPage,
           fields,
           q: params.q,
+          field: params.field === "all" ? undefined : params.field,
           sort: params.sort,
           order: params.order,
           tag: params.tag,
