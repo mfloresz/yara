@@ -6,22 +6,9 @@
           <h1 class="page-title">Biblioteca</h1>
           <p class="muted small" aria-live="polite">
             {{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}
-            <span v-if="searchQuery.trim() && loadingMore" class="search-hint">&nbsp;· buscando…</span>
-            <span v-else-if="searchQuery.trim()" class="search-hint">&nbsp;· filtrado</span>
           </p>
         </div>
         <div class="page-actions">
-          <n-input
-            v-model:value="searchQuery"
-            placeholder="Buscar novela..."
-            clearable
-            class="search-input"
-            :class="{ 'is-loading': searchQuery.trim() && loadingMore }"
-            :input-props="{ type: 'search', inputmode: 'search', enterkeyhint: 'search' }"
-            aria-label="Buscar novelas"
-          >
-            <template #prefix><n-icon><SearchOutline /></n-icon></template>
-          </n-input>
           <n-dropdown
             trigger="click"
             :options="viewMenuOptions"
@@ -53,28 +40,7 @@
       </div>
 
       <n-card v-else-if="sortedNovels.length === 0" role="status">
-        <div v-if="searchQuery.trim()" class="empty-state">
-          <div class="empty-state-icon">
-            <n-icon :size="40"><SearchOutline /></n-icon>
-          </div>
-          <div>
-            <h2 class="empty-state-title">Sin coincidencias</h2>
-            <p class="muted empty-state-body">
-              No se encontraron novelas para «{{ searchQuery.trim() }}». Prueba con otro término o importa una nueva.
-            </p>
-          </div>
-          <div class="empty-state-actions">
-            <n-button secondary @click="clearSearch">
-              <template #icon><n-icon><CloseOutline /></n-icon></template>
-              Limpiar búsqueda
-            </n-button>
-            <n-button type="primary" @click="createOpen = true">
-              <template #icon><n-icon><AddOutline /></n-icon></template>
-              Nueva novela
-            </n-button>
-          </div>
-        </div>
-        <div v-else class="empty-state">
+        <div class="empty-state">
           <div class="empty-state-icon">
             <n-icon :size="40"><BookOutline /></n-icon>
           </div>
@@ -139,7 +105,7 @@
         </section>
       </template>
 
-      <div v-if="hasMore && !searchQuery.trim()" class="load-more-container">
+      <div v-if="hasMore" class="load-more-container">
         <n-button
           :loading="loadingMore"
           secondary
@@ -313,9 +279,7 @@ import {
   GlobeOutline,
   AddOutline,
   BookOutline,
-  SearchOutline,
   ArchiveOutline,
-  CloseOutline,
   OptionsOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
@@ -354,7 +318,6 @@ function isProgressFilter(value: string | undefined): value is ProgressFilter {
 const sortField = ref<SortField>("title");
 const sortOrder = ref<"asc" | "desc">("asc");
 const groupBySeries = ref(false);
-const searchQuery = ref("");
 const preferenceKey = ref<string | null>(null);
 
 // Library filters. showShared/progressFilter persist per user; activeTagFilter
@@ -428,18 +391,6 @@ function savePreferences() {
     progressFilter: progressFilter.value,
   }));
 }
-let searchTimeout: ReturnType<typeof setTimeout> | null = null;
-
-// Watch searchQuery and debounce backend search
-watch(searchQuery, (newQuery) => {
-  if (searchTimeout) clearTimeout(searchTimeout);
-  if (newQuery.trim()) {
-    searchTimeout = setTimeout(() => {
-      void searchNovels(newQuery.trim());
-    }, 300);
-  }
-});
-
 const LIST_SELECT = [
   "id",
   "sourceTitle",
@@ -483,26 +434,8 @@ function toggleGroupBySeries() {
   savePreferences();
 }
 
-function clearSearch() {
-  searchQuery.value = "";
-}
-
-
 const sortedNovels = computed(() => {
-  const list = [...novels.value];
-
-  // Filter by search query
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase().trim();
-    const filtered = list.filter((novel) => {
-      const title = getNovelDisplayTitle(novel).toLowerCase();
-      const author = getNovelDisplayAuthor(novel).toLowerCase();
-      return title.includes(query) || author.includes(query);
-    });
-    return sortNovels(filtered);
-  }
-
-  return sortNovels(list);
+  return sortNovels([...novels.value]);
 });
 
 function sortNovels(list: Novel[]): Novel[] {
@@ -587,7 +520,6 @@ const {
   loadingMore,
   listNovels,
   loadMoreNovels,
-  searchNovels,
   createNovel,
   importNovelFromEpub,
   importNovelFromZip,
@@ -941,21 +873,6 @@ function onBackToUrlDialog() {
   white-space: nowrap;
 }
 
-.search-input {
-  width: clamp(12rem, 22vw, 17rem);
-  transition: border-color 0.15s ease;
-}
-
-.search-input.is-loading :deep(.n-input__border),
-.search-input.is-loading :deep(.n-input__state-border) {
-  border-color: var(--accent-link);
-}
-
-.search-hint {
-  color: var(--text-tertiary);
-  font-style: italic;
-}
-
 .view-menu-button {
   white-space: nowrap;
   flex: 0 0 auto;
@@ -998,8 +915,7 @@ function onBackToUrlDialog() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .create-fab,
-  .search-input {
+  .create-fab {
     transition: none;
   }
 }
@@ -1107,13 +1023,6 @@ function onBackToUrlDialog() {
     flex-wrap: wrap;
     gap: 0.5rem;
     align-items: center;
-  }
-
-  .search-input {
-    flex: 1 1 100%;
-    min-width: 0;
-    width: 100%;
-    order: 1;
   }
 
   .create-menu-button {
