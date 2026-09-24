@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.36.1] - 2026-09-24
+
+### What's new
+
+- Added the `glm-5.3-flash` model to the `InferX` provider catalog.
+- The EPUB import dialog now accepts drag-and-drop: drop zone with `.epub` validation, file-size display, and support for re-selecting the same file.
+
+### Fixes
+
+- Fixed the chapter preview drawer title overflowing the drawer width on long titles (ellipsis + tooltip, header clamped to drawer width).
+- Labeled the debug browser-worker context menu entry as "Añadir historia a Yara (Debug)" so it is distinguishable from the production extension.
+
 ## [v0.36.0] - 2026-09-23
 
 ### What's new
@@ -392,7 +404,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.36.1...HEAD
+[v0.36.1]: https://github.com/mfloresz/yara/compare/v0.36.0...v0.36.1
 [v0.36.0]: https://github.com/mfloresz/yara/compare/v0.35.0...v0.36.0
 [v0.35.0]: https://github.com/mfloresz/yara/compare/v0.34.0...v0.35.0
 [v0.34.0]: https://github.com/mfloresz/yara/compare/v0.33.1...v0.34.0
