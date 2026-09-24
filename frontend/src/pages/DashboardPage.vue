@@ -167,7 +167,40 @@
 
     <n-modal v-model:show="importOpen" preset="card" title="Importar novela desde EPUB" style="width: min(640px, 96vw)">
       <div class="stack-md">
-        <input type="file" accept=".epub" @change="handleImportFile" />
+        <div
+          class="epub-dropzone"
+          :class="{ 'is-dragging': isEpubDragging, 'has-file': !!importFile }"
+          @click="triggerEpubPicker"
+          @dragover.prevent="onEpubDragOver"
+          @dragenter.prevent="onEpubDragOver"
+          @dragleave="onEpubDragLeave"
+          @drop.prevent="onEpubDrop"
+        >
+          <input
+            ref="epubFileInput"
+            type="file"
+            accept=".epub,application/epub+zip"
+            class="visually-hidden"
+            tabindex="-1"
+            aria-hidden="true"
+            @change="handleImportFile"
+            @click.stop
+          />
+          <div class="epub-dropzone-icon" aria-hidden="true">
+            <n-icon :size="32"><CloudUploadOutline /></n-icon>
+          </div>
+          <template v-if="!importFile">
+            <p class="epub-dropzone-title">Arrastra tu archivo EPUB aquí</p>
+            <p id="epub-drop-hint" class="muted small epub-dropzone-hint">o</p>
+            <n-button secondary size="small" @click.stop="triggerEpubPicker">Seleccionar archivo</n-button>
+            <p class="muted small epub-dropzone-hint">Solo archivos .epub</p>
+          </template>
+          <template v-else>
+            <p class="epub-dropzone-title">{{ importFile.name }}</p>
+            <p class="muted small epub-dropzone-hint">{{ formatFileSize(importFile.size) }} · Arrastra otro archivo para reemplazarlo</p>
+            <n-button secondary size="small" @click.stop="triggerEpubPicker">Cambiar archivo</n-button>
+          </template>
+        </div>
         <n-alert v-if="importPreviewLoading" type="info" title="Analizando EPUB…" />
 
         <template v-if="importPreview">
@@ -540,6 +573,8 @@ const importing = ref(false);
 const importPreviewLoading = ref(false);
 const importError = ref<string | null>(null);
 const importFile = ref<File | null>(null);
+const epubFileInput = ref<HTMLInputElement | null>(null);
+const isEpubDragging = ref(false);
 const importTargetLang = ref<string | null>(null);
 const importSourceLang = ref<string | null>(null);
 const importingZip = ref(false);
@@ -750,8 +785,53 @@ async function submitImportZip() {
 }
 
 async function handleImportFile(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  // Permite volver a elegir el mismo archivo después de cancelar o fallar.
+  input.value = "";
   if (!file) return;
+  await processEpubFile(file);
+}
+
+function triggerEpubPicker() {
+  epubFileInput.value?.click();
+}
+
+function onEpubDragOver() {
+  isEpubDragging.value = true;
+}
+
+function onEpubDragLeave(event: DragEvent) {
+  // Evita el parpadeo al pasar sobre los hijos de la zona.
+  const next = event.relatedTarget as Node | null;
+  if (next && (event.currentTarget as HTMLElement).contains(next)) return;
+  isEpubDragging.value = false;
+}
+
+async function onEpubDrop(event: DragEvent) {
+  isEpubDragging.value = false;
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+  await processEpubFile(file);
+}
+
+function isEpubFile(file: File) {
+  return /\.epub$/i.test(file.name) || file.type === "application/epub+zip";
+}
+
+function formatFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function processEpubFile(file: File) {
+  if (!isEpubFile(file)) {
+    importError.value = "El archivo debe tener extensión .epub";
+    importPreview.value = null;
+    return;
+  }
   importError.value = null;
   importFile.value = file;
   importPreviewLoading.value = true;
@@ -782,6 +862,8 @@ function resetImport() {
   importFile.value = null;
   importTargetLang.value = null;
   importSourceLang.value = null;
+  isEpubDragging.value = false;
+  if (epubFileInput.value) epubFileInput.value.value = "";
 }
 
 async function submitImport() {
@@ -828,6 +910,78 @@ function onBackToUrlDialog() {
 </script>
 
 <style scoped>
+.epub-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  border: 1.5px dashed var(--divide);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.epub-dropzone:hover {
+  border-color: var(--accent-link);
+}
+
+.epub-dropzone:focus-within {
+  outline: 2.5px solid var(--accent-link);
+  outline-offset: 2px;
+}
+
+.epub-dropzone.is-dragging {
+  border-color: var(--accent-link);
+  border-style: solid;
+  background: var(--surface-elevated);
+}
+
+.epub-dropzone-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+}
+
+.is-dragging .epub-dropzone-icon {
+  color: var(--accent-link);
+}
+
+.epub-dropzone-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.epub-dropzone-hint {
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .epub-dropzone {
+    transition: none;
+  }
+}
+
 .zip-structure {
   margin: 0;
   white-space: pre-wrap;

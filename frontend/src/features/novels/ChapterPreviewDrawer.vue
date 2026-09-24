@@ -9,10 +9,10 @@
       <template #header>
         <div class="chapter-preview-header">
           <div class="chapter-preview-title-row">
-            <span v-if="chapter" class="mono small muted">#{{ String(chapterPosition(chapter)).padStart(2, "0") }}</span>
-            <span class="chapter-preview-title">{{ displayTitle }}</span>
+            <span v-if="chapter" class="mono small muted chapter-preview-number">#{{ String(chapterPosition(chapter)).padStart(2, "0") }}</span>
+            <span class="chapter-preview-title" :title="displayTitle">{{ displayTitle }}</span>
           </div>
-          <span v-if="showOriginalSubtitle" class="small muted chapter-preview-subtitle">{{ chapter?.title }}</span>
+          <span v-if="showOriginalSubtitle" class="small muted chapter-preview-subtitle" :title="chapter?.title">{{ chapter?.title }}</span>
         </div>
       </template>
 
@@ -201,6 +201,9 @@ function editChapter() {
   flex-direction: column;
   gap: 0.125rem;
   min-width: 0;
+  flex: 1;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .chapter-preview-title-row {
@@ -208,19 +211,39 @@ function editChapter() {
   align-items: baseline;
   gap: 0.5rem;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chapter-preview-number {
+  flex-shrink: 0;
 }
 
 .chapter-preview-title {
   font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chapter-preview-subtitle {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* El contenedor interno de naive-ui del header es flex: sin min-width: 0
+   el hijo con nowrap empuja el ancho del drawer. */
+:deep(.n-drawer-content-header),
+:deep(.n-drawer-header) {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .chapter-preview-meta {

@@ -136,6 +136,7 @@ var knownProviders = []ProviderInfo{
 		Models: []string{
 			"deepseek-v4-flash-0731",
 			"deepseek-v4.1-flash",
+			"glm-5.3-flash",
 			"gemma-4-31B-it-fp8",
 			"Qwen3.6-35B-A3B-FP8",
 		},

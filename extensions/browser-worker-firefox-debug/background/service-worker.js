@@ -15,7 +15,7 @@ const log = (msg, ...args) => console.log(`[DebugWorker] ${msg}`, ...args);
 const warn = (msg, ...args) => console.warn(`[DebugWorker] ${msg}`, ...args);
 const err = (msg, ...args) => console.error(`[DebugWorker] ${msg}`, ...args);
 
-// ── "Añadir historia a Yara" context menu ────────────────────────────
+// ── "Añadir historia a Yara (Debug)" context menu ────────────────────────────
 // Hardcoded supported-site list (see ../shared/supported-sites.js), no auth
 // needed in debug mode. Opens the debug server address with ?importUrl=<page>.
 const YARA_CONTEXT_MENU_ID = 'yara-add-story';
@@ -26,7 +26,7 @@ function setupContextMenu() {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
         id: YARA_CONTEXT_MENU_ID,
-        title: 'Añadir historia a Yara',
+        title: 'Añadir historia a Yara (Debug)',
         contexts: ['page'],
         documentUrlPatterns: SUPPORTED_SITE_PATTERNS,
       }, () => {
