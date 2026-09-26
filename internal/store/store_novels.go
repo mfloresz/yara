@@ -90,6 +90,8 @@ func normalizeListPagination(limit, offset int) (int, int) {
 // normalizeListNovelOptions.
 type ListNovelOptions struct {
 	Tag         string // "" = no filter; exact match, case/accent-insensitive
+	Author      string // "" = no filter; exact match, case-insensitive across source/target author
+	Series      string // "" = no filter; exact match, case-insensitive across source/target series
 	Shared      string // "all" | "own" | "shared"
 	Progress    string // "all" | "translated" | "completed" | "ongoing"
 	SearchField string // "all" | "title" | "author" | "series"; scopes ?q matching
@@ -128,6 +130,8 @@ func normalizeListNovelOptions(opts ListNovelOptions) ListNovelOptions {
 		opts.Progress = "all"
 	}
 	opts.Tag = strings.TrimSpace(opts.Tag)
+	opts.Author = strings.TrimSpace(opts.Author)
+	opts.Series = strings.TrimSpace(opts.Series)
 	opts.SearchField = normalizeSearchField(strings.TrimSpace(opts.SearchField))
 	return opts
 }
@@ -173,6 +177,22 @@ func filterNovelsByTag(novels []Novel, tag string) []Novel {
 	return out
 }
 
+// filterNovelsByStringFields keeps only novels where any of the values picked
+// from the novel equals value exactly (case-insensitive, trimmed). Used for
+// the author/series facet filters.
+func filterNovelsByStringFields(novels []Novel, value string, pick func(Novel) []string) []Novel {
+	out := make([]Novel, 0, len(novels))
+	for _, n := range novels {
+		for _, v := range pick(n) {
+			if strings.EqualFold(strings.TrimSpace(v), value) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (s *Store) ListNovels(userID string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
@@ -181,10 +201,10 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 
 	filter := buildScopeFilter(opts)
 
-	// Tag filtering is Go-level post-filtering over the full scope: running it
-	// after the DB offset would leave holes in pages and make meta.total
-	// inconsistent, so force the in-memory route when a tag is active.
-	if opts.Tag == "" && sortField == string(NovelSortCreated) {
+	// Tag/author/series filtering is Go-level post-filtering over the full
+	// scope: running it after the DB offset would leave holes in pages and make
+	// meta.total inconsistent, so force the in-memory route when one is active.
+	if opts.Tag == "" && opts.Author == "" && opts.Series == "" && sortField == string(NovelSortCreated) {
 		// DB-level sort keeps offset pagination consistent for arbitrarily large libraries.
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
 		dbSort := "-created"
@@ -219,6 +239,16 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 	if opts.Tag != "" {
 		all = filterNovelsByTag(all, opts.Tag)
 	}
+	if opts.Author != "" {
+		all = filterNovelsByStringFields(all, opts.Author, func(n Novel) []string {
+			return []string{n.SourceAuthor, n.TargetAuthor}
+		})
+	}
+	if opts.Series != "" {
+		all = filterNovelsByStringFields(all, opts.Series, func(n Novel) []string {
+			return []string{n.SourceSeries, n.TargetSeries}
+		})
+	}
 	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
 	page, hasMore := paginateNovels(all, limit, offset)
 	return page, hasMore, nil
@@ -252,7 +282,7 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortFi
 	}
 	filter := buildScopeFilter(opts) + " && " + matchClause
 
-	if opts.Tag == "" && sortField == string(NovelSortCreated) {
+	if opts.Tag == "" && opts.Author == "" && opts.Series == "" && sortField == string(NovelSortCreated) {
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
 		dbSort := "-created"
 		if sortOrder == SortOrderDesc {
@@ -280,6 +310,16 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortFi
 	s.populateLastReadAt(all, userID)
 	if opts.Tag != "" {
 		all = filterNovelsByTag(all, opts.Tag)
+	}
+	if opts.Author != "" {
+		all = filterNovelsByStringFields(all, opts.Author, func(n Novel) []string {
+			return []string{n.SourceAuthor, n.TargetAuthor}
+		})
+	}
+	if opts.Series != "" {
+		all = filterNovelsByStringFields(all, opts.Series, func(n Novel) []string {
+			return []string{n.SourceSeries, n.TargetSeries}
+		})
 	}
 	sortNovelsInMemory(all, NovelSortField(sortField), sortOrder)
 	page, hasMore := paginateNovels(all, limit, offset)
@@ -696,6 +736,52 @@ func (s *Store) ListNovelSeriesSuggestions(userID, query string, limit int) ([]s
 	out := make([]string, 0, len(seen))
 	for _, series := range seen {
 		out = append(out, series)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left := strings.ToLower(out[i])
+		right := strings.ToLower(out[j])
+		leftPrefix := query != "" && strings.HasPrefix(left, query)
+		rightPrefix := query != "" && strings.HasPrefix(right, query)
+		if leftPrefix != rightPrefix {
+			return leftPrefix
+		}
+		return left < right
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) ListNovelAuthorSuggestions(userID, query string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner}", "-updated", 5000, 0, dbx.Params{"owner": userID})
+	if err != nil {
+		return nil, err
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	seen := make(map[string]string)
+	for _, record := range records {
+		for _, field := range []string{"source_author", "target_author"} {
+			author := strings.TrimSpace(record.GetString(field))
+			if author == "" {
+				continue
+			}
+			if query != "" && !strings.Contains(strings.ToLower(author), query) {
+				continue
+			}
+			key := strings.ToLower(author)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = author
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, author := range seen {
+		out = append(out, author)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		left := strings.ToLower(out[i])

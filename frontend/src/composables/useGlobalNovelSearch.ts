@@ -22,14 +22,27 @@ const SEARCH_RESULT_FIELDS =
 const MIN_QUERY_CHARS = 2;
 const DEBOUNCE_MS = 300;
 const NOVEL_RESULT_LIMIT = 8;
-const TAG_SUGGESTION_LIMIT = 20;
-const TAG_NOVEL_LIMIT = 20;
+const FACET_SUGGESTION_LIMIT = 20;
+const FACET_NOVEL_LIMIT = 20;
 
 export function criterionMeta(criterion: GlobalSearchCriterion) {
   return (
     GLOBAL_SEARCH_CRITERIA.find((item) => item.key === criterion) ??
     GLOBAL_SEARCH_CRITERIA[0]
   );
+}
+
+// Facet criteria work like tags: the query matches facet values (chips) first,
+// and selecting one lists the novels carrying that value.
+function isFacetCriterion(criterion: GlobalSearchCriterion): boolean {
+  return criterion !== "title";
+}
+
+// Which query param lists the novels of a selected facet value.
+export function facetParam(criterion: GlobalSearchCriterion): "tag" | "author" | "series" {
+  if (criterion === "author") return "author";
+  if (criterion === "series") return "series";
+  return "tag";
 }
 
 export function useGlobalNovelSearch() {
@@ -41,9 +54,9 @@ export function useGlobalNovelSearch() {
   const loading = ref(false);
   const searched = ref(false);
   const results = ref<Novel[]>([]);
-  const tagMatches = ref<string[]>([]);
-  const selectedTag = ref<string | null>(null);
-  const tagNovels = ref<Novel[]>([]);
+  const facetMatches = ref<string[]>([]);
+  const selectedFacet = ref<string | null>(null);
+  const facetNovels = ref<Novel[]>([]);
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let requestSeq = 0;
@@ -54,13 +67,13 @@ export function useGlobalNovelSearch() {
 
   function resetCriterion() {
     criterion.value = "title";
-    selectedTag.value = null;
+    selectedFacet.value = null;
   }
 
   function resetResults() {
     results.value = [];
-    tagMatches.value = [];
-    tagNovels.value = [];
+    facetMatches.value = [];
+    facetNovels.value = [];
     searched.value = false;
   }
 
@@ -84,8 +97,8 @@ export function useGlobalNovelSearch() {
       suppressNextWatch = true;
     }
     query.value = "";
-    selectedTag.value = null;
-    tagNovels.value = [];
+    selectedFacet.value = null;
+    facetNovels.value = [];
     close();
   }
 
@@ -111,18 +124,21 @@ export function useGlobalNovelSearch() {
     }
   }
 
-  async function runTagSearch(trimmed: string, token: number) {
+  async function runFacetSearch(trimmed: string, token: number) {
     try {
-      const tags = await api.novels.listTagSuggestions(
-        trimmed,
-        TAG_SUGGESTION_LIMIT,
-      );
+      const kind = criterion.value;
+      const suggestions =
+        kind === "author"
+          ? await api.novels.listAuthorSuggestions(trimmed, FACET_SUGGESTION_LIMIT)
+          : kind === "series"
+            ? await api.novels.listSeriesSuggestions(trimmed, FACET_SUGGESTION_LIMIT)
+            : await api.novels.listTagSuggestions(trimmed, FACET_SUGGESTION_LIMIT);
       if (token !== requestSeq) return;
-      tagMatches.value = tags;
+      facetMatches.value = suggestions;
       results.value = [];
-      if (selectedTag.value && !tags.includes(selectedTag.value)) {
-        selectedTag.value = null;
-        tagNovels.value = [];
+      if (selectedFacet.value && !suggestions.includes(selectedFacet.value)) {
+        selectedFacet.value = null;
+        facetNovels.value = [];
       }
       searched.value = true;
       open.value = true;
@@ -131,19 +147,19 @@ export function useGlobalNovelSearch() {
     }
   }
 
-  async function selectTag(tag: string) {
-    selectedTag.value = tag;
+  async function selectFacet(value: string) {
+    selectedFacet.value = value;
     const token = ++requestSeq;
     loading.value = true;
     try {
       const res = await api.novels.list({
-        tag,
-        limit: TAG_NOVEL_LIMIT,
+        [facetParam(criterion.value)]: value,
+        limit: FACET_NOVEL_LIMIT,
         offset: 0,
         fields: SEARCH_RESULT_FIELDS,
       });
       if (token !== requestSeq) return;
-      tagNovels.value = res.items;
+      facetNovels.value = res.items;
       open.value = true;
     } finally {
       if (token === requestSeq) loading.value = false;
@@ -157,8 +173,8 @@ export function useGlobalNovelSearch() {
     }
     if (debounceTimer) clearTimeout(debounceTimer);
     const trimmed = query.value.trim();
-    selectedTag.value = null;
-    tagNovels.value = [];
+    selectedFacet.value = null;
+    facetNovels.value = [];
     if (trimmed.length < MIN_QUERY_CHARS) {
       requestSeq++;
       loading.value = false;
@@ -171,8 +187,8 @@ export function useGlobalNovelSearch() {
     open.value = true;
     debounceTimer = setTimeout(() => {
       const token = ++requestSeq;
-      if (criterion.value === "tags") {
-        void runTagSearch(trimmed, token);
+      if (isFacetCriterion(criterion.value)) {
+        void runFacetSearch(trimmed, token);
       } else {
         void runNovelSearch(trimmed, criterion.value, token);
       }
@@ -186,12 +202,12 @@ export function useGlobalNovelSearch() {
     loading,
     searched,
     results,
-    tagMatches,
-    selectedTag,
-    tagNovels,
+    facetMatches,
+    selectedFacet,
+    facetNovels,
     close,
     clear,
-    selectTag,
+    selectFacet,
   };
 }
 

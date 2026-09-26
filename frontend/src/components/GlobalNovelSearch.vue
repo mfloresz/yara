@@ -82,82 +82,32 @@
           </template>
         </n-input>
 
-        <div
-          v-if="open"
-          id="gs-listbox"
-          class="gs-panel"
-          role="listbox"
-          aria-label="Resultados de búsqueda"
-        >
-          <div v-if="loading && !searched" class="gs-loading" role="status" aria-label="Buscando">
-            <n-skeleton text :repeat="3" />
-          </div>
-
-          <template v-else-if="criterion !== 'tags'">
-            <p v-if="results.length === 0" class="gs-empty" role="status">
-              No se encontraron novelas para «{{ query.trim() }}»
-            </p>
-            <button
-              v-for="(novel, index) in results"
-              :id="`gs-opt-${index}`"
-              :key="novel.id"
-              type="button"
-              role="option"
-              :aria-selected="activeIndex === index"
-              class="gs-item"
-              :class="{ 'gs-item--active': activeIndex === index }"
-              @click="goToNovel(novel.id)"
-              @mousemove="activeIndex = index"
-            >
-              <img :src="coverSrc(novel.coverPath)" alt="" class="gs-cover" @error="onCoverError" />
-              <span class="gs-item-text">
-                <span class="gs-item-title">{{ getNovelDisplayTitle(novel) }}</span>
-                <span class="gs-item-sub">{{ getNovelDisplayAuthor(novel) }}</span>
-              </span>
-            </button>
-          </template>
-
-          <template v-else>
-            <div class="gs-tags" role="group" aria-label="Tags coincidentes">
-              <p v-if="tagMatches.length === 0" class="gs-empty" role="status">
-                Sin tags coincidentes
-              </p>
-              <div v-else class="gs-tags-row">
-                <n-tag
-                  v-for="(tag, index) in tagMatches"
-                  :id="`gs-opt-${index}`"
-                  :key="tag"
-                  round
-                  checkable
-                  :checked="selectedTag === tag"
-                  role="option"
-                  :aria-selected="selectedTag === tag"
-                  class="gs-tag"
-                  :class="{ 'gs-tag--active': activeIndex === index }"
-                  @click="selectTagAndFocus(tag)"
-                >
-                  {{ tag }}
-                </n-tag>
-              </div>
+        <div v-if="open" class="gs-panel">
+          <div
+            id="gs-listbox"
+            class="gs-listbox"
+            role="listbox"
+            aria-label="Resultados de búsqueda"
+          >
+            <div v-if="loading && !searched" class="gs-loading" role="status" aria-label="Buscando">
+              <n-skeleton text :repeat="3" />
             </div>
-            <div v-if="selectedTag" class="gs-tag-novels">
-              <div v-if="loading" class="gs-loading" role="status" aria-label="Cargando novelas del tag">
-                <n-spin size="small" />
-              </div>
-              <p v-else-if="tagNovels.length === 0" class="gs-empty" role="status">
-                No se encontraron novelas con este tag
+
+            <template v-if="criterion === 'title'">
+              <p v-if="searched && results.length === 0" class="gs-empty" role="status">
+                No se encontraron novelas para «{{ query.trim() }}»
               </p>
               <button
-                v-for="(novel, index) in tagNovels"
-                :id="`gs-opt-${tagMatches.length + index}`"
+                v-for="(novel, index) in results"
+                :id="`gs-opt-${index}`"
                 :key="novel.id"
                 type="button"
                 role="option"
-                :aria-selected="activeIndex === tagMatches.length + index"
+                :aria-selected="activeIndex === index"
                 class="gs-item"
-                :class="{ 'gs-item--active': activeIndex === tagMatches.length + index }"
+                :class="{ 'gs-item--active': activeIndex === index }"
                 @click="goToNovel(novel.id)"
-                @mousemove="activeIndex = tagMatches.length + index"
+                @mousemove="activeIndex = index"
               >
                 <img :src="coverSrc(novel.coverPath)" alt="" class="gs-cover" @error="onCoverError" />
                 <span class="gs-item-text">
@@ -165,15 +115,74 @@
                   <span class="gs-item-sub">{{ getNovelDisplayAuthor(novel) }}</span>
                 </span>
               </button>
-            </div>
+            </template>
+
+            <template v-else>
+              <div class="gs-tags" role="group" :aria-label="`${activeMeta.label} coincidentes`">
+                <p v-if="facetMatches.length === 0" class="gs-empty" role="status">
+                  Sin {{ activeMeta.label.toLowerCase() }} coincidentes
+                </p>
+                <div v-else class="gs-tags-row">
+                  <n-tag
+                    v-for="(facet, index) in facetMatches"
+                    :id="`gs-opt-${index}`"
+                    :key="facet"
+                    round
+                    checkable
+                    :checked="selectedFacet === facet"
+                    role="option"
+                    :aria-selected="selectedFacet === facet"
+                    class="gs-tag"
+                    :class="{ 'gs-tag--active': activeIndex === index }"
+                    @click="selectFacetAndFocus(facet)"
+                  >
+                    {{ facet }}
+                  </n-tag>
+                </div>
+              </div>
+              <div v-if="selectedFacet" class="gs-facet-novels">
+                <div v-if="loading" class="gs-loading" role="status" aria-label="Cargando novelas">
+                  <n-spin size="small" />
+                </div>
+                <p v-else-if="facetNovels.length === 0" class="gs-empty" role="status">
+                  No se encontraron novelas
+                </p>
+                <button
+                  v-for="(novel, index) in facetNovels"
+                  :id="`gs-opt-${facetMatches.length + index}`"
+                  :key="novel.id"
+                  type="button"
+                  role="option"
+                  :aria-selected="activeIndex === facetMatches.length + index"
+                  class="gs-item"
+                  :class="{ 'gs-item--active': activeIndex === facetMatches.length + index }"
+                  @click="goToNovel(novel.id)"
+                  @mousemove="activeIndex = facetMatches.length + index"
+                >
+                  <img :src="coverSrc(novel.coverPath)" alt="" class="gs-cover" @error="onCoverError" />
+                  <span class="gs-item-text">
+                    <span class="gs-item-title">{{ getNovelDisplayTitle(novel) }}</span>
+                    <span class="gs-item-sub">{{ getNovelDisplayAuthor(novel) }}</span>
+                  </span>
+                </button>
+              </div>
+            </template>
+          </div>
+
+          <div v-if="hasNavigableItems || viewAllHref" class="gs-footer">
             <p v-if="hasNavigableItems" class="gs-hint" aria-hidden="true">
               ↑↓ navegar · Enter abrir · Esc cerrar
             </p>
-          </template>
-
-          <p v-if="criterion !== 'tags' && results.length > 0" class="gs-hint" aria-hidden="true">
-            ↑↓ navegar · Enter abrir · Esc cerrar
-          </p>
+            <n-button
+              v-if="viewAllHref"
+              text
+              size="tiny"
+              class="gs-view-all"
+              @click="viewAll"
+            >
+              Ver todos
+            </n-button>
+          </div>
         </div>
       </div>
     </div>
@@ -204,6 +213,7 @@ import { coverSrc, onCoverError } from "@/utils/cover";
 import {
   GLOBAL_SEARCH_CRITERIA,
   criterionMeta,
+  facetParam,
   useGlobalNovelSearch,
   type GlobalSearchCriterion,
 } from "@/composables/useGlobalNovelSearch";
@@ -217,9 +227,9 @@ const {
   loading,
   searched,
   results,
-  tagMatches,
-  selectedTag,
-  tagNovels,
+  facetMatches,
+  selectedFacet,
+  facetNovels,
 } = search;
 
 const rootEl = ref<HTMLElement | null>(null);
@@ -231,12 +241,25 @@ const activeIndex = ref(-1);
 const activeMeta = computed(() => criterionMeta(criterion.value));
 
 const flatCount = computed(() =>
-  criterion.value === "tags"
-    ? tagMatches.value.length + tagNovels.value.length
-    : results.value.length,
+  criterion.value === "title"
+    ? results.value.length
+    : facetMatches.value.length + facetNovels.value.length,
 );
 
 const hasNavigableItems = computed(() => flatCount.value > 0);
+
+// Target for the "Ver todos" button: hand the active filter to the Dashboard
+// via URL query so it renders the full match list (same flow as clicking a
+// tag in the novel detail page).
+const viewAllHref = computed<{ path: string; query: Record<string, string> } | null>(() => {
+  if (criterion.value === "title") {
+    const q = query.value.trim();
+    if (results.value.length === 0 || q.length < 2) return null;
+    return { path: "/", query: { q } };
+  }
+  if (!selectedFacet.value) return null;
+  return { path: "/", query: { [facetParam(criterion.value)]: selectedFacet.value } };
+});
 
 const activeDescendantId = computed(() =>
   activeIndex.value >= 0 && activeIndex.value < flatCount.value
@@ -269,9 +292,9 @@ function setCriterion(next: GlobalSearchCriterion) {
   nextTick(() => inputRef.value?.focus());
 }
 
-function selectTagAndFocus(tag: string) {
+function selectFacetAndFocus(facet: string) {
   activeIndex.value = -1;
-  void search.selectTag(tag);
+  void search.selectFacet(facet);
   nextTick(() => inputRef.value?.focus());
 }
 
@@ -280,6 +303,15 @@ function goToNovel(novelId: string) {
   mobileOpen.value = false;
   activeIndex.value = -1;
   void router.push({ name: "novel-detail", params: { novelId } });
+}
+
+function viewAll() {
+  const target = viewAllHref.value;
+  if (!target) return;
+  search.clear();
+  mobileOpen.value = false;
+  activeIndex.value = -1;
+  void router.push(target);
 }
 
 function onFocus() {
@@ -294,15 +326,15 @@ function onClear() {
 }
 
 function selectFlat(index: number) {
-  if (criterion.value === "tags" && index < tagMatches.value.length) {
-    const tag = tagMatches.value[index];
-    if (tag !== undefined) selectTagAndFocus(tag);
+  if (criterion.value !== "title" && index < facetMatches.value.length) {
+    const facet = facetMatches.value[index];
+    if (facet !== undefined) selectFacetAndFocus(facet);
     return;
   }
   const novel =
-    criterion.value === "tags"
-      ? tagNovels.value[index - tagMatches.value.length]
-      : results.value[index];
+    criterion.value === "title"
+      ? results.value[index]
+      : facetNovels.value[index - facetMatches.value.length];
   if (novel) goToNovel(novel.id);
 }
 
@@ -461,6 +493,17 @@ onBeforeUnmount(() => {
   padding: 0.375rem;
 }
 
+.gs-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gs-view-all {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .gs-loading {
   padding: 0.75rem;
 }
@@ -536,7 +579,7 @@ onBeforeUnmount(() => {
   outline-offset: 1px;
 }
 
-.gs-tag-novels {
+.gs-facet-novels {
   border-top: 1px solid var(--divide);
   margin-top: 0.25rem;
   padding-top: 0.25rem;
@@ -547,6 +590,7 @@ onBeforeUnmount(() => {
   font-size: 0.75rem;
   color: var(--muted, #8a8a8a);
   text-align: center;
+  flex: 1;
 }
 
 .gs-scrim {

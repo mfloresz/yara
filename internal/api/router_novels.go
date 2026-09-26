@@ -25,9 +25,10 @@ var sharedNovels = sharedNovelHandlers{}
 // listNovels: GET /novels. Supports ?q, ?field (title|author|series|all,
 // default all; scopes ?q matching), ?sort, ?order, ?limit, ?offset (and
 // ?page&per_page on v1). Optional filters: ?tag (exact match,
-// case/accent-insensitive), ?shared (all|own|shared), ?progress
-// (all|translated|completed|ongoing). Invalid filter values fall back to
-// "no filter". The ?select= param is accepted as an alias for ?fields=.
+// case/accent-insensitive), ?author and ?series (exact match,
+// case-insensitive, across source/target), ?shared (all|own|shared),
+// ?progress (all|translated|completed|ongoing). Invalid filter values fall
+// back to "no filter". The ?select= param is accepted as an alias for ?fields=.
 func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		q := e.Request.URL.Query()
@@ -41,6 +42,8 @@ func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 		orderParam := firstQuery(q, "order")
 		opts := store.ListNovelOptions{
 			Tag:         firstQuery(q, "tag"),
+			Author:      firstQuery(q, "author"),
+			Series:      firstQuery(q, "series"),
 			Shared:      firstQuery(q, "shared"),
 			Progress:    firstQuery(q, "progress"),
 			SearchField: firstQuery(q, "field"),
@@ -365,6 +368,18 @@ func (sharedNovelHandlers) seriesSuggestions(s *Server) func(*core.RequestEvent)
 	}
 }
 
+func (sharedNovelHandlers) authorSuggestions(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
+		query := e.Request.URL.Query().Get("q")
+		authors, err := s.Store.ListNovelAuthorSuggestions(e.Auth.Id, query, limit)
+		if err != nil {
+			return e.InternalServerError("failed to list author suggestions", err)
+		}
+		return v1RespondList(e, http.StatusOK, authors, 1, len(authors), len(authors), false, e.Request.URL.Path)
+	}
+}
+
 // maxDescriptionChars mirrors the frontend maxlength on the description
 // fields. Longer input is rejected instead of being silently truncated so the
 // model never sees a different text than what the user pasted.
@@ -461,6 +476,7 @@ func registerV1NovelRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Ser
 	api.POST("/novels", sharedNovels.create(s))
 	api.GET("/novels/tags/suggestions", sharedNovels.tagSuggestions(s))
 	api.GET("/novels/series/suggestions", sharedNovels.seriesSuggestions(s))
+	api.GET("/novels/authors/suggestions", sharedNovels.authorSuggestions(s))
 	api.GET("/novels/{id}", sharedNovels.get(s))
 	api.POST("/novels/{id}/recalculate-stats", sharedNovels.recalculateStats(s))
 	api.POST("/novels/{id}/translate-description", sharedNovels.translateDescription(s))

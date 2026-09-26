@@ -2223,6 +2223,142 @@ func TestListNovelsSearchField(t *testing.T) {
 	assertIDs("q=Drag%C3%B3n&field=weird&sort=title", titleNovel.ID, authorNovel.ID, seriesNovel.ID, targetNovel.ID)
 }
 
+func TestListNovelsFilterByAuthorAndSeries(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-facet@example.com", "secret123", "Alice")
+
+	create := func(title, author, series string) novelPayload {
+		t.Helper()
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+			"sourceTitle":    title,
+			"sourceAuthor":   author,
+			"sourceSeries":   series,
+			"sourceLanguage": "en",
+			"targetLanguage": "es",
+		})
+		assertStatus(t, resp, http.StatusCreated)
+		var novel novelPayload
+		decodeData(t, resp, &novel)
+		return novel
+	}
+
+	anaSource := create("Novel Uno", "Ana Pérez", "Crónicas del Norte")
+	anaTarget := create("Novel Dos", "Bruno Díaz", "Saga Azul")
+	targetResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+anaTarget.ID, alice.Token, map[string]any{
+		"targetAuthor": "Ana Pérez",
+		"targetSeries": "Crónicas del Norte",
+	})
+	assertStatus(t, targetResp, http.StatusOK)
+	other := create("Novel Tres", "Carlos Ruiz", "Saga Verde")
+
+	// ?author matches source and target authors, case-insensitively, exactly.
+	for _, query := range []string{"author=Ana%20P%C3%A9rez", "author=ana%20p%C3%A9rez"} {
+		ids, total, hasMore := listNovelFilterIDs(t, env, alice.Token, query+"&sort=title")
+		want := map[string]bool{anaSource.ID: true, anaTarget.ID: true}
+		if total != len(want) || hasMore || len(ids) != len(want) || !want[ids[0]] {
+			t.Fatalf("query %q: expected %v (total %d), got %v (total %d, hasMore %v)", query, []string{anaSource.ID, anaTarget.ID}, len(want), ids, total, hasMore)
+		}
+	}
+	// Partial author values match nothing: the facet filter is exact.
+	if ids, total, _ := listNovelFilterIDs(t, env, alice.Token, "author=Ana&sort=title"); len(ids) != 0 || total != 0 {
+		t.Fatalf("expected no matches for partial author, got %v (total %d)", ids, total)
+	}
+
+	// ?series matches source and target series.
+	seriesIDs, seriesTotal, seriesHasMore := listNovelFilterIDs(t, env, alice.Token, "series=cr%C3%B3nicas%20del%20norte&sort=title")
+	if seriesTotal != 2 || seriesHasMore || len(seriesIDs) != 2 {
+		t.Fatalf("series filter: expected both Ana novels (total 2), got %v (total %d, hasMore %v)", seriesIDs, seriesTotal, seriesHasMore)
+	}
+
+	// Author + series combine, and unrelated novels stay out.
+	combinedIDs, _, _ := listNovelFilterIDs(t, env, alice.Token, "author=Carlos%20Ruiz&series=Saga%20Verde&sort=title")
+	if !reflect.DeepEqual(combinedIDs, []string{other.ID}) {
+		t.Fatalf("author+series: expected [%s], got %v", other.ID, combinedIDs)
+	}
+
+	// Facet filter + ?q route through SearchNovels and still honor both.
+	// ("Novel Uno" appears in no other field of the other novels.)
+	qIDs, _, _ := listNovelFilterIDs(t, env, alice.Token, "author=Ana%20P%C3%A9rez&q=Novel%20Uno&sort=title")
+	if !reflect.DeepEqual(qIDs, []string{anaSource.ID}) {
+		t.Fatalf("author+q: expected [%s], got %v", anaSource.ID, qIDs)
+	}
+}
+
+func TestNovelAuthorSuggestions(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-authorsugg@example.com", "secret123", "Alice")
+
+	create := func(title, sourceAuthor, targetAuthor string) {
+		t.Helper()
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", alice.Token, map[string]any{
+			"sourceTitle":    title,
+			"sourceAuthor":   sourceAuthor,
+			"targetAuthor":   targetAuthor,
+			"sourceLanguage": "en",
+			"targetLanguage": "es",
+		})
+		assertStatus(t, resp, http.StatusCreated)
+	}
+
+	create("Uno", "Ana Pérez", "Ana Pérez")
+	create("Dos", "ANA PÉREZ", "Bruno Díaz")
+	create("Tres", "Carlos Ruiz", "")
+
+	getSuggestions := func(query string) []string {
+		t.Helper()
+		path := "/api/v1/novels/authors/suggestions"
+		if query != "" {
+			path += "?q=" + query
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodGet, path, alice.Token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var envelope struct {
+			Data []string `json:"data"`
+		}
+		decodeRaw(t, resp, &envelope)
+		return envelope.Data
+	}
+
+	// Case/accent-insensitive dedup across source and target authors. The
+	// kept casing of the deduped "Ana Pérez" family depends on record order,
+	// so assert on the value set, not the exact casing.
+	all := getSuggestions("")
+	if len(all) != 3 {
+		t.Fatalf("expected 3 deduped author suggestions, got %v", all)
+	}
+	family := map[string]bool{"Ana Pérez": true, "ANA PÉREZ": true}
+	if !(family[all[0]] || family[all[1]] || family[all[2]]) ||
+		!containsString(all, "Bruno Díaz") || !containsString(all, "Carlos Ruiz") {
+		t.Fatalf("expected the Ana Pérez family (one casing), Bruno Díaz and Carlos Ruiz, got %v", all)
+	}
+
+	// Query filters and prefix matches sort first.
+	filtered := getSuggestions("ana")
+	if len(filtered) != 1 || !family[filtered[0]] {
+		t.Fatalf("expected the single deduped Ana Pérez suggestion, got %v", filtered)
+	}
+
+	// Limit is honored.
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/authors/suggestions?limit=2", alice.Token, nil)
+	assertStatus(t, resp, http.StatusOK)
+	var limitEnvelope struct {
+		Data []string `json:"data"`
+	}
+	decodeRaw(t, resp, &limitEnvelope)
+	if len(limitEnvelope.Data) != 2 {
+		t.Fatalf("expected limit=2 to truncate, got %v", limitEnvelope.Data)
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreateNovelDedupesAccentTags(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-dedup@example.com", "secret123", "Alice")

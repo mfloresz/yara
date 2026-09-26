@@ -29,9 +29,15 @@
         </div>
       </header>
 
-      <div v-if="activeTagFilter" class="active-filters">
-        <n-tag type="info" closable @close="clearTagFilter">
-          Tag: {{ activeTagFilter }}
+      <div v-if="activeFilters.length" class="active-filters">
+        <n-tag
+          v-for="filter in activeFilters"
+          :key="filter.param"
+          type="info"
+          closable
+          @close="clearFilter(filter.param)"
+        >
+          {{ filter.label }}: {{ filter.value }}
         </n-tag>
       </div>
 
@@ -353,13 +359,27 @@ const sortOrder = ref<"asc" | "desc">("asc");
 const groupBySeries = ref(false);
 const preferenceKey = ref<string | null>(null);
 
-// Library filters. showShared/progressFilter persist per user; activeTagFilter
-// lives only in the URL (it comes from an external click on a tag).
+// Library filters. showShared/progressFilter persist per user; tag/author/
+// series/q live only in the URL (they come from external links, e.g. the
+// global search "Ver todos" button or a tag click on the novel detail page).
 const showShared = ref(true);
 const progressFilter = ref<ProgressFilter>("all");
 const activeTagFilter = ref<string | null>(null);
+const activeAuthorFilter = ref<string | null>(null);
+const activeSeriesFilter = ref<string | null>(null);
+const activeQueryFilter = ref<string | null>(null);
 
 const route = useRoute();
+
+// Chips shown for the URL-borne filters currently active.
+const activeFilters = computed(() => {
+  const out: Array<{ param: string; label: string; value: string }> = [];
+  if (activeTagFilter.value) out.push({ param: "tag", label: "Tag", value: activeTagFilter.value });
+  if (activeAuthorFilter.value) out.push({ param: "author", label: "Autor", value: activeAuthorFilter.value });
+  if (activeSeriesFilter.value) out.push({ param: "series", label: "Serie", value: activeSeriesFilter.value });
+  if (activeQueryFilter.value) out.push({ param: "q", label: "Búsqueda", value: activeQueryFilter.value });
+  return out;
+});
 
 // Effective filters sent to the backend on every list call.
 function currentFilters(): NovelListFilters {
@@ -367,11 +387,17 @@ function currentFilters(): NovelListFilters {
     shared: showShared.value ? "all" : "own",
     progress: progressFilter.value,
     tag: activeTagFilter.value,
+    author: activeAuthorFilter.value,
+    series: activeSeriesFilter.value,
+    q: activeQueryFilter.value,
   };
 }
 
 function applyFiltersFromRoute() {
   activeTagFilter.value = route.query.tag?.toString() ?? null;
+  activeAuthorFilter.value = route.query.author?.toString() ?? null;
+  activeSeriesFilter.value = route.query.series?.toString() ?? null;
+  activeQueryFilter.value = route.query.q?.toString() ?? null;
   const urlShared = route.query.shared?.toString();
   if (urlShared === "own") showShared.value = false;
   else if (urlShared === "all") showShared.value = true;
@@ -380,11 +406,14 @@ function applyFiltersFromRoute() {
 }
 
 // Reflect showShared/progressFilter in the URL so the full filter state is
-// shareable and survives back/forward navigation.
+// shareable and survives back/forward navigation. The tag/author/series/q
+// filters live only in the URL and are carried over untouched.
 function syncFiltersToUrl() {
   const query: Record<string, string> = {};
-  const tag = route.query.tag?.toString();
-  if (tag) query.tag = tag;
+  for (const param of ["tag", "author", "series", "q"]) {
+    const value = route.query[param]?.toString();
+    if (value) query[param] = value;
+  }
   if (!showShared.value) query.shared = "own";
   if (progressFilter.value !== "all") query.progress = progressFilter.value;
   void router.replace({ path: "/", query });
@@ -658,9 +687,9 @@ function handleViewMenuSelect(key: string) {
   }
 }
 
-function clearTagFilter() {
+function clearFilter(param: string) {
   const query = { ...route.query };
-  delete query.tag;
+  delete query[param];
   void router.replace({ path: "/", query });
 }
 
@@ -708,7 +737,7 @@ watch(
 // Back/forward navigation: re-apply the filter state encoded in the URL and
 // reload (the composable's signature cache skips the fetch when nothing changed).
 watch(
-  () => [route.query.tag, route.query.shared, route.query.progress],
+  () => [route.query.tag, route.query.author, route.query.series, route.query.q, route.query.shared, route.query.progress],
   () => {
     applyFiltersFromRoute();
     void loadLibrary();

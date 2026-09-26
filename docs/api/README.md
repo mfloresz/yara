@@ -123,11 +123,13 @@ GET /api/v1/novels/abc123
 | Param | Values | Default | Notes |
 |---|---|---|---|
 | `tag` | any string | — | Exact tag match, case-insensitive and accent-insensitive (`fantasia` matches `Fantasía`, `FANTASÍA`, `Ação` ↔ `acao`). Novels without tags are excluded. Combinable with the other filters (AND). |
+| `author` | any string | — | Exact author match, case-insensitive, across source/target author. Combinable with the other filters (AND). |
+| `series` | any string | — | Exact series match, case-insensitive, across source/target series. Combinable with the other filters (AND). |
 | `field` | `all` \| `title` \| `author` \| `series` | `all` | Scopes `?q` matching (`title` = source/target title, `author` = source/target author, `series` = source/target series). Invalid values fall back to `all`. Ignored without `?q`. |
 | `shared` | `all` \| `own` \| `shared` | `all` | `own` = only novels owned by the caller; `shared` = only foreign public novels. Invalid values fall back to `all`. |
 | `progress` | `all` \| `translated` \| `completed` \| `ongoing` | `all` | `translated` = `chapter_count > 0 && translated_count = chapter_count` (0-chapter novels excluded); `completed`/`ongoing` match the novel `status`. Invalid values fall back to `all`. |
 
-Filters combine with AND and with `?q` (which searches title/author/series by default, or the subset selected by `?field=` — never tags). With `?tag` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
+Filters combine with AND and with `?q` (which searches title/author/series by default, or the subset selected by `?field=` — never tags). With `?tag`/`?author`/`?series` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
 
 **Example:**
 
@@ -225,6 +227,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `POST` | `/api/v1/novels` | Create a novel. Returns 201 + `Location`. |
 | `GET` | `/api/v1/novels/tags/suggestions` | Distinct tag values for autocomplete. |
 | `GET` | `/api/v1/novels/series/suggestions` | Distinct series values for autocomplete. |
+| `GET` | `/api/v1/novels/authors/suggestions` | Distinct author values for autocomplete. |
 | `GET` | `/api/v1/novels/{id}` | Get one novel. Supports `?fields`/`?select`. |
 | `PATCH` | `/api/v1/novels/{id}` | Partial update. |
 | `DELETE` | `/api/v1/novels/{id}` | Delete the novel + all its chapters. Status 204. |

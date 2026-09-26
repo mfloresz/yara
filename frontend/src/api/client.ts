@@ -449,6 +449,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           sort?: "title" | "created" | "lastRead";
           order?: "asc" | "desc";
           tag?: string;
+          author?: string;
+          series?: string;
           shared?: "all" | "own" | "shared";
           progress?: "all" | "translated" | "completed" | "ongoing";
         } = {},
@@ -469,6 +471,8 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           sort: params.sort,
           order: params.order,
           tag: params.tag,
+          author: params.author,
+          series: params.series,
           shared: params.shared === "all" ? undefined : params.shared,
           progress: params.progress === "all" ? undefined : params.progress,
         });
@@ -510,6 +514,16 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         const suffix = buildQuery({ q: query.trim(), limit: limit > 0 ? limit : undefined });
         const result = await http.get<unknown>(
           `/api/v1/novels/series/suggestions${suffix}`,
+        );
+        const { data } = unwrapCollection<string[]>(result);
+        return Array.isArray(data)
+          ? data.filter((item): item is string => typeof item === "string")
+          : [];
+      },
+      async listAuthorSuggestions(query = "", limit = 100): Promise<string[]> {
+        const suffix = buildQuery({ q: query.trim(), limit: limit > 0 ? limit : undefined });
+        const result = await http.get<unknown>(
+          `/api/v1/novels/authors/suggestions${suffix}`,
         );
         const { data } = unwrapCollection<string[]>(result);
         return Array.isArray(data)

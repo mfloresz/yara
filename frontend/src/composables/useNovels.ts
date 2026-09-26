@@ -21,13 +21,17 @@ const maxListLimit = 1000;
 export type NovelSortField = "title" | "created" | "lastRead";
 export type NovelSortOrder = "asc" | "desc";
 
-// Library filters (GET /api/v1/novels ?shared/?progress/?tag). They travel with
-// every list call so pagination and search honor the active filters, and they
-// take part in the list signature: changing a filter forces a fresh page-0 load.
+// Library filters (GET /api/v1/novels ?shared/?progress/?tag/?author/?series/?q).
+// They travel with every list call so pagination and search honor the active
+// filters, and they take part in the list signature: changing a filter forces a
+// fresh page-0 load.
 export type NovelListFilters = {
   shared?: "all" | "own" | "shared";
   progress?: "all" | "translated" | "completed" | "ongoing";
   tag?: string | null;
+  author?: string | null;
+  series?: string | null;
+  q?: string | null;
 };
 
 // Track the sort/order used for the last list load so pagination (loadMore) and
@@ -42,7 +46,7 @@ let lastFilters: NovelListFilters = {};
 let currentListSignature = "";
 
 function filterKey(filters: NovelListFilters) {
-  return `${filters.shared ?? "all"}:${filters.progress ?? "all"}:${filters.tag ?? ""}`;
+  return `${filters.shared ?? "all"}:${filters.progress ?? "all"}:${filters.tag ?? ""}:${filters.author ?? ""}:${filters.series ?? ""}:${filters.q ?? ""}`;
 }
 
 export function useNovels() {
@@ -110,6 +114,9 @@ export function useNovels() {
         shared: lastFilters.shared,
         progress: lastFilters.progress,
         tag: lastFilters.tag ?? undefined,
+        author: lastFilters.author ?? undefined,
+        series: lastFilters.series ?? undefined,
+        q: lastFilters.q ?? undefined,
         limit: PAGE_SIZE,
         offset: 0,
       });
@@ -137,6 +144,9 @@ export function useNovels() {
         shared: lastFilters.shared,
         progress: lastFilters.progress,
         tag: lastFilters.tag ?? undefined,
+        author: lastFilters.author ?? undefined,
+        series: lastFilters.series ?? undefined,
+        q: lastFilters.q ?? undefined,
         limit: PAGE_SIZE,
         offset: currentOffset,
       });
