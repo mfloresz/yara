@@ -25,6 +25,11 @@
         <template #icon><n-icon><RefreshOutline /></n-icon></template>
         Actualizar
       </n-button>
+      <n-button v-if="isOwner" secondary block @click="emit('open-jobs')">
+        <template #icon><n-icon><AlertCircleOutline /></n-icon></template>
+        Errores
+        <n-badge v-if="failedJobsCount > 0" :value="failedJobsCount" :max="99" />
+      </n-button>
       <n-button secondary block :loading="downloadingOffline" @click="emit('toggle-offline')">
         <template #icon>
           <n-icon><CloudDoneOutline v-if="isNovelCached" /><CloudDownloadOutline v-else /></n-icon>
@@ -43,8 +48,9 @@
 </template>
 
 <script setup lang="ts">
-import { NButton, NIcon, NTag } from "naive-ui";
+import { NBadge, NButton, NIcon, NTag } from "naive-ui";
 import {
+  AlertCircleOutline,
   BookOutline,
   CloudDoneOutline,
   CloudDownloadOutline,
@@ -63,6 +69,7 @@ defineProps<{
   downloadingOffline: boolean;
   totalChapters: number;
   translatedChapters: number;
+  failedJobsCount: number;
 }>();
 
 const emit = defineEmits<{
@@ -71,6 +78,7 @@ const emit = defineEmits<{
   (e: "copy-novel"): void;
   (e: "toggle-visibility"): void;
   (e: "open-update-url"): void;
+  (e: "open-jobs"): void;
   (e: "toggle-offline"): void;
 }>();
 

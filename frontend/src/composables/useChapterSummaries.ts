@@ -154,6 +154,9 @@ export function useChapterSummaries(
   function markAllSummariesDirty() {
     allSummariesDirty.value = true;
     cleanAllSummariesDirty.value = true;
+    // The full list also feeds the status filter chips on the chapters tab;
+    // drop it so the next read refetches instead of serving stale counts.
+    translateAllLoaded.value = false;
   }
 
   function resetAll() {

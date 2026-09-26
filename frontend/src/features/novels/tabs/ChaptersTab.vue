@@ -7,12 +7,16 @@
       :loading="loading"
       :page="page"
       :page-size="pageSize"
-      :selected="selected"
+      :selection-set="selectionSet"
       :is-owner="isOwner"
       :gaps="gaps"
-      @update:selected="(s) => emit('update:selected', s)"
+      :status-filter="statusFilter"
+      :status-counts="statusCounts"
+      @update:status-filter="(value) => emit('update:statusFilter', value)"
       @delete="(payload) => emit('delete', payload)"
       @bulk-delete="(event) => emit('bulk-delete', event)"
+      @bulk-translate="(event) => emit('bulk-translate', event)"
+      @bulk-refine="(event) => emit('bulk-refine', event)"
       @create="emit('create')"
       @import="emit('import')"
       @open="(chapter) => emit('open', chapter)"
@@ -33,16 +37,20 @@ defineProps<{
   loading: boolean;
   page: number;
   pageSize: number;
-  selected: ChapterSummary[];
+  selectionSet: Set<string>;
   isOwner: boolean;
   gaps: ChapterGap[];
+  statusFilter: string;
+  statusCounts: Record<string, number> | null;
 }>();
 
 const emit = defineEmits<{
   (e: "update:page", page: number): void;
-  (e: "update:selected", selected: ChapterSummary[]): void;
+  (e: "update:statusFilter", value: string): void;
   (e: "delete", payload: { event: Event; chapter: ChapterSummary }): void;
   (e: "bulk-delete", event: Event): void;
+  (e: "bulk-translate", event: Event): void;
+  (e: "bulk-refine", event: Event): void;
   (e: "create"): void;
   (e: "import"): void;
   (e: "open", chapter: ChapterSummary): void;

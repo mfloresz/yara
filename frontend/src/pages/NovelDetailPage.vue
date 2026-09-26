@@ -59,11 +59,13 @@
         :downloading-offline="downloadingOffline"
         :total-chapters="chapterStats.totalChapters"
         :translated-chapters="chapterStats.translatedChapters"
+        :failed-jobs-count="failedJobs.length"
         @read="onRead"
         @open-settings="settingsOpen = true"
         @copy-novel="copyCurrentNovel"
         @toggle-visibility="toggleVisibility"
         @open-update-url="updateUrlOpen = true"
+        @open-jobs="openJobsDrawer"
         @toggle-offline="handleToggleOfflineCache"
       />
 
@@ -116,19 +118,24 @@
           </div>
           <ChaptersTab
             :active="true"
-            :chapters="chapterSummaries"
-            :total="chapterSummaryTotal"
-            :loading="chapterSummariesLoading"
-            :page="chapterPage"
+            :chapters="displayChapters"
+            :total="displayTotal"
+            :loading="displayLoading"
+            :page="displayPage"
             :page-size="chapterPageSize"
-            v-model:selected="selectedChapters"
+            :selection-set="selectionSet"
             :is-owner="isOwner"
-            :gaps="chapterGaps"
+            :gaps="displayGaps"
+            :status-filter="chapterStatusFilter"
+            :status-counts="statusCounts"
             @delete="onDeleteChapter"
             @bulk-delete="onBulkDeleteChapters"
+            @bulk-translate="onBulkOperate('translate')"
+            @bulk-refine="onBulkOperate('refine')"
             @create="openCreateChapter"
             @import="bulkImportOpen = true"
             @open="openChapterPreview"
+            @update:status-filter="onStatusFilterChange"
             @update:page="chapterPage = $event"
           />
           <div v-if="excludedChapters.length > 0" class="stack-sm">
@@ -176,13 +183,6 @@
           v-show="activeTab === 'export'"
           :novel="novel"
         />
-
-        <JobsTab
-          v-show="activeTab === 'jobs'"
-          :jobs="failedJobs"
-          :all-summaries="allSummaries"
-          @cancel-job="cancelFailedHistoryJob"
-        />
       </div>
     </div>
 
@@ -228,6 +228,16 @@
       @update:open="updateUrlOpen = $event"
       @updated="onUrlUpdated"
     />
+
+    <n-drawer v-model:show="jobsOpen" width="min(520px, 96vw)" placement="right">
+      <n-drawer-content title="Trabajos con errores" closable>
+        <JobsTab
+          :jobs="failedJobs"
+          :all-summaries="allSummaries"
+          @cancel-job="cancelFailedHistoryJob"
+        />
+      </n-drawer-content>
+    </n-drawer>
 
     <n-modal v-model:show="reorderOpen" preset="card" title="Reordenar capítulos" :style="{ width: 'min(520px, 96vw)' }">
       <div class="stack-md">
@@ -283,7 +293,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMessage, useDialog } from "naive-ui";
 import AppLayout from "@/components/AppLayout.vue";
@@ -299,7 +309,7 @@ import TranslateTab from "@/features/novels/tabs/TranslateTab.vue";
 import CleanTab from "@/features/novels/tabs/CleanTab.vue";
 import ExportTab from "@/features/novels/tabs/ExportTab.vue";
 import JobsTab from "@/features/novels/tabs/JobsTab.vue";
-import { NAlert, NButton, NCard, NIcon, NModal, NSkeleton, NTab, NTag, NTabs } from "naive-ui";
+import { NAlert, NButton, NCard, NDrawer, NDrawerContent, NIcon, NModal, NSkeleton, NTab, NTag, NTabs } from "naive-ui";
 import {
   ArrowBackOutline,
   BookmarkOutline,
@@ -329,6 +339,7 @@ import {
   type CreateNovelInput,
   type Novel,
 } from "@/domain";
+import { resolvedChapterStatus } from "@/composables/useChapterStatus";
 
 const router = useRouter();
 const route = useRoute();
@@ -346,7 +357,11 @@ const chapterPage = ref(0);
 const chapterPageSize = 50;
 const failedJobsLoaded = ref(false);
 const failedJobsDirty = ref(false);
-const selectedChapters = ref<ChapterSummary[]>([]);
+// Single source of truth for chapter selection. A reactive Set mutated with
+// add/delete: rows resolve has(own-id) in their own render (O(changed)
+// re-renders per toggle), so this must never be read inside this page's
+// template — only in event handlers and watchers, which are untracked.
+const selectionSet = reactive(new Set<string>());
 
 const {
   chapterSummaries,
@@ -358,6 +373,7 @@ const {
   cleanAllSummaries,
   cleanAllSummariesLoading,
   translateAllSummaries,
+  translateAllLoaded,
   translateAllLoading,
   fullChaptersLoaded,
   loadChapterSummaries,
@@ -374,7 +390,6 @@ const tabs = [
   { value: "translate", label: "Traducir" },
   { value: "clean", label: "Limpieza" },
   { value: "export", label: "Exportar" },
-  { value: "jobs", label: "Trabajos" },
 ];
 
 const activeTab = ref("chapters");
@@ -388,6 +403,78 @@ const previewOpen = ref(false);
 const previewChapter = ref<ChapterSummary | null>(null);
 const pendingDeleteChapterId = ref<string | null>(null);
 const bulkDeleting = ref(false);
+const jobsOpen = ref(false);
+
+type ChapterStatusFilter = Chapter["status"] | "all";
+const chapterStatusFilter = ref<ChapterStatusFilter>("all");
+
+// Status chips + filtered list read from the full (content-less) summaries
+// list, the same payload the Traducir tab already loads. Loaded lazily by
+// refreshNovelAndChapterMeta; null counts hide the chips until then.
+const statusCounts = computed<Record<string, number> | null>(() => {
+  if (!isOwner.value || !translateAllLoaded.value) return null;
+  const counts: Record<string, number> = { all: translateAllSummaries.value.length };
+  for (const chapter of translateAllSummaries.value) {
+    const status = resolvedChapterStatus(chapter);
+    counts[status] = (counts[status] ?? 0) + 1;
+  }
+  return counts;
+});
+
+// ponytail: filtered view renders the whole matching subset in one list — fine
+// for error/pending slices, heavy if a novel has thousands of chapters in one
+// status. Upgrade path: paginate or virtualize the filtered branch.
+const displayChapters = computed(() => {
+  if (chapterStatusFilter.value === "all") return chapterSummaries.value;
+  return translateAllSummaries.value.filter((chapter) => resolvedChapterStatus(chapter) === chapterStatusFilter.value);
+});
+const displayTotal = computed(() =>
+  chapterStatusFilter.value === "all" ? chapterSummaryTotal.value : displayChapters.value.length,
+);
+const displayPage = computed(() => (chapterStatusFilter.value === "all" ? chapterPage.value : 0));
+// Gap rows only make sense in the full paginated view; hide them when a
+// status filter narrows the list.
+const displayGaps = computed(() => (chapterStatusFilter.value === "all" ? chapterGaps.value : []));
+const displayLoading = computed(
+  () => chapterSummariesLoading.value || (chapterStatusFilter.value !== "all" && translateAllLoading.value),
+);
+
+function onStatusFilterChange(value: string) {
+  chapterStatusFilter.value = value as ChapterStatusFilter;
+  chapterPage.value = 0;
+  selectionSet.clear();
+}
+
+async function onBulkOperate(operation: "translate" | "refine") {
+  if (!novel.value || selectionSet.size === 0) return;
+  const selected = displayChapters.value.filter((chapter) => selectionSet.has(chapter.id));
+  const eligible = selected.filter((chapter) => {
+    const status = resolvedChapterStatus(chapter);
+    return operation === "translate"
+      ? chapter.hasOriginalContent && (status === "pending" || status === "failed")
+      : chapter.hasTranslatedContent && (status === "translated" || status === "failed");
+  });
+  if (eligible.length === 0) return;
+  const targetIds = eligible.map((chapter) => chapter.id);
+  try {
+    await createChapterJob(targetIds, operation);
+    patchTranslateStatus(targetIds);
+    markFailedJobsDirty();
+    selectionSet.clear();
+    message.success(
+      `Trabajo de ${operation === "translate" ? "traducción" : "refinamiento"} iniciado (${targetIds.length} capítulos).`,
+      { duration: 3000 },
+    );
+  } catch (err) {
+    message.error(`Error al iniciar trabajo: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+function openJobsDrawer() {
+  jobsOpen.value = true;
+  void ensureFailedJobsLoaded(true);
+  void loadAllSummaries(false, translateOperation.value);
+}
 
 const downloadingOffline = ref(false);
 
@@ -436,7 +523,7 @@ const nextChapterOrder = computed(() => chapterStats.value.maxChapterOrder + 1);
 const translateOperation = ref<"translate" | "refine">("translate");
 
 function tabNeedsAllSummaries(tab: string) {
-  return tab === "translate" || tab === "jobs";
+  return tab === "translate";
 }
 
 function tabNeedsCleanSummaries(tab: string) {
@@ -491,6 +578,12 @@ async function loadCurrentNovel() {
 
 async function refreshNovelAndChapterMeta() {
   await Promise.all([loadCurrentNovel(), loadChapterSummaries(), loadExcludedChapters()]);
+  if (isOwner.value) {
+    // Feeds the status filter chips and warms the Traducir tab; the guard
+    // inside loadTranslateAll makes this a no-op while the cache is fresh.
+    void loadTranslateAll();
+    void ensureFailedJobsLoaded();
+  }
 }
 
 async function refreshChapterViews() {
@@ -516,16 +609,14 @@ watch(activeTab, (tab) => {
   if (tabNeedsCleanSummaries(tab)) {
     void loadCleanAllSummaries();
   }
-  if (tab === "jobs") {
-    void ensureFailedJobsLoaded();
-  }
 });
 
 watch(novelId, () => {
-  selectedChapters.value = [];
+  selectionSet.clear();
   failedJobsLoaded.value = false;
   failedJobsDirty.value = false;
   chapterPage.value = 0;
+  chapterStatusFilter.value = "all";
   void refreshNovelAndChapterMeta();
 });
 
@@ -534,20 +625,19 @@ watch(chapterPage, () => {
 });
 
 watch(chapterSummaries, (items) => {
+  // Runs outside any render effect, so reading/mutating the Set here is safe.
   const validIds = new Set(items.map((item) => item.id));
-  const pruned = selectedChapters.value.filter((selected) => validIds.has(selected.id));
-  if (pruned.length !== selectedChapters.value.length) {
-    selectedChapters.value = pruned;
+  for (const id of [...selectionSet]) {
+    if (!validIds.has(id)) selectionSet.delete(id);
   }
 });
 
 watch(hasActive, (active, previous) => {
   if (!previous || active) return;
+  // The finished job changed chapter statuses server-side; invalidate every
+  // summary cache, then refresh the visible tab and the status chips.
+  markAllSummariesDirty();
   markFailedJobsDirty();
-  if (activeTab.value === "jobs") {
-    void Promise.all([refreshChapterViews(), ensureFailedJobsLoaded(true)]);
-    return;
-  }
   void refreshChapterViews();
 });
 
@@ -581,11 +671,7 @@ async function onUrlUpdated(pending?: number) {
   fullChaptersLoaded.value = false;
   markAllSummariesDirty();
   markFailedJobsDirty();
-  if (activeTab.value === "jobs") {
-    await Promise.all([refreshChapterViews(), ensureFailedJobsLoaded(true)]);
-  } else {
-    await refreshChapterViews();
-  }
+  await refreshChapterViews();
   if (!pending || pending <= 0) {
     message.success("Novela actualizada desde internet", { duration: 2500 });
   }
@@ -658,8 +744,8 @@ function onDeleteChapter({ chapter }: { event: Event; chapter: ChapterSummary })
 }
 
 function onBulkDeleteChapters(_event: Event) {
-  if (selectedChapters.value.length <= 1) return;
-  const count = selectedChapters.value.length;
+  if (selectionSet.size <= 1) return;
+  const count = selectionSet.size;
   dialog.warning({
     title: `¿Excluir ${count} capítulos?`,
     content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
@@ -670,7 +756,7 @@ function onBulkDeleteChapters(_event: Event) {
 }
 
 async function confirmBulkDeleteChapters() {
-  const ids = selectedChapters.value.map((chapter) => chapter.id);
+  const ids = [...selectionSet];
   if (ids.length === 0) {
     return;
   }
@@ -679,7 +765,7 @@ async function confirmBulkDeleteChapters() {
     const { deleted, requested } = await bulkDeleteChapters(ids);
     markAllSummariesDirty();
     await refreshChapterViews();
-    selectedChapters.value = [];
+    selectionSet.clear();
     if (deleted === requested) {
       message.success(
         `Capítulos excluidos: ${deleted} ${deleted === 1 ? "capítulo excluido" : "capítulos excluidos"}.`,
