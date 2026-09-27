@@ -149,7 +149,7 @@ GET /api/v1/novels?tag=fantasia&shared=own&progress=ongoing
 | 401 | Unauthorized |
 | 403 | Forbidden (resource belongs to another user) |
 | 404 | Not found |
-| 409 | Conflict (e.g. `POST /jobs/{id}/retry` on an active job) |
+| 409 | Conflict (e.g. `POST /jobs/{id}/retry` on an active job, or creating a job for a novel that already has a pending/running job) |
 | 422 | Validation failure (reserved; current handlers map validation to 400) |
 | 500 | Internal error |
 | 503 | Job queue full — response carries `Retry-After: 30` and the message `jobQueueFullMessage` |
@@ -311,12 +311,14 @@ caller cannot rotate its rate-limit key by spoofing them.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/novels/{id}/jobs` | Create a translation/refine/download job. Returns 201 + `Location`. |
+| `POST` | `/api/v1/novels/{id}/jobs` | Create a translation/refine/download job. Returns 201 + `Location`. Returns 409 if the novel already has a pending/running job. |
 | `GET` | `/api/v1/novels/{id}/jobs` | List jobs for a novel. `?failedOnly=1` filters. |
 | `GET` | `/api/v1/jobs/active` | List the user's currently active jobs. |
 | `GET` | `/api/v1/jobs/{id}` | Get one job. |
 | `POST` | `/api/v1/jobs/{id}/cancel` | Cancel a running or pending job. |
 | `POST` | `/api/v1/jobs/{id}/retry` | Re-queue a failed or cancelled job. Returns 409 if already active. |
+
+Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at most one job per novel, at most one job per AI provider (globally, across users) and per source-site origin (scheme + host + port of the job's URLs), plus bounded per-class capacity (AI and web). A job waiting for a busy resource stays `pending`; the 503 is reserved for a saturated queue.
 
 ```json
 // POST /api/v1/novels/abc123/jobs

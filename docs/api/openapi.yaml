@@ -1113,6 +1113,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/Job' }
+        '409':
+          description: The novel already has an active (pending or running) job — only one job per novel is allowed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: Job queue full
           content:
@@ -1385,6 +1390,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/JobKickoff' }
+        '409':
+          description: The novel already has an active (pending or running) job — only one job per novel is allowed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: Job queue full
           content:
@@ -1817,6 +1827,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/UpdateFromUrlResult' }
+        '409':
+          description: The novel already has an active (pending or running) job — only one job per novel is allowed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /novels/{id}/redownload-from-url:
     parameters:

@@ -37,14 +37,13 @@ type jobContext struct {
 	lastError         string
 }
 
-func (s *Server) buildJobContext(ctx context.Context, job *store.Job) (*jobContext, error) {
-	chapters, novel, err := s.Store.LoadJobChapters(job)
+// buildJobContext assembles the per-run job context from a pre-resolved
+// config: the scheduler resolved cfg (and the novel) once at dispatch time so
+// the reserved provider keys match the providers actually used here.
+func (s *Server) buildJobContext(ctx context.Context, job *store.Job, novel *store.Novel, cfg resolvedJobConfig) (*jobContext, error) {
+	chapters, _, err := s.Store.LoadJobChapters(job)
 	if err != nil {
 		return nil, fmt.Errorf("load job chapters: %w", err)
-	}
-	cfg, err := s.resolveJobConfig(novel, job)
-	if err != nil {
-		return nil, fmt.Errorf("resolve job config: %w", err)
 	}
 	provider, err := s.newAIProvider(cfg.AI, ai.SessionForJob(job.ID))
 	if err != nil {

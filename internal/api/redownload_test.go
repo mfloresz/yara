@@ -447,11 +447,9 @@ func TestRedownloadFromUrlRejectsActiveDownloadJob(t *testing.T) {
 func TestRedownloadFromUrlConcurrentRequestsConflict(t *testing.T) {
 	fx := setupRedownloadFixture(t, true)
 
-	// Park the created job in the queue so the download worker cannot consume
-	// it between the two concurrent requests.
-	oldQueue := fx.env.server.downloadQueue
-	fx.env.server.downloadQueue = make(chan string, 10)
-	close(oldQueue)
+	// Park the created job in the dispatch queue so it cannot run between the
+	// two concurrent requests.
+	fx.env.server.dispatchDisabled = true
 
 	var wg sync.WaitGroup
 	codes := make([]int, 2)

@@ -451,9 +451,10 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string, 1000)
-	close(oldQueue)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -557,9 +558,10 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string, 1000)
-	close(oldQueue)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -679,9 +681,10 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string, 1000)
-	close(oldQueue)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -708,6 +711,9 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 		{"range 10-12", map[string]any{"startChapter": 10, "endChapter": 12}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The previous subtest's parked download job would trip the
+			// one-job-per-novel admission; settle it first.
+			settleNovelJobs(t, env, alice.User.ID, novel.ID)
 			resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, tc.input)
 			if resp.Code != http.StatusAccepted {
 				t.Fatalf("expected 202, got %d: %s", resp.Code, resp.Body.String())
@@ -736,9 +742,7 @@ func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string)
-	close(oldQueue)
+	forceJobQueueSaturation(t)
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -806,9 +810,10 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string, 1000)
-	close(oldQueue)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -876,9 +881,10 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 	client := noveldownloader.NewHTTPClientWithTransport(transport)
 
 	env := newAPITestEnv(t)
-	oldQueue := env.server.downloadQueue
-	env.server.downloadQueue = make(chan string, 1000)
-	close(oldQueue)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
 	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
 		return noveldownloader.NewDownloaderWithClient(client)
 	}
@@ -901,6 +907,21 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 	}
 	if novelInfoRequests != 1 {
 		t.Errorf("without preview: expected 1 novel info request (fallback scrape), got %d", novelInfoRequests)
+	}
+}
+
+// settleNovelJobs marks every persisted job of the novel as done so the
+// one-job-per-novel admission lets the next request through.
+func settleNovelJobs(t *testing.T, env *apiTestEnv, userID, novelID string) {
+	t.Helper()
+	jobs, err := env.store.ListJobs(userID, novelID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	for _, j := range jobs {
+		if err := env.store.UpdateJob(j.ID, map[string]any{"status": "done"}); err != nil {
+			t.Fatalf("settle job %s: %v", j.ID, err)
+		}
 	}
 }
 
