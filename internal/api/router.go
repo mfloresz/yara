@@ -46,12 +46,28 @@ type Server struct {
 	Store                *store.Store
 	Cfg                  *config.Config
 	Version              string
-	downloadQueue        chan string
-	translateQueue       chan string
-	workerWG             sync.WaitGroup
-	queuedJobs           map[string]struct{}
-	queueMu              sync.Mutex
-	cancelMu             sync.Mutex
+	// Job scheduler state, guarded by jobMu: one admission point
+	// (enqueueJob), a FIFO pending queue per class (pendingAI/pendingWeb),
+	// exclusive resource keys (reservedKeys, one holder per key) and per-class
+	// capacity (runningAI/runningWeb). queuedJobs dedups job IDs across
+	// waiting AND running. PocketBase access never happens under jobMu — see
+	// dispatchJobs/buildJobRunPlan in runtime_scheduler.go.
+	jobMu        sync.Mutex
+	pendingAI    []pendingJob
+	pendingWeb   []pendingJob
+	queuedJobs   map[string]struct{}
+	reservedKeys map[string]string
+	runningJobs  map[string]struct{}
+	runningAI    int
+	runningWeb   int
+	stopping     bool
+	// dispatchDisabled makes enqueueJob park jobs without launching them and
+	// StopJobWorker drop pending jobs instead of draining. Tests set it to
+	// exercise admission/queueing without executing downloads; production
+	// code never touches it.
+	dispatchDisabled bool
+	workerWG         sync.WaitGroup
+	cancelMu         sync.Mutex
 	jobCancels           map[string]context.CancelFunc
 	DownloaderFactory    func(userID string) *noveldownloader.Downloader
 	previewCacheMu       sync.RWMutex
@@ -97,6 +113,8 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		Cfg:                cfg,
 		Version:            "dev",
 		queuedJobs:         map[string]struct{}{},
+		reservedKeys:       map[string]string{},
+		runningJobs:        map[string]struct{}{},
 		jobCancels:         map[string]context.CancelFunc{},
 		previewCache:       make(map[string]previewCacheEntry),
 		importInfoCache:    make(map[string]importInfoCacheEntry),

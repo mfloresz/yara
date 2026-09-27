@@ -113,11 +113,12 @@
       v-model:show="listModalOpen"
       preset="card"
       title="Capítulos"
-      class="reader-list-modal"
+      :style="{ width: 'min(var(--reader-content-w), 96vw)' }"
       :bordered="false"
       :auto-focus="false"
       role="dialog"
       aria-modal="true"
+      @after-enter="scrollListToActive"
     >
       <n-input
         v-model:value="listSearch"
@@ -129,7 +130,7 @@
         <n-skeleton text :repeat="6" />
       </div>
       <p v-else-if="filteredSummaries.length === 0" class="muted">Sin resultados.</p>
-      <ul v-else class="reader-list">
+      <ul v-else ref="listEl" class="reader-list">
         <li v-for="item in filteredSummaries" :key="item.id">
           <button
             type="button"
@@ -276,6 +277,7 @@ const summariesLoading = ref(false);
 const summariesLoaded = ref(false);
 const listModalOpen = ref(false);
 const listSearch = ref("");
+const listEl = ref<HTMLElement | null>(null);
 let summariesToken = 0;
 // Vecinos del capítulo activo (?neighbors=true, orden position): activan ←/→
 // al instante sin esperar a la lista. Cuando la lista ya está cacheada,
@@ -415,6 +417,12 @@ watch(novelId, () => {
 });
 
 watch([fontSize, lineHeight, contentWidth, variant], saveReaderSettings);
+
+// La busqueda puede dejar fuera al capitulo activo: re-centrar cuando la
+// lista cambia de contenido en vez de dejar el scroll donde quedo.
+watch([listSearch, () => visibleSummaries.value.length], () => {
+  if (listModalOpen.value) scrollListToActive();
+});
 
 function chapterToSummary(chapter: Chapter): ChapterSummary {
   return {
@@ -563,6 +571,20 @@ async function ensureSummaries(): Promise<void> {
 async function openChapterList() {
   listModalOpen.value = true;
   await ensureSummaries();
+}
+
+// Centra el capítulo activo en la lista, en lugar de abrir siempre arriba.
+// El delta se mide con getBoundingClientRect y se suma al scrollTop actual
+// (no se asigna offsetTop): la lista no es position:relative, asi que su
+// offsetParent es la tarjeta del modal y el offset traeria el desfase del
+// encabezado. Se ejecuta con la animacion ya terminada porque hasta
+// entonces el transform: scale de apertura devuelve rectangulos escalados.
+function scrollListToActive() {
+  const ul = listEl.value;
+  const active = ul?.querySelector<HTMLElement>(".reader-list-link.active");
+  if (!ul || !active) return;
+  const delta = active.getBoundingClientRect().top - ul.getBoundingClientRect().top;
+  ul.scrollTop += delta - (ul.clientHeight - active.offsetHeight) / 2;
 }
 
 async function selectChapterFromList(chapterId: string) {
@@ -824,11 +846,6 @@ function applyTypography() {
 }
 
 /* ── Chapter list modal ── */
-.reader-list-modal {
-  width: 560px;
-  max-width: calc(100vw - 32px);
-}
-
 .reader-list-search {
   margin-bottom: 12px;
 }

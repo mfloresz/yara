@@ -676,6 +676,13 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			"sourceLanguage": novel.SourceLanguage,
 			"targetLanguage": novel.TargetLanguage,
 		})
+		// Two simultaneous updates of the same novel are rejected (one job per
+		// novel policy); the lock is held until the job is created and
+		// enqueued so a racing request cannot slip past the active-jobs check.
+		unlock, slotErr := s.admitNovelJob(e, novelID)
+		if slotErr != nil {
+			return slotErr
+		}
 		job := &store.Job{
 			NovelID:       novelID,
 			Status:        "pending",
@@ -685,11 +692,14 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			TotalChapters: len(downloadChapters),
 		}
 		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+			unlock()
 			return e.InternalServerError("failed to create download job", err)
 		}
 		if !s.enqueueJob(job.ID) {
+			unlock()
 			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
 		}
+		unlock()
 		resp := map[string]any{
 			"chaptersAdded":   0,
 			"chapters":        []map[string]any{},
@@ -1048,6 +1058,11 @@ func (sharedImportHandlers) batchUpdate(s *Server) func(*core.RequestEvent) erro
 				"sourceLanguage": novel.SourceLanguage,
 				"targetLanguage": novel.TargetLanguage,
 			})
+			// One job per novel: skip novels that already have active work.
+			unlock, slotErr := s.acquireNovelJobSlot(sel.NovelID)
+			if slotErr != nil {
+				continue
+			}
 			job := &store.Job{
 				NovelID:       sel.NovelID,
 				Status:        "pending",
@@ -1057,9 +1072,11 @@ func (sharedImportHandlers) batchUpdate(s *Server) func(*core.RequestEvent) erro
 				TotalChapters: len(chaptersToDownload),
 			}
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+				unlock()
 				continue
 			}
 			enqueueFailed := !s.enqueueJob(job.ID)
+			unlock()
 			jobs = append(jobs, store.BatchUpdateJobResult{
 				NovelID:         sel.NovelID,
 				JobID:           job.ID,
@@ -1145,6 +1162,11 @@ func (sharedImportHandlers) batchTranslate(s *Server) func(*core.RequestEvent) e
 				chapterIDs = pending
 			}
 			idsJSON, _ := json.Marshal(chapterIDs)
+			// One job per novel: skip novels that already have active work.
+			unlock, slotErr := s.acquireNovelJobSlot(sel.NovelID)
+			if slotErr != nil {
+				continue
+			}
 			job := &store.Job{
 				NovelID:       sel.NovelID,
 				Status:        "pending",
@@ -1153,6 +1175,7 @@ func (sharedImportHandlers) batchTranslate(s *Server) func(*core.RequestEvent) e
 				TotalChapters: len(chapterIDs),
 			}
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+				unlock()
 				continue
 			}
 			if chapters, _, err := s.Store.LoadJobChapters(job); err == nil {
@@ -1165,6 +1188,7 @@ func (sharedImportHandlers) batchTranslate(s *Server) func(*core.RequestEvent) e
 				}
 			}
 			enqueueFailed := !s.enqueueJob(job.ID)
+			unlock()
 			if enqueueFailed {
 				if err := s.Store.ReconcileProcessingChaptersForJob(job.ID); err != nil {
 					slog.Warn("reconcile chapters after batch queue rejection", "jobId", job.ID, "error", err)
@@ -1214,6 +1238,11 @@ func (sharedImportHandlers) batchCheck(s *Server) func(*core.RequestEvent) error
 				continue
 			}
 			optionsJSON, _ := json.Marshal(map[string]any{"url": novel.URL})
+			// One job per novel: skip novels that already have active work.
+			unlock, slotErr := s.acquireNovelJobSlot(novelID)
+			if slotErr != nil {
+				continue
+			}
 			job := &store.Job{
 				NovelID:     novelID,
 				Status:      "pending",
@@ -1221,12 +1250,14 @@ func (sharedImportHandlers) batchCheck(s *Server) func(*core.RequestEvent) error
 				OptionsJSON: string(optionsJSON),
 			}
 			if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+				unlock()
 				continue
 			}
 			result := checkResult{NovelID: novelID, JobID: job.ID}
 			if !s.enqueueJob(job.ID) {
 				result.Error = jobQueueFullMessage
 			}
+			unlock()
 			results = append(results, result)
 		}
 		resp := map[string]any{"jobs": results}

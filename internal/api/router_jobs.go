@@ -28,6 +28,14 @@ func (sharedJobHandlers) create(s *Server) func(*core.RequestEvent) error {
 		}
 		provider, _ := body.Options["provider"].(string)
 		model, _ := body.Options["model"].(string)
+		// One active job per novel, regardless of operation: the admission
+		// lock is held until the job is created and enqueued so two
+		// concurrent requests cannot both pass the active-jobs check.
+		unlock, slotErr := s.admitNovelJob(e, e.Request.PathValue("novelId"))
+		if slotErr != nil {
+			return slotErr
+		}
+		defer unlock()
 		idsJSON, _ := json.Marshal(body.ChapterIDs)
 		optionsJSON, _ := json.Marshal(body.Options)
 		job := &store.Job{NovelID: e.Request.PathValue("novelId"), Status: "pending", Operation: defaultString(body.Operation, "translate"), Provider: provider, Model: model, ChapterIDs: string(idsJSON), OptionsJSON: string(optionsJSON), TotalChapters: len(body.ChapterIDs)}
@@ -117,6 +125,9 @@ func (sharedJobHandlers) cancel(s *Server) func(*core.RequestEvent) error {
 			return notFoundOrForbidden(e, err)
 		}
 		s.cancelJob(jobId)
+		// A job still waiting in the dispatch queue must leave it now, without
+		// ever executing; the dispatcher is woken for the next candidates.
+		s.onJobCancelled(jobId)
 		if err := s.Store.ReconcileProcessingChaptersForJob(jobId); err != nil {
 			slog.Error("reconcile cancelled job chapters", "jobId", jobId, "error", err)
 		}
