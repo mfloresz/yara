@@ -17,7 +17,7 @@
     <a
       :href="`/novels/${chapter.novelId}/chapters/${chapter.id}`"
       class="chapter-list-link"
-      :aria-label="`Ver capítulo ${chapterPosition(chapter)}: ${chapter.title}`"
+      :aria-label="`Ver capítulo ${chapterPosition(chapter)}: ${chapter.translatedTitle || chapter.title}`"
       @click.prevent="emit('open', chapter)"
     >
       <span class="chapter-list-order mono small muted">#{{ String(chapterPosition(chapter)).padStart(2, "0") }}</span>
@@ -27,7 +27,7 @@
         :title="`Número de capítulo fuente: ${chapter.chapterOrder}`"
         >Nº {{ chapter.chapterOrder }}</span
       >
-      <span class="chapter-list-title line-clamp-2">{{ chapter.title }}</span>
+      <span class="chapter-list-title line-clamp-2">{{ chapter.translatedTitle || chapter.title }}</span>
     </a>
 
     <n-tag
@@ -52,7 +52,7 @@
             <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
           </n-button>
         </template>
-        ¿Excluir el capítulo "{{ chapter.title }}"? Se conservará y podrás restaurarlo.
+        ¿Excluir el capítulo "{{ chapter.translatedTitle || chapter.title }}"? Se conservará y podrás restaurarlo.
       </n-popconfirm>
     </div>
   </article>

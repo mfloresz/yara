@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.37.0] - 2026-09-26
+
+### ⚠️ Breaking changes
+
+- Creating a job for a novel that already has a `pending` or `running` job now returns `409 Conflict` instead of queueing a second concurrent job. This applies to `POST /api/v1/jobs`, glossary generation, update-from-url and the batch endpoints.
+
+### What's new
+
+- Jobs now run in parallel across novels instead of one at a time. The two single-consumer queues were replaced by an in-process scheduler that allows one active job per novel, one per AI provider (globally, across users) and one per source site origin, with separate capacity limits for AI and web jobs. A job whose provider or site is busy simply stays `pending` until the resource frees up — it no longer blocks unrelated jobs behind it, and the `503` response is now reserved for a genuinely full queue.
+- Cancelling a job that is still waiting in the queue now removes it immediately without running it.
+- Added `author` and `series` filters to `GET /api/v1/novels`: exact, case-insensitive, matching source or target values, combinable with the existing filters.
+- Added `GET /api/v1/novels/authors/suggestions` for author autocomplete.
+- The global novel search now suggests matches by author and series, and the dashboard exposes author/series filters.
+
+### Housekeeping
+
+- Added `docs/job-concurrency-plan.md` describing the scheduling policy and its guarantees.
+- Updated the API documentation with the new novel filters, the suggestions endpoint and the scheduling rules.
+
 ## [v0.36.1] - 2026-09-24
 
 ### What's new
@@ -404,7 +423,8 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.36.1...HEAD
+[Unreleased]: https://github.com/mfloresz/yara/compare/v0.37.0...HEAD
+[v0.37.0]: https://github.com/mfloresz/yara/compare/v0.36.1...v0.37.0
 [v0.36.1]: https://github.com/mfloresz/yara/compare/v0.36.0...v0.36.1
 [v0.36.0]: https://github.com/mfloresz/yara/compare/v0.35.0...v0.36.0
 [v0.35.0]: https://github.com/mfloresz/yara/compare/v0.34.0...v0.35.0

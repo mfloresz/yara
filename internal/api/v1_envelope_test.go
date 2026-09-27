@@ -151,6 +151,10 @@ func TestV1HeaderOnV1Routes(t *testing.T) {
 // and POST /jobs/{id}/retry endpoints work and return the v1 envelope.
 func TestV1JobCancelAndRetryEndpoints(t *testing.T) {
 	env := newAPITestEnv(t)
+	// Park retried jobs in the dispatch queue: without this the worker would
+	// fail the job (no provider key configured) between the two retries and
+	// the second one would legitimately succeed.
+	env.server.dispatchDisabled = true
 	alice := registerUser(t, env, "alice-v1-jobs@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Trabajos", "es", "en")
 

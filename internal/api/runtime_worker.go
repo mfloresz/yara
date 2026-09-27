@@ -28,108 +28,27 @@ const chapterDownloadRetryBaseDelay = 5 * time.Second
 // client when a job cannot be enqueued because the worker queue is saturated.
 const jobQueueFullMessage = "Server is busy processing other jobs. Please wait a few minutes and try again."
 
-func (s *Server) startJobWorker() {
-	s.downloadQueue = make(chan string, 128)
-	s.translateQueue = make(chan string, 128)
-
-	s.workerWG.Add(2)
-	go func() {
-		defer s.workerWG.Done()
-		s.workerLoop(s.downloadQueue)
-	}()
-	go func() {
-		defer s.workerWG.Done()
-		s.workerLoop(s.translateQueue)
-	}()
-
-	jobs, err := s.Store.ListRunnableJobs()
-	if err != nil {
-		slog.Error("list runnable jobs", "error", err)
-		return
-	}
-	for _, job := range jobs {
-		s.enqueueJob(job.ID)
-	}
-}
-
-// StopJobWorker closes both job queues and waits for the worker loops to exit
-// (draining any queued job and finishing the in-flight one). Call at most
-// once, and before closing the store — e.g. in tests, ahead of the PocketBase
-// unbootstrap — so no worker writes to a closed DB afterwards.
-func (s *Server) StopJobWorker() {
-	close(s.downloadQueue)
-	close(s.translateQueue)
-	s.workerWG.Wait()
-}
-
-func (s *Server) enqueueJob(jobID string) bool {
-	if jobID == "" {
-		return false
-	}
-	s.queueMu.Lock()
-	if s.queuedJobs == nil {
-		s.queuedJobs = map[string]struct{}{}
-	}
-	if _, exists := s.queuedJobs[jobID]; exists {
-		s.queueMu.Unlock()
-		return true
-	}
-	s.queuedJobs[jobID] = struct{}{}
-	s.queueMu.Unlock()
-
-	job, err := s.Store.GetJob(jobID)
-	if err != nil {
-		slog.Error("enqueue job: get job", "jobId", jobID, "error", err)
-		s.queueMu.Lock()
-		delete(s.queuedJobs, jobID)
-		s.queueMu.Unlock()
-		return false
-	}
-
-	var queue chan string
-	switch job.Operation {
-	case "download", "check":
-		// Both fetch from the source site via noveldownloader; they must not
-		// wait behind long-running AI jobs.
-		queue = s.downloadQueue
-	default:
-		queue = s.translateQueue
-	}
-
-	select {
-	case queue <- jobID:
-		return true
-	default:
-		s.queueMu.Lock()
-		delete(s.queuedJobs, jobID)
-		s.queueMu.Unlock()
-		if ue := s.Store.UpdateJob(jobID, map[string]any{
-			"status":       "failed",
-			"errorMessage": jobQueueFullMessage,
-		}); ue != nil {
-			slog.Error("update job status on queue saturation", "jobId", jobID, "error", ue)
-		}
-		slog.Warn("job queue full, job rejected",
-			"jobId", jobID,
-			"queueLen", len(queue),
-			"queueCap", cap(queue))
-		return false
-	}
-}
-
-func (s *Server) workerLoop(queue chan string) {
-	for jobID := range queue {
-		s.queueMu.Lock()
-		delete(s.queuedJobs, jobID)
-		s.queueMu.Unlock()
-		if err := s.processJob(jobID); err != nil {
-			slog.Error("job failed", "jobId", jobID, "error", err)
-		}
-	}
-}
-
+// processJob resolves the run plan for jobID and executes it synchronously,
+// without the scheduler (no keys reserved, no capacity taken). Tests use it
+// to exercise a single job in isolation.
 func (s *Server) processJob(jobID string) error {
 	job, err := s.Store.GetJob(jobID)
+	if err != nil {
+		return fmt.Errorf("get job: %w", err)
+	}
+	plan, err := s.buildJobRunPlan(job)
+	if err != nil {
+		return err
+	}
+	return s.runJob(plan)
+}
+
+// runJob executes one dispatched job with the configuration resolved at
+// dispatch time (plan), so the reserved keys match the resources actually
+// used. A job cancelled while waiting is never started; a cancellation that
+// lands during startup is absorbed by the re-check below.
+func (s *Server) runJob(plan *jobRunPlan) error {
+	job, err := s.Store.GetJob(plan.jobID)
 	if err != nil {
 		return fmt.Errorf("get job: %w", err)
 	}
@@ -138,17 +57,17 @@ func (s *Server) processJob(jobID string) error {
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	s.registerJobCancel(jobID, cancel)
+	s.registerJobCancel(job.ID, cancel)
 	defer func() {
 		cancel()
-		s.unregisterJobCancel(jobID)
+		s.unregisterJobCancel(job.ID)
 	}()
 
 	// A cancellation request can land between the status check above and the
 	// registration of the cancel func. Re-read the job after registering so a
 	// job cancelled in that window is not processed: from now on cancelJob
 	// always finds a registered func and cancels runCtx.
-	job, err = s.Store.GetJob(jobID)
+	job, err = s.Store.GetJob(job.ID)
 	if err != nil {
 		return fmt.Errorf("recheck job after cancel registration: %w", err)
 	}
@@ -156,20 +75,24 @@ func (s *Server) processJob(jobID string) error {
 		return nil
 	}
 
-	if job.Operation == "download" {
+	switch job.Operation {
+	case "download":
 		return s.processDownloadJob(runCtx, job)
-	}
-	if job.Operation == "check" {
+	case "check":
 		return s.processCheckJob(runCtx, job)
+	case "generate-glossary":
+		return s.processGenerateGlossaryJob(runCtx, job, plan.novel, *plan.glossaryAI)
+	default:
+		return s.runTranslateRefineJob(runCtx, job, plan)
 	}
-	if job.Operation == "generate-glossary" {
-		return s.processGenerateGlossaryJob(runCtx, job)
-	}
+}
 
-	jc, err := s.buildJobContext(runCtx, job)
+func (s *Server) runTranslateRefineJob(runCtx context.Context, job *store.Job, plan *jobRunPlan) error {
+	jobID := job.ID
+	jc, err := s.buildJobContext(runCtx, job, plan.novel, *plan.cfg)
 	if err != nil {
-		if ue := s.Store.UpdateJob(jobID, map[string]interface{}{"status": "failed", "errorMessage": err.Error()}); ue != nil {
-			slog.Error("update job status on build context failure", "jobId", jobID, "error", ue)
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": err.Error()}); ue != nil {
+			slog.Error("update job status on build context failure", "jobId", job.ID, "error", ue)
 		}
 		return fmt.Errorf("load job context: %w", err)
 	}

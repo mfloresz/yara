@@ -102,13 +102,22 @@ func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
 			OptionsJSON: string(optionsJSON),
 		}
 
+		// One active job per novel: the glossary write must not race another
+		// job on the same novel.
+		unlock, slotErr := s.admitNovelJob(e, novelID)
+		if slotErr != nil {
+			return slotErr
+		}
 		if err := s.Store.CreateJob(userID, job); err != nil {
+			unlock()
 			return e.InternalServerError("failed to create job", err)
 		}
 
 		if !s.enqueueJob(job.ID) {
+			unlock()
 			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
 		}
+		unlock()
 
 		body2 := map[string]any{
 			"jobId":     job.ID,

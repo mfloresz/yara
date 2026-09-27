@@ -74,7 +74,7 @@ func estimateTokens(text string) int {
 	return chars / 4
 }
 
-func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job) error {
+func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job, novel *store.Novel, aiSettings store.AISettings) error {
 	var opts glossaryJobOptions
 	if err := json.Unmarshal([]byte(job.OptionsJSON), &opts); err != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": fmt.Sprintf("invalid job options: %v", err)}); ue != nil {
@@ -100,14 +100,6 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 	}
 	if opts.ChapterFrom <= 0 {
 		opts.ChapterFrom = 1
-	}
-
-	novel, err := s.Store.GetOwnedNovel(job.OwnerID, job.NovelID)
-	if err != nil {
-		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": fmt.Sprintf("novel not found: %v", err)}); ue != nil {
-			slog.Error("update job status on novel error", "jobId", job.ID, "error", ue)
-		}
-		return fmt.Errorf("get novel: %w", err)
 	}
 
 	if err := s.Store.UpdateJob(job.ID, map[string]interface{}{
@@ -163,7 +155,9 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 		existingTerms = extractExistingTerms(existingEntries)
 	}
 
-	provider, err := s.resolveGlossaryProvider(job, novel)
+	// The provider was resolved once at dispatch time (resolveGlossaryAISettings)
+	// and reserved under its AI key; build it from those settings here.
+	provider, err := s.newAIProvider(aiSettings, ai.SessionForJob(job.ID))
 	if err != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": err.Error()}); ue != nil {
 			slog.Error("update job status on provider error", "jobId", job.ID, "error", ue)
@@ -225,14 +219,18 @@ func (s *Server) processGenerateGlossaryJob(ctx context.Context, job *store.Job)
 	return nil
 }
 
-func (s *Server) resolveGlossaryProvider(job *store.Job, novel *store.Novel) (ai.Provider, error) {
+// resolveGlossaryAISettings resolves the effective AI settings for a glossary
+// job (job override > user settings, then novel AI options) without creating
+// a provider. The scheduler calls it once at dispatch time to reserve the
+// provider key; the processor builds the provider from the same settings.
+func (s *Server) resolveGlossaryAISettings(job *store.Job, novel *store.Novel) (store.AISettings, error) {
 	providerKey := strings.TrimSpace(job.Provider)
 	modelOverride := strings.TrimSpace(job.Model)
 
 	if providerKey == "" {
 		settings, err := s.Store.GetAppSettings(job.OwnerID)
 		if err != nil {
-			return nil, fmt.Errorf("get app settings: %w", err)
+			return store.AISettings{}, fmt.Errorf("get app settings: %w", err)
 		}
 		providerKey = settings.AI.Provider
 		modelOverride = settings.AI.Model
@@ -251,18 +249,17 @@ func (s *Server) resolveGlossaryProvider(job *store.Job, novel *store.Novel) (ai
 	}
 
 	if providerKey == "" {
-		return nil, fmt.Errorf("no AI provider configured")
+		return store.AISettings{}, fmt.Errorf("no AI provider configured")
 	}
 
 	aiSettings, err := s.Store.ResolveProviderAISettings(job.OwnerID, providerKey)
 	if err != nil {
-		return nil, fmt.Errorf("resolve provider: %w", err)
+		return store.AISettings{}, fmt.Errorf("resolve provider: %w", err)
 	}
 	if modelOverride != "" {
 		aiSettings.Model = modelOverride
 	}
-
-	return s.newAIProvider(aiSettings, ai.SessionForJob(job.ID))
+	return aiSettings, nil
 }
 
 func resolveGlossaryPrompt(prompts []store.Prompt) string {

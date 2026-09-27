@@ -729,6 +729,13 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 		t.Fatal("expected hasActive=true when user has a pending job")
 	}
 
+	// Only one job per novel is allowed: settle the pre-created job so the
+	// creation below is admitted (the policy test lives in
+	// runtime_scheduler_test.go).
+	if err := env.store.UpdateJob(activeJob.ID, map[string]any{"status": "done"}); err != nil {
+		t.Fatalf("settle active job: %v", err)
+	}
+
 	jobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/jobs", alice.Token, map[string]any{
 		"chapterIds": []string{chapter.ID},
 		"operation":  "translate",
@@ -751,9 +758,7 @@ func TestActiveJobStatusAndCreatedJobMarksChapterProcessing(t *testing.T) {
 
 func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
 	env := newAPITestEnv(t)
-	oldQueue := env.server.translateQueue
-	env.server.translateQueue = make(chan string)
-	close(oldQueue)
+	forceJobQueueSaturation(t)
 	alice := registerUser(t, env, "alice-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Trabajo", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -789,9 +794,7 @@ func TestTranslationJobQueueRejectionResetsProcessingChapter(t *testing.T) {
 
 func TestTranslationJobQueueRejectionWithWholeNovelResetsChapters(t *testing.T) {
 	env := newAPITestEnv(t)
-	oldQueue := env.server.translateQueue
-	env.server.translateQueue = make(chan string)
-	close(oldQueue)
+	forceJobQueueSaturation(t)
 	alice := registerUser(t, env, "alice-novel-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Novela", "es", "en")
 	first := createChapter(t, env.handler, alice.Token, novel.ID, 1)
@@ -877,9 +880,7 @@ func TestJobPatchStatusTransitions(t *testing.T) {
 
 func TestBatchTranslateQueueRejectionMarkedInResponse(t *testing.T) {
 	env := newAPITestEnv(t)
-	oldQueue := env.server.translateQueue
-	env.server.translateQueue = make(chan string)
-	close(oldQueue)
+	forceJobQueueSaturation(t)
 	alice := registerUser(t, env, "alice-batch-queue@example.com", "secret123", "Alice")
 	novel := createNovel(t, env.handler, alice.Token, "Lote", "es", "en")
 	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
