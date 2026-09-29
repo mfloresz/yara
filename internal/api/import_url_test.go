@@ -133,6 +133,9 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 	if importResp.Novel.CoverPath == "" {
 		t.Fatalf("expected coverPath, got empty: %s", resp.Body.String())
 	}
+	if !strings.Contains(importResp.Novel.CoverPath, "?v=") {
+		t.Errorf("coverPath should carry a ?v= cache version, got %q", importResp.Novel.CoverPath)
+	}
 	if importResp.ChaptersImported != 1 {
 		t.Errorf("expected 1 chapter imported, got %d", importResp.ChaptersImported)
 	}
@@ -171,6 +174,9 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 	}
 	if coverRec.Body.Len() == 0 {
 		t.Errorf("expected non-empty cover body")
+	}
+	if cc := coverRec.Header().Get("Cache-Control"); cc != "private, max-age=31536000, immutable" {
+		t.Errorf("expected long-lived cover Cache-Control, got %q", cc)
 	}
 }
 

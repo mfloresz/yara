@@ -320,9 +320,10 @@ func (sharedNovelHandlers) coverImage(s *Server) func(*core.RequestEvent) error 
 			return e.InternalServerError("filesystem init failure", err)
 		}
 		defer fsys.Close()
-		// Covers are replaced in place under the same URL; allow short-lived
-		// caching but never serve a stale copy for long.
-		e.Response.Header().Set("Cache-Control", "private, max-age=60")
+		// coverPath embeds the PocketBase-generated file name as ?v=, which
+		// changes on every cover swap, so URL changes carry the invalidation:
+		// cache long instead of revalidating on every dashboard render.
+		e.Response.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 		return fsys.Serve(e.Response, e.Request, record.BaseFilesPath()+"/"+fileName, fileName)
 	}
 }
