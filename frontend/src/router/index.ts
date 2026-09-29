@@ -12,6 +12,7 @@ const ChapterPage = () => import("@/pages/ChapterPage.vue");
 const ReaderPage = () => import("@/pages/ReaderPage.vue");
 const AdminPage = () => import("@/pages/AdminPage.vue");
 const ResetPasswordPage = () => import("@/pages/ResetPasswordPage.vue");
+const ChatPage = () => import("@/pages/ChatPage.vue");
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -61,6 +62,12 @@ export const router = createRouter({
       name: "operations",
       component: OperationsPage,
       meta: { requiresAuth: true, title: "Operaciones" },
+    },
+    {
+      path: "/chat",
+      name: "chat",
+      component: ChatPage,
+      meta: { requiresAuth: true, title: "Asistente" },
     },
     {
       path: "/novels/:novelId",

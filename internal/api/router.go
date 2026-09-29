@@ -103,6 +103,12 @@ type Server struct {
 	// authenticated surface and PocketBase's native record CRUD, which have
 	// no per-endpoint limit of their own.
 	globalLimiter *rateLimiter
+	// agentLimiter caps agent chat turns per client IP: each turn spends
+	// multiple model calls plus tool executions.
+	agentLimiter *rateLimiter
+	// agentTurnLocks serializes agent chat turns per user so two concurrent
+	// chats cannot interleave history reads/writes on the same session.
+	agentTurnLocks sync.Map
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }
@@ -124,6 +130,7 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		invitationLimiter:  newRateLimiter(10, 10),   // 10 redemptions per minute per IP
 		wsLimiter:          newRateLimiter(16, 16),   // 16 WS upgrades per minute per IP
 		globalLimiter:      newRateLimiter(600, 600), // global backstop: 600 requests per minute per IP
+		agentLimiter:       newRateLimiter(10, 20),   // agent chat: burst 10, 20 turns per minute per IP
 	}
 	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
 		directClient := noveldownloader.NewHTTPClient()

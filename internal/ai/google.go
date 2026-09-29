@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/zendev-sh/goai"
-	"github.com/zendev-sh/goai/provider"
-	"github.com/zendev-sh/goai/provider/google"
+	einogemini "github.com/cloudwego/eino-ext/components/model/gemini"
+	"google.golang.org/genai"
 )
 
 type GoogleProvider struct {
@@ -19,69 +19,55 @@ type GoogleProvider struct {
 	Timeout time.Duration
 }
 
-func (p *GoogleProvider) model() (provider.LanguageModel, error) {
+func (p *GoogleProvider) chatModel(ctx context.Context) (*einogemini.ChatModel, error) {
 	if p == nil || p.APIKey == "" {
 		return nil, fmt.Errorf("google not configured")
 	}
-	return google.Chat(p.Model,
-		google.WithAPIKey(p.APIKey),
-		google.WithHeaders(map[string]string{"User-Agent": yaraUserAgent}),
-	), nil
+	cli, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      p.APIKey,
+		Backend:     genai.BackendGeminiAPI,
+		HTTPClient:  &http.Client{Timeout: p.resolveTimeout()},
+		HTTPOptions: genai.HTTPOptions{Headers: http.Header{"User-Agent": []string{yaraUserAgent}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return einogemini.NewChatModel(ctx, &einogemini.Config{Client: cli, Model: p.Model})
 }
 
 func (p *GoogleProvider) TranslateTitle(ctx context.Context, in TranslateTitleInput) (string, error) {
-	model, err := p.model()
+	m, err := p.chatModel(ctx)
 	if err != nil {
 		return "", err
 	}
-	opts := []goai.Option{
-		goai.WithSystem(buildTranslationTitleSystemPrompt(in)),
-		goai.WithPrompt(buildTranslationTitlePrompt(in)),
-		goai.WithTimeout(p.resolveTimeout()),
-	}
-	result, err := goai.GenerateText(ctx, model, opts...)
+	out, err := m.Generate(ctx, systemUserMessages(buildTranslationTitleSystemPrompt(in), buildTranslationTitlePrompt(in)))
 	if err != nil {
 		return "", fmt.Errorf("google translate title: %w", err)
 	}
-	return strings.TrimSpace(result.Text), nil
+	return strings.TrimSpace(out.Content), nil
 }
 
 func (p *GoogleProvider) TranslateText(ctx context.Context, in TranslateTextInput) (string, error) {
-	model, err := p.model()
+	m, err := p.chatModel(ctx)
 	if err != nil {
 		return "", err
 	}
-	opts := []goai.Option{
-		goai.WithSystem(buildTranslationContentSystemPrompt(in)),
-		goai.WithPrompt(buildTranslationContentPrompt(in)),
-		goai.WithTimeout(p.resolveTimeout()),
-	}
-	result, err := goai.GenerateText(ctx, model, opts...)
+	out, err := m.Generate(ctx, systemUserMessages(buildTranslationContentSystemPrompt(in), buildTranslationContentPrompt(in)))
 	if err != nil {
 		return "", fmt.Errorf("google translate text: %w", err)
 	}
-	return strings.TrimSpace(result.Text), nil
+	return strings.TrimSpace(out.Content), nil
 }
 
 func (p *GoogleProvider) Check(ctx context.Context, in CheckInput) (CheckOutput, error) {
-	model, err := p.model()
-	if err != nil {
-		return CheckOutput{}, err
-	}
 	system := "Analyze the following text for translation quality."
 	if trimmed := strings.TrimSpace(in.SystemPrompt); trimmed != "" {
 		system = trimmed
 	}
-	opts := []goai.Option{
-		goai.WithSystem(system),
-		goai.WithPrompt(strings.TrimSpace(in.UserPrompt)),
-		goai.WithTimeout(p.resolveTimeout()),
-	}
-	result, err := goai.GenerateText(ctx, model, opts...)
+	text, err := p.generateText(ctx, system, strings.TrimSpace(in.UserPrompt))
 	if err != nil {
 		return CheckOutput{}, fmt.Errorf("google check: %w", err)
 	}
-	text := stripJSONFences(strings.TrimSpace(result.Text))
 	var out CheckOutput
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		return CheckOutput{}, fmt.Errorf("google check: parsing response: %w (raw: %s)", err, truncateString(text, 200))
@@ -90,13 +76,13 @@ func (p *GoogleProvider) Check(ctx context.Context, in CheckInput) (CheckOutput,
 }
 
 func (p *GoogleProvider) Refine(ctx context.Context, in RefineInput) (RefineOutput, error) {
-	model, err := p.model()
+	m, err := p.chatModel(ctx)
 	if err != nil {
 		return RefineOutput{}, err
 	}
 
 	var summary RefineOutput
-	applyEditsTool := goai.Tool{
+	applyEditsTool := AgentTool{
 		Name:        "apply_edits",
 		Description: "Apply a batch of exact-text replacements to the current translation. Every edit is attempted independently in the order given — one failing edit never blocks the others from being applied. If some edits fail, call this tool again with corrected versions of only the failed edits.",
 		InputSchema: json.RawMessage(refineApplyEditsSchema),
@@ -141,17 +127,40 @@ func (p *GoogleProvider) Refine(ctx context.Context, in RefineInput) (RefineOutp
 		},
 	}
 
-	opts := []goai.Option{
-		goai.WithSystem(in.SystemPrompt),
-		goai.WithPrompt(in.UserPrompt),
-		goai.WithTools(applyEditsTool),
-		goai.WithMaxSteps(refineMaxSteps),
-		goai.WithTimeout(p.resolveTimeout()),
-	}
-	if _, err := goai.GenerateText(ctx, model, opts...); err != nil {
+	msgs := systemUserMessages(in.SystemPrompt, in.UserPrompt)
+	if _, err := runToolLoop(ctx, m, msgs, []AgentTool{applyEditsTool}, refineMaxSteps, nil); err != nil {
 		return summary, fmt.Errorf("google refine: %w", err)
 	}
 	return summary, nil
+}
+
+func (p *GoogleProvider) GenerateGlossary(ctx context.Context, in GenerateGlossaryInput) (GenerateGlossaryOutput, error) {
+	system := resolveGlossarySystemPrompt(in)
+	prompt := buildGlossaryPrompt(in)
+	text, err := p.generateText(ctx, system, prompt)
+	if err != nil {
+		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: %w", err)
+	}
+	var out GenerateGlossaryOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: parsing response: %w (raw: %s)", err, truncateString(text, 200))
+	}
+	return out, nil
+}
+
+// generateText runs one system+user completion with the schema appended as
+// instructions: Gemma models on the Gemini API do not support structured
+// output, so JSON is requested in the prompt and parsed locally.
+func (p *GoogleProvider) generateText(ctx context.Context, system, user string) (string, error) {
+	m, err := p.chatModel(ctx)
+	if err != nil {
+		return "", err
+	}
+	out, err := m.Generate(ctx, systemUserMessages(system, user))
+	if err != nil {
+		return "", err
+	}
+	return stripJSONFences(strings.TrimSpace(out.Content)), nil
 }
 
 func (p *GoogleProvider) resolveTimeout() time.Duration {
@@ -159,31 +168,6 @@ func (p *GoogleProvider) resolveTimeout() time.Duration {
 		return p.Timeout
 	}
 	return 60 * time.Second
-}
-
-func (p *GoogleProvider) GenerateGlossary(ctx context.Context, in GenerateGlossaryInput) (GenerateGlossaryOutput, error) {
-	model, err := p.model()
-	if err != nil {
-		return GenerateGlossaryOutput{}, err
-	}
-	system := resolveGlossarySystemPrompt(in)
-	prompt := buildGlossaryPrompt(in)
-
-	opts := []goai.Option{
-		goai.WithSystem(system),
-		goai.WithPrompt(prompt),
-		goai.WithTimeout(p.resolveTimeout()),
-	}
-	result, err := goai.GenerateText(ctx, model, opts...)
-	if err != nil {
-		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: %w", err)
-	}
-	text := stripJSONFences(strings.TrimSpace(result.Text))
-	var out GenerateGlossaryOutput
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return GenerateGlossaryOutput{}, fmt.Errorf("google generate glossary: parsing response: %w (raw: %s)", err, truncateString(text, 200))
-	}
-	return out, nil
 }
 
 // stripJSONFences removes markdown code fences wrapping a JSON response.

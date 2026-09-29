@@ -29,6 +29,7 @@ The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). Whe
   - [Browser workers & proxy](#browser-workers--proxy)
   - [Worker auth](#worker-auth)
   - [Admin](#admin)
+  - [Agent](#agent)
 - [WebSocket](#websocket)
 
 ## Base URL & versioning
@@ -541,6 +542,25 @@ is used. `GET /api/v1/providers` exposes `sharedKeyAvailable` and
 
 **Prompt precedence:** embedded default < admin global override < user
 setting < per-novel prompt.
+
+### Agent
+
+AI library assistant over chat. Requires the user's configured AI provider to
+be OpenAI-compatible (the Google provider does not support the tool loop and
+answers with `400 provider_unsupported`). Tool calls run server-side against
+the requesting user's own library only; mutations go through the same store
+validation as the REST endpoints.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `done`, `error`. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
+| `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
+
+Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
+`get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries),
+`get_chapter` (body text, truncated), `update_novel` (target title /
+description / notes — writes immediately).
 
 ## WebSocket
 

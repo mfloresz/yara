@@ -9,7 +9,8 @@ type ProviderInfo struct {
 	OpenAICompat bool           `json:"openaiCompat"`
 	GoAIOptions  map[string]any `json:"goaiOptions,omitempty"`
 	// ModelOptions holds per-model overrides merged over GoAIOptions for
-	// requests targeting that model.
+	// requests targeting that model. Recognized keys (eino): strictJsonSchema,
+	// venice_parameters.
 	ModelOptions map[string]map[string]any `json:"modelOptions,omitempty"`
 }
 
@@ -38,7 +39,6 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "e2ee-deepseek-v4-flash",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
 			"venice_parameters": map[string]any{
 				"include_venice_system_prompt": false,
@@ -66,7 +66,6 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
 		},
 	},
@@ -79,7 +78,6 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "muse-spark-1.2-contributor",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
 		},
 	},
@@ -94,17 +92,11 @@ var knownProviders = []ProviderInfo{
 			"openai/gpt-5.6-luna (reasoning: medium)",
 			"mimo-v2.5",
 			"deepseek-v4.1-flash",
-			"muse-spark-1.3-contributor",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
-		},
-		ModelOptions: map[string]map[string]any{
-			// muse-spark speaks the OpenAI Responses API, not chat completions.
-			"muse-spark-1.3-contributor": {"useResponsesAPI": true},
 		},
 	},
 
@@ -115,17 +107,11 @@ var knownProviders = []ProviderInfo{
 		Models: []string{
 			"x-preview-f-free",
 			"mimo-v2.5-free",
-			"muse-spark-1.3-contributor-free",
 		},
 		DefaultModel: "x-preview-f-free",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
-		},
-		ModelOptions: map[string]map[string]any{
-			// muse-spark speaks the OpenAI Responses API, not chat completions.
-			"muse-spark-1.3-contributor-free": {"useResponsesAPI": true},
 		},
 	},
 
@@ -143,7 +129,6 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "deepseek-v4-flash-0731",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": true,
 		},
 	},

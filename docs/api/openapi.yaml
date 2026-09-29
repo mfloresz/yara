@@ -48,6 +48,7 @@ tags:
   - name: Browser workers
   - name: Worker auth
   - name: Admin
+  - name: Agent
   - name: WebSocket
 
 paths:
@@ -526,7 +527,10 @@ paths:
         visibility (owner or is_public). Novels without a stored cover get
         coverPath === "" and the frontend shows its bundled default image;
         the endpoint still serves the bundled default for those per-novel
-        URLs as a compat fallback.
+        URLs as a compat fallback. Responses are served with a long-lived
+        `Cache-Control: private, max-age=31536000, immutable`; cache
+        invalidation is carried by the `?v=` version in `coverPath`, which
+        changes on every cover re-upload.
       responses:
         '200':
           description: OK
@@ -2541,6 +2545,70 @@ paths:
         '101':
           description: Switching Protocols.
 
+  # ---------------------------------------------------------------------------
+  # Agent (AI library assistant)
+  # ---------------------------------------------------------------------------
+  /agent/chat:
+    post:
+      tags: [Agent]
+      summary: Run one assistant chat turn, streamed as NDJSON.
+      description: |
+        Executes one agent turn against the user's configured AI provider
+        (OpenAI-compatible providers only; the Google provider does not
+        support the tool loop). The assistant may call novel tools that run
+        server-side against the user's own library. Responses stream as
+        newline-delimited JSON events:
+        `session`, `text_delta`, `tool_call`, `tool_result`, `done`, `error`.
+        When no sessionId is sent, the user's latest session is reused, or a
+        new one is created. Rate limited per client IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                sessionId: { type: string, description: "Continue this session; omit to reuse the latest one." }
+                novelId: { type: string, description: "Selected novel context for this message." }
+                message: { type: string, maxLength: 8000 }
+      responses:
+        '200':
+          description: NDJSON event stream.
+          content:
+            application/x-ndjson:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AgentChatEvent' }
+        '400':
+          description: Validation failure or provider does not support agent chat (problem+json).
+        '404':
+          description: Unknown sessionId or novelId (problem+json).
+        '429':
+          description: Rate limited (problem+json).
+
+  /agent/session:
+    get:
+      tags: [Agent]
+      summary: Get the user's latest chat session (null when none).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AgentSession' }
+    delete:
+      tags: [Agent]
+      summary: Reset the chat (delete every session of the user).
+      responses:
+        '204':
+          description: No Content
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2634,6 +2702,46 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+    AgentChatEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [session, text_delta, tool_call, tool_result, done, error] }
+        sessionId: { type: string }
+        step: { type: integer }
+        text: { type: string, description: text_delta payload }
+        tool: { type: string, description: tool_call/tool_result tool name }
+        args: { type: string, description: tool_call raw JSON arguments }
+        result: { type: string, description: tool_result preview }
+        message: { type: object, description: done payload (role + content) }
+        steps: { type: integer, description: done payload, model steps taken }
+        code: { type: string, description: error code }
+        error: { type: string, description: error detail }
+
+    AgentSession:
+      type: object
+      properties:
+        id: { type: string }
+        ownerId: { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [user, assistant, tool] }
+              content: { type: string }
+              toolCallId: { type: string }
+              toolName: { type: string }
+              toolCalls:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    args: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
     Problem:
       type: object
       description: RFC 7807 problem details. The envelope uses `error` instead of the standard top-level fields to keep the v1 envelope consistent.
@@ -2856,7 +2964,7 @@ components:
         status:
           type: string
           enum: [ongoing, completed, hiatus, dropped]
-        coverPath: { type: string, description: Thumbnail path; falls back to the full cover. Empty when the novel has no stored cover (frontend shows its bundled default). }
+        coverPath: { type: string, description: "Thumbnail path (falls back to the full cover) with a ?v= cache version derived from the stored file name; it changes on every cover re-upload. Empty when the novel has no stored cover (frontend shows its bundled default)." }
         isPublic: { type: boolean }
         chapterCount: { type: integer }
         translatedCount: { type: integer }

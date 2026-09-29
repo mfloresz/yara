@@ -78,16 +78,24 @@ func TestNewAIProviderKnownProviderUsesResolvedBaseURLAndProviderOptions(t *test
 	if got, _ := op.ProviderOptions["strictJsonSchema"].(bool); !got {
 		t.Fatal("expected opencode-go provider to enable strict JSON schema")
 	}
+	if op.SessionID != "session-abc" {
+		t.Fatalf("expected opencode session id to be carried, got %q", op.SessionID)
+	}
 }
 
-func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
+// TestNewAIProviderCarriesRegistryOptions replaces the old muse-spark
+// per-model Responses-API test: eino speaks chat completions only, so the
+// registry no longer carries useResponsesAPI overrides. What must survive the
+// migration is the option plumbing itself (venice_parameters, strict
+// JSON schema, opencode session header).
+func TestNewAIProviderCarriesRegistryOptions(t *testing.T) {
 	env := newAPITestEnv(t)
 	server := New(env.store, nil)
 
 	provider, err := server.newAIProvider(store.AISettings{
-		Provider: "opencode-go",
+		Provider: "venice",
 		APIKey:   "test-key",
-		Model:    "muse-spark-1.3-contributor",
+		Model:    "e2ee-deepseek-v4-flash",
 	}, "session-abc")
 	if err != nil {
 		t.Fatalf("new AI provider: %v", err)
@@ -96,11 +104,14 @@ func TestNewAIProviderPerModelResponsesAPIOption(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ai.OpenAIProvider, got %T", provider)
 	}
-	if got, _ := op.ProviderOptions["useResponsesAPI"].(bool); !got {
-		t.Fatal("expected muse-spark-1.3-contributor on opencode-go to use the responses API")
+	if _, ok := op.ProviderOptions["venice_parameters"]; !ok {
+		t.Fatal("expected venice_parameters in provider options")
 	}
 	if got, _ := op.ProviderOptions["strictJsonSchema"].(bool); !got {
-		t.Fatal("expected strict JSON schema to remain enabled for muse-spark-1.3-contributor")
+		t.Fatal("expected strict JSON schema to stay enabled for venice")
+	}
+	if op.SessionID != "" {
+		t.Fatalf("venice must not carry an opencode session, got %q", op.SessionID)
 	}
 }
 

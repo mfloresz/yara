@@ -481,3 +481,33 @@ export type WorkerToken = {
   createdAt?: string;
   revoked: boolean;
 };
+
+export type AgentSessionMessage = {
+  role: "user" | "assistant" | "tool";
+  content?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolCalls?: { id: string; name: string; args: string }[];
+};
+
+export type AgentSession = {
+  id: string;
+  ownerId: string;
+  messages: AgentSessionMessage[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AgentChatEvent = {
+  type: "session" | "text_delta" | "tool_call" | "tool_result" | "done" | "error";
+  sessionId?: string;
+  step?: number;
+  text?: string;
+  tool?: string;
+  args?: string;
+  result?: string;
+  message?: { role: string; content: string };
+  steps?: number;
+  code?: string;
+  error?: string;
+};
