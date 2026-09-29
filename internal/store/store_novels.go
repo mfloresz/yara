@@ -638,6 +638,18 @@ func (s *Store) UpdateNovelCheckResult(novelID, checkedAt string, newChapters in
 	return s.App.Save(record)
 }
 
+// ClearNovelPendingNewChapters resets the pending "new chapters" counter once
+// those chapters have actually been downloaded. last_checked_at is left
+// untouched: the check did happen, only its result is now consumed.
+func (s *Store) ClearNovelPendingNewChapters(novelID string) error {
+	record, err := s.App.FindRecordById(NovelsCollection, novelID)
+	if err != nil {
+		return ErrNotFound
+	}
+	record.Set("last_check_new_chapters", 0)
+	return s.App.Save(record)
+}
+
 func (s *Store) UpdateNovelGlossary(userID, novelID, glossaryJSON string) error {
 	record, err := s.App.FindRecordById(NovelsCollection, novelID)
 	if err != nil {

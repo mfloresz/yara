@@ -1,69 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <meta charset="utf-8">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 320px; padding: 16px; background: #1a1a2e; color: #e0e0e0; }
-    .header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-    .header h1 { font-size: 14px; font-weight: 600; }
-    .debug-badge { background: #ff6b35; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
-    .status-section { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-    .status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-    .status-row:last-child { margin-bottom: 0; }
-    .status-label { font-size: 12px; color: #888; }
-    .status-value { font-size: 12px; font-weight: 500; }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; display: inline-block; }
-    .status-dot.connected { background: #4ade80; }
-    .status-dot.disconnected { background: #ef4444; }
-    .status-dot.connecting { background: #fbbf24; }
-    .btn { width: 100%; padding: 10px; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-    .btn-primary { background: #3b82f6; color: white; }
-    .btn-primary:hover { background: #2563eb; }
-    .btn-danger { background: #ef4444; color: white; }
-    .btn-danger:hover { background: #dc2626; }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .config-section { margin-top: 12px; }
-    .config-label { font-size: 11px color: #888; margin-bottom: 4px; }
-    .config-input { width: 100%; padding: 8px; border: 1px solid #333; border-radius: 4px; background: #0f0f23; color: #e0e0e0; font-size: 12px; }
-    .info-text { font-size: 11px; color: #666; margin-top: 8px; line-height: 1.4; }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yara Browser Worker (Debug)</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="header">
-    <h1>Yara Browser Worker</h1>
-    <span class="debug-badge">DEBUG</span>
-  </div>
-  
-  <div class="status-section">
-    <div class="status-row">
-      <span class="status-label">Status</span>
-      <span class="status-value" id="statusText">
-        <span class="status-dot disconnected" id="statusDot"></span>
-        <span id="statusLabel">Disconnected</span>
-      </span>
+  <div class="container">
+    <header class="header">
+      <img src="../icons/icon48.png" alt="" class="logo" width="28" height="28">
+      <h1>Browser Worker</h1>
+      <span class="badge-debug">DEBUG</span>
+    </header>
+
+    <div id="status-bar" class="status" data-state="disconnected" role="status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="status-text">Desconectado</span>
+      <span id="status-server" class="status-meta"></span>
     </div>
-    <div class="status-row">
-      <span class="status-label">Server</span>
-      <span class="status-value" id="serverAddr">localhost:5177</span>
+
+    <div id="import-panel" class="panel hidden">
+      <p class="panel-eyebrow">Página actual</p>
+      <p id="import-host" class="panel-host"></p>
+      <button id="btn-import" class="btn btn-primary btn-block">
+        <svg class="panel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Añadir historia a Yara (Debug)
+      </button>
     </div>
-    <div class="status-row">
-      <span class="status-label">Auth</span>
-      <span class="status-value" style="color: #fbbf24;">Not required (debug)</span>
+
+    <div id="challenge-panel" class="panel hidden">
+      <svg class="panel-icon is-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6l7-3z"/>
+        <path d="M12 9v4M12 16h.01"/>
+      </svg>
+      <p class="panel-title">Desafío de Cloudflare detectado</p>
+      <p class="panel-hint">Resuélvelo en la pestaña del navegador. El worker reutilizará la sesión para las siguientes peticiones.</p>
+      <button id="btn-refresh" class="btn btn-secondary btn-block">Actualizar pestaña</button>
     </div>
+
+    <div class="field">
+      <label for="server-addr">Servidor</label>
+      <input type="text" id="server-addr" placeholder="localhost:5177" spellcheck="false" autocomplete="off">
+      <p class="field-hint">host:puerto del proxy de desarrollo</p>
+    </div>
+
+    <label class="switch">
+      <input type="checkbox" id="auto-connect">
+      <span>Conectar automáticamente al iniciar</span>
+    </label>
+
+    <div class="button-group">
+      <button id="btn-toggle" class="btn btn-primary">Conectar</button>
+    </div>
+
+    <div id="error-panel" class="notice notice-error hidden" role="alert">
+      <span id="error-text"></span>
+    </div>
+
+    <p class="footer-note">Modo debug: sin autenticación. Solo para desarrollo contra sitios protegidos por Cloudflare.</p>
   </div>
 
-  <button class="btn btn-primary" id="connectBtn">Connect</button>
-  
-  <div class="config-section">
-    <div class="config-label">Server Address</div>
-    <input type="text" class="config-input" id="serverInput" placeholder="localhost:5176">
-  </div>
-
-  <p class="info-text">
-    Debug mode: no authentication required. Use this for development and testing with Cloudflare-protected sites.
-  </p>
-
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

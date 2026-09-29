@@ -979,3 +979,54 @@ func TestRealWebnovel(t *testing.T) {
 		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
 	}
 }
+
+func TestRealCherryMist(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real URL test in short mode")
+	}
+	url := "https://cherrymist.cafe/story/reverse-dungeon/"
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	dl := NewDownloader()
+	parser := dl.FindParser(url)
+	if parser == nil {
+		t.Fatalf("no parser found for %s", url)
+	}
+
+	info, err := dl.GetNovelInfo(ctx, url)
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+	t.Logf("title=%q author=%q cover=%q totalChapters=%d",
+		info.Title, info.Author, info.CoverURL, len(info.Chapters))
+	if info.Title == "" || len(info.Chapters) == 0 {
+		t.Fatalf("incomplete novel info: %+v", info)
+	}
+	for i, ch := range info.Chapters {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  - %s (order %d) -> %s", ch.Title, ch.Order, ch.URL)
+	}
+
+	chapter, err := dl.DownloadChapter(ctx, info.Chapters[0].URL)
+	if err != nil {
+		t.Fatalf("DownloadChapter: %v", err)
+	}
+	t.Logf("chapter title=%q contentLen=%d markdownLen=%d",
+		chapter.Title, len(chapter.Content), len(chapter.Markdown))
+	if len(chapter.Markdown) < 500 {
+		t.Errorf("markdown too short: %d bytes", len(chapter.Markdown))
+	}
+	// The API serves the body with its letters remapped onto Private Use Area
+	// codepoints; any of them surviving means the seed table is wrong.
+	for _, r := range chapter.Markdown {
+		if r >= 0xE000 && r <= 0xF8FF {
+			t.Fatalf("markdown still contains Private Use Area codepoint %U", r)
+		}
+	}
+	if !strings.Contains(chapter.Markdown, "The mysterious thing about life") {
+		t.Errorf("chapter 1 did not decode to the expected opening line: %.200q", chapter.Markdown)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,10 +68,14 @@ func classifyJobOperation(op string) (jobClass, bool) {
 	return aiClass, false
 }
 
-// pendingJob is a job waiting in a class queue for dispatch.
+// pendingJob is a job waiting in a class queue for dispatch. origins is the
+// set of site origins the job will hit, resolved once at enqueue time so a
+// running job can tell, without touching the store, whether its cooldown is
+// spacing a queued job. Only download jobs populate it — see pendingOrigins.
 type pendingJob struct {
 	id         string
 	enqueuedAt time.Time
+	origins    []string
 }
 
 // jobRunPlan carries everything resolved once for one execution, so the keys
@@ -306,11 +311,48 @@ func (s *Server) enqueueJob(jobID string) bool {
 		return false
 	}
 	s.queuedJobs[jobID] = struct{}{}
-	*pending = append(*pending, pendingJob{id: jobID, enqueuedAt: time.Now()})
+	*pending = append(*pending, pendingJob{id: jobID, enqueuedAt: time.Now(), origins: pendingOrigins(job)})
 	s.jobMu.Unlock()
 
 	s.dispatchJobs()
 	return true
+}
+
+// pendingOrigins returns the site origins a queued download job will hit.
+// Check jobs are left empty on purpose: processCheckJob already waits before
+// its own fetch, so counting one would double the gap. A derivation failure is
+// ignored here — buildJobRunPlan rejects such a job at dispatch time anyway,
+// which is where the error belongs.
+func pendingOrigins(job *store.Job) []string {
+	if job.Operation != "download" {
+		return nil
+	}
+	origins, err := webJobOrigins(job)
+	if err != nil {
+		return nil
+	}
+	return origins
+}
+
+// hasPendingWebJobForOrigins reports whether a queued download job targets any
+// of the origins the given job touches. A running job holds the origin keys it
+// reserved, so a queued job sharing one cannot start until this job returns:
+// this is the signal that a cooldown would actually space two requests.
+func (s *Server) hasPendingWebJobForOrigins(job *store.Job) bool {
+	origins, err := webJobOrigins(job)
+	if err != nil {
+		return false
+	}
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	for _, cand := range s.pendingWeb {
+		for _, o := range cand.origins {
+			if slices.Contains(origins, o) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dispatchJobs scans both pending queues in FIFO order and launches every job

@@ -8,64 +8,65 @@
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <img src="../icons/icon48.png" alt="Yara" class="logo">
+    <header class="header">
+      <img src="../icons/icon48.png" alt="" class="logo" width="28" height="28">
       <h1>Browser Worker</h1>
-    </div>
+    </header>
 
-    <div id="status-bar" class="status-bar disconnected">
-      <span class="status-dot"></span>
+    <div id="status-bar" class="status" data-state="disconnected" role="status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
       <span id="status-text">Desconectado</span>
+      <span id="status-server" class="status-meta"></span>
     </div>
 
-    <div id="auth-panel" class="auth-panel hidden">
-      <div class="auth-icon">&#128274;</div>
-      <div class="auth-text">No autenticado</div>
-      <div class="auth-hint">Conecta tu cuenta para usar el worker</div>
-      <button id="btn-auth" class="btn btn-primary">Autenticar con el Servidor</button>
+    <div id="import-panel" class="panel hidden">
+      <p class="panel-eyebrow">Página actual</p>
+      <p id="import-host" class="panel-host"></p>
+      <button id="btn-import" class="btn btn-primary btn-block">
+        <svg class="panel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Añadir historia a Yara
+      </button>
     </div>
 
-    <div id="challenge-panel" class="challenge-panel hidden">
-      <div class="challenge-icon">&#9888;</div>
-      <div class="challenge-text">Cloudflare Challenge Detectado</div>
-      <div class="challenge-hint">Resuelve el challenge en la pesta&ntilde;a del navegador</div>
-      <button id="btn-refresh" class="btn btn-warning">Refrescar P&aacute;gina</button>
+    <div id="auth-panel" class="panel hidden">
+      <svg class="panel-icon is-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4" y="10" width="16" height="11" rx="2"/>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+      </svg>
+      <p class="panel-title">Cuenta no conectada</p>
+      <p class="panel-hint">Autentica contra tu servidor Yara para que el worker pueda importar páginas.</p>
+      <button id="btn-auth" class="btn btn-secondary btn-block">Autenticar con el servidor</button>
     </div>
 
-    <div class="form-group">
+    <div id="challenge-panel" class="panel hidden">
+      <svg class="panel-icon is-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6l7-3z"/>
+        <path d="M12 9v4M12 16h.01"/>
+      </svg>
+      <p class="panel-title">Desafío de Cloudflare detectado</p>
+      <p class="panel-hint">Resuélvelo en la pestaña del navegador. El worker reutilizará la sesión para las siguientes peticiones.</p>
+      <button id="btn-refresh" class="btn btn-secondary btn-block">Actualizar pestaña</button>
+    </div>
+
+    <div class="field">
       <label for="server-addr">Servidor</label>
-      <input type="text" id="server-addr" placeholder="192.168.1.100:5176" spellcheck="false">
-      <small class="help-text">host:puerto del servidor Yara</small>
+      <input type="text" id="server-addr" placeholder="192.168.1.100:5176" spellcheck="false" autocomplete="off">
+      <p class="field-hint">host:puerto del servidor Yara</p>
     </div>
 
-    <div class="form-group">
-      <label>
-        <input type="checkbox" id="auto-connect" checked>
-        Conectar autom&aacute;ticamente al iniciar
-      </label>
-    </div>
+    <label class="switch">
+      <input type="checkbox" id="auto-connect">
+      <span>Conectar automáticamente al iniciar</span>
+    </label>
 
     <div class="button-group">
       <button id="btn-connect" class="btn btn-primary">Conectar</button>
       <button id="btn-disconnect" class="btn btn-secondary" disabled>Desconectar</button>
     </div>
 
-    <div id="info-panel" class="info-panel hidden">
-      <div class="info-row">
-        <span class="info-label">Navegador:</span>
-        <span id="info-browser" class="info-value">-</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Uptime:</span>
-        <span id="info-uptime" class="info-value">-</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Token:</span>
-        <span id="info-token" class="info-value">-</span>
-      </div>
-    </div>
-
-    <div id="error-panel" class="error-panel hidden">
+    <div id="error-panel" class="notice notice-error hidden" role="alert">
       <span id="error-text"></span>
     </div>
   </div>

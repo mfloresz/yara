@@ -1,21 +1,22 @@
-import { getConfig, setConfig, getWorkerToken, setWorkerToken, clearWorkerToken } from '../shared/storage.js';
+import { getConfig, setConfig, getWorkerToken } from '../shared/storage.js';
+import { isSupportedUrl, yaraBaseUrl } from '../shared/supported-sites.js';
 
 const statusEl = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
+const statusServer = document.getElementById('status-server');
 const serverAddrInput = document.getElementById('server-addr');
 const autoConnectCheckbox = document.getElementById('auto-connect');
 const btnConnect = document.getElementById('btn-connect');
 const btnDisconnect = document.getElementById('btn-disconnect');
 const btnAuth = document.getElementById('btn-auth');
+const btnImport = document.getElementById('btn-import');
+const btnRefresh = document.getElementById('btn-refresh');
 const authPanel = document.getElementById('auth-panel');
-const infoPanel = document.getElementById('info-panel');
-const infoBrowser = document.getElementById('info-browser');
-const infoUptime = document.getElementById('info-uptime');
-const infoToken = document.getElementById('info-token');
+const importPanel = document.getElementById('import-panel');
+const importHost = document.getElementById('import-host');
+const challengePanel = document.getElementById('challenge-panel');
 const errorPanel = document.getElementById('error-panel');
 const errorText = document.getElementById('error-text');
-const challengePanel = document.getElementById('challenge-panel');
-const btnRefresh = document.getElementById('btn-refresh');
 
 const stateNames = {
   disconnected: 'Desconectado',
@@ -25,16 +26,17 @@ const stateNames = {
   unauthenticated: 'Sin autenticar',
 };
 
-let connectedAt = null;
 let challengeTabId = null;
 
 async function init() {
   const config = await getConfig();
   serverAddrInput.value = config.serverAddr;
   autoConnectCheckbox.checked = config.autoConnect;
+  statusServer.textContent = config.serverAddr;
 
   const tokenData = await getWorkerToken();
   updateAuthUI(tokenData);
+  renderImportAction();
 
   const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
   updateUI(response.state, response.connected, tokenData);
@@ -43,18 +45,21 @@ async function init() {
     if (msg.type === 'STATE_CHANGED') {
       getWorkerToken().then(td => updateUI(msg.state, null, td));
     }
-    if (msg.type === 'CHALLENGE_DETECTED') showChallenge(msg.url, msg.tabId);
-    if (msg.type === 'AUTH_COMPLETE') {
-      getWorkerToken().then(updateAuthUI);
+    if (msg.type === 'CHALLENGE_DETECTED') showChallenge(msg.tabId);
+    if (msg.type === 'auth_complete' || msg.type === 'AUTH_COMPLETE') {
+      getWorkerToken().then(async (td) => {
+        updateAuthUI(td);
+        const res = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+        updateUI(res.state, res.connected, td);
+      });
     }
   });
 }
 
-async function updateUI(state, connected, tokenData) {
-  if (!tokenData) tokenData = await getWorkerToken();
+function updateUI(state, connected, tokenData) {
   const hasToken = !!(tokenData && tokenData.token);
 
-  statusEl.className = `status-bar ${state}`;
+  statusEl.dataset.state = state;
   statusText.textContent = stateNames[state] || state;
 
   const isConnected = state === 'connected' || state === 'downloading' || connected;
@@ -72,68 +77,86 @@ async function updateUI(state, connected, tokenData) {
     btnConnect.disabled = isConnected;
     btnDisconnect.disabled = !isConnected;
   }
-
-  if (state === 'connected' || state === 'downloading') {
-    connectedAt = connectedAt || Date.now();
-    infoPanel.classList.remove('hidden');
-    updateInfo();
-  } else {
-    infoPanel.classList.add('hidden');
-    if (state === 'disconnected') connectedAt = null;
-  }
 }
 
-async function updateAuthUI(tokenData) {
+function updateAuthUI(tokenData) {
   if (tokenData && tokenData.token) {
-    infoToken.textContent = tokenData.token.substring(0, 8) + '...';
-    infoToken.title = 'Token activo';
-    btnAuth.textContent = 'Re-autenticar';
-    btnAuth.className = 'btn btn-secondary';
+    btnAuth.textContent = 'Volver a autenticar';
   } else {
-    infoToken.textContent = 'No configurado';
-    btnAuth.textContent = 'Autenticar con el Servidor';
-    btnAuth.className = 'btn btn-primary';
+    btnAuth.textContent = 'Autenticar con el servidor';
   }
 }
 
-function updateInfo() {
-  const ua = navigator.userAgent;
-  let browser = 'Chrome';
-  if (ua.includes('Firefox')) browser = 'Firefox';
-  else if (ua.includes('Edg/')) browser = 'Edge';
-  infoBrowser.textContent = browser;
-
-  if (connectedAt) {
-    const s = Math.floor((Date.now() - connectedAt) / 1000);
-    infoUptime.textContent = `${Math.floor(s / 60)}m ${s % 60}s`;
+// The context-menu entry only shows on supported sites, so the popup button
+// stays hidden everywhere else: the UI only offers actions it can perform.
+async function renderImportAction() {
+  const tab = await activeTab();
+  if (!tab || !isSupportedUrl(tab.url)) {
+    importPanel.classList.add('hidden');
+    return;
   }
+  importHost.textContent = new URL(tab.url).hostname.replace(/^www\./, '');
+  importPanel.classList.remove('hidden');
 }
 
-function showChallenge(url, tabId) {
+async function activeTab() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabs[0] || null;
+}
+
+function showChallenge(tabId) {
   challengeTabId = tabId;
   challengePanel.classList.remove('hidden');
 }
 
-setInterval(updateInfo, 1000);
+function showError(message) {
+  errorText.textContent = message;
+  errorPanel.classList.remove('hidden');
+}
+
+function clearError() {
+  errorPanel.classList.add('hidden');
+}
+
+btnImport.addEventListener('click', async () => {
+  const tab = await activeTab();
+  if (!tab || !isSupportedUrl(tab.url)) {
+    importPanel.classList.add('hidden');
+    return;
+  }
+  btnImport.disabled = true;
+  const res = await chrome.runtime.sendMessage({ type: 'IMPORT_URL', url: tab.url });
+  btnImport.disabled = false;
+  if (res && res.ok) {
+    window.close();
+  } else {
+    showError((res && res.error) || 'No se pudo abrir Yara con esta página');
+  }
+});
 
 btnAuth.addEventListener('click', async () => {
   const addr = serverAddrInput.value.trim();
   if (!addr) {
-    errorPanel.classList.remove('hidden');
-    errorText.textContent = 'Configura la dirección del servidor primero';
+    showError('Configura la dirección del servidor primero');
+    serverAddrInput.focus();
     return;
   }
-  
+
   await setConfig({ serverAddr: addr });
-  
+  statusServer.textContent = addr;
+
   const extId = chrome.runtime.id;
-  const authURL = browserWorkerHTTPURL(addr) + `/api/v1/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
+  const authURL = `${yaraBaseUrl(addr)}/api/v1/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
   chrome.tabs.create({ url: authURL });
 });
 
 btnConnect.addEventListener('click', async () => {
   const addr = serverAddrInput.value.trim();
-  if (!addr) return;
+  if (!addr) {
+    showError('Configura la dirección del servidor primero');
+    serverAddrInput.focus();
+    return;
+  }
 
   const tokenData = await getWorkerToken();
   if (!tokenData || !tokenData.token) {
@@ -141,8 +164,9 @@ btnConnect.addEventListener('click', async () => {
     return;
   }
 
-  errorPanel.classList.add('hidden');
+  clearError();
   await setConfig({ serverAddr: addr, autoConnect: autoConnectCheckbox.checked });
+  statusServer.textContent = addr;
   chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', config: { serverAddr: addr, autoConnect: autoConnectCheckbox.checked } });
   chrome.runtime.sendMessage({ type: 'CONNECT' });
 });
@@ -153,27 +177,15 @@ btnDisconnect.addEventListener('click', () => {
 
 btnRefresh.addEventListener('click', async () => {
   if (challengeTabId) {
-    try { await chrome.tabs.reload(challengeTabId); challengePanel.classList.add('hidden'); } catch {}
+    try { await chrome.tabs.reload(challengeTabId); challengePanel.classList.add('hidden'); } catch { /* ignore */ }
   }
 });
 
-function browserWorkerHTTPURL(serverAddr) {
-  const value = String(serverAddr || '').trim().replace(/\/$/, '');
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value;
-  }
-  if (value.startsWith('ws://')) {
-    return `http://${value.slice('ws://'.length)}`;
-  }
-  if (value.startsWith('wss://')) {
-    return `https://${value.slice('wss://'.length)}`;
-  }
-  return `http://${value}`;
-}
-
 serverAddrInput.addEventListener('change', () => {
   const addr = serverAddrInput.value.trim();
-  if (addr) setConfig({ serverAddr: addr });
+  if (!addr) return;
+  setConfig({ serverAddr: addr });
+  statusServer.textContent = addr;
 });
 
 autoConnectCheckbox.addEventListener('change', () => {

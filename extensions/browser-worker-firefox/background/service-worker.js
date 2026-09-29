@@ -1,6 +1,6 @@
 import { MessageType, JobStatus, WorkerState, createMessage, parseMessage } from '../shared/protocol.js';
 import { getConfig, setConfig, getWorkerToken } from '../shared/storage.js';
-import { SUPPORTED_SITE_PATTERNS, yaraBaseUrl } from '../shared/supported-sites.js';
+import { SUPPORTED_SITE_PATTERNS, isSupportedUrl, yaraBaseUrl } from '../shared/supported-sites.js';
 
 let ws = null;
 let state = WorkerState.DISCONNECTED;
@@ -191,6 +191,19 @@ function handleInternalMessage(msg, sender, sendResponse) {
       }
       sendResponse({ ok: true });
     });
+    return true;
+  }
+  if (msg.type === 'IMPORT_URL') {
+    // Same path as the context menu: the popup button is a second entry point
+    // to the same import flow, so it reuses openYaraWithUrl instead of
+    // duplicating the tab-reuse logic. The guard mirrors documentUrlPatterns.
+    if (!msg.url || !isSupportedUrl(msg.url)) {
+      sendResponse({ ok: false, error: 'sitio no soportado' });
+      return false;
+    }
+    openYaraWithUrl(msg.url)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
     return true;
   }
   if (msg.type === 'auth_complete') {

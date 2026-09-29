@@ -291,13 +291,10 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	}
 	dl := s.DownloaderFactory(job.OwnerID)
 	if len(opts.Chapters) == 0 {
+		// Nothing was fetched, so there is no request to space out: the job
+		// ends here rather than holding the origin keys for a pointless wait.
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "done"}); ue != nil {
 			slog.Error("update job status on no chapters", "jobId", job.ID, "error", ue)
-		}
-		if ctx.Err() == nil {
-			if err := dl.SleepBetweenChapters(ctx); err != nil {
-				return err
-			}
 		}
 		return nil
 	}
@@ -435,11 +432,6 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	if err := s.Store.RecalculateNovelStats(job.NovelID); err != nil {
 		slog.Error("failed to recalculate novel stats after download", "jobId", job.ID, "error", err)
 	}
-	if ctx.Err() == nil {
-		if err := dl.SleepBetweenChapters(ctx); err != nil {
-			return err
-		}
-	}
 	if ctx.Err() != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
 			"completedChapters": completed,
@@ -453,11 +445,38 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	if failed > 0 {
 		status = "failed"
 	}
-	return s.Store.UpdateJob(job.ID, map[string]interface{}{
+	// The chapters the last check flagged as new are now stored, so the
+	// "pending updates" flag must go back to zero or the UI keeps offering a
+	// download that would re-fetch nothing. Skipped for re-downloads (they
+	// refresh existing chapters, they don't consume pending ones) and for
+	// partial failures, where some flagged chapters never arrived.
+	if status == "done" && !opts.ReDownload {
+		if err := s.Store.ClearNovelPendingNewChapters(job.NovelID); err != nil {
+			slog.Warn("clear pending new chapters after download", "jobId", job.ID, "novelId", job.NovelID, "error", err)
+		}
+	}
+	if err := s.Store.UpdateJob(job.ID, map[string]interface{}{
 		"status":            status,
 		"completedChapters": completed,
 		"failedChapters":    failed,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Cooldown before finishJob releases the origin keys. It is kept only when
+	// another job is already queued for the same site: that is the one case
+	// where it spaces two requests, and the queued job cannot start until this
+	// one returns. With an empty queue the wait blocks nobody and only delays
+	// this job's own completion.
+	// ponytail: a job enqueued in the microseconds after this check starts with
+	// no gap at all; the upgrade path is a per-origin lastFetchAt timestamp and
+	// sleeping only the remaining time.
+	if ctx.Err() == nil && s.hasPendingWebJobForOrigins(job) {
+		if err := dl.SleepBetweenChapters(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // downloadChapterWithRetry downloads a single chapter, retrying transient

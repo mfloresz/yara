@@ -261,6 +261,72 @@ func TestCopyNovelPreservesCoverAndChapterContent(t *testing.T) {
 	}
 }
 
+func TestClearNovelPendingNewChaptersResetsCountAndKeepsCheckedAt(t *testing.T) {
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	users, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		t.Fatalf("find users collection: %v", err)
+	}
+	owner := core.NewRecord(users)
+	owner.Set("email", "clear-pending@example.com")
+	owner.Set("password", "secret123")
+	owner.Set("passwordConfirm", "secret123")
+	if err := app.Save(owner); err != nil {
+		t.Fatalf("save owner user: %v", err)
+	}
+
+	novels, err := app.FindCollectionByNameOrId(NovelsCollection)
+	if err != nil {
+		t.Fatalf("find novels collection: %v", err)
+	}
+	novel := core.NewRecord(novels)
+	novel.Set("owner", owner.Id)
+	novel.Set("source_language", "en")
+	novel.Set("target_language", "es")
+	novel.Set("source_title", "Clear Pending Novel")
+	novel.Set("status", "ongoing")
+	if err := app.Save(novel); err != nil {
+		t.Fatalf("save novel: %v", err)
+	}
+
+	if err := st.UpdateNovelCheckResult(novel.Id, "2026-01-02T03:04:05Z", 5); err != nil {
+		t.Fatalf("record check result: %v", err)
+	}
+	if err := st.ClearNovelPendingNewChapters(novel.Id); err != nil {
+		t.Fatalf("clear pending new chapters: %v", err)
+	}
+
+	after, err := st.GetNovelAccessible(owner.Id, novel.Id)
+	if err != nil {
+		t.Fatalf("reload novel: %v", err)
+	}
+	if after.LastCheckNewChapters != 0 {
+		t.Fatalf("expected pending new chapters to be 0, got %d", after.LastCheckNewChapters)
+	}
+	if after.LastCheckedAt != "2026-01-02T03:04:05Z" {
+		t.Fatalf("expected last_checked_at to be preserved, got %q", after.LastCheckedAt)
+	}
+
+	if err := st.ClearNovelPendingNewChapters("missing-novel-id"); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound for unknown novel, got %v", err)
+	}
+}
+
 func TestClampTextTruncatesAndStrips(t *testing.T) {
 	got := clampText("  hello world  ", 5)
 	if got != "hello" {

@@ -476,8 +476,10 @@ watch(activeJobs, (current, prev) => {
         if (completedJob?.status === "failed") message.error(`${novel.sourceTitle}: Error al verificar`);
         else if (newChapters > 0) message.success(`${novel.sourceTitle}: ${newChapters} capítulos nuevos`);
       } else {
+        // Also refresh the check fields: a download consumes the "new chapters"
+        // the last check flagged, and canUpdate is recomputed server-side.
         api.novels.get(novelId).then((updated) => {
-          if (updated) updateNovelLocal(novelId, { chapterCount: updated.chapterCount, translatedCount: updated.translatedCount });
+          if (updated) updateNovelLocal(novelId, { chapterCount: updated.chapterCount, translatedCount: updated.translatedCount, lastCheckedAt: updated.lastCheckedAt, lastCheckNewChapters: updated.lastCheckNewChapters, canUpdate: updated.canUpdate });
         }).catch(() => {});
       }
     }
