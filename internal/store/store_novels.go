@@ -103,13 +103,14 @@ const (
 	SearchFieldTitle  = "title"
 	SearchFieldAuthor = "author"
 	SearchFieldSeries = "series"
+	SearchFieldTags   = "tags"
 )
 
-// normalizeSearchField validates a ?field= value, mapping unknown values to
-// the "all fields" default instead of erroring (same leniency as shared/progress).
+// normalizeSearchField validates a ?field= value, mapping unknown values to the
+// "all fields" default instead of erroring (same leniency as shared/progress).
 func normalizeSearchField(field string) string {
 	switch field {
-	case SearchFieldTitle, SearchFieldAuthor, SearchFieldSeries:
+	case SearchFieldTitle, SearchFieldAuthor, SearchFieldSeries, SearchFieldTags:
 		return field
 	default:
 		return SearchFieldAll
@@ -137,29 +138,29 @@ func normalizeListNovelOptions(opts ListNovelOptions) ListNovelOptions {
 }
 
 // buildScopeFilter returns the visibility scope clause (shared filter) plus the
-// progress clause. The scope is parenthesized so the appended && progress
-// clause cannot bind to only one arm of the || scope (PocketBase gives &&
-// higher precedence than ||). The :owner param must be provided in dbx.Params.
+// progress clause as raw SQL (AND/OR, not fexpr &&/||) with the :owner param
+// bound through dbx.Params. The scope is parenthesized so an appended AND
+// progress clause cannot bind to only one arm of the OR scope.
 func buildScopeFilter(opts ListNovelOptions) string {
 	var scope string
 	switch opts.Shared {
 	case "own":
-		scope = "(owner = {:owner})"
+		scope = "owner = {:owner}"
 	case "shared":
-		scope = "(owner != {:owner} && is_public = true)"
+		scope = "owner != {:owner} AND is_public = 1"
 	default:
-		scope = "(owner = {:owner} || is_public = true)"
+		scope = "(owner = {:owner} OR is_public = 1)"
 	}
 	switch opts.Progress {
 	case "translated":
 		// A novel whose source and target languages match needs no translation, so
 		// translated_count stays at 0 forever and it would never satisfy
 		// translated_count = chapter_count. Treat it as translated by definition.
-		return scope + " && chapter_count > 0 && (source_language = target_language || translated_count = chapter_count)"
+		return scope + " AND chapter_count > 0 AND (source_language = target_language OR translated_count = chapter_count)"
 	case "completed":
-		return scope + " && status = 'completed'"
+		return scope + " AND status = 'completed'"
 	case "ongoing":
-		return scope + " && status = 'ongoing'"
+		return scope + " AND status = 'ongoing'"
 	}
 	return scope
 }
@@ -196,13 +197,161 @@ func filterNovelsByStringFields(novels []Novel, value string, pick func(Novel) [
 	return out
 }
 
+// novelListColumns is the narrow column set behind ListNovels/SearchNovels.
+// The heavy per-novel blobs (glossary can reach several MB, plus the 8 prompt
+// fields, notes, ai/translation options, cleanup rules and custom commands)
+// are never displayed by list/search/suggestion flows — the library grid and
+// the search dropdown request sparse fieldsets without them — so hydrating
+// them turned every library render into a full-table blob read. Single-novel
+// endpoints (GET /novels/{id}, POST /novels) keep full record hydration and
+// still return the heavy fields. Descriptions are kept: the default (no
+// ?fields=) list response includes them and they are small in practice.
+// One entry per column: dbx quotes each Select() argument as a whole column
+// expression, so a multi-column string would break the query.
+var novelListColumns = []string{
+	"id", "owner", "is_public",
+	"source_language", "target_language",
+	"source_title", "source_author", "source_series", "source_number",
+	"target_title", "target_author", "target_series", "target_number",
+	"source_description", "target_description",
+	"status", "tags", "url", "cover", "thumbnail",
+	"chapter_count", "translated_count", "completed_count",
+	"original_char_count", "translated_char_count", "refined_char_count",
+	"total_char_count", "max_chapter_order",
+	"last_checked_at", "last_check_new_chapters",
+	"created", "updated",
+}
+
+// novelListRow mirrors novelListColumns for dbx struct scanning. Numerics and
+// booleans are scanned as float64 because SQLite NUMERIC values come back with
+// INTEGER or REAL storage class depending on the value.
+type novelListRow struct {
+	ID                  string  `db:"id"`
+	Owner               string  `db:"owner"`
+	IsPublic            float64 `db:"is_public"`
+	SourceLanguage      string  `db:"source_language"`
+	TargetLanguage      string  `db:"target_language"`
+	SourceTitle         string  `db:"source_title"`
+	SourceAuthor        string  `db:"source_author"`
+	SourceSeries        string  `db:"source_series"`
+	SourceNumber        string  `db:"source_number"`
+	TargetTitle         string  `db:"target_title"`
+	TargetAuthor        string  `db:"target_author"`
+	TargetSeries        string  `db:"target_series"`
+	TargetNumber        string  `db:"target_number"`
+	SourceDescription   string  `db:"source_description"`
+	TargetDescription   string  `db:"target_description"`
+	Status              string  `db:"status"`
+	Tags                string  `db:"tags"`
+	URL                 string  `db:"url"`
+	Cover               string  `db:"cover"`
+	Thumbnail           string  `db:"thumbnail"`
+	ChapterCount        float64 `db:"chapter_count"`
+	TranslatedCount     float64 `db:"translated_count"`
+	CompletedCount      float64 `db:"completed_count"`
+	OriginalCharCount   float64 `db:"original_char_count"`
+	TranslatedCharCount float64 `db:"translated_char_count"`
+	RefinedCharCount    float64 `db:"refined_char_count"`
+	TotalCharCount      float64 `db:"total_char_count"`
+	MaxChapterOrder     float64 `db:"max_chapter_order"`
+	LastCheckedAt       string  `db:"last_checked_at"`
+	LastCheckNewChapters float64 `db:"last_check_new_chapters"`
+	Created             string  `db:"created"`
+	Updated             string  `db:"updated"`
+}
+
+// firstFileName extracts the first file name from a PocketBase file-field
+// column, which stores either a JSON array of names or a bare filename.
+func firstFileName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil || len(names) == 0 {
+		return raw
+	}
+	return names[0]
+}
+
+func novelFromListRow(row novelListRow) Novel {
+	coverFile := firstFileName(row.Cover)
+	thumbFile := firstFileName(row.Thumbnail)
+	return Novel{
+		ID:                      row.ID,
+		OwnerID:                 row.Owner,
+		SourceLanguage:          row.SourceLanguage,
+		TargetLanguage:          row.TargetLanguage,
+		SourceTitle:             row.SourceTitle,
+		SourceAuthor:            row.SourceAuthor,
+		SourceDescription:       row.SourceDescription,
+		SourceSeries:            row.SourceSeries,
+		SourceNumber:            row.SourceNumber,
+		TargetTitle:             row.TargetTitle,
+		TargetAuthor:            row.TargetAuthor,
+		TargetDescription:       row.TargetDescription,
+		TargetSeries:            row.TargetSeries,
+		TargetNumber:            row.TargetNumber,
+		Glossary:                "[]",
+		AIOptions:               "{}",
+		TranslationOptions:      "{}",
+		CleanupRules:            "[]",
+		URL:                     row.URL,
+		Status:                  normalizeNovelStatus(row.Status),
+		Tags:                    jsonString(parseNovelTagsJSON(row.Tags), "[]"),
+		CoverFile:               coverFile,
+		CoverPath:               novelCoverURL(row.ID, coverFile),
+		ThumbnailFile:           thumbFile,
+		ThumbnailPath:           novelCoverURL(row.ID, thumbFile),
+		IsPublic:                row.IsPublic != 0,
+		ChapterCount:            asInt(row.ChapterCount, 0),
+		TranslatedCount:         asInt(row.TranslatedCount, 0),
+		CompletedCount:          asInt(row.CompletedCount, 0),
+		OriginalCharCount:       asInt(row.OriginalCharCount, 0),
+		TranslatedCharCount:     asInt(row.TranslatedCharCount, 0),
+		RefinedCharCount:        asInt(row.RefinedCharCount, 0),
+		TotalCharCount:          asInt(row.TotalCharCount, 0),
+		MaxChapterOrder:         asInt(row.MaxChapterOrder, 0),
+		LastCheckedAt:           row.LastCheckedAt,
+		LastCheckNewChapters:    asInt(row.LastCheckNewChapters, 0),
+		CreatedAt:               row.Created,
+		UpdatedAt:               row.Updated,
+	}
+}
+
+// findNovelListRows runs one projected list query. where is raw SQL with
+// {:name} placeholders; limit 0 means unbounded.
+func (s *Store) findNovelListRows(where string, params dbx.Params, limit, offset int, orderBys ...string) ([]Novel, error) {
+	query := s.App.DB().
+		Select(novelListColumns...).
+		From(NovelsCollection).
+		Where(dbx.NewExp(where, params)).
+		OrderBy(orderBys...)
+	if limit > 0 {
+		query = query.Limit(int64(limit))
+	}
+	if offset > 0 {
+		query = query.Offset(int64(offset))
+	}
+	rows := []novelListRow{}
+	if err := query.All(&rows); err != nil {
+		return nil, err
+	}
+	out := make([]Novel, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, novelFromListRow(row))
+	}
+	return out, nil
+}
+
 func (s *Store) ListNovels(userID string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
 	limit, offset = normalizeListPagination(limit, offset)
 	opts = normalizeListNovelOptions(opts)
 
-	filter := buildScopeFilter(opts)
+	where := buildScopeFilter(opts)
+	params := dbx.Params{"owner": userID}
 
 	// Tag/author/series filtering is Go-level post-filtering over the full
 	// scope: running it after the DB offset would leave holes in pages and make
@@ -210,34 +359,33 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 	if opts.Tag == "" && opts.Author == "" && opts.Series == "" && sortField == string(NovelSortCreated) {
 		// DB-level sort keeps offset pagination consistent for arbitrarily large libraries.
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
-		dbSort := "-created"
+		dbSort := "created DESC"
 		if sortOrder == SortOrderDesc {
-			dbSort = "created"
+			dbSort = "created ASC"
 		}
 		// Request limit+1 to detect whether more results exist.
-		fetchLimit := limit + 1
-		records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, dbSort, fetchLimit, offset, dbx.Params{"owner": userID})
+		page, err := s.findNovelListRows(where, params, limit+1, offset, dbSort)
 		if err != nil {
 			return nil, false, err
 		}
-		hasMore := len(records) > limit
+		hasMore := len(page) > limit
 		if hasMore {
-			records = records[:limit]
+			page = page[:limit]
 		}
-		out := s.novelsFromRecords(records)
-		s.populateLastReadAt(out, userID)
-		return out, hasMore, nil
+		s.populateLastReadAt(page, userID)
+		return page, hasMore, nil
 	}
 
 	// title and lastRead depend on display-level data (target-or-source title and
 	// per-user reading progress), so sort the full result set in memory (unbounded
 	// fetch) and slice the sorted window. Pages stay globally consistent for the
-	// same query, and all novels are reachable regardless of library size.
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", 0, 0, dbx.Params{"owner": userID})
+	// same query, and all novels are reachable regardless of library size. Rows
+	// use the narrow list projection, so the unbounded fetch no longer
+	// transfers each novel's glossary/prompts.
+	all, err := s.findNovelListRows(where, params, 0, 0, "created DESC")
 	if err != nil {
 		return nil, false, err
 	}
-	all := s.novelsFromRecords(records)
 	s.populateLastReadAt(all, userID)
 	if opts.Tag != "" {
 		all = filterNovelsByTag(all, opts.Tag)
@@ -257,11 +405,12 @@ func (s *Store) ListNovels(userID string, limit int, offset int, sortField strin
 	return page, hasMore, nil
 }
 
-// SearchNovels searches novels by title, author, or series matching the given query.
-// opts.SearchField scopes the match: "title" (source/target title), "author"
-// (source/target author), "series" (source/target series), or "all" (default:
-// title + author + series). Supports pagination via limit/offset, scoped to
-// novels the user owns or are public.
+// SearchNovels searches novels by title, author, series, or tags matching the
+// given query. opts.SearchField scopes the match: "title" (source/target
+// title), "author" (source/target author), "series" (source/target series),
+// "tags" (tag list), or "all" (default: title + author + series + tags).
+// Supports pagination via limit/offset, scoped to novels the user owns or are
+// public.
 func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortField string, sortOrder string, opts ListNovelOptions) ([]Novel, bool, error) {
 	sortField = string(normalizeNovelSortField(sortField))
 	sortOrder = normalizeNovelSortOrder(sortOrder)
@@ -271,45 +420,49 @@ func (s *Store) SearchNovels(userID, query string, limit int, offset int, sortFi
 		offset = 0
 	}
 
-	// Search across title, author, and series fields (both source and target)
-	// Note: field names must match the schema exactly (snake_case, not camelCase)
-	matchClause := "(source_title ~ {:q} || source_author ~ {:q} || source_series ~ {:q} || " +
-		"target_title ~ {:q} || target_author ~ {:q} || target_series ~ {:q})"
+	// Search across title, author, series, and tags fields (source and target
+	// variants). Field names must match the schema exactly. LIKE mirrors the
+	// semantics of the previous fexpr `~` operator (case-insensitive for ASCII,
+	// unescaped %).
+	like := "%" + query + "%"
+	matchClause := "(source_title LIKE {:like} OR target_title LIKE {:like} OR " +
+		"source_author LIKE {:like} OR target_author LIKE {:like} OR " +
+		"source_series LIKE {:like} OR target_series LIKE {:like} OR tags LIKE {:like})"
 	switch opts.SearchField {
 	case SearchFieldTitle:
-		matchClause = "(source_title ~ {:q} || target_title ~ {:q})"
+		matchClause = "(source_title LIKE {:like} OR target_title LIKE {:like})"
 	case SearchFieldAuthor:
-		matchClause = "(source_author ~ {:q} || target_author ~ {:q})"
+		matchClause = "(source_author LIKE {:like} OR target_author LIKE {:like})"
 	case SearchFieldSeries:
-		matchClause = "(source_series ~ {:q} || target_series ~ {:q})"
+		matchClause = "(source_series LIKE {:like} OR target_series LIKE {:like})"
+	case SearchFieldTags:
+		matchClause = "tags LIKE {:like}"
 	}
-	filter := buildScopeFilter(opts) + " && " + matchClause
+	where := buildScopeFilter(opts) + " AND " + matchClause
+	params := dbx.Params{"owner": userID, "like": like}
 
 	if opts.Tag == "" && opts.Author == "" && opts.Series == "" && sortField == string(NovelSortCreated) {
 		// The UI treats "asc" as most-recent-first for created, so asc maps to -created.
-		dbSort := "-created"
+		dbSort := "created DESC"
 		if sortOrder == SortOrderDesc {
-			dbSort = "created"
+			dbSort = "created ASC"
 		}
-		fetchLimit := limit + 1
-		records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, dbSort, fetchLimit, offset, dbx.Params{"owner": userID, "q": query})
+		page, err := s.findNovelListRows(where, params, limit+1, offset, dbSort)
 		if err != nil {
 			return nil, false, err
 		}
-		hasMore := len(records) > limit
+		hasMore := len(page) > limit
 		if hasMore {
-			records = records[:limit]
+			page = page[:limit]
 		}
-		out := s.novelsFromRecords(records)
-		s.populateLastReadAt(out, userID)
-		return out, hasMore, nil
+		s.populateLastReadAt(page, userID)
+		return page, hasMore, nil
 	}
 
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, filter, "-created", 0, 0, dbx.Params{"owner": userID, "q": query})
+	all, err := s.findNovelListRows(where, params, 0, 0, "created DESC")
 	if err != nil {
 		return nil, false, err
 	}
-	all := s.novelsFromRecords(records)
 	s.populateLastReadAt(all, userID)
 	if opts.Tag != "" {
 		all = filterNovelsByTag(all, opts.Tag)
@@ -417,35 +570,28 @@ func compareTitleStrings(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// novelsFromRecords converts PocketBase records to Novel structs.
-func (s *Store) novelsFromRecords(records []*core.Record) []Novel {
-	out := make([]Novel, 0, len(records))
-	for _, record := range records {
-		out = append(out, s.novelFromRecord(record))
-	}
-	return out
-}
-
 // populateLastReadAt fetches reading progress for all novels and fills LastReadAt.
+// Narrow projection (novel, updated): the previous version hydrated every
+// progress record of the user on every library listing.
 func (s *Store) populateLastReadAt(novels []Novel, userID string) {
 	if len(novels) == 0 {
 		return
 	}
-	progressRecords, err := s.App.FindRecordsByFilter(
-		ReadingProgressCollection,
-		"user = {:user}",
-		"-updated",
-		0, 0,
-		dbx.Params{"user": userID},
-	)
+	rows := []struct {
+		Novel   string `db:"novel"`
+		Updated string `db:"updated"`
+	}{}
+	err := s.App.DB().Select("novel", "updated").From(ReadingProgressCollection).
+		Where(dbx.NewExp("user = {:user}", dbx.Params{"user": userID})).
+		OrderBy("updated DESC").
+		All(&rows)
 	if err != nil {
 		return
 	}
-	lastReadMap := make(map[string]string)
-	for _, pr := range progressRecords {
-		novelID := pr.GetString("novel")
-		if _, exists := lastReadMap[novelID]; !exists {
-			lastReadMap[novelID] = pr.GetString("updated")
+	lastReadMap := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if _, exists := lastReadMap[row.Novel]; !exists {
+			lastReadMap[row.Novel] = row.Updated
 		}
 	}
 	for i := range novels {
@@ -684,14 +830,22 @@ func (s *Store) ListNovelTagSuggestions(userID, query string, limit int) ([]stri
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner}", "-updated", 5000, 0, dbx.Params{"owner": userID})
-	if err != nil {
+	// Narrow projection: only the tags column is read, instead of hydrating up
+	// to 5000 full novel records (glossary and prompts included).
+	rows := []struct {
+		Tags string `db:"tags"`
+	}{}
+	if err := s.App.DB().Select("tags").From(NovelsCollection).
+		Where(dbx.NewExp("owner = {:owner}", dbx.Params{"owner": userID})).
+		OrderBy("updated DESC").
+		Limit(5000).
+		All(&rows); err != nil {
 		return nil, err
 	}
 	query = strings.TrimSpace(query)
 	seen := make(map[string]string)
-	for _, record := range records {
-		for _, tag := range parseNovelTagsJSON(record.GetString("tags")) {
+	for _, row := range rows {
+		for _, tag := range parseNovelTagsJSON(row.Tags) {
 			if query != "" && !strings.Contains(normalizeTagKey(tag), normalizeTagKey(query)) {
 				continue
 			}
@@ -726,15 +880,23 @@ func (s *Store) ListNovelSeriesSuggestions(userID, query string, limit int) ([]s
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner}", "-updated", 5000, 0, dbx.Params{"owner": userID})
-	if err != nil {
+	// Narrow projection: only the two series columns are read.
+	rows := []struct {
+		SourceSeries string `db:"source_series"`
+		TargetSeries string `db:"target_series"`
+	}{}
+	if err := s.App.DB().Select("source_series", "target_series").From(NovelsCollection).
+		Where(dbx.NewExp("owner = {:owner}", dbx.Params{"owner": userID})).
+		OrderBy("updated DESC").
+		Limit(5000).
+		All(&rows); err != nil {
 		return nil, err
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
 	seen := make(map[string]string)
-	for _, record := range records {
-		for _, field := range []string{"source_series", "target_series"} {
-			series := strings.TrimSpace(record.GetString(field))
+	for _, row := range rows {
+		for _, field := range []string{row.SourceSeries, row.TargetSeries} {
+			series := strings.TrimSpace(field)
 			if series == "" {
 				continue
 			}
@@ -772,15 +934,23 @@ func (s *Store) ListNovelAuthorSuggestions(userID, query string, limit int) ([]s
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner}", "-updated", 5000, 0, dbx.Params{"owner": userID})
-	if err != nil {
+	// Narrow projection: only the two author columns are read.
+	rows := []struct {
+		SourceAuthor string `db:"source_author"`
+		TargetAuthor string `db:"target_author"`
+	}{}
+	if err := s.App.DB().Select("source_author", "target_author").From(NovelsCollection).
+		Where(dbx.NewExp("owner = {:owner}", dbx.Params{"owner": userID})).
+		OrderBy("updated DESC").
+		Limit(5000).
+		All(&rows); err != nil {
 		return nil, err
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
 	seen := make(map[string]string)
-	for _, record := range records {
-		for _, field := range []string{"source_author", "target_author"} {
-			author := strings.TrimSpace(record.GetString(field))
+	for _, row := range rows {
+		for _, field := range []string{row.SourceAuthor, row.TargetAuthor} {
+			author := strings.TrimSpace(field)
 			if author == "" {
 				continue
 			}
@@ -872,12 +1042,29 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The novel metadata (glossary, descriptions, prompts, ...) is global to
+	// the novel and was fully copied above: the chapter loop must not re-read
+	// it. Positions are taken verbatim from the source (dense-fallback for
+	// legacy unpositioned rows) and every chapter is inserted in one
+	// transaction — the previous loop went through UpsertChapterWithoutStats,
+	// re-hydrating the full novel record and the highest-positioned chapter
+	// once per chapter.
+	useSourcePositions := true
 	for _, chapter := range chapters {
-		chapter.ID = ""
-		chapter.NovelID = clone.ID
-		if _, err := s.UpsertChapterWithoutStats(userID, clone.ID, &chapter); err != nil {
-			return nil, err
+		if chapter.Position <= 0 {
+			useSourcePositions = false
+			break
 		}
+	}
+	for i := range chapters {
+		chapters[i].ID = ""
+		chapters[i].NovelID = clone.ID
+		if !useSourcePositions {
+			chapters[i].Position = i + 1
+		}
+	}
+	if err := s.insertChaptersBulk(clone.ID, chapters); err != nil {
+		return nil, err
 	}
 	if err := s.RecalculateNovelStats(clone.ID); err != nil {
 		return nil, err
@@ -916,16 +1103,20 @@ func (s *Store) ImportEpubNovel(input *ImportEpubNovelInput) (*ImportEpubNovelRe
 			return nil, err
 		}
 	}
+	// Build all chapters first, then insert them in one transaction: per-chapter
+	// upserts re-read the novel and recalculated positions once per chapter.
+	chapterInputs := make([]Chapter, 0, len(input.Chapters))
 	for idx, chapter := range input.Chapters {
-		_, err := s.UpsertChapterWithoutStats(input.OwnerID, resultNovel.ID, &Chapter{
+		chapterInputs = append(chapterInputs, Chapter{
 			ChapterOrder:    idx + 1,
+			Position:        idx + 1,
 			Title:           clampText(chapter.Title, 500),
 			OriginalContent: chapter.Content,
 			Status:          "pending",
 		})
-		if err != nil {
-			return nil, err
-		}
+	}
+	if err := s.insertChaptersBulk(resultNovel.ID, chapterInputs); err != nil {
+		return nil, err
 	}
 	if err := s.RecalculateNovelStats(resultNovel.ID); err != nil {
 		return nil, err
@@ -1041,12 +1232,16 @@ func (s *Store) ImportZipNovel(input *ImportZipNovelInput) (*ImportZipNovelResul
 			return nil, err
 		}
 	}
+	// Build all chapters first, then insert them in one transaction (see
+	// ImportEpubNovel). Source order 0 falls back to the dense index, matching
+	// the previous auto-append behavior.
+	chapterInputs := make([]Chapter, 0, len(input.Chapters))
 	for _, chapter := range input.Chapters {
 		status := "pending"
 		if strings.TrimSpace(chapter.TranslatedContent) != "" {
 			status = "translated"
 		}
-		_, err := s.UpsertChapterWithoutStats(input.OwnerID, resultNovel.ID, &Chapter{
+		chapterInputs = append(chapterInputs, Chapter{
 			ChapterOrder:      chapter.Order,
 			Title:             chapter.Title,
 			TranslatedTitle:   chapter.TranslatedTitle,
@@ -1054,9 +1249,15 @@ func (s *Store) ImportZipNovel(input *ImportZipNovelInput) (*ImportZipNovelResul
 			TranslatedContent: chapter.TranslatedContent,
 			Status:            status,
 		})
-		if err != nil {
-			return nil, err
+	}
+	for i := range chapterInputs {
+		chapterInputs[i].Position = i + 1
+		if chapterInputs[i].ChapterOrder == 0 {
+			chapterInputs[i].ChapterOrder = i + 1
 		}
+	}
+	if err := s.insertChaptersBulk(resultNovel.ID, chapterInputs); err != nil {
+		return nil, err
 	}
 	if err := s.RecalculateNovelStats(resultNovel.ID); err != nil {
 		return nil, err

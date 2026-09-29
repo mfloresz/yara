@@ -7,6 +7,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 	"translator-server/internal/secure"
 )
 
@@ -594,5 +595,248 @@ func TestRunChapterPositionsMigrationBackfillsAndIsIdempotent(t *testing.T) {
 	}
 	if fresh.GetIndex("idx_chapters_novel_position_unique") == "" {
 		t.Fatal("expected migration to create the unique chapter position index")
+	}
+}
+
+// setupChaptersTestEnv boots a real PocketBase into a temp dir and creates an
+// owner + novel, returning the store, app, owner, novel and chapters collection.
+func setupChaptersTestEnv(t *testing.T, email, title string) (*Store, *pocketbase.PocketBase, *core.Record, *core.Record, *core.Collection) {
+	t.Helper()
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	users, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		t.Fatalf("find users collection: %v", err)
+	}
+	owner := core.NewRecord(users)
+	owner.Set("email", email)
+	owner.Set("password", "secret123")
+	owner.Set("passwordConfirm", "secret123")
+	if err := app.Save(owner); err != nil {
+		t.Fatalf("save owner user: %v", err)
+	}
+	novels, err := app.FindCollectionByNameOrId(NovelsCollection)
+	if err != nil {
+		t.Fatalf("find novels collection: %v", err)
+	}
+	novel := core.NewRecord(novels)
+	novel.Set("owner", owner.Id)
+	novel.Set("source_language", "en")
+	novel.Set("target_language", "es")
+	novel.Set("source_title", title)
+	if err := app.Save(novel); err != nil {
+		t.Fatalf("save novel: %v", err)
+	}
+	chapters, err := app.FindCollectionByNameOrId(ChaptersCollection)
+	if err != nil {
+		t.Fatalf("find chapters collection: %v", err)
+	}
+	return st, app, owner, novel, chapters
+}
+
+// Guards the aggregate SQL behind RecalculateNovelStats: excluded chapters
+// must count toward max_chapter_order only, and the visible counters/char
+// sums must skip them — the exact semantics of the record loop it replaced.
+func TestRecalculateNovelStatsSkipsExcludedChapters(t *testing.T) {
+	st, app, _, novel, chapters := setupChaptersTestEnv(t, "stats-test@example.com", "Stats Novel")
+
+	addChapter := func(order int, position int, status string, excluded bool, orig, trans, refined int) {
+		rec := core.NewRecord(chapters)
+		rec.Set("novel", novel.Id)
+		rec.Set("chapter_order", order)
+		rec.Set("position", position)
+		rec.Set("excluded", excluded)
+		rec.Set("status", status)
+		rec.Set("original_content", strings.Repeat("a", orig))
+		rec.Set("translated_content", strings.Repeat("b", trans))
+		rec.Set("refined_content", strings.Repeat("c", refined))
+		rec.Set("original_char_count", orig)
+		rec.Set("translated_char_count", trans)
+		rec.Set("refined_char_count", refined)
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save chapter %d: %v", order, err)
+		}
+	}
+	addChapter(1, 1, "translated", false, 100, 80, 0)
+	addChapter(2, 2, "refined", false, 200, 150, 140)
+	addChapter(3, 3, "pending", true, 500, 0, 0)
+
+	if err := st.RecalculateNovelStats(novel.Id); err != nil {
+		t.Fatalf("recalculate: %v", err)
+	}
+	updated, err := app.FindRecordById(NovelsCollection, novel.Id)
+	if err != nil {
+		t.Fatalf("reload novel: %v", err)
+	}
+	assertField := func(name string, want float64) {
+		t.Helper()
+		if got := updated.GetFloat(name); got != want {
+			t.Fatalf("%s = %v, want %v", name, got, want)
+		}
+	}
+	assertField("chapter_count", 2)
+	assertField("translated_count", 2)
+	assertField("completed_count", 1)
+	assertField("original_char_count", 300)
+	assertField("translated_char_count", 230)
+	assertField("refined_char_count", 140)
+	assertField("total_char_count", 670)
+	assertField("max_chapter_order", 3)
+}
+
+// Guards the projected summary queries: flags/counts/neighbors must match
+// what the full-record hydration produced before, without selecting content.
+func TestChapterSummariesProjection(t *testing.T) {
+	st, app, owner, novel, chapters := setupChaptersTestEnv(t, "summary-test@example.com", "Summary Novel")
+
+	addChapter := func(order int, title string, orig, trans, refined string, excluded bool) *core.Record {
+		rec := core.NewRecord(chapters)
+		rec.Set("novel", novel.Id)
+		rec.Set("chapter_order", order)
+		rec.Set("position", order)
+		rec.Set("excluded", excluded)
+		rec.Set("title", title)
+		rec.Set("original_content", orig)
+		rec.Set("translated_content", trans)
+		rec.Set("refined_content", refined)
+		rec.Set("original_char_count", len(orig))
+		rec.Set("translated_char_count", len(trans))
+		rec.Set("refined_char_count", len(refined))
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save chapter %d: %v", order, err)
+		}
+		return rec
+	}
+	one := addChapter(1, "One", "abc", "defg", "", false)
+	addChapter(2, "Two", "", "", "", false)
+	addChapter(3, "Three", "xyz", "", "", true)
+
+	visible, err := st.ListAllChapterSummariesAccessible(owner.Id, novel.Id)
+	if err != nil {
+		t.Fatalf("list summaries: %v", err)
+	}
+	if len(visible) != 2 {
+		t.Fatalf("expected 2 visible summaries (excluded hidden), got %d", len(visible))
+	}
+	first, second := visible[0], visible[1]
+	if first.Title != "One" || second.Title != "Two" {
+		t.Fatalf("unexpected order: %q then %q", first.Title, second.Title)
+	}
+	if !first.HasOriginalContent || !first.HasTranslatedContent || first.HasRefinedContent {
+		t.Fatalf("chapter One flags wrong: %+v", first)
+	}
+	if first.OriginalChars != 3 || first.TranslatedChars != 4 || first.RefinedChars != 0 {
+		t.Fatalf("chapter One char counts wrong: %+v", first)
+	}
+	if first.Position != 1 || second.Position != 2 {
+		t.Fatalf("positions wrong: %d, %d", first.Position, second.Position)
+	}
+	if _, err := types.ParseDateTime(first.CreatedAt); err != nil {
+		t.Fatalf("CreatedAt %q does not parse as PB datetime: %v", first.CreatedAt, err)
+	}
+	if second.HasOriginalContent || second.HasTranslatedContent || second.HasRefinedContent {
+		t.Fatalf("chapter Two should have no content flags: %+v", second)
+	}
+	if second.Status != "pending" {
+		t.Fatalf("empty status should default to pending, got %q", second.Status)
+	}
+
+	excluded, err := st.ListExcludedChapterSummariesAccessible(owner.Id, novel.Id)
+	if err != nil {
+		t.Fatalf("list excluded summaries: %v", err)
+	}
+	if len(excluded) != 1 || excluded[0].Title != "Three" || !excluded[0].HasOriginalContent {
+		t.Fatalf("excluded summaries wrong: %+v", excluded)
+	}
+
+	prev, next, err := st.GetChapterNeighborsAccessible(owner.Id, novel.Id, one.Id)
+	if err != nil {
+		t.Fatalf("neighbors: %v", err)
+	}
+	if prev != nil || next == nil || next.Title != "Two" {
+		t.Fatalf("neighbors of One wrong: prev=%v next=%v", prev, next)
+	}
+	prev, next, err = st.GetChapterNeighborsAccessible(owner.Id, novel.Id, next.ID)
+	if err != nil {
+		t.Fatalf("neighbors of Two: %v", err)
+	}
+	if prev == nil || prev.Title != "One" || next != nil {
+		t.Fatalf("neighbors of Two wrong: prev=%v next=%v", prev, next)
+	}
+}
+
+// Guards the narrow job-progress UPDATE: a running job gets its progress
+// columns persisted without a full row rewrite, and a cancelled job ignores
+// mid-flight writes (mirroring UpdateJob's allowlist — only the final
+// bookkeeping may touch a cancelled job).
+func TestUpdateJobProgressFastCancelledGuard(t *testing.T) {
+	st, app, owner, novel, _ := setupChaptersTestEnv(t, "jobprogress-test@example.com", "Progress Novel")
+
+	jobs, err := app.FindCollectionByNameOrId(JobsCollection)
+	if err != nil {
+		t.Fatalf("find jobs collection: %v", err)
+	}
+	createJob := func(status string) *core.Record {
+		rec := core.NewRecord(jobs)
+		rec.Set("owner", owner.Id)
+		rec.Set("novel", novel.Id)
+		rec.Set("status", status)
+		rec.Set("operation", "translate")
+		rec.Set("total_chapters", 3)
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save job %s: %v", status, err)
+		}
+		return rec
+	}
+	running := createJob("running")
+	cancelled := createJob("cancelled")
+
+	if err := st.UpdateJobProgressFast(running.Id, map[string]any{
+		"completedChapters":       2,
+		"failedChapters":          1,
+		"autoSegmentChapterTitle": "Capítulo 2",
+	}); err != nil {
+		t.Fatalf("update running job progress: %v", err)
+	}
+	fresh, err := app.FindRecordById(JobsCollection, running.Id)
+	if err != nil {
+		t.Fatalf("reload running job: %v", err)
+	}
+	if got := fresh.GetFloat("completed_chapters"); got != 2 {
+		t.Fatalf("running completed_chapters = %v, want 2", got)
+	}
+	if got := fresh.GetFloat("failed_chapters"); got != 1 {
+		t.Fatalf("running failed_chapters = %v, want 1", got)
+	}
+	if got := fresh.GetString("auto_segment_chapter_title"); got != "Capítulo 2" {
+		t.Fatalf("running auto_segment_chapter_title = %q, want %q", got, "Capítulo 2")
+	}
+
+	if err := st.UpdateJobProgressFast(cancelled.Id, map[string]any{
+		"completedChapters":       99,
+		"autoSegmentChapterTitle": "late write",
+	}); err != nil {
+		t.Fatalf("update cancelled job progress: %v", err)
+	}
+	freshCancelled, err := app.FindRecordById(JobsCollection, cancelled.Id)
+	if err != nil {
+		t.Fatalf("reload cancelled job: %v", err)
+	}
+	if got := freshCancelled.GetFloat("completed_chapters"); got != 0 {
+		t.Fatalf("cancelled completed_chapters = %v, want 0 (write must be skipped)", got)
+	}
+	if got := freshCancelled.GetString("auto_segment_chapter_title"); got != "" {
+		t.Fatalf("cancelled auto_segment_chapter_title = %q, want empty (write must be skipped)", got)
 	}
 }

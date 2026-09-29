@@ -2,9 +2,11 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/dbutils"
 	"github.com/pocketbase/pocketbase/tools/types"
 	"translator-server/internal/ai"
 )
@@ -448,6 +450,40 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 	return c, nil
 }
 
+// ensureJobIndexes backfills the query-supporting indexes on translation_jobs.
+// The owner index ships with the collection, but every novel-scoped query
+// (HasActiveJobsForNovel, ListActiveNovelJobs, ...) and the scheduler's
+// runnable-jobs scan used to be full table scans; jobs are never pruned, so
+// the scans grew with the job history. Idempotent: existing installs gain the
+// indexes on the next boot.
+func (s *Store) ensureJobIndexes(c *core.Collection) error {
+	added := false
+	for _, idx := range []struct {
+		name    string
+		columns string
+	}{
+		{"idx_jobs_novel_status", "novel,status"},
+		{"idx_jobs_status_created", "status,created"},
+	} {
+		exists := false
+		for _, raw := range c.Indexes {
+			if strings.EqualFold(dbutils.ParseIndex(raw).IndexName, idx.name) {
+				exists = true
+				break
+			}
+		}
+		if exists {
+			continue
+		}
+		c.AddIndex(idx.name, false, idx.columns, "")
+		added = true
+	}
+	if !added {
+		return nil
+	}
+	return s.App.Save(c)
+}
+
 func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(JobsCollection); err == nil {
 		c, err := s.migrateSystemDateFields(existing)
@@ -508,6 +544,9 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 				}
 			}
 		}
+		if err := s.ensureJobIndexes(c); err != nil {
+			return nil, err
+		}
 		return c, nil
 	}
 	c := core.NewBaseCollection(JobsCollection)
@@ -539,6 +578,8 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	c.Fields.Add(&core.NumberField{Name: "new_chapters"})
 	addSystemDateFields(c)
 	c.AddIndex("idx_jobs_owner", false, "owner", "")
+	c.AddIndex("idx_jobs_novel_status", false, "novel,status", "")
+	c.AddIndex("idx_jobs_status_created", false, "status,created", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}

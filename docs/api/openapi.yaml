@@ -255,11 +255,11 @@ paths:
           description: >
             Scopes `q` matching. `title` matches source/target title,
             `author` matches source/target author, `series` matches
-            source/target series, `all` matches all of them. Invalid values
-            fall back to `all`. Ignored without `q`.
+            source/target series, `tags` matches the tag list, `all` matches
+            all of them. Invalid values fall back to `all`. Ignored without `q`.
           schema:
             type: string
-            enum: [all, title, author, series]
+            enum: [all, title, author, series, tags]
             default: all
         - name: tag
           in: query
@@ -2591,7 +2591,12 @@ components:
     FieldsParam:
       name: fields
       in: query
-      description: Comma-separated list of allowed fields. Heavy fields (coverPath, glossary, tags, aiOptions, translationOptions, cleanupRules, sourceDescription, targetDescription, notes) are excluded unless requested.
+      description: >
+        Comma-separated list of allowed fields. The list endpoints serve a
+        lightweight projection: glossary, prompts, notes, aiOptions,
+        translationOptions, cleanupRules and customCommands are not populated
+        here — fetch them from the single-novel endpoint. Requesting them
+        returns empty placeholders.
       schema: { type: string }
     SelectParam:
       name: select

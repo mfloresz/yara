@@ -156,6 +156,47 @@ func (s *Store) HasActiveJobs(userID string) (bool, error) {
 	return len(records) > 0, nil
 }
 
+// UpdateJobProgressFast persists job progress counters with a narrow UPDATE:
+// it neither loads nor rewrites the full job row (chapter_ids/options_json can
+// reach many KB and the worker flushes progress once per chapter). Updates are
+// skipped for cancelled jobs, mirroring UpdateJob's allowlist: after a
+// cancellation only the final bookkeeping (UpdateJob with status=cancelled)
+// may touch these fields again.
+func (s *Store) UpdateJobProgressFast(jobID string, patch map[string]any) error {
+	columnByField := map[string]string{
+		"completedChapters":         "completed_chapters",
+		"failedChapters":            "failed_chapters",
+		"errorMessage":              "error_message",
+		"autoSegmentActive":         "auto_segment_active",
+		"autoSegmentCount":          "auto_segment_count",
+		"autoSegmentCurrentIndex":   "auto_segment_current_index",
+		"autoSegmentCompletedCount": "auto_segment_completed_count",
+		"autoSegmentChapterId":      "auto_segment_chapter_id",
+		"autoSegmentChapterTitle":   "auto_segment_chapter_title",
+	}
+	sets := make([]string, 0, len(columnByField))
+	params := dbx.Params{"id": jobID}
+	i := 0
+	for field, column := range columnByField {
+		value, ok := patch[field]
+		if !ok {
+			continue
+		}
+		name := fmt.Sprintf("v%d", i)
+		i++
+		sets = append(sets, column+" = {:"+name+"}")
+		params[name] = value
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	_, err := s.App.DB().NewQuery(
+		"UPDATE " + JobsCollection + " SET " + strings.Join(sets, ", ") +
+			" WHERE id = {:id} AND status != 'cancelled'",
+	).Bind(params).Execute()
+	return err
+}
+
 func (s *Store) UpdateJob(jobID string, patch map[string]any) error {
 	record, err := s.App.FindRecordById(JobsCollection, jobID)
 	if err != nil {

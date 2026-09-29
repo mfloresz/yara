@@ -35,6 +35,7 @@ type jobContext struct {
 	completed         int
 	failed            int
 	lastError         string
+	lastFlush         time.Time
 }
 
 // buildJobContext assembles the per-run job context from a pre-resolved
@@ -93,9 +94,16 @@ func (jc *jobContext) markStatsDirty() {
 	jc.mu.Unlock()
 }
 
+// jobProgressFlushInterval throttles job-row writes: the worker reports every
+// segment/chapter result but the UI polls the jobs endpoints, so persisting
+// more often than ~twice a second only rewrites the job row (chapter_ids
+// included) for no visible effect. The final counts are written by UpdateJob
+// at job end regardless, so a suppressed last flush is never lost.
+const jobProgressFlushInterval = 500 * time.Millisecond
+
 func (jc *jobContext) flushProgress(s *Server) {
 	jc.mu.Lock()
-	if !jc.dirty {
+	if !jc.dirty || time.Since(jc.lastFlush) < jobProgressFlushInterval {
 		jc.mu.Unlock()
 		return
 	}
@@ -111,8 +119,10 @@ func (jc *jobContext) flushProgress(s *Server) {
 		"autoSegmentChapterTitle":   jc.pendingSegTitle,
 	}
 	jc.dirty = false
+	jc.lastFlush = time.Now()
 	jc.mu.Unlock()
-	if err := s.Store.UpdateJob(jc.jobID, patch); err != nil {
+	// Narrow UPDATE: never loads nor rewrites the full job row.
+	if err := s.Store.UpdateJobProgressFast(jc.jobID, patch); err != nil {
 		slog.Warn("flush job progress", "jobId", jc.jobID, "error", err)
 	}
 }

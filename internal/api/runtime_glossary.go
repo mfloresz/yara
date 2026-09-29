@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"unicode/utf8"
+	"uuid"
 
-	"github.com/google/uuid"
 	"translator-server/internal/ai"
 	"translator-server/internal/store"
 )

@@ -104,7 +104,7 @@ If both `page`/`per_page` and `limit`/`offset` are sent, the canonical form wins
 
 ### Sparse fieldsets
 
-Use `?fields=id,sourceTitle,status` to request only specific fields. `?select=...` is accepted as an alias. Heavy fields excluded by default in sparse mode: `coverPath`, `glossary`, `tags`, `aiOptions`, `translationOptions`, `cleanupRules`, `sourceDescription`, `targetDescription`, `notes`.
+Use `?fields=id,sourceTitle,status` to request only specific fields. `?select=...` is accepted as an alias. The list endpoints serve a lightweight projection: `glossary`, `prompts`, `notes`, `aiOptions`, `translationOptions`, `cleanupRules` and `customCommands` are not populated there (requesting them returns empty placeholders) — fetch them from `GET /api/v1/novels/{id}`, which returns the full record.
 
 **Example (lightweight list):**
 
@@ -125,11 +125,11 @@ GET /api/v1/novels/abc123
 | `tag` | any string | — | Exact tag match, case-insensitive and accent-insensitive (`fantasia` matches `Fantasía`, `FANTASÍA`, `Ação` ↔ `acao`). Novels without tags are excluded. Combinable with the other filters (AND). |
 | `author` | any string | — | Exact author match, case-insensitive, across source/target author. Combinable with the other filters (AND). |
 | `series` | any string | — | Exact series match, case-insensitive, across source/target series. Combinable with the other filters (AND). |
-| `field` | `all` \| `title` \| `author` \| `series` | `all` | Scopes `?q` matching (`title` = source/target title, `author` = source/target author, `series` = source/target series). Invalid values fall back to `all`. Ignored without `?q`. |
+| `field` | `all` \| `title` \| `author` \| `series` \| `tags` | `all` | Scopes `?q` matching (`title` = source/target title, `author` = source/target author, `series` = source/target series, `tags` = tag list). Invalid values fall back to `all`. Ignored without `?q`. |
 | `shared` | `all` \| `own` \| `shared` | `all` | `own` = only novels owned by the caller; `shared` = only foreign public novels. Invalid values fall back to `all`. |
 | `progress` | `all` \| `translated` \| `completed` \| `ongoing` | `all` | `translated` = `chapter_count > 0 && (source_language = target_language \|\| translated_count = chapter_count)` (0-chapter novels excluded). A novel whose source and target languages match needs no translation, so it qualifies without any translated chapters. `completed`/`ongoing` match the novel `status` (a manual editorial flag, independent of translation progress). Invalid values fall back to `all`. |
 
-Filters combine with AND and with `?q` (which searches title/author/series by default, or the subset selected by `?field=` — never tags). With `?tag`/`?author`/`?series` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
+Filters combine with AND and with `?q` (which searches title/author/series/tags by default, or the subset selected by `?field=`). With `?tag`/`?author`/`?series` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
 
 **Example:**
 

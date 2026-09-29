@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pocketbase/dbx"
 	"golang.org/x/text/unicode/norm"
 
 	"translator-server/internal/ai"
@@ -65,6 +66,40 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// narrowSet builds the SET clause of a targeted UPDATE statement so hot paths
+// can persist individual columns without hydrating a record or rewriting the
+// whole row (chapter rows carry full content; novel rows carry up to MBs of
+// glossary/prompts). Column names come from fixed call sites, values are bound.
+type narrowSet struct {
+	sets   []string
+	params dbx.Params
+}
+
+func newNarrowSet() *narrowSet {
+	return &narrowSet{params: dbx.Params{}}
+}
+
+func (n *narrowSet) add(column string, value any) {
+	name := fmt.Sprintf("v%d", len(n.sets))
+	n.sets = append(n.sets, column+" = {:"+name+"}")
+	n.params[name] = value
+}
+
+func (n *narrowSet) bind(key string, value any) {
+	n.params[key] = value
+}
+
+// exec runs "UPDATE table SET ... WHERE where" and returns the affected rows.
+func (n *narrowSet) exec(s *Store, table, where string) (int64, error) {
+	sql := "UPDATE " + table + " SET " + strings.Join(n.sets, ", ") + " WHERE " + where
+	res, err := s.App.DB().NewQuery(sql).Bind(n.params).Execute()
+	if err != nil {
+		return 0, err
+	}
+	rows, _ := res.RowsAffected()
+	return rows, nil
 }
 
 func clampText(value string, max int) string {

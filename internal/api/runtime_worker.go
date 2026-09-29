@@ -352,7 +352,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 
 		// Report the in-flight chapter so the jobs drawer can show
 		// "Descargando capítulo: <título>" while the fetch runs.
-		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+		if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
 			"autoSegmentChapterTitle": chInfo.Title,
 		}); ue != nil {
 			slog.Warn("update job current chapter", "jobId", job.ID, "error", ue)
@@ -422,7 +422,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			failed++
 			slog.Warn("empty download result", "jobId", job.ID, "chapter", chInfo.Title)
 		}
-		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+		if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
 			"completedChapters": completed,
 			"failedChapters":    failed,
 		}); ue != nil {
