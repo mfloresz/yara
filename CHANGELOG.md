@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.38.0] - 2026-09-29
+
+### What's new
+
+- Reworked the `cherrymist.cafe` parser: the site is a client-rendered React SPA backed by a JSON API, so novel info, chapter lists and chapter content are now fetched through that API, decoding the cipher that maps Private Use Area codepoints back to readable text using per-seed lookup tables. The browser-worker extensions now share a common `isSupportedUrl` helper.
+- AVIF images are now detected in the browser-worker proxy and in EPUB export, so novels with AVIF covers are handled correctly.
+- Global novel search now also matches novel tags (`?field=tags`).
+
+### Fixes
+
+- Novels whose source and target languages match are now considered translated: they show up under the `progress=translated` filter even with zero translated chapters, and `sourceLanguage`/`targetLanguage` are normalized to lowercase so the filter matches regardless of case.
+- FenrirRealm novel descriptions are stripped of HTML before storing, preserving paragraph breaks as blank lines.
+
+### Housekeeping
+
+- Bumped Go to 1.27 and updated dependencies (PocketBase, goai, golang.org/x/*).
+- Job progress updates are now flushed at most twice per second and written with a narrow UPDATE that avoids rewriting full job rows — less database churn on large novels.
+- Updated the API documentation (tag search, list projection and sparse fieldset behavior).
+
 ## [v0.37.0] - 2026-09-26
 
 ### ⚠️ Breaking changes
@@ -424,6 +443,7 @@
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
 [Unreleased]: https://github.com/mfloresz/yara/compare/v0.37.0...HEAD
+[v0.38.0]: https://github.com/mfloresz/yara/compare/v0.37.0...v0.38.0
 [v0.37.0]: https://github.com/mfloresz/yara/compare/v0.36.1...v0.37.0
 [v0.36.1]: https://github.com/mfloresz/yara/compare/v0.36.0...v0.36.1
 [v0.36.0]: https://github.com/mfloresz/yara/compare/v0.35.0...v0.36.0
