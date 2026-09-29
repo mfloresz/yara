@@ -559,8 +559,11 @@ validation as the REST endpoints.
 
 Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
 `get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries),
-`get_chapter` (body text, truncated), `update_novel` (target title /
-description / notes — writes immediately).
+`get_chapter` (body text, truncated), `search_chapters` (literal search over
+titles and bodies with snippets), `update_novel` (target title /
+description / notes), `update_chapter` (titles + translated/refined body
+replacement; refused while the novel has active jobs), `set_chapter_status`
+(`pending|translated|refined|done|error`) and `set_chapter_excluded`.
 
 ## WebSocket
 

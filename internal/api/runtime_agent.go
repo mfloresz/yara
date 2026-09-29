@@ -28,14 +28,16 @@ var errAgentUnsupportedProvider = errors.New("the configured AI provider does no
 // agentSystemPrompt anchors the assistant: what it can see (its tools), when
 // it may write, and how to behave. The selected-novel block is appended per
 // turn when the chat has one picked, so history stays free of context noise.
-const agentSystemPrompt = `You are the library assistant of Yara, a self-hosted app for reading and translating literary novels. You help the user inspect and maintain their novel library.
+const agentSystemPrompt = `You are the library assistant of Yara, a self-hosted app for reading and translating literary novels. You help the user inspect and maintain their novel library and its chapters.
 
 Rules:
 - Reply in the same language the user writes in. Be concise and concrete.
-- Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids when reporting results.
+- Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids and chapter orders when reporting results.
 - list_novels returns hasDescription so you can answer questions like "which novels are missing a description". Request a generous limit when the user asks for a full sweep.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
-- update_novel writes immediately. Only call it when the user clearly asked for a change, never for exploratory suggestions; after applying it, tell the user exactly which fields changed.
+- search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
+- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded) apply immediately. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. While a novel has active download/translation jobs, chapter writes are refused — say so instead of retrying.
+- Valid chapter statuses: pending, translated, refined, done, error.
 - The user's selected novel (when present in this prompt) is the default subject of their questions; still use its id with the tools.
 
 Tool args are JSON objects. When several small lookups would answer the question, you may call several tools across steps before answering.`
@@ -102,7 +104,11 @@ func (s *Server) agentTools(userID string) []ai.AgentTool {
 		s.agentToolGetNovelStats(userID),
 		s.agentToolGetNovelChapters(userID),
 		s.agentToolGetChapter(userID),
+		s.agentToolSearchChapters(userID),
 		s.agentToolUpdateNovel(userID),
+		s.agentToolUpdateChapter(userID),
+		s.agentToolSetChapterStatus(userID),
+		s.agentToolSetChapterExcluded(userID),
 	}
 }
 
@@ -398,6 +404,166 @@ func agentNovelAfterUpdate(novel *store.Novel) map[string]any {
 		"targetTitle":       novel.TargetTitle,
 		"targetDescription": novel.TargetDescription,
 		"notes":             novel.Notes,
+	}
+}
+
+func (s *Server) agentToolSearchChapters(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "search_chapters",
+		Description: "Search chapter titles AND bodies of one novel for a literal text match (case-sensitive substring; wildcards are literal). Returns chapter hits with matched field names and a snippet when a body matched. Use it to locate where something is said before reading whole chapters.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."},
+    "query": {"type": "string", "description": "Literal text to search for."},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 25, "description": "Max hits (default 10)."}
+  },
+  "required": ["novelId", "query"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID string `json:"novelId"`
+				Query   string `json:"query"`
+				Limit   int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" {
+				return "", fmt.Errorf("invalid novelId")
+			}
+			hits, err := s.Store.SearchChaptersAccessible(userID, strings.TrimSpace(a.NovelID), a.Query, a.Limit)
+			if err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{"hits": hits})
+		},
+	}
+}
+
+func (s *Server) agentToolUpdateChapter(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "update_chapter",
+		Description: "Edit one chapter's titles and/or content: title (original), translatedTitle, translatedContent, refinedContent. Content values replace the WHOLE field, so read the current text with get_chapter first when editing. Omitted fields stay unchanged; empty strings clear them. Refused while the novel has active jobs.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."},
+    "chapterId": {"type": "string", "description": "Chapter id (from get_novel_chapters or search_chapters)."},
+    "title": {"type": "string", "description": "New original title."},
+    "translatedTitle": {"type": "string", "description": "New translated title."},
+    "translatedContent": {"type": "string", "description": "New translated body; replaces the whole text."},
+    "refinedContent": {"type": "string", "description": "New refined body; replaces the whole text."}
+  },
+  "required": ["novelId", "chapterId"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID           string  `json:"novelId"`
+				ChapterID         string  `json:"chapterId"`
+				Title             *string `json:"title"`
+				TranslatedTitle   *string `json:"translatedTitle"`
+				TranslatedContent *string `json:"translatedContent"`
+				RefinedContent    *string `json:"refinedContent"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" {
+				return "", fmt.Errorf("invalid novelId/chapterId")
+			}
+			chapter, err := s.Store.UpdateChapterEdits(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID), store.ChapterEdits{
+				Title:             a.Title,
+				TranslatedTitle:   a.TranslatedTitle,
+				TranslatedContent: a.TranslatedContent,
+				RefinedContent:    a.RefinedContent,
+			})
+			if err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{
+				"ok": true,
+				"chapter": map[string]any{
+					"id":              chapter.ID,
+					"chapterOrder":    chapter.ChapterOrder,
+					"title":           chapter.Title,
+					"translatedTitle": chapter.TranslatedTitle,
+					"status":          chapter.Status,
+					"originalChars":   len(chapter.OriginalContent),
+					"translatedChars": len(chapter.TranslatedContent),
+					"refinedChars":    len(chapter.RefinedContent),
+				},
+			})
+		},
+	}
+}
+
+// agentChapterStatuses is the closed set the model may set via
+// set_chapter_status; anything else returns a tool error the model can read.
+var agentChapterStatuses = map[string]bool{
+	"pending":    true,
+	"translated": true,
+	"refined":    true,
+	"done":       true,
+	"error":      true,
+}
+
+func (s *Server) agentToolSetChapterStatus(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "set_chapter_status",
+		Description: "Change one chapter's translation status (pending, translated, refined, done, error), optionally with an error note. This does not create, translate or delete content; it only flips the status flag and refreshes novel stats.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."},
+    "chapterId": {"type": "string", "description": "Chapter id."},
+    "status": {"type": "string", "enum": ["pending", "translated", "refined", "done", "error"]},
+    "errorMessage": {"type": "string", "description": "Optional note stored with the chapter (cleared when omitted)."}
+  },
+  "required": ["novelId", "chapterId", "status"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID      string `json:"novelId"`
+				ChapterID    string `json:"chapterId"`
+				Status       string `json:"status"`
+				ErrorMessage string `json:"errorMessage"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" {
+				return "", fmt.Errorf("invalid novelId/chapterId")
+			}
+			if !agentChapterStatuses[a.Status] {
+				return "", fmt.Errorf("invalid status %q: use pending, translated, refined, done or error", a.Status)
+			}
+			if err := s.Store.UpdateChapterStatusForUser(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID), a.Status, a.ErrorMessage); err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{"ok": true, "chapterId": strings.TrimSpace(a.ChapterID), "status": a.Status})
+		},
+	}
+}
+
+func (s *Server) agentToolSetChapterExcluded(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "set_chapter_excluded",
+		Description: "Include or exclude one chapter from the novel (excluded chapters are hidden from readers and skipped by stats and translation jobs). Refused while the novel has active jobs.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."},
+    "chapterId": {"type": "string", "description": "Chapter id."},
+    "excluded": {"type": "boolean", "description": "true to exclude (hide), false to include."}
+  },
+  "required": ["novelId", "chapterId", "excluded"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID   string `json:"novelId"`
+				ChapterID string `json:"chapterId"`
+				Excluded  bool   `json:"excluded"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" {
+				return "", fmt.Errorf("invalid novelId/chapterId")
+			}
+			if err := s.Store.SetChapterExcluded(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID), a.Excluded); err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{"ok": true, "chapterId": strings.TrimSpace(a.ChapterID), "excluded": a.Excluded})
+		},
 	}
 }
 

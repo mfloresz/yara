@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -213,4 +214,185 @@ func TestAgentChatRequiresOwnershipOfNovel(t *testing.T) {
 	})
 	// GetNovelAccessible masks another user's novel as not found.
 	assertStatus(t, resp, http.StatusNotFound)
+}
+
+// scriptedAgentProvider runs a fixed sequence of tool calls against the real
+// tool catalog and answers once they all executed.
+type scriptedAgentProvider struct {
+	*ai.OpenAIProvider
+	toolCalls []string // "_tool" + args envelopes, in order
+}
+
+func (f *scriptedAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput) (ai.AgentChatOutput, error) {
+	byName := map[string]ai.AgentTool{}
+	for _, tool := range in.Tools {
+		byName[tool.Name] = tool
+	}
+	toolMsgs := make([]ai.AgentMessage, 0, len(f.toolCalls))
+	for i, rawArgs := range f.toolCalls {
+		var envelope struct {
+			Tool string          `json:"_tool"`
+			Args json.RawMessage `json:"args"`
+		}
+		if err := json.Unmarshal([]byte(rawArgs), &envelope); err != nil {
+			return ai.AgentChatOutput{}, err
+		}
+		tool, ok := byName[envelope.Tool]
+		if !ok {
+			return ai.AgentChatOutput{}, fmt.Errorf("scripted tool %q not in catalog", envelope.Tool)
+		}
+		result, err := tool.Execute(ctx, envelope.Args)
+		content := result
+		if err != nil {
+			content = "error: " + err.Error()
+		}
+		callID := fmt.Sprintf("call-%d", i+1)
+		if in.OnEvent != nil {
+			in.OnEvent(ai.AgentEvent{Type: "tool_call", Step: i + 1, ToolName: envelope.Tool, ToolArgs: string(envelope.Args)})
+			in.OnEvent(ai.AgentEvent{Type: "tool_result", Step: i + 1, ToolName: envelope.Tool, ToolResult: content})
+		}
+		toolMsgs = append(toolMsgs,
+			ai.AgentMessage{Role: "assistant", ToolCalls: []ai.AgentToolCall{{ID: callID, Name: envelope.Tool, Args: string(envelope.Args)}}},
+			ai.AgentMessage{Role: "tool", Content: content, ToolCallID: callID, ToolName: envelope.Tool},
+		)
+	}
+	final := "Hecho."
+	trail := append([]ai.AgentMessage{}, in.Messages...)
+	trail = append(trail, toolMsgs...)
+	trail = append(trail, ai.AgentMessage{Role: "assistant", Content: final})
+	return ai.AgentChatOutput{Messages: trail, Text: final, Steps: len(f.toolCalls) + 1}, nil
+}
+
+// TestAgentChatChapterToolsExercisesNewCatalog drives the four chapter tools
+// added after the first agent release: search_chapters, update_chapter,
+// set_chapter_status and set_chapter_excluded.
+func TestAgentChatChapterToolsExercisesNewCatalog(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-chtools@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Capítulos", "es", "en")
+
+	// One chapter with body content to search and edit.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":      1,
+		"title":             "El comienzo",
+		"originalContent":   "The hidden dragon awakens beneath the mountain.",
+		"translatedContent": "El dragón oculto despierta bajo la montaña.",
+		"status":            "translated",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	var chapter struct {
+		ID string `json:"id"`
+	}
+	decodeData(t, resp, &chapter)
+
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: []string{
+			`{"_tool":"search_chapters","args":{"novelId":"` + novel.ID + `","query":"dragon"}}`,
+			`{"_tool":"update_chapter","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","translatedTitle":"El inicio","translatedContent":"El dragón oculto despierta bajo la montaña, furioso."}}`,
+			`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","status":"refined"}}`,
+			`{"_tool":"set_chapter_excluded","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","excluded":false}}`,
+		}}, nil
+	}
+
+	chatResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "busca dragon, edita el capítulo y marca refined",
+		"novelId": novel.ID,
+	})
+	assertStatus(t, chatResp, http.StatusOK)
+
+	var searchResult, updateResult, statusResult, excludeResult string
+	for _, ev := range parseNDJSON(t, []byte(chatResp.Body.String())) {
+		if ev["type"] != "tool_result" {
+			continue
+		}
+		switch ev["tool"] {
+		case "search_chapters":
+			searchResult, _ = ev["result"].(string)
+		case "update_chapter":
+			updateResult, _ = ev["result"].(string)
+		case "set_chapter_status":
+			statusResult, _ = ev["result"].(string)
+		case "set_chapter_excluded":
+			excludeResult, _ = ev["result"].(string)
+		}
+	}
+
+	if !strings.Contains(searchResult, chapter.ID) || !strings.Contains(searchResult, "originalContent") || !strings.Contains(searchResult, "hidden dragon") {
+		t.Fatalf("search_chapters should hit the body with a snippet, got %q", searchResult)
+	}
+	if !strings.Contains(updateResult, `"ok":true`) || !strings.Contains(updateResult, "El inicio") {
+		t.Fatalf("update_chapter should apply the edit, got %q", updateResult)
+	}
+	if !strings.Contains(statusResult, `"status":"refined"`) {
+		t.Fatalf("set_chapter_status should apply, got %q", statusResult)
+	}
+	if !strings.Contains(excludeResult, `"excluded":false`) {
+		t.Fatalf("set_chapter_excluded should apply, got %q", excludeResult)
+	}
+
+	// The edits must be visible through the normal REST surface.
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID, alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	var got struct {
+		TranslatedTitle   string `json:"translatedTitle"`
+		TranslatedContent string `json:"translatedContent"`
+		Status            string `json:"status"`
+	}
+	decodeData(t, getResp, &got)
+	if got.TranslatedTitle != "El inicio" {
+		t.Fatalf("translatedTitle not persisted: %q", got.TranslatedTitle)
+	}
+	if !strings.Contains(got.TranslatedContent, "furioso") {
+		t.Fatalf("translatedContent not persisted: %q", got.TranslatedContent)
+	}
+	if got.Status != "refined" {
+		t.Fatalf("status not persisted: %q", got.Status)
+	}
+}
+
+// TestAgentChatChapterToolsRejectsForeignNovel pins ownership: every chapter
+// tool resolves the novel through the requesting user, so another user's
+// chapter ids are indistinguishable from unknown ones.
+func TestAgentChatChapterToolsRejectsForeignNovel(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-chown@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-chown@example.com", "secret123", "Bob")
+	novel := createNovel(t, env.handler, alice.Token, "Privada", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Uno",
+		"originalContent": "contenido",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	var chapter struct {
+		ID string `json:"id"`
+	}
+	decodeData(t, chResp, &chapter)
+
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: []string{
+			`{"_tool":"update_chapter","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","title":"hackeado"}}`,
+			`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","status":"done"}}`,
+			`{"_tool":"set_chapter_excluded","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapter.ID + `","excluded":true}}`,
+			`{"_tool":"search_chapters","args":{"novelId":"` + novel.ID + `","query":"contenido"}}`,
+		}}, nil
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", bob.Token, map[string]any{
+		"message": "tócame los capítulos",
+	})
+	assertStatus(t, resp, http.StatusOK)
+
+	for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+		if ev["type"] != "tool_result" {
+			continue
+		}
+		result, _ := ev["result"].(string)
+		if !strings.HasPrefix(result, "error: ") {
+			t.Fatalf("tool %v against a foreign novel must fail, got %q", ev["tool"], result)
+		}
+		if strings.Contains(result, "hackeado") {
+			t.Fatalf("update must not leak the applied title, got %q", result)
+		}
+	}
 }
