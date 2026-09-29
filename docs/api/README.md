@@ -127,7 +127,7 @@ GET /api/v1/novels/abc123
 | `series` | any string | — | Exact series match, case-insensitive, across source/target series. Combinable with the other filters (AND). |
 | `field` | `all` \| `title` \| `author` \| `series` | `all` | Scopes `?q` matching (`title` = source/target title, `author` = source/target author, `series` = source/target series). Invalid values fall back to `all`. Ignored without `?q`. |
 | `shared` | `all` \| `own` \| `shared` | `all` | `own` = only novels owned by the caller; `shared` = only foreign public novels. Invalid values fall back to `all`. |
-| `progress` | `all` \| `translated` \| `completed` \| `ongoing` | `all` | `translated` = `chapter_count > 0 && translated_count = chapter_count` (0-chapter novels excluded); `completed`/`ongoing` match the novel `status`. Invalid values fall back to `all`. |
+| `progress` | `all` \| `translated` \| `completed` \| `ongoing` | `all` | `translated` = `chapter_count > 0 && (source_language = target_language \|\| translated_count = chapter_count)` (0-chapter novels excluded). A novel whose source and target languages match needs no translation, so it qualifies without any translated chapters. `completed`/`ongoing` match the novel `status` (a manual editorial flag, independent of translation progress). Invalid values fall back to `all`. |
 
 Filters combine with AND and with `?q` (which searches title/author/series by default, or the subset selected by `?field=` — never tags). With `?tag`/`?author`/`?series` the matching novels are computed in memory before sorting/pagination, so `meta.total` and page navigation always reflect the filtered set.
 
@@ -263,6 +263,8 @@ caller cannot rotate its rate-limit key by spoofing them.
 // response (201) — also sets Location: /api/v1/novels/<id>
 { "data": { "id": "abc123", "sourceTitle": "Reverend Insanity", "status": "ongoing", "chapterCount": 0, "canUpdate": true, "requiresBrowser": false, ... } }
 ```
+
+`sourceLanguage` and `targetLanguage` are trimmed and lowercased before storage, so `"ES"` is stored as `"es"`. Setting both to the same value marks a novel that needs no translation: it appears under `?progress=translated` regardless of how many chapters have been translated.
 
 ### Chapters
 
@@ -444,7 +446,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/v1/novels/import-epub` | `multipart/form-data`: `file` (EPUB), `sourceLanguage`, `targetLanguage`. Returns 201 + `Location`. |
-| `POST` | `/api/v1/novels/import-zip` | `multipart/form-data`: a project zip with `originals/`, `translated/`, `metadata.json`. Returns 201. |
+| `POST` | `/api/v1/novels/import-zip` | `multipart/form-data`: a project zip with `originals/`, `translated/`, `metadata.json`. Returns 201. Language codes come from `metadata.json` and are trimmed and lowercased. |
 | `POST` | `/api/v1/novels/preview-from-url` | Body `{ "url": "..." }` — fetch and return novel metadata + chapter list (cached for 30 min). |
 | `POST` | `/api/v1/novels/import-from-url` | Body `{ "url", "sourceLanguage", "targetLanguage", "startChapter", "endChapter" }`. Creates a novel, downloads the first chapter synchronously, and enqueues a download job for the rest. Returns 201. |
 | `POST` | `/api/v1/novels/{id}/check-preview` | Re-fetch the source, count new chapters, update `lastCheckedAt`. |

@@ -166,8 +166,8 @@ func workerTokenFromRecord(record *core.Record) WorkerToken {
 }
 
 func applyNovelToRecord(record *core.Record, novel *Novel) {
-	record.Set("source_language", novel.SourceLanguage)
-	record.Set("target_language", novel.TargetLanguage)
+	record.Set("source_language", normalizeLanguageCode(novel.SourceLanguage))
+	record.Set("target_language", normalizeLanguageCode(novel.TargetLanguage))
 	record.Set("source_title", novel.SourceTitle)
 	record.Set("source_author", novel.SourceAuthor)
 	record.Set("source_description", novel.SourceDescription)

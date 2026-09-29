@@ -172,7 +172,7 @@ import {
   hasPendingTranslation,
   isActualizable,
   isSameLanguage,
-  translationRatio,
+  pendingTranslationCount,
   type NovelJobContext,
 } from "@/composables/useOperationDisplay";
 import { emitJobChanged } from "@/utils/job-events";
@@ -180,7 +180,7 @@ import type { Novel, TranslationJob } from "@/domain";
 
 const PAGE_SIZE = 200;
 
-type FilterValue = "all" | "actualizable" | "updates" | "completed" | "active";
+type FilterValue = "all" | "actualizable" | "updates" | "pending" | "completed" | "active";
 
 const message = useMessage();
 const dialog = useDialog();
@@ -230,6 +230,7 @@ const filterCounts = computed(() => ({
   all: novels.value.length,
   actualizable: novels.value.filter((n) => isActualizable(n) && n.status !== "completed").length,
   updates: novels.value.filter((n) => hasNewChapters(n)).length,
+  pending: novels.value.filter((n) => hasPendingTranslation(n)).length,
   active: novels.value.filter((n) => hasAnyActive(n.id)).length,
   completed: novels.value.filter((n) => n.status === "completed").length,
 }));
@@ -238,6 +239,7 @@ const filterOptionsWithCounts = computed(() => [
   { label: "Todas", value: "all" as FilterValue, count: filterCounts.value.all },
   { label: "Actualizables", value: "actualizable" as FilterValue, count: filterCounts.value.actualizable },
   { label: "Con novedades", value: "updates" as FilterValue, count: filterCounts.value.updates },
+  { label: "Con pendientes", value: "pending" as FilterValue, count: filterCounts.value.pending },
   { label: "Activas", value: "active" as FilterValue, count: filterCounts.value.active },
   { label: "Completadas", value: "completed" as FilterValue, count: filterCounts.value.completed },
 ]);
@@ -267,6 +269,11 @@ const emptyState = computed(() => {
       return {
         title: "Nada que verificar",
         body: "No hay novelas con URL actualizable pendientes. Todas están al día o completadas.",
+      };
+    case "pending":
+      return {
+        title: "Nada pendiente",
+        body: "No hay capítulos sin traducir. Las novelas con origen y destino en el mismo idioma no se listan aquí.",
       };
     case "active":
       return {
@@ -302,6 +309,9 @@ const filteredNovels = computed(() => {
       return list.filter((n) => isActualizable(n) && n.status !== "completed");
     case "updates":
       return list.filter((n) => hasNewChapters(n));
+    case "pending":
+      // hasPendingTranslation ya excluye las que tienen origen y destino en el mismo idioma.
+      return list.filter((n) => hasPendingTranslation(n));
     case "active":
       return list.filter((n) => hasAnyActive(n.id));
     case "completed":
@@ -421,7 +431,8 @@ const columns: DataTableColumns<Novel> = [
     key: "translationStatus",
     width: 165,
     align: "center",
-    sorter: (a, b) => translationRatio(a) - translationRatio(b),
+    // Ordena por capítulos pendientes (no por % de avance: con todo en 0% el ratio empata y no ordena nada).
+    sorter: (a, b) => pendingTranslationCount(a) - pendingTranslationCount(b),
     render(row) {
       const s = statusFor(row);
       return h(OperationsTranslation, { status: s.translation });

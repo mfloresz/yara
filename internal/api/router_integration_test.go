@@ -182,7 +182,7 @@ func TestChapterGetWithNeighbors(t *testing.T) {
 	}
 
 	var mid struct {
-		Data      chapterPayload  `json:"data"`
+		Data      chapterPayload `json:"data"`
 		Neighbors struct {
 			Prev *chapterPayload `json:"prev"`
 			Next *chapterPayload `json:"next"`
@@ -200,7 +200,7 @@ func TestChapterGetWithNeighbors(t *testing.T) {
 	}
 
 	var edge struct {
-		Data      chapterPayload  `json:"data"`
+		Data      chapterPayload `json:"data"`
 		Neighbors struct {
 			Prev *chapterPayload `json:"prev"`
 			Next *chapterPayload `json:"next"`
@@ -215,7 +215,7 @@ func TestChapterGetWithNeighbors(t *testing.T) {
 	}
 
 	edge = struct {
-		Data      chapterPayload  `json:"data"`
+		Data      chapterPayload `json:"data"`
 		Neighbors struct {
 			Prev *chapterPayload `json:"prev"`
 			Next *chapterPayload `json:"next"`
@@ -977,7 +977,6 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 		t.Fatalf("expected cancelled job chapter to reset to pending, got %q", updatedChapter.Status)
 	}
 }
-
 
 func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	env := newAPITestEnv(t)
@@ -1939,11 +1938,15 @@ func findProvider(t *testing.T, providers []store.ProviderSetting, key string) s
 // number of chapters (the first `translated` of them with translated content
 // and status=translated), so ?tag/?shared/?progress filters can be exercised.
 func createFilterNovel(t *testing.T, handler http.Handler, token, title string, tags []string, status string, chapters, translated int, isPublic bool) novelPayload {
+	return createFilterNovelWithLanguages(t, handler, token, title, tags, status, "en", "es", chapters, translated, isPublic)
+}
+
+func createFilterNovelWithLanguages(t *testing.T, handler http.Handler, token, title string, tags []string, status, sourceLang, targetLang string, chapters, translated int, isPublic bool) novelPayload {
 	t.Helper()
 	body := map[string]any{
 		"sourceTitle":    title,
-		"sourceLanguage": "en",
-		"targetLanguage": "es",
+		"sourceLanguage": sourceLang,
+		"targetLanguage": targetLang,
 	}
 	if tags != nil {
 		body["tags"] = tags
@@ -2105,6 +2108,39 @@ func TestListNovelsFilterProgress(t *testing.T) {
 	}
 	if hiatus.ID == completed.ID {
 		t.Fatal("test setup error")
+	}
+}
+
+// A novel whose source and target languages match needs no translation, so its
+// chapters stay "pending" and translated_count is 0. It must still satisfy
+// ?progress=translated, otherwise same-language novels are unreachable from the
+// dashboard's "Completamente traducidas" filter.
+func TestListNovelsFilterProgressSameLanguage(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-samelang@example.com", "secret123", "Alice")
+
+	sameLang := createFilterNovelWithLanguages(t, env.handler, alice.Token, "Mismo idioma", nil, "ongoing", "es", "es", 3, 0, false)
+	// Case difference must not defeat the match: languages are stored lowercased.
+	mixedCase := createFilterNovelWithLanguages(t, env.handler, alice.Token, "Mismo idioma con mayus", nil, "ongoing", "ES", "es", 2, 0, false)
+	empty := createFilterNovelWithLanguages(t, env.handler, alice.Token, "Mismo idioma vacia", nil, "ongoing", "es", "es", 0, 0, false)
+	partial := createFilterNovelWithLanguages(t, env.handler, alice.Token, "Otro idioma a medias", nil, "ongoing", "en", "es", 3, 1, false)
+
+	ids, _, _ := listNovelFilterIDs(t, env, alice.Token, "progress=translated&sort=title")
+	want := []string{sameLang.ID, mixedCase.ID}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("progress=translated with same-language novels: expected %v, got %v", want, ids)
+	}
+
+	// The 0-chapter same-language novel stays excluded, matching the existing rule.
+	for _, id := range ids {
+		if id == empty.ID {
+			t.Fatal("progress=translated must exclude the 0-chapter same-language novel")
+		}
+	}
+	for _, id := range ids {
+		if id == partial.ID {
+			t.Fatal("progress=translated must exclude a partially translated cross-language novel")
+		}
 	}
 }
 

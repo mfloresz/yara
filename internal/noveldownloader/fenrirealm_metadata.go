@@ -146,8 +146,9 @@ func (p *FenrirRealmParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 		author = meta.User.Username
 	}
 
-	// 6. Build description (strip HTML tags or keep as-is for the backend).
-	description := strings.TrimSpace(meta.Description)
+	// 6. Build description. The API returns HTML blocks; the frontend renders
+	// descriptions as text, so tags are stripped here rather than stored raw.
+	description := fenrirDescription(meta.Description)
 
 	return &NovelInfo{
 		Title:       meta.Title,
@@ -157,6 +158,38 @@ func (p *FenrirRealmParser) GetNovelInfo(ctx context.Context, client HTTPClient,
 		SourceURL:   pageURL,
 		Chapters:    chapters,
 	}, nil
+}
+
+// fenrirDescription converts the API's HTML description into plain text.
+// The endpoint returns <p style="text-align: left;">…</p> blocks; descriptions
+// are stored and rendered as text, so the markup must not survive. Paragraph
+// boundaries are kept as blank lines so the layout reads the same in the import
+// preview and in the novel detail page.
+func fenrirDescription(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(raw))
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	doc.Find("br").ReplaceWithHtml("\n")
+
+	normalize := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+	// Each block element becomes a paragraph. Descriptions without block
+	// markup fall back to the whole text.
+	blocks := doc.Find("p, div, li")
+	if blocks.Length() == 0 {
+		return normalize(doc.Find("body").Text())
+	}
+	paragraphs := make([]string, 0, blocks.Length())
+	blocks.Each(func(_ int, s *goquery.Selection) {
+		if text := normalize(s.Text()); text != "" {
+			paragraphs = append(paragraphs, text)
+		}
+	})
+	return strings.Join(paragraphs, "\n\n")
 }
 
 func (p *FenrirRealmParser) GetChapterURLs(ctx context.Context, client HTTPClient, _ *goquery.Document, pageURL string) ([]ChapterURL, error) {

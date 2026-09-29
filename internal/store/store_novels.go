@@ -152,7 +152,10 @@ func buildScopeFilter(opts ListNovelOptions) string {
 	}
 	switch opts.Progress {
 	case "translated":
-		return scope + " && chapter_count > 0 && translated_count = chapter_count"
+		// A novel whose source and target languages match needs no translation, so
+		// translated_count stays at 0 forever and it would never satisfy
+		// translated_count = chapter_count. Treat it as translated by definition.
+		return scope + " && chapter_count > 0 && (source_language = target_language || translated_count = chapter_count)"
 	case "completed":
 		return scope + " && status = 'completed'"
 	case "ongoing":
@@ -566,9 +569,9 @@ func (s *Store) UpdateNovel(userID, novelID string, patch map[string]any) (*Nove
 	for key, value := range patch {
 		switch key {
 		case "sourceLanguage":
-			record.Set("source_language", value)
+			record.Set("source_language", normalizeLanguageCode(fmt.Sprint(value)))
 		case "targetLanguage":
-			record.Set("target_language", value)
+			record.Set("target_language", normalizeLanguageCode(fmt.Sprint(value)))
 		case "sourceTitle":
 			record.Set("source_title", value)
 		case "sourceAuthor":

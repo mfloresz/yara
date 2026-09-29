@@ -47,6 +47,17 @@ const fenrirStubMeta = `{
 
 // fenrirStubChapters mixes free and premium chapters. Chapter 2 and chapter 4
 // are premium (locked.price > 0) and must be excluded from the chapter list.
+// fenrirStubMetaHTMLDescription mirrors the live API shape: the description
+// arrives as <p style="text-align: left;"> blocks.
+const fenrirStubMetaHTMLDescription = `{
+	"id": 1,
+	"title": "Absolute Regression",
+	"slug": "absolute-regression",
+	"description": "<p style=\"text-align: left;\">First line.</p><p style=\"text-align: left;\">Second line\nwrapped.</p><p>Third line.</p>",
+	"cover": "/media/cover.jpg",
+	"user": {"username": "Fenrirtl"}
+}`
+
 const fenrirStubChapters = `[
 	{"id":1,"slug":"1","name":"Chapter 1","title":"One","number":1,"type":"text","locked":{"price":0,"unlocked_at":"2025-02-24T21:46:04.000000Z","is_read_only":false}},
 	{"id":2,"slug":"2","name":"Chapter 2","title":"Two","number":2,"type":"text","locked":{"price":15,"unlocked_at":null,"is_read_only":false}},
@@ -82,6 +93,50 @@ func TestFenrirRealmGetNovelInfoSkipsPremiumChapters(t *testing.T) {
 	// Order must be preserved.
 	if info.Chapters[0].Title != "Chapter 1" || info.Chapters[1].Title != "Chapter 3" || info.Chapters[2].Title != "Chapter 5" {
 		t.Errorf("chapter order/selection wrong: %v", info.Chapters)
+	}
+}
+
+// The series API returns the description as HTML blocks. Storing it raw leaks
+// "<p style=...>" markup into the import preview, which renders the field as
+// text, so the parser must flatten it while keeping paragraph breaks.
+func TestFenrirRealmDescriptionStripsHTML(t *testing.T) {
+	meta := fenrirStubMetaHTMLDescription
+	client := &fenrirStubClient{responses: map[string]string{
+		"https://fenrirealm.com/api/new/v2/series/absolute-regression":          meta,
+		"https://fenrirealm.com/api/new/v2/series/absolute-regression/chapters": fenrirStubChapters,
+	}}
+
+	info, err := NewFenrirRealmParser().GetNovelInfo(context.Background(), client, "https://fenrirealm.com/series/absolute-regression")
+	if err != nil {
+		t.Fatalf("GetNovelInfo: %v", err)
+	}
+
+	if strings.Contains(info.Description, "<") || strings.Contains(info.Description, ">") {
+		t.Errorf("description still contains HTML markup: %q", info.Description)
+	}
+	want := "First line.\n\nSecond line wrapped.\n\nThird line."
+	if info.Description != want {
+		t.Errorf("description = %q, want %q", info.Description, want)
+	}
+}
+
+// fenrirealm.com serves covers as AVIF. The signature whitelist must accept
+// them or DownloadCover discards a perfectly valid image.
+func TestIsLikelyImageAcceptsAVIF(t *testing.T) {
+	avif := append([]byte{0x00, 0x00, 0x00, 0x20}, []byte("ftypavifmif1miaf")...)
+	if !isLikelyImage(avif) {
+		t.Error("AVIF cover rejected as non-image")
+	}
+	if !isLikelyImage([]byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p', 'a', 'v', '0', '1'}) {
+		t.Error("av01 brand rejected as non-image")
+	}
+	// Guard against a too-loose ftyp check letting non-AVIF ISOBMFF through.
+	if isLikelyImage([]byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p', 'm', 'i', 'f', '1'}) {
+		t.Error("non-AVIF ftyp brand accepted as image")
+	}
+	// HTML error pages must still be rejected.
+	if isLikelyImage([]byte("<htm")) {
+		t.Error("HTML accepted as image")
 	}
 }
 

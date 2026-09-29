@@ -49,6 +49,15 @@ Valores válidos para `status`: `ongoing`, `completed`, `hiatus`, `cancelled`.
 
 Solo `title`, `sourceLanguage` y `targetLanguage` son obligatorios.
 
+### Idiomas
+
+`sourceLanguage` y `targetLanguage` se guardan siempre en minúsculas y sin espacios
+(`"ES"` se almacena como `"es"`), así que no importa cómo los escribas.
+
+Si ambos valores son iguales, la novela se marca como **sin necesidad de traducción**:
+sus capítulos pueden quedarse en `pending` y aun así aparecerá en el filtro
+*Completamente traducidas* de la biblioteca, porque no hay nada que traducir.
+
 ## Cómo importar
 
 ### 1. Crear el ZIP

@@ -72,15 +72,14 @@ export function isSameLanguage(novel: Novel): boolean {
   return !!a && a === b;
 }
 
-export function translationRatio(novel: Novel): number {
-  if (isSameLanguage(novel)) return 1;
-  if (!novel.chapterCount) return 1;
-  return novel.translatedCount / novel.chapterCount;
+/** Capítulos sin traducir. 0 cuando origen y destino coinciden o no hay capítulos. */
+export function pendingTranslationCount(novel: Novel): number {
+  if (isSameLanguage(novel)) return 0;
+  return Math.max(0, novel.chapterCount - novel.translatedCount);
 }
 
 export function hasPendingTranslation(novel: Novel): boolean {
-  if (isSameLanguage(novel)) return false;
-  return novel.chapterCount > 0 && novel.translatedCount < novel.chapterCount;
+  return pendingTranslationCount(novel) > 0;
 }
 
 export function hasNewChapters(novel: Novel): boolean {
@@ -151,8 +150,8 @@ function buildTranslationStatus(novel: Novel, translateJob: TranslationJob | und
   if (novel.chapterCount === 0) {
     return { ...base, tagType: "default", tagText: "Sin capítulos", tagTip: "Esta novela aún no tiene capítulos" };
   }
-  if (hasPendingTranslation(novel)) {
-    const pending = novel.chapterCount - novel.translatedCount;
+  const pending = pendingTranslationCount(novel);
+  if (pending > 0) {
     return {
       ...base,
       tagType: "info",
@@ -169,7 +168,7 @@ export function buildNovelOperationStatus(novel: Novel, ctx: NovelJobContext): N
   const canCheck = isActualizable(novel) && novel.status !== "completed";
   const canDownload = hasNewChapters(novel);
   const canTranslate = hasPendingTranslation(novel);
-  const pendingCount = novel.chapterCount - novel.translatedCount;
+  const pendingCount = pendingTranslationCount(novel);
 
   return {
     origin: buildOriginStatus(novel, ctx),

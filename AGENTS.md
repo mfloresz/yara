@@ -76,7 +76,33 @@ When adding or debugging parsers for sites protected by Cloudflare, use the debu
 
 4. **If Cloudflare challenge appears**, the extension opens a background tab. The user solves the challenge once. Subsequent fetches to the same origin use cached cookies automatically.
 
-5. **When done**, kill the proxy: `pkill -9 -f debug-proxy`
+5. **When done, kill the proxy** — see [Always clean up the debug proxy](#always-clean-up-the-debug-proxy) below. This is mandatory, not optional.
+
+### Always clean up the debug proxy
+
+The debug proxy is a **long-lived background process**. The agent must not leave it running once the task is finished — a leftover process holds port 5177, survives between sessions, and silently breaks the next task's startup (the new proxy fails to bind and the agent debugs the wrong failure).
+
+- **Shutdown is part of the task, not an optional extra.** If you started the proxy, you own killing it. Do it in the same turn you finish the work — do not leave it for the user, and do not wait to be asked.
+- Kill it even when the task ended early, failed, or was abandoned partway.
+- Kill it before handing back any final summary. If it is still running when you report completion, the task is not complete.
+
+```bash
+pkill -9 -f "debug-prox[y]"
+```
+
+> **Gotcha — the bracket is required.** `pkill -9 -f debug-proxy` matches *its own shell*, because `-f` matches the full command line and the invoking shell's command line literally contains the string `debug-proxy`. The shell kills itself mid-command, the command aborts with a confusing non-zero exit, and the proxy is never verified dead. Writing the pattern as `debug-prox[y]` still matches the real process but not the literal string in the pkill invocation. Same trap applies to any self-matching `pkill`/`ps`/`grep` pattern used for cleanup.
+
+Verify it is actually gone before reporting done — a process that is still holding the port is a ghost process:
+
+```bash
+pkill -9 -f "debug-prox[y]"; sleep 1
+ps aux | grep "debug-prox[y]" || echo "none running: OK"
+(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep 5177 || echo "port free: OK"
+```
+
+Both checks must print the `OK` line. Note that the `ps aux | grep` in the same command as the `pkill` will happily match itself, so keep the bracket trick there too.
+
+The main server (`:5176`) and the Vite dev server (`:5175`) are the user's responsibility — leave those alone.
 
 ### Key details
 

@@ -197,7 +197,6 @@ func TestCopyNovelPreservesCoverAndChapterContent(t *testing.T) {
 		t.Fatal("expected copied novel to have a cover file")
 	}
 
-
 	// Verify the cover blob is accessible on the clone.
 	copiedRecord, err := app.FindRecordById(NovelsCollection, copied.ID)
 	if err != nil {
@@ -337,6 +336,75 @@ func TestClampTextTruncatesAndStrips(t *testing.T) {
 	}
 	if clampText(strings.Repeat("a", 5000), 5000) != strings.Repeat("a", 5000) {
 		t.Fatalf("string at boundary should be preserved")
+	}
+}
+
+func TestNormalizeLanguageCodeLowercasesAndTrims(t *testing.T) {
+	cases := map[string]string{
+		"en":     "en",
+		"EN":     "en",
+		"  Es  ": "es",
+		"":       "",
+		"pt-BR":  "pt-br",
+	}
+	for input, want := range cases {
+		if got := normalizeLanguageCode(input); got != want {
+			t.Fatalf("normalizeLanguageCode(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// Languages are stored lowercased so the ?progress=translated filter's
+// `source_language = target_language` comparison (case-sensitive in SQL) matches
+// regardless of how the client cased the value.
+func TestCreateAndUpdateNovelNormalizeLanguages(t *testing.T) {
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	users, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		t.Fatalf("find users collection: %v", err)
+	}
+	owner := core.NewRecord(users)
+	owner.Set("email", "lang-test@example.com")
+	owner.Set("password", "secret123")
+	owner.Set("passwordConfirm", "secret123")
+	if err := app.Save(owner); err != nil {
+		t.Fatalf("save owner user: %v", err)
+	}
+
+	novel := &Novel{
+		SourceTitle:    "Novela",
+		SourceLanguage: "ES",
+		TargetLanguage: " es ",
+	}
+	if err := st.CreateNovel(owner.Id, novel); err != nil {
+		t.Fatalf("create novel: %v", err)
+	}
+	if novel.SourceLanguage != "es" || novel.TargetLanguage != "es" {
+		t.Fatalf("create should normalize languages, got %q -> %q", novel.SourceLanguage, novel.TargetLanguage)
+	}
+
+	updated, err := st.UpdateNovel(owner.Id, novel.ID, map[string]any{
+		"sourceLanguage": "EN",
+		"targetLanguage": "Es",
+	})
+	if err != nil {
+		t.Fatalf("update novel: %v", err)
+	}
+	if updated.SourceLanguage != "en" || updated.TargetLanguage != "es" {
+		t.Fatalf("update should normalize languages, got %q -> %q", updated.SourceLanguage, updated.TargetLanguage)
 	}
 }
 

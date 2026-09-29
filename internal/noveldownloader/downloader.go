@@ -365,5 +365,23 @@ func isLikelyImage(data []byte) bool {
 	if len(data) >= 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
 		return true
 	}
+	// AVIF: ISOBMFF box "ftyp" at offset 4 followed by an AVIF brand
+	// (fenrirealm.com serves covers this way).
+	if isAVIFBytes(data) {
+		return true
+	}
+	return false
+}
+
+// isAVIFBytes reports whether data is an AVIF/AV1 image file. AVIF uses the
+// ISO base media format: a "ftyp" box at offset 4 naming the brand.
+func isAVIFBytes(data []byte) bool {
+	if len(data) < 12 || !bytes.Equal(data[4:8], []byte("ftyp")) {
+		return false
+	}
+	switch string(data[8:12]) {
+	case "avif", "avis", "av01":
+		return true
+	}
 	return false
 }

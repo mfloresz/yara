@@ -352,6 +352,9 @@ func mimeToExt(mime string) string {
 	if strings.Contains(mime, "webp") {
 		return ".webp"
 	}
+	if strings.Contains(mime, "avif") {
+		return ".avif"
+	}
 	return ".jpg"
 }
 
@@ -368,7 +371,24 @@ func DetectImageMime(data []byte) string {
 	if data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 {
 		return "image/webp"
 	}
+	if isAVIFBytes(data) {
+		return "image/avif"
+	}
 	return "image/jpeg"
+}
+
+// isAVIFBytes reports whether data is an AVIF/AV1 image file. AVIF uses the
+// ISO base media format: a "ftyp" box at offset 4 naming the brand. Without
+// this the AVIF cover would be written into the EPUB labelled as JPEG.
+func isAVIFBytes(data []byte) bool {
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	switch string(data[8:12]) {
+	case "avif", "avis", "av01":
+		return true
+	}
+	return false
 }
 
 func ReadCloserToBytes(r io.Reader) ([]byte, error) {

@@ -89,6 +89,14 @@ func asInt(value float64, fallback int) int {
 	return int(value)
 }
 
+// normalizeLanguageCode canonicalizes a language identifier so stored values
+// compare predictably. The `progress=translated` filter matches
+// `source_language = target_language` in SQL, which is case-sensitive, so
+// "EN" vs "en" would otherwise make a same-language novel look translatable.
+func normalizeLanguageCode(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
 func normalizeNovelStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "completed":

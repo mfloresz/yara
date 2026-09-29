@@ -290,7 +290,9 @@ paths:
           in: query
           description: >
             Filter by progress/status. `translated` means `chapter_count > 0 &&
-            translated_count = chapter_count`. Invalid values fall back to `all`.
+            (source_language = target_language || translated_count = chapter_count)`:
+            a novel whose source and target languages match needs no translation, so it
+            qualifies without any translated chapters. Invalid values fall back to `all`.
           schema:
             type: string
             enum: [all, translated, completed, ongoing]
@@ -865,7 +867,7 @@ paths:
         - name: neighbors
           in: query
           required: false
-          description: When `true`, include the previous/next visible chapters in reading order (`position`) as `neighbors: {prev, next}` plus a `links.self` URL. Two indexed queries — no full list needed for prev/next navigation.
+          description: 'When `true`, include the previous/next visible chapters in reading order (`position`) as `neighbors: {prev, next}` plus a `links.self` URL. Two indexed queries — no full list needed for prev/next navigation.'
           schema:
             type: boolean
             default: false
@@ -1684,8 +1686,12 @@ paths:
               required: [file, sourceLanguage, targetLanguage]
               properties:
                 file: { type: string, format: binary }
-                sourceLanguage: { type: string }
-                targetLanguage: { type: string }
+                sourceLanguage:
+                  type: string
+                  description: Trimmed and lowercased before storage.
+                targetLanguage:
+                  type: string
+                  description: Trimmed and lowercased before storage.
       responses:
         '201':
           description: Created
@@ -1703,7 +1709,10 @@ paths:
   /novels/import-zip:
     post:
       tags: [Imports]
-      summary: Import a project zip.
+      summary: >
+        Import a project zip. `sourceLanguage` and `targetLanguage` come from the
+        zip's `metadata.json` and are trimmed and lowercased before storage; setting
+        them equal marks the novel as needing no translation.
       requestBody:
         required: true
         content:
@@ -1765,8 +1774,14 @@ paths:
               required: [url]
               properties:
                 url: { type: string, format: uri }
-                sourceLanguage: { type: string, default: en }
-                targetLanguage: { type: string, default: es }
+                sourceLanguage:
+                  type: string
+                  default: en
+                  description: Trimmed and lowercased before storage.
+                targetLanguage:
+                  type: string
+                  default: es
+                  description: Trimmed and lowercased before storage.
                 startChapter: { type: integer, minimum: 1, default: 1 }
                 endChapter: { type: integer, minimum: 1 }
       responses:
@@ -2813,8 +2828,14 @@ components:
       properties:
         id: { type: string }
         ownerId: { type: string }
-        sourceLanguage: { type: string }
-        targetLanguage: { type: string }
+        sourceLanguage:
+          type: string
+          description: >
+            Language code, always stored trimmed and lowercased. A value equal to
+            `targetLanguage` marks the novel as needing no translation.
+        targetLanguage:
+          type: string
+          description: Language code, always stored trimmed and lowercased.
         sourceTitle: { type: string }
         sourceAuthor: { type: string }
         sourceDescription: { type: string }
@@ -2869,8 +2890,14 @@ components:
       type: object
       required: [sourceTitle]
       properties:
-        sourceLanguage: { type: string }
-        targetLanguage: { type: string }
+        sourceLanguage:
+          type: string
+          description: >
+            Trimmed and lowercased before storage. Use the same value as
+            `targetLanguage` to mark a novel that needs no translation.
+        targetLanguage:
+          type: string
+          description: Trimmed and lowercased before storage.
         sourceTitle: { type: string }
         sourceAuthor: { type: string }
         sourceDescription: { type: string }

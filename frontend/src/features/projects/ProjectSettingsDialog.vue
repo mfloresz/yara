@@ -800,9 +800,7 @@
                       </n-button>
                     </template>
                     <div style="max-width: 280px">
-                      ¿Eliminar
-                      <strong class="no-wrap">{{ novelDraft.sourceTitle || 'esta novela' }}</strong>?
-                      Esta acción no se puede deshacer.
+                      ¿Eliminar la novela? Esta acción no se puede deshacer.
                     </div>
                   </n-popconfirm>
                 </div>
