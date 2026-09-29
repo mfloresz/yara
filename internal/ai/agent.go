@@ -19,7 +19,11 @@ type AgentTool struct {
 	Name        string
 	Description string
 	InputSchema json.RawMessage
-	Execute     func(ctx context.Context, args json.RawMessage) (string, error)
+	// Terminal tools end the turn when called: the result is appended to the
+	// trail but the model is not invoked again. The caller surfaces the call
+	// itself (e.g. ask_user renders its arguments as clickable options).
+	Terminal bool
+	Execute  func(ctx context.Context, args json.RawMessage) (string, error)
 }
 
 // AgentMessage is one persisted conversation message. Role is "system",
@@ -156,6 +160,7 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 		}
 		trail = append(trail, agentMessageFromEino(final))
 
+		terminal := false
 		for _, call := range calls {
 			emit(AgentEvent{Type: "tool_call", Step: step + 1, ToolName: call.Name, ToolArgs: call.Args})
 			toolMsg := &schema.Message{
@@ -172,6 +177,12 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 				ToolName:   call.Name,
 			})
 			emit(AgentEvent{Type: "tool_result", Step: step + 1, ToolName: call.Name, ToolResult: toolResultPreview(toolMsg.Content)})
+			if t := agentToolByName(in.Tools, call.Name); t != nil && t.Terminal {
+				terminal = true
+			}
+		}
+		if terminal {
+			return AgentChatOutput{Messages: trail, Steps: step + 1}, nil
 		}
 	}
 
@@ -185,6 +196,17 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 	msgs = append(msgs, final)
 	trail = append(trail, agentMessageFromEino(final))
 	return AgentChatOutput{Messages: trail, Text: final.Content, Steps: maxSteps}, nil
+}
+
+// agentToolByName finds a catalog tool by name; nil when the model invented
+// one (runAgentTool already answers those with an error result).
+func agentToolByName(tools []AgentTool, name string) *AgentTool {
+	for i := range tools {
+		if tools[i].Name == name {
+			return &tools[i]
+		}
+	}
+	return nil
 }
 
 // agentMessagesToEino maps persisted history (plus the system prompt) to

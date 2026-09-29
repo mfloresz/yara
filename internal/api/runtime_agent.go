@@ -36,8 +36,10 @@ Rules:
 - list_novels returns hasDescription so you can answer questions like "which novels are missing a description". Request a generous limit when the user asks for a full sweep.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
+- query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those.
 - Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded) apply immediately. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. While a novel has active download/translation jobs, chapter writes are refused — say so instead of retrying.
 - Valid chapter statuses: pending, translated, refined, done, error.
+- When the user's request is ambiguous because several novels or chapters match (e.g. two novels share a title), call ask_user with the candidates as clickable options instead of asking in prose: label is the human-readable choice (e.g. "The Guardian (de Evil_Warlord)"), value is the exact text their click will send (the id). ask_user must be the only tool call in that step; the picked value arrives as the user's next message.
 - The user's selected novel (when present in this prompt) is the default subject of their questions; still use its id with the tools.
 
 Tool args are JSON objects. When several small lookups would answer the question, you may call several tools across steps before answering.`
@@ -105,10 +107,52 @@ func (s *Server) agentTools(userID string) []ai.AgentTool {
 		s.agentToolGetNovelChapters(userID),
 		s.agentToolGetChapter(userID),
 		s.agentToolSearchChapters(userID),
+		s.agentToolQueryLibrary(userID),
 		s.agentToolUpdateNovel(userID),
 		s.agentToolUpdateChapter(userID),
 		s.agentToolSetChapterStatus(userID),
 		s.agentToolSetChapterExcluded(userID),
+		agentToolAskUser(),
+	}
+}
+
+// agentAskUserToolName is the terminal tool the model calls to surface a
+// multiple-choice question. The router maps its tool_call event to a
+// "question" event the frontend renders as clickable options; the picked
+// option's value arrives as the user's next message.
+const agentAskUserToolName = "ask_user"
+
+// agentToolAskUser touches no store data, so it needs no userID. Terminal:
+// AgentChat ends the turn on this call; Execute only produces the tool result
+// the model reads on the next turn, next to the user's picked answer.
+func agentToolAskUser() ai.AgentTool {
+	return ai.AgentTool{
+		Name:        agentAskUserToolName,
+		Description: "Ask the user to pick between options when their request is ambiguous (e.g. several novels match a title). The question renders as clickable buttons and the clicked option's value arrives as the user's next message. Call it alone, without any other tool in the same step, and only when the difference matters to answer.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "question": {"type": "string", "description": "Short question shown above the options."},
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {"type": "string", "description": "Human-readable choice, e.g. \"The Guardian (de Evil_Warlord)\"."},
+          "value": {"type": "string", "description": "Exact message sent when the option is clicked, e.g. the novel id."}
+        },
+        "required": ["label", "value"]
+      }
+    }
+  },
+  "required": ["question", "options"]
+}`),
+		Terminal: true,
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+			return `{"awaitingUser":true,"note":"the user's picked answer arrives in their next message"}`, nil
+		},
 	}
 }
 
@@ -345,6 +389,34 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 				out["refinedContent"] = truncateAgentContent(chapter.RefinedContent)
 			}
 			return marshalToolResult(out)
+		},
+	}
+}
+
+func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name: "query_library",
+		Description: "Run ONE read-only analytics SELECT over the library progress views (SQLite dialect). Cheapest way to answer aggregate questions like 'novels missing fewer than 10 chapters to be complete', counts, filters, rankings. Only these two views exist here (owner filtering is automatic, never filter by owner yourself):\n" +
+			"- v_agent_novel_progress: owner_id, novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated\n" +
+			"- v_agent_chapter_overview: owner_id, novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated\n" +
+			"Rules: one SELECT (or WITH ... SELECT), no ';' and no comments, base tables (novels, chapters, users...) are not readable, chapter bodies are not in the views (use get_chapter).",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "sql": {"type": "string", "description": "One SELECT over the two v_agent_* views, e.g. SELECT novel_id, title, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending."},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max rows (default 50)."}
+  },
+  "required": ["sql"]
+}`),
+		Execute: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				SQL   string `json:"sql"`
+				Limit int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.SQL) == "" {
+				return "", fmt.Errorf("missing sql")
+			}
+			return s.Store.RunAgentAnalyticsQuery(ctx, userID, a.SQL, a.Limit)
 		},
 	}
 }

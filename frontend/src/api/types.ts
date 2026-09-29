@@ -498,14 +498,28 @@ export type AgentSession = {
   updatedAt?: string;
 };
 
+export type AgentChatOption = {
+  label: string;
+  value: string;
+};
+
 export type AgentChatEvent = {
-  type: "session" | "text_delta" | "tool_call" | "tool_result" | "done" | "error";
+  type:
+    | "session"
+    | "text_delta"
+    | "tool_call"
+    | "tool_result"
+    | "question"
+    | "done"
+    | "error";
   sessionId?: string;
   step?: number;
   text?: string;
   tool?: string;
   args?: string;
   result?: string;
+  question?: string;
+  options?: AgentChatOption[];
   message?: { role: string; content: string };
   steps?: number;
   code?: string;

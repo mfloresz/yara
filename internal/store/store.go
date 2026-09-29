@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -56,6 +58,11 @@ var ErrInvalidReorder = errors.New("invalid chapter order list")
 type Store struct {
 	App       core.App
 	Encryptor *secure.Encryptor
+	// Agent analytics read-only handle, built lazily once. MaxOpenConns(1)
+	// serializes queries so per-user temp view rescoping never interleaves.
+	agentAnalyticsOnce  sync.Once
+	agentAnalyticsRODB  *sql.DB
+	agentAnalyticsROErr error
 }
 
 func New(app core.App, encryptor *secure.Encryptor) *Store {
@@ -127,6 +134,9 @@ func (s *Store) EnsureSchema() error {
 		return err
 	}
 	if err := s.seedProviders(); err != nil {
+		return err
+	}
+	if err := s.ensureAgentAnalyticsViews(); err != nil {
 		return err
 	}
 	return nil

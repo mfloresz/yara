@@ -165,6 +165,133 @@ func TestAgentChatRunsToolsAndPersistsSession(t *testing.T) {
 	}
 }
 
+// TestAgentChatAskUserEmitsQuestionEvent drives the ask_user flow end to end:
+// the terminal tool call must surface as a "question" NDJSON event (never as a
+// tool chip), persist a replayable trail, and accept the picked option as the
+// next turn's message.
+func TestAgentChatAskUserEmitsQuestionEvent(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-ask@example.com", "secret123", "Alice")
+	createNovel(t, env.handler, alice.Token, "The Guardian", "es", "en")
+
+	const askArgs = `{"question":"¿De cuál necesitas las estadísticas?","options":[` +
+		`{"label":"The Guardian (de Evil_Warlord)","value":"gp7kkn"},` +
+		`{"label":"Cultivating Clan","value":"cxg6ar"}]}`
+
+	// questionAgentProvider mimics the real loop's ask_user turn: one terminal
+	// tool call, the awaitingUser tool result, no final assistant text. It
+	// records the replayed history so the test can assert the trail survives.
+	provider := &questionAgentProvider{askArgs: askArgs}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "Dame las estadísticas de la novela The Guardian",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	events := parseNDJSON(t, []byte(resp.Body.String()))
+
+	var question, done map[string]any
+	for _, ev := range events {
+		switch ev["type"] {
+		case "question":
+			question = ev
+		case "tool_call", "tool_result":
+			if ev["tool"] == agentAskUserToolName {
+				t.Fatalf("ask_user must not leak as a tool event, got %v", ev)
+			}
+		case "done":
+			done = ev
+		}
+	}
+	if question == nil {
+		t.Fatalf("stream must contain a question event, got %#v", events)
+	}
+	if question["question"] != "¿De cuál necesitas las estadísticas?" {
+		t.Fatalf("unexpected question payload: %v", question)
+	}
+	options, ok := question["options"].([]any)
+	if !ok || len(options) != 2 {
+		t.Fatalf("question must carry two options, got %v", question["options"])
+	}
+	first, _ := options[0].(map[string]any)
+	if first["label"] != "The Guardian (de Evil_Warlord)" || first["value"] != "gp7kkn" {
+		t.Fatalf("unexpected first option: %v", first)
+	}
+	if done == nil {
+		t.Fatal("stream must still end with a done event")
+	}
+	if msg, ok := done["message"].(map[string]any); !ok || msg["content"] != "" {
+		t.Fatalf("question turn must end without assistant text, got %v", done["message"])
+	}
+
+	// The trail must persist the ask_user call and its awaitingUser result so
+	// the next turn replays a valid conversation.
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	var session struct {
+		Messages []struct {
+			Role      string `json:"role"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Name string `json:"name"`
+				Args string `json:"args"`
+			} `json:"toolCalls"`
+		} `json:"messages"`
+	}
+	decodeData(t, getResp, &session)
+	if len(session.Messages) != 3 {
+		t.Fatalf("expected 3 persisted messages (user, assistant tool call, tool), got %d", len(session.Messages))
+	}
+	if len(session.Messages[1].ToolCalls) != 1 || session.Messages[1].ToolCalls[0].Name != agentAskUserToolName {
+		t.Fatalf("assistant message must persist the ask_user call, got %#v", session.Messages[1])
+	}
+	if !strings.Contains(session.Messages[1].ToolCalls[0].Args, "gp7kkn") {
+		t.Fatalf("persisted args must carry the options, got %q", session.Messages[1].ToolCalls[0].Args)
+	}
+	if session.Messages[2].Role != "tool" || !strings.Contains(session.Messages[2].Content, "awaitingUser") {
+		t.Fatalf("tool result must persist the awaitingUser marker, got %#v", session.Messages[2])
+	}
+
+	// The user's click arrives as a normal message; the replayed history the
+	// provider receives must contain the whole ask_user trail.
+	resp2 := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "gp7kkn",
+	})
+	assertStatus(t, resp2, http.StatusOK)
+	seen := provider.seen
+	if len(seen) != 4 {
+		t.Fatalf("second turn must replay user + ask_user trail + new message, got %d messages: %#v", len(seen), seen)
+	}
+	if seen[1].ToolCalls[0].Name != agentAskUserToolName || seen[2].Role != "tool" || seen[3].Content != "gp7kkn" {
+		t.Fatalf("replayed history is not the question trail plus the answer: %#v", seen)
+	}
+}
+
+// questionAgentProvider mimics the real loop's ask_user turn: one terminal
+// tool call, the awaitingUser tool result, no final assistant text. It
+// records the replayed history it receives each turn.
+type questionAgentProvider struct {
+	*ai.OpenAIProvider
+	askArgs string
+	seen    []ai.AgentMessage
+}
+
+func (q *questionAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput) (ai.AgentChatOutput, error) {
+	q.seen = append([]ai.AgentMessage{}, in.Messages...)
+	trail := append([]ai.AgentMessage{}, in.Messages...)
+	trail = append(trail,
+		ai.AgentMessage{Role: "assistant", ToolCalls: []ai.AgentToolCall{{ID: "call-1", Name: agentAskUserToolName, Args: q.askArgs}}},
+		ai.AgentMessage{Role: "tool", Content: `{"awaitingUser":true}`, ToolCallID: "call-1", ToolName: agentAskUserToolName},
+	)
+	if in.OnEvent != nil {
+		in.OnEvent(ai.AgentEvent{Type: "tool_call", Step: 1, ToolName: agentAskUserToolName, ToolArgs: q.askArgs})
+		in.OnEvent(ai.AgentEvent{Type: "tool_result", Step: 1, ToolName: agentAskUserToolName, ToolResult: `{"awaitingUser":true}`})
+	}
+	return ai.AgentChatOutput{Messages: trail, Steps: 1}, nil
+}
+
 func TestAgentChatRejectsUnsupportedProviderAndBadInput(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-agent-2@example.com", "secret123", "Alice")
@@ -394,5 +521,68 @@ func TestAgentChatChapterToolsRejectsForeignNovel(t *testing.T) {
 		if strings.Contains(result, "hackeado") {
 			t.Fatalf("update must not leak the applied title, got %q", result)
 		}
+	}
+}
+
+// TestAgentChatQueryLibraryTool drives the read-only SQL analytics tool end
+// to end: the model's SELECT goes through the scoped views and returns only
+// the requesting user's rows.
+func TestAgentChatQueryLibraryTool(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-sql@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Analytics", "en", "es")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":      1,
+		"title":             "Uno",
+		"originalContent":   "body",
+		"translatedContent": "cuerpo",
+		"status":            "translated",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+
+	// The motivating query from the feature request: novels missing fewer
+	// than 10 chapters to be complete.
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: []string{
+			`{"_tool":"query_library","args":{"sql":"SELECT novel_id, title, total, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending"}}`,
+		}}, nil
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "¿qué novelas les faltan menos de 10 capítulos?",
+	})
+	assertStatus(t, resp, http.StatusOK)
+
+	var result string
+	for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+		if ev["type"] == "tool_result" && ev["tool"] == "query_library" {
+			result, _ = ev["result"].(string)
+		}
+	}
+	if !strings.Contains(result, novel.ID) || !strings.Contains(result, "Analytics") {
+		t.Fatalf("query_library should return alice's novel, got %q", result)
+	}
+	if !strings.Contains(result, `"pending":0`) && !strings.Contains(result, "0") {
+		t.Fatalf("unexpected pending value in %q", result)
+	}
+
+	// A destructive query arrives back as a tool error, never as data loss.
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: []string{
+			`{"_tool":"query_library","args":{"sql":"DELETE FROM v_agent_novel_progress"}}`,
+		}}, nil
+	}
+	badResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "borra todo",
+	})
+	assertStatus(t, badResp, http.StatusOK)
+	var badResult string
+	for _, ev := range parseNDJSON(t, []byte(badResp.Body.String())) {
+		if ev["type"] == "tool_result" && ev["tool"] == "query_library" {
+			badResult, _ = ev["result"].(string)
+		}
+	}
+	if !strings.HasPrefix(badResult, "error: ") {
+		t.Fatalf("DELETE attempt must surface as a tool error, got %q", badResult)
 	}
 }

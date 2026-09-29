@@ -38,19 +38,27 @@ type agentChatRequest struct {
 	Message   string `json:"message"`
 }
 
+// agentChatOption is one clickable choice of a "question" event.
+type agentChatOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 // agentChatEvent is one NDJSON line of the streaming response.
 type agentChatEvent struct {
-	Type        string         `json:"type"`
-	SessionID   string         `json:"sessionId,omitempty"`
-	Text        string         `json:"text,omitempty"`
-	Step        int            `json:"step,omitempty"`
-	Tool        string         `json:"tool,omitempty"`
-	Args        string         `json:"args,omitempty"`
-	Result      string         `json:"result,omitempty"`
-	Message     map[string]any `json:"message,omitempty"`
-	Steps       int            `json:"steps,omitempty"`
-	Code        string         `json:"code,omitempty"`
-	ErrorDetail string         `json:"error,omitempty"`
+	Type        string            `json:"type"`
+	SessionID   string            `json:"sessionId,omitempty"`
+	Text        string            `json:"text,omitempty"`
+	Step        int               `json:"step,omitempty"`
+	Tool        string            `json:"tool,omitempty"`
+	Args        string            `json:"args,omitempty"`
+	Result      string            `json:"result,omitempty"`
+	Message     map[string]any    `json:"message,omitempty"`
+	Steps       int               `json:"steps,omitempty"`
+	Code        string            `json:"code,omitempty"`
+	ErrorDetail string            `json:"error,omitempty"`
+	Question    string            `json:"question,omitempty"`
+	Options     []agentChatOption `json:"options,omitempty"`
 }
 
 // handleAgentChat streams one assistant turn as NDJSON. Pre-flight failures
@@ -132,8 +140,20 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 			case "text_delta":
 				writeEvent(agentChatEvent{Type: "text_delta", Step: ev.Step, Text: ev.Text})
 			case "tool_call":
+				// ask_user renders as a question bubble with clickable
+				// options, not as a tool chip; fall back to the raw chip when
+				// the model sent malformed arguments.
+				if ev.ToolName == agentAskUserToolName {
+					if question, options, ok := parseAgentQuestionArgs(ev.ToolArgs); ok {
+						writeEvent(agentChatEvent{Type: "question", Step: ev.Step, Question: question, Options: options})
+						break
+					}
+				}
 				writeEvent(agentChatEvent{Type: "tool_call", Step: ev.Step, Tool: ev.ToolName, Args: ev.ToolArgs})
 			case "tool_result":
+				if ev.ToolName == agentAskUserToolName {
+					break // the question event already carries the display
+				}
 				writeEvent(agentChatEvent{Type: "tool_result", Step: ev.Step, Tool: ev.ToolName, Result: ev.ToolResult})
 			}
 		})
@@ -158,6 +178,29 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		})
 		return nil
 	}
+}
+
+// parseAgentQuestionArgs decodes ask_user tool call arguments into the
+// question payload for the frontend; ok=false falls back to the raw tool chip.
+func parseAgentQuestionArgs(raw string) (string, []agentChatOption, bool) {
+	var a struct {
+		Question string            `json:"question"`
+		Options  []agentChatOption `json:"options"`
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		return "", nil, false
+	}
+	options := make([]agentChatOption, 0, len(a.Options))
+	for _, o := range a.Options {
+		if strings.TrimSpace(o.Label) == "" || strings.TrimSpace(o.Value) == "" {
+			continue
+		}
+		options = append(options, o)
+	}
+	if strings.TrimSpace(a.Question) == "" || len(options) == 0 {
+		return "", nil, false
+	}
+	return a.Question, options, true
 }
 
 // resolveAgentSession returns the requested session, or the user's latest

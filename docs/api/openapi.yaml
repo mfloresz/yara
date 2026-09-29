@@ -2705,13 +2705,24 @@ components:
     AgentChatEvent:
       type: object
       properties:
-        type: { type: string, enum: [session, text_delta, tool_call, tool_result, done, error] }
+        type: { type: string, enum: [session, text_delta, tool_call, tool_result, question, done, error] }
         sessionId: { type: string }
         step: { type: integer }
         text: { type: string, description: text_delta payload }
         tool: { type: string, description: tool_call/tool_result tool name }
         args: { type: string, description: tool_call raw JSON arguments }
         result: { type: string, description: tool_result preview }
+        question:
+          type: string
+          description: question payload — the assistant's clarifying question.
+        options:
+          type: array
+          description: question payload — clickable choices; the picked option's value is sent back as the user's next message.
+          items:
+            type: object
+            properties:
+              label: { type: string, description: Human-readable choice text. }
+              value: { type: string, description: Exact message sent when the option is clicked. }
         message: { type: object, description: done payload (role + content) }
         steps: { type: integer, description: done payload, model steps taken }
         code: { type: string, description: error code }

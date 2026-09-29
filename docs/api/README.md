@@ -553,17 +553,24 @@ validation as the REST endpoints.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `done`, `error`. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `done`, `error`. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
 Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
 `get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries),
 `get_chapter` (body text, truncated), `search_chapters` (literal search over
-titles and bodies with snippets), `update_novel` (target title /
-description / notes), `update_chapter` (titles + translated/refined body
-replacement; refused while the novel has active jobs), `set_chapter_status`
-(`pending|translated|refined|done|error`) and `set_chapter_excluded`.
+titles and bodies with snippets), `query_library` (one read-only analytics
+SELECT over the `v_agent_novel_progress` / `v_agent_chapter_overview` views —
+aggregates like "novels missing fewer than 10 chapters" in a single call;
+base tables and chapter bodies are unreachable, ownership is enforced
+server-side via per-user scoped temp views on a read-only connection),
+`update_novel` (target title / description / notes), `update_chapter`
+(titles + translated/refined body replacement; refused while the novel has
+active jobs), `set_chapter_status` (`pending|translated|refined|done|error`),
+`set_chapter_excluded` and `ask_user` (clarifying question with clickable
+options; ends the turn and the picked option's value arrives as the user's
+next message).
 
 ## WebSocket
 

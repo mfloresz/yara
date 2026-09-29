@@ -74,6 +74,24 @@
             </div>
           </div>
 
+          <div v-else-if="item.kind === 'question'" class="chat-row chat-row--assistant">
+            <div class="chat-bubble chat-bubble--assistant">
+              <div class="markdown-preview chat-markdown" v-html="renderMarkdown(item.question)"></div>
+              <div class="chat-options">
+                <button
+                  v-for="opt in item.options"
+                  :key="opt.value"
+                  type="button"
+                  class="chat-suggestion"
+                  :disabled="item.answered || streaming"
+                  @click="chooseOption(item, opt)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div v-else class="chat-row chat-row--error">
             <div class="chat-error">{{ item.content }}</div>
           </div>
@@ -186,12 +204,13 @@ import {
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
 import { markdownToHtml } from "@/utils/markdown";
-import type { AgentChatEvent, AgentSessionMessage } from "@/api/types";
+import type { AgentChatEvent, AgentChatOption, AgentSessionMessage } from "@/api/types";
 import type { Novel } from "@/domain";
 
 type ChatItem =
   | { kind: "message"; role: "user" | "assistant"; content: string }
   | { kind: "tool"; name: string; args?: string; result?: string; running: boolean; open: boolean }
+  | { kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
   | { kind: "error"; content: string };
 
 type PickerNovel = Pick<
@@ -254,6 +273,19 @@ function clearSelectedNovel(): void {
   selectedNovel.value = null;
 }
 
+// parseAskUserQuestion extracts the question text from a persisted ask_user
+// tool call so past questions replay as plain assistant messages (their
+// options were already answered).
+function parseAskUserQuestion(args?: string): string {
+  if (!args) return "";
+  try {
+    const parsed = JSON.parse(args) as { question?: string };
+    return parsed.question ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function mapHistory(messages: AgentSessionMessage[]): void {
   const mapped: ChatItem[] = [];
   const pendingResults = new Map<string, { index: number }>();
@@ -264,6 +296,13 @@ function mapHistory(messages: AgentSessionMessage[]): void {
     }
     if (message.role === "assistant") {
       for (const call of message.toolCalls ?? []) {
+        if (call.name === "ask_user") {
+          const question = parseAskUserQuestion(call.args);
+          if (question) {
+            mapped.push({ kind: "message", role: "assistant", content: question });
+          }
+          continue;
+        }
         pendingResults.set(call.id, { index: mapped.length });
         mapped.push({ kind: "tool", name: call.name, args: call.args, running: false, open: false });
       }
@@ -312,8 +351,20 @@ async function resetChat(): Promise<void> {
   items.value = [];
 }
 
-async function send(): Promise<void> {
-  const message = draft.value.trim();
+function send(): void {
+  void sendMessage(draft.value.trim());
+}
+
+async function chooseOption(
+  item: Extract<ChatItem, { kind: "question" }>,
+  option: AgentChatOption,
+): Promise<void> {
+  if (item.answered || streaming.value) return;
+  item.answered = true;
+  await sendMessage(option.value);
+}
+
+async function sendMessage(message: string): Promise<void> {
   if (!message || streaming.value) return;
 
   draft.value = "";
@@ -371,6 +422,17 @@ async function send(): Promise<void> {
             break;
           }
         }
+        scrollToBottom();
+        break;
+      }
+      case "question": {
+        assistantText = "";
+        items.value.push({
+          kind: "question",
+          question: event.question ?? "",
+          options: event.options ?? [],
+          answered: false,
+        });
         scrollToBottom();
         break;
       }
@@ -530,6 +592,13 @@ function chooseNovel(novel: PickerNovel): void {
 
 .chat-suggestion:hover {
   background: var(--mock-row);
+}
+
+.chat-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
 }
 
 .chat-row {
