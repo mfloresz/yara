@@ -18,8 +18,16 @@ type AgentSession struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// agentMessagesFieldMax caps the serialized chat trail. PocketBase falls back
+// to 5000 chars when a TextField has no explicit Max, which truncated real
+// histories at the first list_novels result.
+const agentMessagesFieldMax = 1_000_000
+
 func (s *Store) ensureAgentSessionsCollection(users *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(AgentSessionsCollection); err == nil {
+		if err := s.migrateAgentMessagesMax(existing); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(AgentSessionsCollection)
@@ -30,13 +38,29 @@ func (s *Store) ensureAgentSessionsCollection(users *core.Collection) (*core.Col
 	c.UpdateRule = nil
 	c.DeleteRule = nil
 	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1, CascadeDelete: true})
-	c.Fields.Add(&core.TextField{Name: "messages"})
+	c.Fields.Add(&core.TextField{Name: "messages", Max: agentMessagesFieldMax})
 	addSystemDateFields(c)
 	c.AddIndex("idx_agent_sessions_owner_updated", false, "owner", "updated")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// migrateAgentMessagesMax raises the messages field cap on collections created
+// before the explicit Max existed (their TextField ran on PocketBase's 5000
+// char default and rejected real session saves).
+func (s *Store) migrateAgentMessagesMax(c *core.Collection) error {
+	field := c.Fields.GetByName("messages")
+	if field == nil {
+		return nil
+	}
+	textField, ok := field.(*core.TextField)
+	if !ok || textField.Max >= agentMessagesFieldMax {
+		return nil
+	}
+	textField.Max = agentMessagesFieldMax
+	return s.App.Save(c)
 }
 
 func agentSessionFromRecord(r *core.Record) *AgentSession {

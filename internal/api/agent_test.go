@@ -32,6 +32,10 @@ func (f *fakeAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput)
 			}
 		}
 	}
+	// Pad the tool result past PocketBase's 5000-char TextField default: the
+	// persisted trail must survive it (regression for the agent session save
+	// failure on real libraries).
+	toolResult += "\n" + strings.Repeat("x", 6000)
 	if in.OnEvent != nil {
 		in.OnEvent(ai.AgentEvent{Type: "tool_call", Step: 1, ToolName: "list_novels", ToolArgs: `{"query":"Sin"}`})
 		in.OnEvent(ai.AgentEvent{Type: "tool_result", Step: 1, ToolName: "list_novels", ToolResult: toolResult})
