@@ -86,15 +86,24 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 
 		var selectedNovel *store.Novel
 		if strings.TrimSpace(in.NovelID) != "" {
-			selectedNovel, err = s.Store.GetNovelAccessible(userID, strings.TrimSpace(in.NovelID))
+			// Owner-only: the assistant's context novel must be one the user
+			// owns, like every other novel it can reach. A novel owned by
+			// someone else is masked as 404 rather than 403, so the chat never
+			// confirms that an id exists in another user's library.
+			selectedNovel, err = s.Store.GetOwnedNovel(userID, strings.TrimSpace(in.NovelID))
+			if errors.Is(err, store.ErrForbidden) {
+				err = store.ErrNotFound
+			}
 			if err != nil {
 				return notFoundOrForbidden(e, err)
 			}
 		}
 
 		// Resolve the runner before streaming so configuration problems get a
-		// proper status code instead of a mid-stream error event.
-		if _, err := s.resolveAgentRunner(userID); err != nil {
+		// proper status code instead of a mid-stream error event. The resolved
+		// runner is handed to runAgentTurn so the turn does not rebuild it.
+		runner, err := s.resolveAgentRunner(userID)
+		if err != nil {
 			if errors.Is(err, errAgentUnsupportedProvider) {
 				return writeV1Error(e, http.StatusBadRequest, "provider_unsupported", "the configured AI provider does not support agent chat")
 			}
@@ -105,6 +114,9 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		e.Response.Header().Set("Content-Type", "application/x-ndjson")
 		e.Response.Header().Set("Cache-Control", "no-store")
 		e.Response.Header().Set("X-Accel-Buffering", "no")
+		// Set before WriteHeader: the shared v1 middleware adds this after
+		// e.Next() returns, which is too late once the stream has flushed.
+		e.Response.Header().Set("X-API-Version", "v1")
 		e.Response.WriteHeader(http.StatusOK)
 
 		writeEvent := func(ev agentChatEvent) bool {
@@ -135,7 +147,7 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		ctx, cancel := context.WithTimeout(e.Request.Context(), agentChatTurnTimeout)
 		defer cancel()
 
-		output, session, err := s.runAgentTurn(ctx, userID, session, selectedNovel, message, func(ev ai.AgentEvent) {
+		output, session, err := s.runAgentTurn(ctx, runner, userID, session, selectedNovel, message, func(ev ai.AgentEvent) {
 			switch ev.Type {
 			case "text_delta":
 				writeEvent(agentChatEvent{Type: "text_delta", Step: ev.Step, Text: ev.Text})
@@ -162,8 +174,11 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 				writeEvent(agentChatEvent{Type: "error", Code: "timeout", ErrorDetail: "the agent turn timed out"})
 				return nil
 			}
+			// The full error chain (store, PocketBase validation, provider
+			// internals) stays in the log; the client gets a generic message
+			// like every other v1 error.
 			slog.Error("agent turn failed", "error", err, "userID", userID, "sessionID", session.ID)
-			writeEvent(agentChatEvent{Type: "error", Code: "agent_failed", ErrorDetail: err.Error()})
+			writeEvent(agentChatEvent{Type: "error", Code: "agent_failed", ErrorDetail: "the assistant turn failed, try again"})
 			return nil
 		}
 
@@ -207,7 +222,13 @@ func parseAgentQuestionArgs(raw string) (string, []agentChatOption, bool) {
 // one, or a brand-new session when none exists.
 func resolveAgentSession(s *Server, userID, sessionID string) (*store.AgentSession, error) {
 	if strings.TrimSpace(sessionID) != "" {
-		return s.Store.GetAgentSession(userID, strings.TrimSpace(sessionID))
+		session, err := s.Store.GetAgentSession(userID, strings.TrimSpace(sessionID))
+		// A session owned by someone else is reported as not found: a 403 here
+		// would confirm that the id exists in another user's chat.
+		if errors.Is(err, store.ErrForbidden) {
+			err = store.ErrNotFound
+		}
+		return session, err
 	}
 	session, err := s.Store.GetLatestAgentSession(userID)
 	if errors.Is(err, store.ErrNotFound) {

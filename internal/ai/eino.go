@@ -194,19 +194,3 @@ func runToolLoop(ctx context.Context, m model.ToolCallingChatModel, msgs []*sche
 	}
 	return msgs, nil
 }
-
-// forceTextAnswer produces a final assistant message after a tool loop ended
-// on step exhaustion with pending tool results: one last call without tools
-// so the model summarizes instead of leaving dangling tool messages.
-func forceTextAnswer(ctx context.Context, m model.ToolCallingChatModel, msgs []*schema.Message, opts []model.Option) ([]*schema.Message, error) {
-	if len(msgs) > 0 && len(msgs[len(msgs)-1].ToolCalls) > 0 {
-		// Should not happen (callers only invoke after tool results were
-		// appended), but a trailing assistant tool-call message must go.
-		return msgs, nil
-	}
-	msg, err := m.Generate(ctx, msgs, opts...)
-	if err != nil {
-		return msgs, err
-	}
-	return append(msgs, msg), nil
-}

@@ -95,11 +95,78 @@ func (s *Store) ListChapterSummariesAccessible(userID, novelID string, limit, of
 	return summaries, novel.ChapterCount, nil
 }
 
+// GetOwnedChapter returns one chapter of a novel the user owns, without the
+// "public novels are readable" leniency GetChapterAccessible allows. The agent
+// assistant uses it so its tools can only ever touch the caller's own library.
+func (s *Store) GetOwnedChapter(userID, novelID, chapterID string) (*Chapter, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil || record.GetString("novel") != novelID {
+		return nil, ErrNotFound
+	}
+	chapter := chapterFromRecord(record)
+	return &chapter, nil
+}
+
+// GetOwnedChapterStats returns aggregate chapter stats for a novel the user
+// owns, following the same ownership policy as GetOwnedChapter.
+func (s *Store) GetOwnedChapterStats(userID, novelID string) (*ChapterStats, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	return s.chapterStatsForNovel(novel)
+}
+
+// GetOwnedChapterSummaries lists chapter summaries of a novel the user owns,
+// following the same ownership policy as GetOwnedChapter.
+func (s *Store) GetOwnedChapterSummaries(userID, novelID string, limit, offset int) ([]ChapterSummary, int, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	summaries, err := s.findChapterSummaries(
+		"novel = {:novel} AND excluded = 0",
+		limit, offset,
+		dbx.Params{"novel": novelID},
+		"position ASC", "chapter_order ASC",
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	return summaries, novel.ChapterCount, nil
+}
+
 func (s *Store) GetChapterStatsAccessible(userID, novelID string) (*ChapterStats, error) {
 	novel, err := s.GetNovelAccessible(userID, novelID)
 	if err != nil {
 		return nil, err
 	}
+	return &ChapterStats{
+		TotalChapters:        novel.ChapterCount,
+		CompletedChapters:    novel.CompletedCount,
+		TranslatedChapters:   novel.TranslatedCount,
+		OriginalCharacters:   novel.OriginalCharCount,
+		TranslatedCharacters: novel.TranslatedCharCount,
+		RefinedCharacters:    novel.RefinedCharCount,
+		TotalCharacters:      novel.TotalCharCount,
+		MaxChapterOrder:      novel.MaxChapterOrder,
+	}, nil
+}
+
+// chapterStatsForNovel builds ChapterStats from an already-authorized novel.
+func (s *Store) chapterStatsForNovel(novel *Novel) (*ChapterStats, error) {
 	return &ChapterStats{
 		TotalChapters:        novel.ChapterCount,
 		CompletedChapters:    novel.CompletedCount,
@@ -855,7 +922,7 @@ func (s *Store) UpdateChapterEdits(userID, novelID, chapterID string, edits Chap
 	return &chapter, nil
 }
 
-// ChapterSearchHit is one SearchChaptersAccessible match: the chapter summary
+// ChapterSearchHit is one SearchOwnedChapters match: the chapter summary
 // plus which fields matched and a short snippet around the first content hit.
 type ChapterSearchHit struct {
 	ChapterSummary
@@ -866,12 +933,15 @@ type ChapterSearchHit struct {
 // searchSnippetWindow is the number of context chars shown around a match.
 const searchSnippetWindow = 90
 
-// SearchChaptersAccessible runs a substring search over chapter titles and
-// bodies of one accessible novel. The query is a literal (LIKE wildcards in
-// user input are escaped); hits return with the matched field names and a
-// snippet when the match was inside a body. limit defaults to 10, max 25.
-func (s *Store) SearchChaptersAccessible(userID, novelID, query string, limit int) ([]ChapterSearchHit, error) {
-	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+// SearchOwnedChapters runs a case-sensitive literal substring search over
+// chapter titles and bodies of one novel the user owns. The agent assistant
+// uses it, so the search surface is the caller's own library only — public
+// novels belonging to other users are out of reach, exactly like every other
+// agent tool. instr() is used instead of LIKE because the contract is a
+// literal, case-sensitive match: LIKE would fold ASCII case and reject the
+// wildcard escaping the annotations below expect. limit defaults to 10, max 25.
+func (s *Store) SearchOwnedChapters(userID, novelID, query string, limit int) ([]ChapterSearchHit, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
 		return nil, err
 	}
 	query = strings.TrimSpace(query)
@@ -884,9 +954,6 @@ func (s *Store) SearchChaptersAccessible(userID, novelID, query string, limit in
 	if limit > 25 {
 		limit = 25
 	}
-
-	// Literal LIKE: escape the escape char first, then the wildcards.
-	pattern := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
 	rows := []struct {
 		ID                string `db:"id"`
 		ChapterOrder      int64  `db:"chapter_order"`
@@ -908,18 +975,18 @@ func (s *Store) SearchChaptersAccessible(userID, novelID, query string, limit in
 		FROM chapters
 		WHERE novel = {:novel}
 			AND (
-				title LIKE {:pattern} ESCAPE '\'
-				OR translated_title LIKE {:pattern} ESCAPE '\'
-				OR original_content LIKE {:pattern} ESCAPE '\'
-				OR translated_content LIKE {:pattern} ESCAPE '\'
-				OR refined_content LIKE {:pattern} ESCAPE '\'
+				instr(title, {:query}) > 0
+				OR instr(translated_title, {:query}) > 0
+				OR instr(original_content, {:query}) > 0
+				OR instr(translated_content, {:query}) > 0
+				OR instr(refined_content, {:query}) > 0
 			)
 		ORDER BY chapter_order
 		LIMIT {:limit}
 	`).Bind(dbx.Params{
-		"novel":   novelID,
-		"pattern": pattern,
-		"limit":   limit,
+		"novel": novelID,
+		"query": query,
+		"limit": limit,
 	}).All(&rows)
 	if err != nil {
 		return nil, err

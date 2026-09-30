@@ -153,6 +153,207 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 	}
 }
 
+// TestValidateAgentAnalyticsSQLAllowlist locks the allowlist the sandbox
+// relies on. The model may only read the two sandbox tables, and only through
+// FROM/JOIN — a subquery naming anything else is rejected before any SQL runs.
+// A CTE is allowed to name its own result table, since that reads nothing.
+func TestValidateAgentAnalyticsSQLAllowlist(t *testing.T) {
+	allowed := []string{
+		"SELECT novel_id, title, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending",
+		"SELECT count(*) FROM v_agent_chapter_overview WHERE status = 'pending'",
+		"SELECT n.title, count(c.chapter_id) FROM v_agent_novel_progress n JOIN v_agent_chapter_overview c ON c.novel_id = n.novel_id GROUP BY n.title",
+		// A literal that spells a forbidden word must not trip the check.
+		"SELECT novel_id FROM v_agent_novel_progress WHERE title LIKE '%update%'",
+		"SELECT novel_id FROM v_agent_novel_progress WHERE title = 'Create a novel'",
+		// Reading through a subquery of an allowed view is still an allowed relation.
+		"SELECT * FROM (SELECT * FROM v_agent_novel_progress) x",
+	}
+	for _, q := range allowed {
+		if err := validateAgentAnalyticsSQL(q); err != nil {
+			t.Errorf("expected query to be allowed, got %v: %s", err, q)
+		}
+	}
+
+	// CTEs: the trailing SELECT reads the CTE name, which resolves to the
+	// allowed views it was built from.
+	for _, q := range []string{
+		"WITH low AS (SELECT novel_id FROM v_agent_novel_progress WHERE pending < 10) SELECT * FROM low",
+		"WITH c AS (SELECT * FROM v_agent_chapter_overview) SELECT count(*) FROM c",
+	} {
+		if err := validateAgentAnalyticsSQL(q); err != nil {
+			t.Errorf("expected CTE query to be allowed, got %v: %s", err, q)
+		}
+	}
+
+	rejected := []string{
+		// The payloads that escaped the old table blocklist.
+		"SELECT email, tokenKey FROM _superusers WHERE 'v_agent_'='v_agent_'",
+		"SELECT (SELECT group_concat(messages) FROM agent_sessions) AS leak FROM v_agent_novel_progress LIMIT 1",
+		"SELECT * FROM _authOrigins WHERE 'v_agent_'='v_agent_'",
+		"SELECT (SELECT group_concat(source_title) FROM novels) AS leak FROM v_agent_chapter_overview LIMIT 1",
+		"SELECT (SELECT count(*) FROM users) AS n FROM v_agent_novel_progress",
+		"SELECT (SELECT group_concat(token_key) FROM worker_tokens) AS n FROM v_agent_novel_progress",
+		"SELECT (SELECT group_concat(password) FROM _superusers) AS n FROM v_agent_novel_progress",
+		"SELECT * FROM sqlite_master",
+		"SELECT * FROM pragma_table_info('chapters')",
+		"SELECT 1 FROM v_agent_novel_progress JOIN users ON 1=1",
+		// Statement/mutation surface.
+		"SELECT novel_id FROM v_agent_novel_progress; DROP TABLE novels",
+		"DELETE FROM v_agent_novel_progress",
+		"INSERT INTO v_agent_novel_progress SELECT * FROM v_agent_novel_progress",
+		"SELECT * FROM v_agent_novel_progress UNION SELECT * FROM agent_sessions",
+		"ATTACH DATABASE 'x' AS y",
+		"SELECT novel_id FROM v_agent_novel_progress -- comment",
+		"UPDATE novels SET title = 'x'",
+		"",
+		"not a query",
+	}
+	for _, q := range rejected {
+		if err := validateAgentAnalyticsSQL(q); err == nil {
+			t.Errorf("expected query to be rejected, got nil: %s", q)
+		}
+	}
+}
+
+// TestAgentSandboxHoldsOnlyOwnerData is the structural guarantee behind the
+// allowlist: the sandbox is a separate database that never contains users,
+// superusers, sessions or any other user's novels, so even a query that
+// slipped past validation would find nothing to read.
+func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, bobNovelID := seedAnalyticsLibrary(t, st)
+	_ = bobNovelID
+	ctx := context.Background()
+
+	db, err := st.agentAnalyticsRO()
+	if err != nil {
+		t.Fatalf("open sandbox: %v", err)
+	}
+	if err := st.populateAgentSandbox(ctx, db, aliceID); err != nil {
+		t.Fatalf("populate sandbox: %v", err)
+	}
+
+	// Only the two documented relations exist in the sandbox.
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+	if err != nil {
+		t.Fatalf("list sandbox relations: %v", err)
+	}
+	defer rows.Close()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan relation name: %v", err)
+		}
+		names = append(names, name)
+	}
+	for _, name := range names {
+		if name != AgentAnalyticsNovelView && name != AgentAnalyticsChapterView {
+			t.Errorf("unexpected relation in sandbox: %q (all: %v)", name, names)
+		}
+	}
+
+	// Alice's snapshot holds her novel and nothing of bob's.
+	out, err := st.RunAgentAnalyticsQuery(ctx, aliceID, "SELECT novel_id FROM "+AgentAnalyticsNovelView, 50)
+	if err != nil {
+		t.Fatalf("alice query: %v", err)
+	}
+	if strings.Contains(out, bobNovelID) {
+		t.Fatalf("sandbox snapshot must be alice-scoped, leaked bob's novel: %s", out)
+	}
+	if len(parseAgentAnalyticsRows(t, out)) != 1 {
+		t.Fatalf("expected exactly alice's novel: %s", out)
+	}
+}
+
+// TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd drives the payloads
+// that used to escape the blocklist through the real entry point, which must
+// now fail on validation or because the relation does not exist in the sandbox.
+func TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"SELECT email, tokenKey FROM _superusers WHERE 'v_agent_'='v_agent_'",
+		"SELECT (SELECT group_concat(messages) FROM agent_sessions) AS leak FROM " + AgentAnalyticsNovelView,
+		"SELECT * FROM _authOrigins",
+		"SELECT (SELECT group_concat(source_title) FROM novels) AS leak FROM " + AgentAnalyticsNovelView,
+		"SELECT (SELECT group_concat(password) FROM _superusers) AS n FROM " + AgentAnalyticsNovelView,
+		"SELECT * FROM sqlite_master",
+		"SELECT * FROM users",
+	} {
+		if _, err := st.RunAgentAnalyticsQuery(ctx, aliceID, query, 50); err == nil {
+			t.Errorf("query must be rejected: %q", query)
+		}
+	}
+}
+
+// TestAgentAnalyticsTruncationStaysUnderLimit pins the row cap: the payload
+// reports truncation without carrying the extra probe row.
+func TestAgentAnalyticsTruncationStaysUnderLimit(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	// 12 chapters > limit 5: the payload must carry exactly 5 rows and say so.
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT chapter_id FROM "+AgentAnalyticsChapterView, 5)
+	if err != nil {
+		t.Fatalf("analytics query: %v", err)
+	}
+	var result struct {
+		Rows      [][]any `json:"rows"`
+		Truncated bool    `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("invalid payload: %v", err)
+	}
+	if len(result.Rows) != 5 {
+		t.Fatalf("limit 5 must yield exactly 5 rows, got %d in %s", len(result.Rows), out)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated flag, got %s", out)
+	}
+
+	// Under the cap: no truncation flag, every row present.
+	out, err = st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT chapter_id FROM "+AgentAnalyticsChapterView, 50)
+	if err != nil {
+		t.Fatalf("analytics query: %v", err)
+	}
+	// A fresh struct: the omitted `truncated` field would keep the previous true.
+	full := struct {
+		Rows      [][]any `json:"rows"`
+		Truncated bool    `json:"truncated"`
+	}{}
+	if err := json.Unmarshal([]byte(out), &full); err != nil {
+		t.Fatalf("invalid payload: %v", err)
+	}
+	if len(full.Rows) != 12 || full.Truncated {
+		t.Fatalf("expected 12 rows untruncated, got %d (truncated=%v) in %s", len(full.Rows), full.Truncated, out)
+	}
+}
+
+// TestTruncateRunesKeepsMultibyteTextIntact guards the rune-safe cut shared by
+// the analytics cells and the agent tool results.
+func TestTruncateRunesKeepsMultibyteTextIntact(t *testing.T) {
+	if got := TruncateRunes("áéíóúñ", 3); got != "áéí" {
+		t.Errorf("expected 3 accented chars, got %q", got)
+	}
+	if got := TruncateRunes("第一章第二", 2); got != "第一" {
+		t.Errorf("expected 2 CJK chars, got %q", got)
+	}
+	if got := TruncateRunes("abc", 10); got != "abc" {
+		t.Errorf("short strings must pass through, got %q", got)
+	}
+	if got := TruncateRunes("abc", 0); got != "" {
+		t.Errorf("zero budget must yield empty, got %q", got)
+	}
+}
+
 // parseAgentAnalyticsRows converts the positional {columns, rows} payload
 // into per-row maps for assertions.
 func parseAgentAnalyticsRows(t *testing.T, payload string) []map[string]any {

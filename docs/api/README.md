@@ -548,8 +548,16 @@ setting < per-novel prompt.
 AI library assistant over chat. Requires the user's configured AI provider to
 be OpenAI-compatible (the Google provider does not support the tool loop and
 answers with `400 provider_unsupported`). Tool calls run server-side against
-the requesting user's own library only; mutations go through the same store
+the requesting user's **own** library only; mutations go through the same store
 validation as the REST endpoints.
+
+**Ownership is enforced by the backend, not by the model's cooperation.** Every
+tool resolves its target through an owner-scoped store method, so a novel
+belonging to another user is refused with 404 even when that novel is public
+(the REST API does expose public novels, but the assistant does not). Requests
+for a foreign `novelId` or `sessionId` are masked as `404`, not `403`, so the
+chat never confirms that an id exists in another user's data. Chat sessions are
+per user — one session each, enforced by a unique index on the owner.
 
 | Method | Path | Description |
 |---|---|---|
@@ -559,18 +567,37 @@ validation as the REST endpoints.
 
 Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
 `get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries),
-`get_chapter` (body text, truncated), `search_chapters` (literal search over
-titles and bodies with snippets), `query_library` (one read-only analytics
-SELECT over the `v_agent_novel_progress` / `v_agent_chapter_overview` views —
-aggregates like "novels missing fewer than 10 chapters" in a single call;
-base tables and chapter bodies are unreachable, ownership is enforced
-server-side via per-user scoped temp views on a read-only connection),
-`update_novel` (target title / description / notes), `update_chapter`
+`get_chapter` (body text, truncated), `search_chapters` (case-sensitive literal
+search over titles and bodies with snippets), `query_library` (one read-only
+analytics SELECT over the `v_agent_novel_progress` / `v_agent_chapter_overview`
+tables — aggregates like "novels missing fewer than 10 chapters" in a single
+call), `update_novel` (target title / description / notes), `update_chapter`
 (titles + translated/refined body replacement; refused while the novel has
-active jobs), `set_chapter_status` (`pending|translated|refined|done|error`),
+active jobs), `set_chapter_status` (`pending|translated|refined|done|failed`),
 `set_chapter_excluded` and `ask_user` (clarifying question with clickable
 options; ends the turn and the picked option's value arrives as the user's
 next message).
+
+#### `query_library` isolation
+
+The assistant's SQL never touches the application database. Each call is served
+from a private in-memory SQLite database that is rebuilt per request with the
+requesting owner's novels and chapters, and contains nothing else: no `users`,
+no `_superusers`, no provider keys, no `agent_sessions`, and no other user's
+novels. Two layers back that up:
+
+1. **Structural** — the sandbox only has the two analytics tables, so a
+   subquery, `JOIN` or `sqlite_master` read has nothing to find. The rows are
+   selected by owner server-side, and the sandbox carries no owner column, so
+   there is no filter for the model to omit or override.
+2. **Validation** — the query must be a single comment-free `SELECT`/`WITH`
+   whose every `FROM`/`JOIN` target is one of the two tables (CTE names bound by
+   the query itself are allowed, since they read nothing). The check runs
+   against the query with string literals blanked out, so a `LIKE '%update%'`
+   pattern is not mistaken for the `UPDATE` keyword.
+
+Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
+Row results are capped (`limit`, default 50, max 200) and cells are truncated.
 
 ## WebSocket
 

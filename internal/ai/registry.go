@@ -71,9 +71,12 @@ var knownProviders = []ProviderInfo{
 	},
 
 	{
-		ID:           "meta",
-		Name:         "Meta",
-		BaseURL:      "https://api.meta.ai/v1",
+		ID:      "meta",
+		Name:    "Meta",
+		BaseURL: "https://api.meta.ai/v1",
+		// Every OpenAI-compatible provider now goes through eino's
+		// /chat/completions path; the old useResponsesAPI switch is gone, so
+		// this entry only works while the endpoint exposes chat completions.
 		Models:       []string{"muse-spark-1.2-contributor"},
 		DefaultModel: "muse-spark-1.2-contributor",
 		OpenAICompat: true,
@@ -141,7 +144,6 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "local-model",
 		OpenAICompat: true,
 		GoAIOptions: map[string]any{
-			"useResponsesAPI":  false,
 			"strictJsonSchema": false,
 		},
 	},

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"strings"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -23,9 +25,16 @@ type AgentSession struct {
 // histories at the first list_novels result.
 const agentMessagesFieldMax = 1_000_000
 
+// agentSessionsOwnerIndex is the unique owner index that keeps one chat
+// session per user.
+const agentSessionsOwnerIndex = "idx_agent_sessions_owner_unique"
+
 func (s *Store) ensureAgentSessionsCollection(users *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(AgentSessionsCollection); err == nil {
 		if err := s.migrateAgentMessagesMax(existing); err != nil {
+			return nil, err
+		}
+		if err := s.migrateAgentSessionsUniqueOwner(existing); err != nil {
 			return nil, err
 		}
 		return existing, nil
@@ -40,7 +49,10 @@ func (s *Store) ensureAgentSessionsCollection(users *core.Collection) (*core.Col
 	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.TextField{Name: "messages", Max: agentMessagesFieldMax})
 	addSystemDateFields(c)
-	c.AddIndex("idx_agent_sessions_owner_updated", false, "owner", "updated")
+	// One chat session per user: the owner is unique, so two concurrent turns
+	// that both try to create a session cannot end up with two records the
+	// "latest session" lookup would have to disambiguate.
+	c.AddIndex(agentSessionsOwnerIndex, true, "owner", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
@@ -63,6 +75,36 @@ func (s *Store) migrateAgentMessagesMax(c *core.Collection) error {
 	return s.App.Save(c)
 }
 
+// migrateAgentSessionsUniqueOwner installs the one-session-per-owner unique
+// index on collections created before it existed. Leftover duplicates (a race
+// between two turns that both found no session) are collapsed first, keeping
+// the most recently updated record, because SQLite refuses to create a unique
+// index while duplicates exist and the server must still boot.
+func (s *Store) migrateAgentSessionsUniqueOwner(c *core.Collection) error {
+	for _, index := range c.Indexes {
+		if strings.HasPrefix(index, "CREATE UNIQUE INDEX "+agentSessionsOwnerIndex) {
+			return nil
+		}
+	}
+	records, err := s.App.FindRecordsByFilter(AgentSessionsCollection, "owner != ''", "-updated", 0, 0)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, record := range records {
+		owner := record.GetString("owner")
+		if seen[owner] {
+			if err := s.App.Delete(record); err != nil {
+				return err
+			}
+			continue
+		}
+		seen[owner] = true
+	}
+	c.AddIndex(agentSessionsOwnerIndex, true, "owner", "")
+	return s.App.Save(c)
+}
+
 func agentSessionFromRecord(r *core.Record) *AgentSession {
 	return &AgentSession{
 		ID:        r.Id,
@@ -73,7 +115,9 @@ func agentSessionFromRecord(r *core.Record) *AgentSession {
 	}
 }
 
-// CreateAgentSession persists a new empty session for the owner.
+// CreateAgentSession persists a new empty session for the owner. The unique
+// owner index makes creation idempotent per user: if a concurrent turn got
+// there first, that session is returned instead of a duplicate.
 func (s *Store) CreateAgentSession(ownerID, messages string) (*AgentSession, error) {
 	collection, err := s.App.FindCollectionByNameOrId(AgentSessionsCollection)
 	if err != nil {
@@ -83,6 +127,9 @@ func (s *Store) CreateAgentSession(ownerID, messages string) (*AgentSession, err
 	record.Set("owner", ownerID)
 	record.Set("messages", messages)
 	if err := s.App.Save(record); err != nil {
+		if existing, getErr := s.GetLatestAgentSession(ownerID); getErr == nil {
+			return existing, nil
+		}
 		return nil, err
 	}
 	return agentSessionFromRecord(record), nil
@@ -137,16 +184,19 @@ func (s *Store) SaveAgentSessionMessages(ownerID, sessionID, messages string) (*
 }
 
 // DeleteAgentSessions removes every session of the requesting user; used by
-// the chat reset action.
+// the chat reset action. All-or-nothing: a partial delete would leave the
+// chat showing a conversation the user believes they just cleared.
 func (s *Store) DeleteAgentSessions(ownerID string) error {
 	records, err := s.App.FindRecordsByFilter(AgentSessionsCollection, "owner = {:owner}", "", 0, 0, dbx.Params{"owner": ownerID})
 	if err != nil {
 		return err
 	}
-	for _, record := range records {
-		if err := s.App.Delete(record); err != nil {
-			return err
+	return s.App.RunInTransaction(func(txApp core.App) error {
+		for _, record := range records {
+			if err := txApp.Delete(record); err != nil {
+				return err
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }

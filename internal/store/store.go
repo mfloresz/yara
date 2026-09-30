@@ -58,9 +58,11 @@ var ErrInvalidReorder = errors.New("invalid chapter order list")
 type Store struct {
 	App       core.App
 	Encryptor *secure.Encryptor
-	// Agent analytics read-only handle, built lazily once. MaxOpenConns(1)
-	// serializes queries so per-user temp view rescoping never interleaves.
+	// Agent analytics sandbox handle, built lazily once. It is a private
+	// in-memory database that never holds anything but the querying owner's
+	// own library rows; the mutex serializes snapshot rebuilds on it.
 	agentAnalyticsOnce  sync.Once
+	agentAnalyticsMu    sync.Mutex
 	agentAnalyticsRODB  *sql.DB
 	agentAnalyticsROErr error
 }
@@ -134,9 +136,6 @@ func (s *Store) EnsureSchema() error {
 		return err
 	}
 	if err := s.seedProviders(); err != nil {
-		return err
-	}
-	if err := s.ensureAgentAnalyticsViews(); err != nil {
 		return err
 	}
 	return nil

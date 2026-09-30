@@ -16,6 +16,7 @@ import (
 const (
 	agentMaxMessageChars        = 8000
 	agentMaxHistoryMessages     = 60
+	agentMaxHistoryBytes        = 800_000
 	agentListNovelsDefaultLimit = 20
 	agentListNovelsMaxLimit     = 50
 	agentChaptersDefaultLimit   = 50
@@ -32,13 +33,14 @@ const agentSystemPrompt = `You are the library assistant of Yara, a self-hosted 
 
 Rules:
 - Reply in the same language the user writes in. Be concise and concrete.
+- Every tool works ONLY on novels the user owns. Other users' novels, chapters, sessions, accounts and settings are not reachable by any tool, and no SQL query can read them. If asked about them, say the assistant can only see the user's own library.
 - Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids and chapter orders when reporting results.
 - list_novels returns hasDescription so you can answer questions like "which novels are missing a description". Request a generous limit when the user asks for a full sweep.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
 - query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those.
-- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded) apply immediately. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. While a novel has active download/translation jobs, chapter writes are refused — say so instead of retrying.
-- Valid chapter statuses: pending, translated, refined, done, error.
+- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. While a novel has active download/translation jobs, chapter writes are refused — say so instead of retrying.
+- Valid chapter statuses: pending, translated, refined, done, failed.
 - When the user's request is ambiguous because several novels or chapters match (e.g. two novels share a title), call ask_user with the candidates as clickable options instead of asking in prose: label is the human-readable choice (e.g. "The Guardian (de Evil_Warlord)"), value is the exact text their click will send (the id). ask_user must be the only tool call in that step; the picked value arrives as the user's next message.
 - The user's selected novel (when present in this prompt) is the default subject of their questions; still use its id with the tools.
 
@@ -167,7 +169,7 @@ func marshalToolResult(v any) (string, error) {
 func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "list_novels",
-		Description: "List the user's novels, newest first. Set query to search by title, author, series or tags. Returns light records: hasDescription tells you whether the target (user-facing) description is empty.",
+		Description: "List the user's OWN novels, newest first. Set query to search by title, author, series or tags. Returns light records: hasDescription tells you whether the target (user-facing) description is empty. The assistant only ever sees novels the user owns, never other users' public novels.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -188,7 +190,10 @@ func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 			if limit > agentListNovelsMaxLimit {
 				limit = agentListNovelsMaxLimit
 			}
-			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, 0, "", "", store.ListNovelOptions{Shared: "all"})
+			// Shared: "own" keeps the assistant inside the caller's library:
+			// with the default "all" scope, public novels belonging to other
+			// users would be listed and then readable through get_novel.
+			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, 0, "", "", store.ListNovelOptions{Shared: "own"})
 			if err != nil {
 				return "", err
 			}
@@ -213,7 +218,7 @@ func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 func (s *Server) agentToolGetNovel(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "get_novel",
-		Description: "Get one novel's full metadata by id: titles, authors, series, source and target descriptions, status, tags, source URL and the user's notes.",
+		Description: "Get one of the user's OWN novels by id: titles, authors, series, source and target descriptions, status, tags, source URL and the user's notes. Ids of novels the user does not own are not accessible.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -228,7 +233,7 @@ func (s *Server) agentToolGetNovel(userID string) ai.AgentTool {
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.ID) == "" {
 				return "", fmt.Errorf("invalid id")
 			}
-			novel, err := s.Store.GetNovelAccessible(userID, strings.TrimSpace(a.ID))
+			novel, err := s.Store.GetOwnedNovel(userID, strings.TrimSpace(a.ID))
 			if err != nil {
 				return "", err
 			}
@@ -258,7 +263,7 @@ func (s *Server) agentToolGetNovel(userID string) ai.AgentTool {
 func (s *Server) agentToolGetNovelStats(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "get_novel_stats",
-		Description: "Get translation progress stats for one novel: total, completed and translated chapter counts plus character totals.",
+		Description: "Get translation progress stats for one of the user's OWN novels: total, completed and translated chapter counts plus character totals.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -273,10 +278,7 @@ func (s *Server) agentToolGetNovelStats(userID string) ai.AgentTool {
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.ID) == "" {
 				return "", fmt.Errorf("invalid id")
 			}
-			if _, err := s.Store.GetNovelAccessible(userID, strings.TrimSpace(a.ID)); err != nil {
-				return "", err
-			}
-			stats, err := s.Store.GetChapterStatsAccessible(userID, strings.TrimSpace(a.ID))
+			stats, err := s.Store.GetOwnedChapterStats(userID, strings.TrimSpace(a.ID))
 			if err != nil {
 				return "", err
 			}
@@ -288,7 +290,7 @@ func (s *Server) agentToolGetNovelStats(userID string) ai.AgentTool {
 func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "get_novel_chapters",
-		Description: "List chapter summaries for one novel (ordered): titles, translation status, exclusion flag and character counts. Summaries never include chapter bodies; use get_chapter for those.",
+		Description: "List chapter summaries for one of the user's OWN novels (ordered): titles, translation status, exclusion flag and character counts. Summaries never include chapter bodies; use get_chapter for those.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -317,7 +319,7 @@ func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 			if a.Offset < 0 {
 				a.Offset = 0
 			}
-			summaries, total, err := s.Store.ListChapterSummariesAccessible(userID, strings.TrimSpace(a.ID), limit, a.Offset)
+			summaries, total, err := s.Store.GetOwnedChapterSummaries(userID, strings.TrimSpace(a.ID), limit, a.Offset)
 			if err != nil {
 				return "", err
 			}
@@ -349,7 +351,7 @@ func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "get_chapter",
-		Description: "Read one chapter by novel id + chapter id. Without content it returns metadata only; set content to original, translated or refined to include that text (truncated for context safety).",
+		Description: "Read one chapter of the user's OWN novel by novel id + chapter id. Without content it returns metadata only; set content to original, translated or refined to include that text (truncated for context safety).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -368,7 +370,7 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" {
 				return "", fmt.Errorf("invalid novelId/chapterId")
 			}
-			chapter, err := s.Store.GetChapterAccessible(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID))
+			chapter, err := s.Store.GetOwnedChapter(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID))
 			if err != nil {
 				return "", err
 			}
@@ -424,7 +426,7 @@ func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
 func (s *Server) agentToolUpdateNovel(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "update_novel",
-		Description: "Apply edits to one novel's metadata: target (user-facing) title, target description and/or the user's notes. Writes immediately; empty strings clear a field. Only use on explicit user request.",
+		Description: "Apply edits to one of the user's OWN novels: target (user-facing) title, target description and/or the user's notes. Writes immediately; empty strings clear a field. Only use on explicit user request.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -501,7 +503,7 @@ func (s *Server) agentToolSearchChapters(userID string) ai.AgentTool {
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" {
 				return "", fmt.Errorf("invalid novelId")
 			}
-			hits, err := s.Store.SearchChaptersAccessible(userID, strings.TrimSpace(a.NovelID), a.Query, a.Limit)
+			hits, err := s.Store.SearchOwnedChapters(userID, strings.TrimSpace(a.NovelID), a.Query, a.Limit)
 			if err != nil {
 				return "", err
 			}
@@ -513,7 +515,7 @@ func (s *Server) agentToolSearchChapters(userID string) ai.AgentTool {
 func (s *Server) agentToolUpdateChapter(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "update_chapter",
-		Description: "Edit one chapter's titles and/or content: title (original), translatedTitle, translatedContent, refinedContent. Content values replace the WHOLE field, so read the current text with get_chapter first when editing. Omitted fields stay unchanged; empty strings clear them. Refused while the novel has active jobs.",
+		Description: "Edit one chapter of the user's OWN novel: title (original), translatedTitle, translatedContent, refinedContent. Content values replace the WHOLE field, so read the current text with get_chapter first when editing. Omitted fields stay unchanged; empty strings clear them. Refused while the novel has active jobs.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -565,25 +567,28 @@ func (s *Server) agentToolUpdateChapter(userID string) ai.AgentTool {
 }
 
 // agentChapterStatuses is the closed set the model may set via
-// set_chapter_status; anything else returns a tool error the model can read.
+// set_chapter_status. It mirrors the chapters collection SelectField values
+// (store_schema.go) minus "processing", which is a transient state the
+// translation worker owns. Anything else returns a tool error the model can
+// read — a value outside the schema would fail PocketBase validation.
 var agentChapterStatuses = map[string]bool{
 	"pending":    true,
 	"translated": true,
 	"refined":    true,
 	"done":       true,
-	"error":      true,
+	"failed":     true,
 }
 
 func (s *Server) agentToolSetChapterStatus(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "set_chapter_status",
-		Description: "Change one chapter's translation status (pending, translated, refined, done, error), optionally with an error note. This does not create, translate or delete content; it only flips the status flag and refreshes novel stats.",
+		Description: "Change one chapter of the user's OWN novel: flip its translation status (pending, translated, refined, done, failed) and optionally set an error note. This does not create, translate or delete content; it only flips the status flag and refreshes novel stats.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "novelId": {"type": "string", "description": "Novel id."},
     "chapterId": {"type": "string", "description": "Chapter id."},
-    "status": {"type": "string", "enum": ["pending", "translated", "refined", "done", "error"]},
+    "status": {"type": "string", "enum": ["pending", "translated", "refined", "done", "failed"]},
     "errorMessage": {"type": "string", "description": "Optional note stored with the chapter (cleared when omitted)."}
   },
   "required": ["novelId", "chapterId", "status"]
@@ -599,7 +604,7 @@ func (s *Server) agentToolSetChapterStatus(userID string) ai.AgentTool {
 				return "", fmt.Errorf("invalid novelId/chapterId")
 			}
 			if !agentChapterStatuses[a.Status] {
-				return "", fmt.Errorf("invalid status %q: use pending, translated, refined, done or error", a.Status)
+				return "", fmt.Errorf("invalid status %q: use pending, translated, refined, done or failed", a.Status)
 			}
 			if err := s.Store.UpdateChapterStatusForUser(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID), a.Status, a.ErrorMessage); err != nil {
 				return "", err
@@ -612,7 +617,7 @@ func (s *Server) agentToolSetChapterStatus(userID string) ai.AgentTool {
 func (s *Server) agentToolSetChapterExcluded(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "set_chapter_excluded",
-		Description: "Include or exclude one chapter from the novel (excluded chapters are hidden from readers and skipped by stats and translation jobs). Refused while the novel has active jobs.",
+		Description: "Include or exclude one chapter of the user's OWN novel (excluded chapters are hidden from readers and skipped by stats and translation jobs). Refused while the novel has active jobs.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -669,15 +674,49 @@ func agentHistoryFromSession(session *store.AgentSession) []ai.AgentMessage {
 	return history
 }
 
-// runAgentTurn executes one chat turn: resolve the runner, replay history,
-// stream events through onEvent, then persist the extended trail. Callers
-// must serialize turns per user (agentTurnLocks).
-func (s *Server) runAgentTurn(ctx context.Context, userID string, session *store.AgentSession, selectedNovel *store.Novel, message string, onEvent func(ai.AgentEvent)) (ai.AgentChatOutput, *store.AgentSession, error) {
-	runner, err := s.resolveAgentRunner(userID)
-	if err != nil {
-		return ai.AgentChatOutput{}, session, err
+// trimAgentHistory bounds the persisted trail by both message count and
+// encoded size, cutting only at a turn boundary.
+//
+// Cutting at an arbitrary offset can drop an assistant(toolCalls) message
+// while keeping its `tool` replies, or the reverse. The trail then replays as
+// a conversation whose first message is a tool result, which every
+// OpenAI-compatible API rejects with a 400 — and because the bad trail is
+// already persisted, every later turn fails the same way until the session is
+// reset. So the cut walks back to the newest `user` message: a turn boundary
+// where everything after it is a self-contained assistant/tool exchange.
+func trimAgentHistory(messages []ai.AgentMessage) []ai.AgentMessage {
+	if len(messages) <= agentMaxHistoryMessages {
+		return messages
 	}
+	start := len(messages) - agentMaxHistoryMessages
+	for start < len(messages) && messages[start].Role != "user" {
+		start++
+	}
+	if start >= len(messages) {
+		// No user message in the kept window (a malformed trail): fall back to
+		// dropping the whole window rather than persisting a broken one.
+		return nil
+	}
+	return messages[start:]
+}
 
+// agentHistoryBytes accumulates the encoded size of a trail, used to keep the
+// persisted JSON under the collection's field cap.
+func agentHistoryBytes(messages []ai.AgentMessage) int {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content) + len(m.ToolCallID) + len(m.ToolName)
+		for _, call := range m.ToolCalls {
+			total += len(call.Name) + len(call.Args)
+		}
+	}
+	return total
+}
+
+// runAgentTurn executes one chat turn: replay history, stream events through
+// onEvent, then persist the extended trail. Callers must serialize turns per
+// user (agentTurnLocks) and pass an already-resolved runner.
+func (s *Server) runAgentTurn(ctx context.Context, runner ai.AgentProvider, userID string, session *store.AgentSession, selectedNovel *store.Novel, message string, onEvent func(ai.AgentEvent)) (ai.AgentChatOutput, *store.AgentSession, error) {
 	history := agentHistoryFromSession(session)
 	history = append(history, ai.AgentMessage{Role: "user", Content: message})
 
@@ -696,10 +735,22 @@ func (s *Server) runAgentTurn(ctx context.Context, userID string, session *store
 		return output, session, err
 	}
 
-	full := output.Messages
-	if len(full) > agentMaxHistoryMessages {
-		full = full[len(full)-agentMaxHistoryMessages:]
+	full := trimAgentHistory(output.Messages)
+	// Tool call arguments are unbounded (update_chapter carries whole
+	// chapters), so a count-bounded trail can still blow past the collection's
+	// field cap. Drop whole turns from the front until the encoded trail fits.
+	for len(full) > 0 && agentHistoryBytes(full) > agentMaxHistoryBytes {
+		cut := 0
+		for cut < len(full) && full[cut].Role != "user" {
+			cut++
+		}
+		if cut >= len(full) {
+			full = nil
+			break
+		}
+		full = full[cut:]
 	}
+
 	encoded, err := json.Marshal(full)
 	if err != nil {
 		return output, session, fmt.Errorf("encode agent history: %w", err)

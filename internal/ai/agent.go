@@ -256,17 +256,32 @@ func agentMessageFromEino(m *schema.Message) AgentMessage {
 	return out
 }
 
+// truncateRunes cuts s to at most maxChars runes without splitting a
+// multi-byte character. The library serves accented Spanish and CJK text, so a
+// byte-wise cut would emit invalid UTF-8 at every boundary and JSON-marshal it
+// into the model context as U+FFFD.
+func truncateRunes(s string, maxChars int) string {
+	count := 0
+	for i := range s {
+		if count == maxChars {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
 func truncateToolResult(s string) string {
 	if len(s) <= maxToolResultChars {
 		return s
 	}
-	return s[:maxToolResultChars] + "\n…[truncated]"
+	return truncateRunes(s, maxToolResultChars) + "\n…[truncated]"
 }
 
 func toolResultPreview(s string) string {
 	preview := strings.ReplaceAll(s, "\n", " ")
 	if len(preview) > maxEventToolResultChars {
-		preview = preview[:maxEventToolResultChars] + "…"
+		preview = truncateRunes(preview, maxEventToolResultChars) + "…"
 	}
 	return preview
 }

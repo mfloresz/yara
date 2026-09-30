@@ -133,9 +133,11 @@ func TestOpenCodeGoLunaVariantWireFormat(t *testing.T) {
 
 // TestOpenAIProviderAlwaysUsesChatCompletions pins the eino migration
 // behavior: every OpenAI-compatible request goes to /chat/completions with a
-// messages array, regardless of legacy provider options. Endpoints that only
-// speak the OpenAI Responses API (e.g. muse-spark on opencode) are not
-// supported anymore and their catalog entries were removed.
+// messages array, regardless of legacy provider options. The useResponsesAPI
+// switch is gone, so a catalog endpoint that only speaks the OpenAI Responses
+// API (e.g. muse-spark) will not work until that provider exposes
+// /chat/completions; the catalog entry is kept so the provider stays
+// selectable, and the limitation is called out in the API docs.
 func TestOpenAIProviderAlwaysUsesChatCompletions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

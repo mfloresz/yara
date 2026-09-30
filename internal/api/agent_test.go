@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -585,4 +586,310 @@ func TestAgentChatQueryLibraryTool(t *testing.T) {
 	if !strings.HasPrefix(badResult, "error: ") {
 		t.Fatalf("DELETE attempt must surface as a tool error, got %q", badResult)
 	}
+}
+
+// runAgentTools executes one chat turn and returns the concatenated tool
+// results, so a test can assert on what the model actually read or wrote.
+func runAgentTools(t *testing.T, env *apiTestEnv, token string, calls []string, body map[string]any) []string {
+	t.Helper()
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: calls}, nil
+	}
+	payload := map[string]any{"message": "hazlo"}
+	for k, v := range body {
+		payload[k] = v
+	}
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", token, payload)
+	assertStatus(t, resp, http.StatusOK)
+	results := []string{}
+	for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+		if ev["type"] == "tool_result" {
+			if s, ok := ev["result"].(string); ok {
+				results = append(results, s)
+			}
+		}
+	}
+	return results
+}
+
+// TestAgentToolsCannotReadAnotherUsersLibrary is the core ownership
+// guarantee: no assistant tool, however the model asks, can read a novel,
+// chapter or body that belongs to someone else — not even when the novel is
+// public, which the REST surface deliberately exposes to other users.
+func TestAgentToolsCannotReadAnotherUsersLibrary(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-iso@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-iso@example.com", "secret123", "Bob")
+
+	aliceNovel := createNovel(t, env.handler, alice.Token, "Secreto de Alice", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+aliceNovel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":      1,
+		"title":             "Uno",
+		"originalContent":   "contenido original de alice",
+		"translatedContent": "traducción secreta de alice",
+		"status":            "translated",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	chapterID := chapterIDFrom(t, chResp)
+
+	// Make it public: the REST API exposes it to every user, so the assistant
+	// must not become a back door around that.
+	pubResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+aliceNovel.ID, alice.Token, map[string]any{
+		"isPublic": true,
+	})
+	assertStatus(t, pubResp, http.StatusOK)
+
+	readTools := []string{
+		`{"_tool":"list_novels","args":{"query":"Secreto"}}`,
+		`{"_tool":"get_novel","args":{"id":"` + aliceNovel.ID + `"}}`,
+		`{"_tool":"get_novel_stats","args":{"id":"` + aliceNovel.ID + `"}}`,
+		`{"_tool":"get_novel_chapters","args":{"id":"` + aliceNovel.ID + `"}}`,
+		`{"_tool":"get_chapter","args":{"novelId":"` + aliceNovel.ID + `","chapterId":"` + chapterID + `","content":"original"}}`,
+		`{"_tool":"get_chapter","args":{"novelId":"` + aliceNovel.ID + `","chapterId":"` + chapterID + `","content":"translated"}}`,
+		`{"_tool":"search_chapters","args":{"novelId":"` + aliceNovel.ID + `","query":"secreta"}}`,
+		`{"_tool":"query_library","args":{"sql":"SELECT novel_id, title FROM v_agent_novel_progress"}}`,
+		`{"_tool":"query_library","args":{"sql":"SELECT chapter_id, title FROM v_agent_chapter_overview"}}`,
+	}
+	for _, call := range readTools {
+		for _, result := range runAgentTools(t, env, bob.Token, []string{call}, nil) {
+			for _, secret := range []string{
+				aliceNovel.ID,
+				"Secreto de Alice",
+				chapterID,
+				"contenido original de alice",
+				"traducción secreta de alice",
+			} {
+				if strings.Contains(result, secret) {
+					t.Errorf("tool %s leaked %q to another user: %s", call, secret, result)
+				}
+			}
+		}
+	}
+}
+
+// TestAgentToolsCannotWriteAnotherUsersLibrary pins the write side of the same
+// guarantee: the mutation tools are refused for a novel the caller does not
+// own, and the target record is unchanged afterwards.
+func TestAgentToolsCannotWriteAnotherUsersLibrary(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-w@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-w@example.com", "secret123", "Bob")
+	novel := createNovel(t, env.handler, alice.Token, "Intocable", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Original",
+		"originalContent": "intocable",
+		"status":          "pending",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	chapterID := chapterIDFrom(t, chResp)
+	pubResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{"isPublic": true})
+	assertStatus(t, pubResp, http.StatusOK)
+
+	writeTools := []string{
+		`{"_tool":"update_novel","args":{"id":"` + novel.ID + `","targetTitle":"Secuestrada"}}`,
+		`{"_tool":"update_chapter","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","translatedContent":"hackeado"}}`,
+		`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","status":"done"}}`,
+		`{"_tool":"set_chapter_excluded","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","excluded":true}}`,
+	}
+	for _, call := range writeTools {
+		results := runAgentTools(t, env, bob.Token, []string{call}, nil)
+		if len(results) != 1 || !strings.HasPrefix(results[0], "error: ") {
+			t.Errorf("write tool %s must be refused for a non-owner, got %v", call, results)
+		}
+	}
+
+	// Nothing changed on alice's side.
+	novelResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID, alice.Token, nil)
+	assertStatus(t, novelResp, http.StatusOK)
+	if strings.Contains(novelResp.Body.String(), "Secuestrada") {
+		t.Fatal("another user renamed the novel through the assistant")
+	}
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters?includeContent=true", alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	if strings.Contains(chapterResp.Body.String(), "hackeado") {
+		t.Fatal("another user edited the chapter through the assistant")
+	}
+	if !strings.Contains(chapterResp.Body.String(), `"status":"pending"`) {
+		t.Fatalf("another user changed the chapter status through the assistant: %s", chapterResp.Body.String())
+	}
+}
+
+// TestAgentSessionIsPerUser pins that each user gets an independent chat and
+// never sees another's history.
+func TestAgentSessionIsPerUser(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-sess@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-sess@example.com", "secret123", "Bob")
+
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &fakeAgentProvider{finalText: "respuesta"}, nil
+	}
+	aliceResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "mi secreto de alice",
+	})
+	assertStatus(t, aliceResp, http.StatusOK)
+	bobResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", bob.Token, map[string]any{
+		"message": "hola bob",
+	})
+	assertStatus(t, bobResp, http.StatusOK)
+
+	aliceSession := sessionIDFrom(t, aliceResp)
+	bobSession := sessionIDFrom(t, bobResp)
+	if aliceSession == "" || bobSession == "" {
+		t.Fatal("both users must get a session id")
+	}
+	if aliceSession == bobSession {
+		t.Fatal("users must not share a chat session")
+	}
+
+	// Alice's history holds her message; bob's must not contain it.
+	aliceGet := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", alice.Token, nil)
+	assertStatus(t, aliceGet, http.StatusOK)
+	if !strings.Contains(aliceGet.Body.String(), "mi secreto de alice") {
+		t.Fatalf("alice's session lost her message: %s", aliceGet.Body.String())
+	}
+	bobGet := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", bob.Token, nil)
+	assertStatus(t, bobGet, http.StatusOK)
+	if strings.Contains(bobGet.Body.String(), "mi secreto de alice") {
+		t.Fatalf("bob can read alice's session: %s", bobGet.Body.String())
+	}
+	if strings.Contains(bobGet.Body.String(), aliceSession) {
+		t.Fatalf("bob's session points at alice's session id: %s", bobGet.Body.String())
+	}
+
+	// Sending an explicit foreign sessionId must be refused, not adopted.
+	crossResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", bob.Token, map[string]any{
+		"sessionId": aliceSession,
+		"message":   "intento",
+	})
+	assertStatus(t, crossResp, http.StatusNotFound)
+
+	// Resetting bob's chat leaves alice's intact.
+	delResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/agent/session", bob.Token, nil)
+	assertStatus(t, delResp, http.StatusNoContent)
+	bobAfterReset := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", bob.Token, nil)
+	assertStatus(t, bobAfterReset, http.StatusOK)
+	if !strings.Contains(bobAfterReset.Body.String(), `"data":null`) {
+		t.Fatalf("bob's session should be gone after reset, got %s", bobAfterReset.Body.String())
+	}
+	aliceAfterReset := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", alice.Token, nil)
+	assertStatus(t, aliceAfterReset, http.StatusOK)
+	if !strings.Contains(aliceAfterReset.Body.String(), "mi secreto de alice") {
+		t.Fatalf("bob's reset must not clear alice's session: %s", aliceAfterReset.Body.String())
+	}
+}
+
+// TestAgentChapterStatusAcceptsOnlySchemaValues pins the closed status set to
+// the chapters collection values: "failed" works, the previously advertised
+// "error" is refused instead of failing PocketBase validation.
+func TestAgentChapterStatusAcceptsOnlySchemaValues(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-status@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Estados", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Uno",
+		"originalContent": "x",
+		"status":          "pending",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	chapterID := chapterIDFrom(t, chResp)
+
+	ok := runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","status":"failed","errorMessage":"boom"}}`,
+	}, nil)
+	if len(ok) != 1 || strings.HasPrefix(ok[0], "error: ") {
+		t.Fatalf("failed must be an accepted status, got %v", ok)
+	}
+	chapterResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters?includeContent=true", alice.Token, nil)
+	assertStatus(t, chapterResp, http.StatusOK)
+	if !strings.Contains(chapterResp.Body.String(), `"status":"failed"`) {
+		t.Fatalf("status was not persisted: %s", chapterResp.Body.String())
+	}
+
+	rejected := runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","status":"error"}}`,
+		`{"_tool":"set_chapter_status","args":{"novelId":"` + novel.ID + `","chapterId":"` + chapterID + `","status":"inventado"}}`,
+	}, nil)
+	for _, result := range rejected {
+		if !strings.HasPrefix(result, "error: ") {
+			t.Errorf("unknown status must be refused, got %q", result)
+		}
+	}
+}
+
+// TestTrimAgentHistoryCutsAtTurnBoundary guards the replay invariant: a
+// trimmed trail must start with a user message, never with an orphaned tool
+// result, which every OpenAI-compatible API rejects with a 400.
+func TestTrimAgentHistoryCutsAtTurnBoundary(t *testing.T) {
+	build := func(n int) []ai.AgentMessage {
+		msgs := make([]ai.AgentMessage, 0, n*3)
+		for i := 0; i < n; i++ {
+			msgs = append(msgs,
+				ai.AgentMessage{Role: "user", Content: fmt.Sprintf("pregunta %d", i)},
+				ai.AgentMessage{Role: "assistant", ToolCalls: []ai.AgentToolCall{{ID: fmt.Sprintf("c%d", i), Name: "list_novels", Args: "{}"}}},
+				ai.AgentMessage{Role: "tool", Content: "[]", ToolCallID: fmt.Sprintf("c%d", i), ToolName: "list_novels"},
+			)
+		}
+		return msgs
+	}
+
+	trimmed := trimAgentHistory(build(100))
+	if len(trimmed) == 0 {
+		t.Fatal("trimming dropped the whole history")
+	}
+	if trimmed[0].Role != "user" {
+		t.Fatalf("trimmed history must start at a user message, got %q", trimmed[0].Role)
+	}
+	if len(trimmed) > agentMaxHistoryMessages {
+		t.Fatalf("trimmed history is still over the cap: %d", len(trimmed))
+	}
+	// Every tool result must be preceded by its assistant tool call.
+	pending := map[string]bool{}
+	for _, m := range trimmed {
+		switch m.Role {
+		case "assistant":
+			for _, call := range m.ToolCalls {
+				pending[call.ID] = true
+			}
+		case "tool":
+			if !pending[m.ToolCallID] {
+				t.Fatalf("orphaned tool result for %q survived the trim", m.ToolCallID)
+			}
+			delete(pending, m.ToolCallID)
+		}
+	}
+
+	// A short history is left untouched.
+	short := build(3)
+	if got := trimAgentHistory(short); len(got) != len(short) {
+		t.Fatalf("short history must not be trimmed, got %d of %d", len(got), len(short))
+	}
+}
+
+func chapterIDFrom(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+	var payload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode chapter response: %v", err)
+	}
+	if payload.Data.ID == "" {
+		t.Fatalf("chapter response carried no id: %s", resp.Body.String())
+	}
+	return payload.Data.ID
+}
+
+func sessionIDFrom(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+	for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+		if id, ok := ev["sessionId"].(string); ok && id != "" {
+			return id
+		}
+	}
+	return ""
 }

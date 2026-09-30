@@ -2556,7 +2556,10 @@ paths:
         Executes one agent turn against the user's configured AI provider
         (OpenAI-compatible providers only; the Google provider does not
         support the tool loop). The assistant may call novel tools that run
-        server-side against the user's own library. Responses stream as
+        server-side against the user's OWN library; ownership is enforced by
+        the backend through owner-scoped store methods, not by the model.
+        A novel or session owned by another user is refused with 404 even when
+        that novel is public. Responses stream as
         newline-delimited JSON events:
         `session`, `text_delta`, `tool_call`, `tool_result`, `done`, `error`.
         When no sessionId is sent, the user's latest session is reused, or a
