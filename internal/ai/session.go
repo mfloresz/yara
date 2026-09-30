@@ -10,6 +10,10 @@ const yaraUserAgent = "yara"
 
 const opencodeSessionHeader = "X-Opencode-Session"
 
+// openRouterReferer is the HTTP-Referer sent to OpenRouter. The gateway uses
+// it for app attribution, exactly as goai's OpenRouter provider did.
+const openRouterReferer = "https://github.com/mfloresz/yara"
+
 const opencodeSessionLength = 8
 
 // SessionForJob derives a stable, opaque session ID from a job ID so OpenCode

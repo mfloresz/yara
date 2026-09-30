@@ -18,6 +18,7 @@
     "dompurify": "^3.4.12",
     "jszip": "^3.10.1",
     "marked": "^18.0.6",
+    "markstream-vue": "^2.0.14",
     "naive-ui": "^2.44.1",
     "turndown": "^7.2.4",
     "vue": "^3.5.18",

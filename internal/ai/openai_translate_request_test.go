@@ -10,45 +10,52 @@ import (
 	"testing"
 )
 
-type capturedResponsesRequest struct {
-	Model        string         `json:"model"`
-	Instructions string         `json:"instructions"`
-	Input        []inputItem    `json:"input"`
-	Text         map[string]any `json:"text"`
+type capturedChatRequest struct {
+	Model          string `json:"model"`
+	ResponseFormat any    `json:"response_format"`
+	Messages       []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
 }
 
-type inputItem struct {
-	Role    string         `json:"role"`
-	Content []contentBlock `json:"content"`
-}
-
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-func extractUserText(req capturedResponsesRequest) string {
-	for _, item := range req.Input {
-		if item.Role != "user" {
-			continue
-		}
-		for _, block := range item.Content {
-			if block.Type == "input_text" {
-				return block.Text
-			}
+func systemContent(req capturedChatRequest) string {
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			return m.Content
 		}
 	}
 	return ""
 }
 
+func userContent(req capturedChatRequest) string {
+	for _, m := range req.Messages {
+		if m.Role == "user" {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+func respondChatCompletion(w http.ResponseWriter, text string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":      "chatcmpl-test",
+		"object":  "chat.completion",
+		"model":   "test-model",
+		"choices": []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": text}, "finish_reason": "stop"}},
+		"usage":   map[string]int{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+	})
+}
+
 func TestOpenAITranslateTitle_SendsTitleContextAndReturnsPlainText(t *testing.T) {
-	var captured capturedResponsesRequest
+	var captured capturedChatRequest
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected method: %s", r.Method)
 		}
-		if r.URL.Path != "/responses" {
+		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
@@ -62,21 +69,7 @@ func TestOpenAITranslateTitle_SendsTitleContextAndReturnsPlainText(t *testing.T)
 			t.Fatalf("failed decoding request body: %v\nbody: %s", err, string(body))
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":     "resp-test",
-			"model":  "test-model",
-			"status": "completed",
-			"output": []map[string]any{{
-				"type": "message",
-				"role": "assistant",
-				"content": []map[string]any{{
-					"type": "output_text",
-					"text": "Capítulo Siete",
-				}},
-			}},
-			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
-		})
+		respondChatCompletion(w, "Capítulo Siete")
 	}))
 	defer ts.Close()
 
@@ -103,11 +96,11 @@ func TestOpenAITranslateTitle_SendsTitleContextAndReturnsPlainText(t *testing.T)
 	if captured.Model != "test-model" {
 		t.Fatalf("unexpected model: %q", captured.Model)
 	}
-	if strings.TrimSpace(captured.Instructions) == "" {
-		t.Fatal("instructions (system prompt) should not be empty")
+	if strings.TrimSpace(systemContent(captured)) == "" {
+		t.Fatal("system message should not be empty")
 	}
 
-	userText := extractUserText(captured)
+	userText := userContent(captured)
 	if userText == "" {
 		t.Fatal("user message content should not be empty")
 	}
@@ -132,33 +125,20 @@ func TestOpenAITranslateTitle_SendsTitleContextAndReturnsPlainText(t *testing.T)
 		}
 	}
 
-	if format, ok := captured.Text["format"]; ok {
-		t.Fatalf("plain-text title translation must not request text.format schema, got: %#v", format)
+	if captured.ResponseFormat != nil {
+		t.Fatalf("plain-text title translation must not request a response_format, got: %#v", captured.ResponseFormat)
 	}
 }
 
 func TestOpenAITranslateTitle_IncludesPreviousTitleInUserPayload(t *testing.T) {
-	var captured capturedResponsesRequest
+	var captured capturedChatRequest
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Fatalf("failed decoding request body: %v\nbody: %s", err, string(body))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":     "resp-test",
-			"model":  "test-model",
-			"status": "completed",
-			"output": []map[string]any{{
-				"type": "message",
-				"role": "assistant",
-				"content": []map[string]any{{
-					"type": "output_text",
-					"text": "Capítulo Siete",
-				}},
-			}},
-		})
+		respondChatCompletion(w, "Capítulo Siete")
 	}))
 	defer ts.Close()
 
@@ -179,7 +159,7 @@ func TestOpenAITranslateTitle_IncludesPreviousTitleInUserPayload(t *testing.T) {
 		t.Fatalf("TranslateTitle returned error: %v", err)
 	}
 
-	userText := extractUserText(captured)
+	userText := userContent(captured)
 	var userPayload map[string]any
 	if err := json.Unmarshal([]byte(userText), &userPayload); err != nil {
 		t.Fatalf("user message is not valid JSON: %v\ncontent: %s", err, userText)
@@ -197,7 +177,7 @@ func TestOpenAITranslateTitle_IncludesPreviousTitleInUserPayload(t *testing.T) {
 }
 
 func TestOpenAITranslateText_SendsPlainTextPromptWithoutSchema(t *testing.T) {
-	var captured capturedResponsesRequest
+	var captured capturedChatRequest
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -207,20 +187,7 @@ func TestOpenAITranslateText_SendsPlainTextPromptWithoutSchema(t *testing.T) {
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Fatalf("failed decoding request body: %v\nbody: %s", err, string(body))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":     "resp-test",
-			"model":  "test-model",
-			"status": "completed",
-			"output": []map[string]any{{
-				"type": "message",
-				"role": "assistant",
-				"content": []map[string]any{{
-					"type": "output_text",
-					"text": "Texto del cuerpo traducido",
-				}},
-			}},
-		})
+		respondChatCompletion(w, "Texto del cuerpo traducido")
 	}))
 	defer ts.Close()
 
@@ -244,14 +211,13 @@ func TestOpenAITranslateText_SendsPlainTextPromptWithoutSchema(t *testing.T) {
 		t.Fatalf("unexpected translated text\nwant: %q\ngot:  %q", "Texto del cuerpo traducido", translatedText)
 	}
 
-	userText := extractUserText(captured)
-	if userText != "Body text" {
-		t.Fatalf("plain-text user prompt mismatch\nwant: %q\ngot:  %q", "Body text", userText)
+	if userContent(captured) != "Body text" {
+		t.Fatalf("plain-text user prompt mismatch\nwant: %q\ngot:  %q", "Body text", userContent(captured))
 	}
-	if strings.Contains(captured.Instructions, "structured output schema") {
-		t.Fatalf("content instructions must not require structured output:\n%s", captured.Instructions)
+	if strings.Contains(systemContent(captured), "structured output schema") {
+		t.Fatalf("content instructions must not require structured output:\n%s", systemContent(captured))
 	}
-	if format, ok := captured.Text["format"]; ok {
-		t.Fatalf("plain-text translation must not request text.format schema, got: %#v", format)
+	if captured.ResponseFormat != nil {
+		t.Fatalf("plain-text translation must not request a response_format, got: %#v", captured.ResponseFormat)
 	}
 }

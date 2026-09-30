@@ -29,6 +29,7 @@ The machine-readable spec is [`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1). Whe
   - [Browser workers & proxy](#browser-workers--proxy)
   - [Worker auth](#worker-auth)
   - [Admin](#admin)
+  - [Agent](#agent)
 - [WebSocket](#websocket)
 
 ## Base URL & versioning
@@ -541,6 +542,132 @@ is used. `GET /api/v1/providers` exposes `sharedKeyAvailable` and
 
 **Prompt precedence:** embedded default < admin global override < user
 setting < per-novel prompt.
+
+### Agent
+
+AI library assistant over chat. Requires the user's configured AI provider to
+be OpenAI-compatible (the Google provider does not support the tool loop and
+answers with `400 provider_unsupported`). Tool calls run server-side against
+the requesting user's **own** library only; mutations go through the same store
+validation as the REST endpoints.
+
+**Ownership is enforced by the backend, not by the model's cooperation.** Every
+tool resolves its target through an owner-scoped store method, so a novel
+belonging to another user is refused with 404 even when that novel is public
+(the REST API does expose public novels, but the assistant does not). Requests
+for a foreign `novelId` or `sessionId` are masked as `404`, not `403`, so the
+chat never confirms that an id exists in another user's data. Chat sessions are
+per user — one session each, enforced by a unique index on the owner.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `done`, `error`. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
+| `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
+
+Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
+`get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries, paged by
+`offset`/`limit` **or** selected as a contiguous block with
+`fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a line
+window: `startLine` + `lineCount`, default 60 / max 400, returning `totalLines`
+and `nextStartLine` so long chapters are paged rather than cut),
+`search_chapters` (case-sensitive literal search over titles and bodies with
+snippets), `query_library` (one read-only analytics SELECT over the
+`v_agent_novel_progress` / `v_agent_chapter_overview` tables — aggregates like
+"novels missing fewer than 10 chapters" in a single call), `update_novel`
+(target title / description / notes), `update_chapter` (titles +
+translated/refined body replacement; refused while the novel has active jobs),
+`set_chapter_status` (`pending|translated|refined|done|failed`),
+`set_chapter_excluded` and `ask_user` (clarifying question with clickable
+options; ends the turn and the picked option's value arrives as the user's
+next message).
+
+Chapter bodies are never silently truncated: the model controls how much it
+reads (`startLine`/`lineCount`) and is told whether more remains, so it can
+fetch a slice, inspect it and continue. A fixed character cut destroyed the
+tail of a chapter with no way for the model to notice or page past it.
+
+#### Turn timeouts
+
+A turn is bounded by two limits, and neither truncates an answer that is still
+arriving:
+
+- **Idle gap (60s)** — the provider has 60 seconds to deliver the next stream
+  chunk. A provider that accepts the request and then goes silent produces no
+  error and no output, which would otherwise leave the chat hanging; this
+  catches that case and surfaces it as an `error` event with code
+  `provider_stalled`. It bounds the gap *between* chunks, not the total, so a
+  slow but active response is never cut off.
+- **Whole turn (8 min)** — an upper bound on the turn, including tool
+  executions.
+
+Transient provider failures (429, 5xx, dropped connections) are retried twice
+with exponential backoff. A retry only happens while the step has emitted
+nothing, so a resumed stream can never duplicate text already delivered.
+
+The agent deliberately does **not** use the per-provider timeout from Settings:
+a turn is up to 8 sequential model calls, so a deadline sized for a single
+translation would abort a legitimate long turn. Translation and refine jobs are
+unaffected and keep using their own Settings (or per-novel) timeout, applied as
+a per-call context deadline.
+
+#### `query_library` isolation
+
+The assistant's SQL never touches the application database. Each call is
+served from a private SQLite sandbox built per request from the requesting
+owner's novels and chapters. It contains nothing else: no `users`, no
+`_superusers`, no provider keys, no `agent_sessions`, and no other user's
+novels. Two layers back that up:
+
+1. **Structural** — the sandbox holds only the two analytics tables, so a
+   subquery, `JOIN` or `sqlite_master` read finds nothing beyond those two
+   views' own definitions; any other relation fails at the engine with "no
+   such table". The rows are selected by owner server-side, and the sandbox
+   carries no owner column, so there is no filter for the model to omit or
+   override. The sandbox is materialised by attaching `data.db` **read-only**
+   and running `CREATE TABLE ... AS SELECT` with a server-written `WHERE
+   owner = ?`; the builder then closes its handle, so the attachment does not
+   outlive the build and cannot be named by the model's own statement.
+2. **Validation** — the query must be a single comment-free `SELECT`/`WITH`
+   that reads at least one of the two tables. Statement keywords, `;` and
+   comments are rejected, and the check runs against the query with string
+   literals blanked out, so a `LIKE '%update%'` pattern is not mistaken for the
+   `UPDATE` keyword. The validator deliberately does *not* police which
+   relations a query names: an earlier allowlist scanned every `FROM`/`JOIN`
+   target, but SQLite's legacy comma join is neither keyword, so
+   `FROM v_agent_novel_progress, "sqlite_master"` slipped past it. Layer 1
+   covers what the scan could not.
+
+Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
+Only the table a query actually names is materialised, so a novel-level
+question never pays to build every chapter row.
+
+The sandbox is a per-query file under `<data-dir>/agent-sandbox/`, removed when
+the query returns. It deliberately does **not** use the system temp dir:
+`os.TempDir()` falls back to `/tmp` on any `GOOS=linux` build — which is what
+the Termux target is — and `/tmp` does not exist on Android, so `MkdirTemp`
+fails and the tool stops working on the project's primary mobile target. The
+data dir is already resolved, already writable, and keeps the copy off
+tmpfs, where it would otherwise occupy RAM. If the sandbox cannot be created
+the tool reports that analytics is unavailable and points the model at the
+other tools, rather than failing the turn.
+
+Two further bounds apply at the engine, on the connection that runs the
+statement, because the payload limits alone are applied only after the value
+has already been built:
+
+- `SQLITE_LIMIT_LENGTH` caps any single string/BLOB at 1 MB. Without it a
+  four-byte novel title is enough to write `SELECT printf('%.'||20000000||
+  'd',1)`, which allocated ~1.1 GB before Go ever saw a byte and then arrived
+  as a 400-rune truncated cell.
+- The query runs under a 5 s deadline, and the sandbox is opened
+  `query_only`, so the blocklist is a second line of defence rather than the
+  only one.
+
+Row results are capped (`limit`, default 50, max 200) and cells are truncated
+on a rune boundary. The message trail persisted per session is trimmed to fit
+the `messages` field cap by its **JSON-encoded** size, since JSON escapes
+expand and a raw-length budget undercounts.
 
 ## WebSocket
 

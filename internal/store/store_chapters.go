@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -95,11 +96,118 @@ func (s *Store) ListChapterSummariesAccessible(userID, novelID string, limit, of
 	return summaries, novel.ChapterCount, nil
 }
 
+// GetOwnedChapter returns one chapter of a novel the user owns, without the
+// "public novels are readable" leniency GetChapterAccessible allows. The agent
+// assistant uses it so its tools can only ever touch the caller's own library.
+func (s *Store) GetOwnedChapter(userID, novelID, chapterID string) (*Chapter, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil || record.GetString("novel") != novelID {
+		return nil, ErrNotFound
+	}
+	chapter := chapterFromRecord(record)
+	return &chapter, nil
+}
+
+// GetOwnedChapterStats returns aggregate chapter stats for a novel the user
+// owns, following the same ownership policy as GetOwnedChapter.
+func (s *Store) GetOwnedChapterStats(userID, novelID string) (*ChapterStats, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	return s.chapterStatsForNovel(novel)
+}
+
+// GetOwnedChapterSummaries lists chapter summaries of a novel the user owns,
+// following the same ownership policy as GetOwnedChapter.
+func (s *Store) GetOwnedChapterSummaries(userID, novelID string, limit, offset int) ([]ChapterSummary, int, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	summaries, err := s.findChapterSummaries(
+		"novel = {:novel} AND excluded = 0",
+		limit, offset,
+		dbx.Params{"novel": novelID},
+		"position ASC", "chapter_order ASC",
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	return summaries, novel.ChapterCount, nil
+}
+
+// maxOrderGuard caps an unbounded upper chapter-order filter. Real novels do
+// not come close; the bound just keeps the generated filter finite.
+const maxOrderGuard = 1 << 30
+
+// GetOwnedChapterSummariesInOrderRange returns the chapter summaries of an
+// owned novel whose chapter_order falls in [minOrder, maxOrder].
+//
+// A bound of -1 means "unbounded on that side", so the model can ask for
+// "everything from chapter 40 onwards" without inventing a ceiling. Range
+// addressing lets it inspect a contiguous slice of a long novel directly,
+// instead of walking the whole list in fixed pages.
+func (s *Store) GetOwnedChapterSummariesInOrderRange(userID, novelID string, minOrder, maxOrder, limit int) ([]ChapterSummary, int, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if minOrder < 0 {
+		minOrder = 0
+	}
+	if maxOrder < 0 || maxOrder > maxOrderGuard {
+		maxOrder = maxOrderGuard
+	}
+	summaries, err := s.findChapterSummaries(
+		"novel = {:novel} AND excluded = 0 AND chapter_order >= {:min} AND chapter_order <= {:max}",
+		limit, 0,
+		dbx.Params{"novel": novelID, "min": minOrder, "max": maxOrder},
+		"chapter_order ASC",
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	return summaries, novel.ChapterCount, nil
+}
+
 func (s *Store) GetChapterStatsAccessible(userID, novelID string) (*ChapterStats, error) {
 	novel, err := s.GetNovelAccessible(userID, novelID)
 	if err != nil {
 		return nil, err
 	}
+	return &ChapterStats{
+		TotalChapters:        novel.ChapterCount,
+		CompletedChapters:    novel.CompletedCount,
+		TranslatedChapters:   novel.TranslatedCount,
+		OriginalCharacters:   novel.OriginalCharCount,
+		TranslatedCharacters: novel.TranslatedCharCount,
+		RefinedCharacters:    novel.RefinedCharCount,
+		TotalCharacters:      novel.TotalCharCount,
+		MaxChapterOrder:      novel.MaxChapterOrder,
+	}, nil
+}
+
+// chapterStatsForNovel builds ChapterStats from an already-authorized novel.
+func (s *Store) chapterStatsForNovel(novel *Novel) (*ChapterStats, error) {
 	return &ChapterStats{
 		TotalChapters:        novel.ChapterCount,
 		CompletedChapters:    novel.CompletedCount,
@@ -163,10 +271,10 @@ func (s *Store) RecalculateNovelStats(novelID string) error {
 			updated = {:updated}
 		WHERE id = {:id}
 	`).Bind(dbx.Params{
-		"total":      int(stats.Total),
-		"translated": int(stats.Translated),
-		"completed":  int(stats.Completed),
-		"orig_chars": originalChars,
+		"total":       int(stats.Total),
+		"translated":  int(stats.Translated),
+		"completed":   int(stats.Completed),
+		"orig_chars":  originalChars,
 		"trans_chars": translatedChars,
 		"ref_chars":   refinedChars,
 		"total_chars": originalChars + translatedChars + refinedChars,
@@ -797,6 +905,222 @@ func (s *Store) UpdateChapterStatusForUser(userID, novelID, chapterID, status, e
 		return err
 	}
 	return s.RecalculateNovelStats(novelID)
+}
+
+// ChapterEdits carries the optional chapter fields accepted by
+// UpdateChapterEdits. nil leaves the field unchanged; an empty string clears
+// it.
+type ChapterEdits struct {
+	Title             *string
+	TranslatedTitle   *string
+	TranslatedContent *string
+	RefinedContent    *string
+}
+
+// UpdateChapterEdits applies field-level content edits to one chapter with
+// ownership checks, keeping the per-chapter char counts and novel stats
+// current. Content edits are refused while the novel has active jobs: a
+// running translate/refine job would either overwrite the edit or race it.
+func (s *Store) UpdateChapterEdits(userID, novelID, chapterID string, edits ChapterEdits) (*Chapter, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil || record.GetString("novel") != novelID {
+		return nil, ErrNotFound
+	}
+	if edits.Title != nil {
+		record.Set("title", *edits.Title)
+	}
+	if edits.TranslatedTitle != nil {
+		record.Set("translated_title", *edits.TranslatedTitle)
+	}
+	if edits.TranslatedContent != nil {
+		record.Set("translated_content", *edits.TranslatedContent)
+		record.Set("translated_char_count", len(*edits.TranslatedContent))
+	}
+	if edits.RefinedContent != nil {
+		record.Set("refined_content", *edits.RefinedContent)
+		record.Set("refined_char_count", len(*edits.RefinedContent))
+	}
+	if edits.Title == nil && edits.TranslatedTitle == nil && edits.TranslatedContent == nil && edits.RefinedContent == nil {
+		return nil, fmt.Errorf("%w: nothing to edit", ErrInvalidInput)
+	}
+	active, err := s.HasActiveJobsForNovel(novelID)
+	if err != nil {
+		return nil, err
+	}
+	if active {
+		return nil, ErrActiveJobs
+	}
+	if err := s.App.Save(record); err != nil {
+		return nil, err
+	}
+	if err := s.RecalculateNovelStats(novelID); err != nil {
+		return nil, err
+	}
+	chapter := chapterFromRecord(record)
+	return &chapter, nil
+}
+
+// ChapterSearchHit is one SearchOwnedChapters match: the chapter summary
+// plus which fields matched and a short snippet around the first content hit.
+type ChapterSearchHit struct {
+	ChapterSummary
+	MatchedFields []string `json:"matchedFields"`
+	Snippet       string   `json:"snippet"`
+}
+
+// searchSnippetWindow is the number of context chars shown around a match.
+const searchSnippetWindow = 90
+
+// SearchOwnedChapters runs a case-sensitive literal substring search over
+// chapter titles and bodies of one novel the user owns. The agent assistant
+// uses it, so the search surface is the caller's own library only — public
+// novels belonging to other users are out of reach, exactly like every other
+// agent tool. instr() is used instead of LIKE because the contract is a
+// literal, case-sensitive match: LIKE would fold ASCII case and reject the
+// wildcard escaping the annotations below expect. limit defaults to 10, max 25.
+func (s *Store) SearchOwnedChapters(userID, novelID, query string, limit int) ([]ChapterSearchHit, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("%w: empty search query", ErrInvalidInput)
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 25 {
+		limit = 25
+	}
+	rows := []struct {
+		ID                string `db:"id"`
+		ChapterOrder      int64  `db:"chapter_order"`
+		Title             string `db:"title"`
+		TranslatedTitle   string `db:"translated_title"`
+		Status            string `db:"status"`
+		Excluded          bool   `db:"excluded"`
+		OriginalChars     int64  `db:"original_char_count"`
+		TranslatedChars   int64  `db:"translated_char_count"`
+		RefinedChars      int64  `db:"refined_char_count"`
+		OriginalContent   string `db:"original_content"`
+		TranslatedContent string `db:"translated_content"`
+		RefinedContent    string `db:"refined_content"`
+	}{}
+	err := s.App.DB().NewQuery(`
+		SELECT id, chapter_order, title, translated_title, status, excluded,
+			original_char_count, translated_char_count, refined_char_count,
+			original_content, translated_content, refined_content
+		FROM chapters
+		WHERE novel = {:novel}
+			AND (
+				instr(title, {:query}) > 0
+				OR instr(translated_title, {:query}) > 0
+				OR instr(original_content, {:query}) > 0
+				OR instr(translated_content, {:query}) > 0
+				OR instr(refined_content, {:query}) > 0
+			)
+		ORDER BY chapter_order
+		LIMIT {:limit}
+	`).Bind(dbx.Params{
+		"novel": novelID,
+		"query": query,
+		"limit": limit,
+	}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+
+	hits := make([]ChapterSearchHit, 0, len(rows))
+	for _, row := range rows {
+		hit := ChapterSearchHit{
+			ChapterSummary: ChapterSummary{
+				ID:                   row.ID,
+				NovelID:              novelID,
+				ChapterOrder:         int(row.ChapterOrder),
+				Excluded:             row.Excluded,
+				Title:                row.Title,
+				TranslatedTitle:      row.TranslatedTitle,
+				Status:               row.Status,
+				HasOriginalContent:   row.OriginalContent != "",
+				HasTranslatedContent: row.TranslatedContent != "",
+				HasRefinedContent:    row.RefinedContent != "",
+				OriginalChars:        int(row.OriginalChars),
+				TranslatedChars:      int(row.TranslatedChars),
+				RefinedChars:         int(row.RefinedChars),
+			},
+			MatchedFields: []string{},
+		}
+		if strings.Contains(row.Title, query) {
+			hit.MatchedFields = append(hit.MatchedFields, "title")
+		}
+		if strings.Contains(row.TranslatedTitle, query) {
+			hit.MatchedFields = append(hit.MatchedFields, "translatedTitle")
+		}
+		snippetField := ""
+		snippetBody := ""
+		for _, candidate := range []struct {
+			name string
+			body string
+		}{
+			{"translatedContent", row.TranslatedContent},
+			{"originalContent", row.OriginalContent},
+			{"refinedContent", row.RefinedContent},
+		} {
+			if strings.Contains(candidate.body, query) {
+				hit.MatchedFields = append(hit.MatchedFields, candidate.name)
+				if snippetField == "" {
+					snippetField = candidate.name
+					snippetBody = candidate.body
+				}
+			}
+		}
+		if snippetField != "" {
+			hit.Snippet = buildSearchSnippet(snippetBody, query)
+		}
+		hits = append(hits, hit)
+	}
+	return hits, nil
+}
+
+// buildSearchSnippet cuts a ±searchSnippetWindow window around the first
+// occurrence of query in body, collapsing newlines for the tool result.
+//
+// The window edges are snapped to rune boundaries. `strings.Index` returns a
+// byte offset and a byte-sized window can land inside a multi-byte character —
+// the agent serves accented and CJK text, so the raw slice produced invalid
+// UTF-8 in roughly a third of emoji/CJK bodies, and that corrupt snippet went
+// straight into the model-facing tool result.
+func buildSearchSnippet(body, query string) string {
+	index := strings.Index(body, query)
+	if index < 0 {
+		return ""
+	}
+	start := index - searchSnippetWindow
+	if start < 0 {
+		start = 0
+	}
+	end := index + len(query) + searchSnippetWindow
+	if end > len(body) {
+		end = len(body)
+	}
+	for start > 0 && !utf8.RuneStart(body[start]) {
+		start--
+	}
+	for end < len(body) && !utf8.RuneStart(body[end]) {
+		end++
+	}
+	snippet := strings.ReplaceAll(body[start:end], "\n", " ")
+	snippet = strings.TrimSpace(snippet)
+	if start > 0 {
+		snippet = "…" + snippet
+	}
+	if end < len(body) {
+		snippet += "…"
+	}
+	return snippet
 }
 
 func (s *Store) SaveChapterTranslation(chapterID, translatedTitle, translatedContent, refinedContent, status string) error {
