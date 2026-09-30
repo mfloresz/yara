@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	goopenai "github.com/meguminnnnnnnnn/go-openai"
 )
 
 // Transient-failure retries. goai wrapped every call in withRetry with
@@ -63,19 +64,20 @@ func isRetryableModelError(err error) bool {
 	if errors.Is(err, errNoRetry) {
 		return false
 	}
-	// eino's openai component surfaces HTTP failures as APIError.
+	// eino's openai component surfaces HTTP failures as APIError, but only when
+	// the response body parsed as a JSON error object. A gateway returning a
+	// plain-text or HTML 500 page (the common shape behind a reverse proxy) comes
+	// back as a *RequestError instead, which carries the status code but never
+	// reaches the substring fallback below — "Internal Server Error" is not in
+	// that list, and neither is a bare "500". Classify on the status code first,
+	// for both error shapes, so a transient 5xx retries regardless of body.
 	var apiErr *openai.APIError
 	if errors.As(err, &apiErr) {
-		switch {
-		case apiErr.HTTPStatusCode == 429:
-			return true
-		case apiErr.HTTPStatusCode >= 500:
-			return true
-		case apiErr.HTTPStatusCode == 408:
-			return true
-		default:
-			return false
-		}
+		return isRetryableStatus(apiErr.HTTPStatusCode)
+	}
+	var reqErr *goopenai.RequestError
+	if errors.As(err, &reqErr) {
+		return isRetryableStatus(reqErr.HTTPStatusCode)
 	}
 	// Transport-level failures (connection reset, DNS, EOF mid-response).
 	var netErr net.Error
@@ -90,13 +92,27 @@ func isRetryableModelError(err error) bool {
 		"connection reset", "connection refused", "broken pipe",
 		"no such host", "timeout", "temporarily unavailable", "eof",
 		"server closed idle", "too many requests", "overloaded", "bad gateway",
-		"service unavailable", "gateway timeout",
+		"service unavailable", "gateway timeout", "internal server error",
 	} {
 		if strings.Contains(msg, transient) {
 			return true
 		}
 	}
 	return false
+}
+
+// isRetryableStatus reports whether an HTTP status is worth another attempt.
+// Rate limits, request timeouts and server-side errors are transient; every
+// other 4xx is deterministic and retrying it only burns the user's quota.
+func isRetryableStatus(status int) bool {
+	switch {
+	case status == 429, status == 408:
+		return true
+	case status >= 500:
+		return true
+	default:
+		return false
+	}
 }
 
 // retryDelay returns the backoff for attempt n (0-based): exponential with a
@@ -175,7 +191,16 @@ func streamWithRetry(
 	err := withRetry(ctx, defaultAgentRetries+1, func(ctx context.Context) error {
 		chunks = chunks[:0]
 		delivered := 0
-		stream, err := m.Stream(ctx, msgs, opts...)
+		// Per-attempt context. It is what releases a provider that stops
+		// sending: the HTTP body is bound to it, so aborting it unblocks the
+		// read. eino's StreamReader.Close only unblocks the *sender*
+		// (stream.closeRecv closes the channel the producer selects on), so
+		// closing alone leaves a reader parked on <-items forever — measured at
+		// 6 stranded goroutines and 6 pinned connections per stalled turn.
+		// The cancel is deferred, so every exit from the attempt releases it.
+		stepCtx, cancelStep := context.WithCancel(ctx)
+		defer cancelStep()
+		stream, err := m.Stream(stepCtx, msgs, opts...)
 		if err != nil {
 			return err
 		}
@@ -184,7 +209,7 @@ func streamWithRetry(
 			var chunk *schema.Message
 			var recvErr error
 			if agentStreamIdleTimeout > 0 {
-				chunk, recvErr = recvWithIdleTimeout(ctx, stream, agentStreamIdleTimeout)
+				chunk, recvErr = recvWithIdleTimeout(stepCtx, cancelStep, stream, agentStreamIdleTimeout)
 			} else {
 				chunk, recvErr = stream.Recv()
 			}
@@ -213,22 +238,24 @@ func streamWithRetry(
 }
 
 // recvWithIdleTimeout wraps stream.Recv so a provider that stops sending
-// without erroring is detected. It cancels only the in-flight read: the
-// stream is left for the caller to Close, so no goroutine is stranded.
+// without erroring is detected.
+//
+// Releasing the blocked read is the delicate part. eino's StreamReader.Close
+// only unblocks the SENDER (stream.closeRecv closes the channel the producer
+// selects on), so a reader parked on `<-s.items` is not released by it — and
+// the underlying HTTP body stays open for as long as the provider holds it.
+// Cancelling the per-step context is what actually works: the body read is
+// bound to it, so the abort surfaces as a Recv error and the goroutine below
+// returns. The caller therefore passes the cancel it created for this attempt.
 //
 // A cancellation caused by the caller's own context is passed through
 // unchanged so it is not misreported as a provider stall.
 func recvWithIdleTimeout(
 	ctx context.Context,
+	cancelStep context.CancelFunc,
 	stream *schema.StreamReader[*schema.Message],
 	timeout time.Duration,
 ) (*schema.Message, error) {
-	// The cancel is not passed to Recv (eino's StreamReader takes no context);
-	// it exists so a read still in flight when the timer fires is released when
-	// the caller Closes the stream, instead of pinning the goroutine.
-	_, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	type result struct {
 		chunk *schema.Message
 		err   error
@@ -248,7 +275,9 @@ func recvWithIdleTimeout(
 		// Caller cancelled: the read is already unwinding.
 		return nil, ctx.Err()
 	case <-timer.C:
-		cancel()
+		// Abort the request so the blocked read unwinds now rather than when
+		// the deferred cancel eventually runs.
+		cancelStep()
 		return nil, fmt.Errorf("%w: no stream chunk received in %s", errStreamStalled, timeout)
 	case r := <-ch:
 		return r.chunk, r.err

@@ -8,12 +8,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/schema"
+	goopenai "github.com/meguminnnnnnnnn/go-openai"
 )
 
 // sseWrite emits one OpenAI-style SSE data line and flushes it.
@@ -273,6 +276,76 @@ func TestRetryClassifier(t *testing.T) {
 	}
 }
 
+// TestRetryClassifierHandlesNonJSONErrorBodies pins the case that made a
+// transient failure look deterministic. eino only produces an *APIError when
+// the response body parsed as a JSON error object; a gateway returning a plain
+// 500 page (the common shape behind a reverse proxy) surfaces as a
+// *RequestError instead, carrying the status code but no JSON message. Before
+// this was classified on the status code it fell through to a substring list
+// that had neither "500" nor "internal server error", so the same outage
+// retried with a JSON body and failed immediately with an HTML one.
+func TestRetryClassifierHandlesNonJSONErrorBodies(t *testing.T) {
+	for _, status := range []int{429, 500, 502, 503, 504, 408} {
+		err := &goopenai.RequestError{HTTPStatusCode: status, Body: []byte("<h1>Internal Server Error</h1>")}
+		if !isRetryableModelError(err) {
+			t.Errorf("status %d with a non-JSON body should be retried", status)
+		}
+	}
+	for _, status := range []int{400, 401, 403, 404, 422} {
+		err := &goopenai.RequestError{HTTPStatusCode: status, Body: []byte("<h1>Bad Request</h1>")}
+		if isRetryableModelError(err) {
+			t.Errorf("status %d is deterministic and must not be retried", status)
+		}
+	}
+	// eino wraps the original error, so the unwrap chain has to be traversed.
+	wrapped := fmt.Errorf("openai chat: %w", &goopenai.RequestError{HTTPStatusCode: 502})
+	if !isRetryableModelError(wrapped) {
+		t.Error("a wrapped non-JSON 502 should be retried")
+	}
+}
+
+// TestRetriesTransientStatusWithNonJSONBody drives the real HTTP path: a
+// provider that answers 500 with an HTML body on every attempt must be tried
+// three times, and one that answers 401 must be tried once.
+func TestRetriesTransientStatusWithNonJSONBody(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		body     string
+		wantCall int
+	}{
+		{"transient 500 html", http.StatusInternalServerError, "<h1>Internal Server Error</h1>", 3},
+		{"transient 503 html", http.StatusServiceUnavailable, "<h1>Service Unavailable</h1>", 3},
+		{"deterministic 401 html", http.StatusUnauthorized, "<h1>Unauthorized</h1>", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			cm, err := openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
+				APIKey: "test-key", BaseURL: srv.URL, Model: "test-model", HTTPClient: srv.Client(),
+			})
+			if err != nil {
+				t.Fatalf("new chat model: %v", err)
+			}
+			_, err = generateWithRetry(context.Background(), cm,
+				[]*schema.Message{schema.UserMessage("hola")}, nil)
+			if err == nil {
+				t.Fatal("expected the provider failure to surface")
+			}
+			if calls != tc.wantCall {
+				t.Errorf("provider called %d times, want %d", calls, tc.wantCall)
+			}
+		})
+	}
+}
+
 // TestWithRetryStopsOnNonRetryable pins that a deterministic failure is
 // attempted once, not three times.
 func TestWithRetryStopsOnNonRetryable(t *testing.T) {
@@ -412,6 +485,62 @@ func TestAgentChatDoesNotAbortALongButActiveStream(t *testing.T) {
 	}
 }
 
+// TestStalledTurnsDoNotLeakGoroutinesOrConnections pins the cleanup half of the
+// idle guard: aborting a silent provider must also release the resources the
+// request was holding.
+//
+// eino's StreamReader.Close only unblocks the *sender* (closeRecv closes the
+// channel the producer selects on), so a reader parked on <-items is not
+// released by it and the HTTP body stays pinned for as long as the provider
+// holds it. Measured before the fix: 6 stranded goroutines and 6 pinned
+// connections per stalled turn, growing linearly until the peer gave up. The
+// step's own context is what breaks the wedge, because the body read is bound
+// to it.
+func TestStalledTurnsDoNotLeakGoroutinesOrConnections(t *testing.T) {
+	// Bounded on the server side too: if the client never aborts, these
+	// handlers must still return, or a leak turns into a hung test rather than
+	// a failing one.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Never send a byte, never close: hold until the client aborts.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(20 * time.Second):
+		}
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{APIKey: "test-key", BaseURL: srv.URL, Model: "test-model"}
+	restore := agentStreamIdleTimeoutForTest(120 * time.Millisecond)
+	defer restore()
+
+	const turns = 6
+	base := runtime.NumGoroutine()
+	for i := 0; i < turns; i++ {
+		// Deliberately NOT a cancelable per-turn context. Cancelling it here
+		// would release the response body on the way out and mask the very leak
+		// this pins — the idle guard has to be what ends the request.
+		_, err := provider.AgentChat(context.Background(), AgentChatInput{
+			System: "s", Messages: []AgentMessage{{Role: "user", Content: "hola"}},
+		})
+		if !IsStreamStalled(err) {
+			t.Fatalf("turn %d: want a stalled-stream error, got %v", i, err)
+		}
+		// Give the aborted read a moment to unwind before sampling.
+		runtime.GC()
+		time.Sleep(120 * time.Millisecond)
+	}
+	// Each stalled turn must return everything it took. A slack of a couple of
+	// goroutines covers runtime/pool churn; the leak was +6 per turn.
+	if grew := runtime.NumGoroutine() - base; grew > 4 {
+		t.Errorf("goroutines grew by %d over %d stalled turns; the abort is not releasing the request", grew, turns)
+	}
+}
+
 // agentStreamIdleTimeoutForTest overrides the production idle guard and
 // returns a function that restores it.
 func agentStreamIdleTimeoutForTest(d time.Duration) func() {
@@ -487,5 +616,48 @@ func TestTranslationWithoutTimeoutRespectsCallerContext(t *testing.T) {
 
 	if _, err := provider.TranslateText(ctx, TranslateTextInput{TextToTranslate: "hola"}); err == nil {
 		t.Fatal("expected the caller's deadline to abort the call")
+	}
+}
+
+// TestSettingsTimeoutAppliesToRefine pins the same guarantee for the refine
+// tool loop. Refine is the one path that had lost it: it builds the model and
+// calls runToolLoop without going through einoCallContext, so a wedged provider
+// left a refine job running until the process died. The job worker passes a
+// context.WithCancel with no deadline, so the provider is the only place the
+// Settings timeout can reach a refine call.
+func TestSettingsTimeoutAppliesToRefine(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Accept the request and never answer: only the deadline ends this.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer func() {
+		close(release)
+		srv.Close()
+	}()
+
+	provider := &OpenAIProvider{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Model:   "test-model",
+		Timeout: 300 * time.Millisecond,
+	}
+	start := time.Now()
+	_, err := provider.Refine(context.Background(), RefineInput{
+		SystemPrompt: "s", UserPrompt: "u", CurrentText: func() string { return "hola" },
+	})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the configured timeout to abort refine")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("refine took %s; the Settings timeout is not being applied to the refine loop", elapsed)
 	}
 }

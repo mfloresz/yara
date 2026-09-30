@@ -10,6 +10,7 @@ import (
 	"time"
 
 	einogemini "github.com/cloudwego/eino-ext/components/model/gemini"
+	"github.com/cloudwego/eino/schema"
 	"google.golang.org/genai"
 )
 
@@ -40,7 +41,7 @@ func (p *GoogleProvider) TranslateTitle(ctx context.Context, in TranslateTitleIn
 	if err != nil {
 		return "", err
 	}
-	out, err := m.Generate(ctx, systemUserMessages(buildTranslationTitleSystemPrompt(in), buildTranslationTitlePrompt(in)))
+	out, err := googleGenerateWithRetry(ctx, m, systemUserMessages(buildTranslationTitleSystemPrompt(in), buildTranslationTitlePrompt(in)))
 	if err != nil {
 		return "", fmt.Errorf("google translate title: %w", err)
 	}
@@ -52,7 +53,7 @@ func (p *GoogleProvider) TranslateText(ctx context.Context, in TranslateTextInpu
 	if err != nil {
 		return "", err
 	}
-	out, err := m.Generate(ctx, systemUserMessages(buildTranslationContentSystemPrompt(in), buildTranslationContentPrompt(in)))
+	out, err := googleGenerateWithRetry(ctx, m, systemUserMessages(buildTranslationContentSystemPrompt(in), buildTranslationContentPrompt(in)))
 	if err != nil {
 		return "", fmt.Errorf("google translate text: %w", err)
 	}
@@ -156,11 +157,33 @@ func (p *GoogleProvider) generateText(ctx context.Context, system, user string) 
 	if err != nil {
 		return "", err
 	}
-	out, err := m.Generate(ctx, systemUserMessages(system, user))
+	out, err := googleGenerateWithRetry(ctx, m, systemUserMessages(system, user))
 	if err != nil {
 		return "", err
 	}
 	return stripJSONFences(strings.TrimSpace(out.Content)), nil
+}
+
+// googleGenerateWithRetry retries a Gemini completion on transient failures.
+//
+// goai wrapped every Generate in withRetry (2 retries by default); the eino
+// migration dropped it on the Google side, so a single 429 or a dropped
+// connection failed a whole translation. The OpenAI paths route through
+// generateWithRetry for the same reason. The Gemini client surfaces failures as
+// plain errors, so isRetryableModelError's substring fallback is what
+// classifies them here.
+func googleGenerateWithRetry(
+	ctx context.Context,
+	m *einogemini.ChatModel,
+	msgs []*schema.Message,
+) (*schema.Message, error) {
+	var out *schema.Message
+	err := withRetry(ctx, defaultAgentRetries+1, func(ctx context.Context) error {
+		var err error
+		out, err = m.Generate(ctx, msgs)
+		return err
+	})
+	return out, err
 }
 
 func (p *GoogleProvider) resolveTimeout() time.Duration {

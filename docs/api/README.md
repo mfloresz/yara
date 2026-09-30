@@ -613,18 +613,21 @@ a per-call context deadline.
 
 #### `query_library` isolation
 
-The assistant's SQL never touches the application database. Each call is served
-from a private in-memory SQLite database, opened per request and rebuilt with
-the requesting owner's novels and chapters. It contains nothing else: no
-`users`, no `_superusers`, no provider keys, no `agent_sessions`, and no other
-user's novels. Two layers back that up:
+The assistant's SQL never touches the application database. Each call is
+served from a private SQLite sandbox built per request from the requesting
+owner's novels and chapters. It contains nothing else: no `users`, no
+`_superusers`, no provider keys, no `agent_sessions`, and no other user's
+novels. Two layers back that up:
 
 1. **Structural** — the sandbox holds only the two analytics tables, so a
    subquery, `JOIN` or `sqlite_master` read finds nothing beyond those two
    views' own definitions; any other relation fails at the engine with "no
    such table". The rows are selected by owner server-side, and the sandbox
    carries no owner column, so there is no filter for the model to omit or
-   override.
+   override. The sandbox is materialised by attaching `data.db` **read-only**
+   and running `CREATE TABLE ... AS SELECT` with a server-written `WHERE
+   owner = ?`; the builder then closes its handle, so the attachment does not
+   outlive the build and cannot be named by the model's own statement.
 2. **Validation** — the query must be a single comment-free `SELECT`/`WITH`
    that reads at least one of the two tables. Statement keywords, `;` and
    comments are rejected, and the check runs against the query with string
@@ -636,9 +639,30 @@ user's novels. Two layers back that up:
    covers what the scan could not.
 
 Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
-Only the table a query actually names is populated, so a novel-level question
-never pays to copy every chapter row — the cost of a call scales with the
-owner's own library, not with the size of the install.
+Only the table a query actually names is materialised, so a novel-level
+question never pays to build every chapter row.
+
+The sandbox is a per-query file under `<data-dir>/agent-sandbox/`, removed when
+the query returns. It deliberately does **not** use the system temp dir:
+`os.TempDir()` falls back to `/tmp` on any `GOOS=linux` build — which is what
+the Termux target is — and `/tmp` does not exist on Android, so `MkdirTemp`
+fails and the tool stops working on the project's primary mobile target. The
+data dir is already resolved, already writable, and keeps the copy off
+tmpfs, where it would otherwise occupy RAM. If the sandbox cannot be created
+the tool reports that analytics is unavailable and points the model at the
+other tools, rather than failing the turn.
+
+Two further bounds apply at the engine, on the connection that runs the
+statement, because the payload limits alone are applied only after the value
+has already been built:
+
+- `SQLITE_LIMIT_LENGTH` caps any single string/BLOB at 1 MB. Without it a
+  four-byte novel title is enough to write `SELECT printf('%.'||20000000||
+  'd',1)`, which allocated ~1.1 GB before Go ever saw a byte and then arrived
+  as a 400-rune truncated cell.
+- The query runs under a 5 s deadline, and the sandbox is opened
+  `query_only`, so the blocklist is a second line of defence rather than the
+  only one.
 
 Row results are capped (`limit`, default 50, max 200) and cells are truncated
 on a rune boundary. The message trail persisted per session is trimmed to fit

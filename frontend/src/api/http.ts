@@ -197,7 +197,7 @@ export function createHttpClient(config: HttpClientConfig) {
       );
     }
     if (!response.body) {
-      throw new ApiError("empty response stream", response.status);
+      throw new ApiError("empty response stream", 500);
     }
 
     const reader = response.body.getReader();
@@ -213,11 +213,19 @@ export function createHttpClient(config: HttpClientConfig) {
           const line = buffer.slice(0, newline).trim();
           buffer = buffer.slice(newline + 1);
           if (line) {
+            // Parse and dispatch are separate steps on purpose. Wrapping the
+            // onEvent call in the same try made a handler bug indistinguishable
+            // from a malformed line: the event vanished with no error anywhere
+            // and the stream carried on. Only a bad parse is skipped.
+            let parsed: T;
             try {
-              onEvent(JSON.parse(line) as T);
+              parsed = JSON.parse(line) as T;
             } catch {
               // Skip malformed lines instead of aborting the stream.
+              newline = buffer.indexOf("\n");
+              continue;
             }
+            onEvent(parsed);
           }
           newline = buffer.indexOf("\n");
         }
@@ -227,11 +235,15 @@ export function createHttpClient(config: HttpClientConfig) {
       buffer += decoder.decode();
       const tail = buffer.trim();
       if (tail) {
+        // Same split as above: a parse failure is skipped, a handler failure
+        // propagates.
+        let parsed: T | undefined;
         try {
-          onEvent(JSON.parse(tail) as T);
+          parsed = JSON.parse(tail) as T;
         } catch {
           // Ignore trailing garbage.
         }
+        if (parsed !== undefined) onEvent(parsed);
       }
     } finally {
       // Release the body. Without this the stream stays locked forever if

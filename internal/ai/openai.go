@@ -215,6 +215,13 @@ func (p *OpenAIProvider) Refine(ctx context.Context, in RefineInput) (RefineOutp
 	}
 
 	msgs := systemUserMessages(in.SystemPrompt, in.UserPrompt)
+	// The refine loop makes up to refineMaxSteps sequential model calls, so the
+	// per-call deadline is applied once around the whole loop. Without it a
+	// wedged provider keeps the refine job alive until the process dies: the
+	// job worker passes a context.WithCancel with no deadline, so this is the
+	// only place the Settings timeout can reach the provider.
+	ctx, cancel := p.einoCallContext(ctx)
+	defer cancel()
 	if _, err := runToolLoop(ctx, m, msgs, []AgentTool{applyEditsTool}, refineMaxSteps, p.einoCallOptions()); err != nil {
 		return summary, fmt.Errorf("openai refine: %w", err)
 	}

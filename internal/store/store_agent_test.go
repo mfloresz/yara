@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -298,5 +299,55 @@ func TestSearchOwnedChaptersIsCaseSensitiveAndOwnerOnly(t *testing.T) {
 	}
 	if len(hits) != 1 {
 		t.Fatalf("bob's own search should find his chapter, got %d", len(hits))
+	}
+}
+
+// TestBuildSearchSnippetNeverSplitsARune pins that the snippet window is cut
+// on character boundaries.
+//
+// The window is a byte offset and searchSnippetWindow (90) is not a multiple
+// of any multi-byte rune width, so a raw slice landed mid-character for a
+// large share of emoji and CJK bodies — invalid UTF-8 handed straight to the
+// model as a search result. The agent serves exactly that content, so this
+// sweeps match positions across multi-byte bodies rather than trusting one.
+func TestBuildSearchSnippetNeverSplitsARune(t *testing.T) {
+	bodies := map[string]string{
+		"emoji":  strings.Repeat("😀", 120),
+		"cjk":    strings.Repeat("章", 120),
+		"accent": strings.Repeat("ñ", 120),
+		"mixed":  strings.Repeat("El día😀章 ", 40),
+	}
+	// A query placed at a different offset in each body exercises every
+	// alignment of the window against the rune grid.
+	offsets := []int{0, 1, 2, 3, 5, 7, 11, 13, 17, 29, 41, 57, 73, 89, 97, 113}
+
+	invalid := 0
+	for name, body := range bodies {
+		for _, off := range offsets {
+			if off >= len(body) {
+				continue
+			}
+			query := body[off : off+len("😀")]
+			if !strings.Contains(body, query) {
+				continue
+			}
+			snippet := buildSearchSnippet(body, query)
+			if snippet == "" {
+				continue
+			}
+			if !utf8.ValidString(snippet) {
+				invalid++
+				if invalid <= 3 {
+					t.Errorf("%s body, query at %d: snippet is not valid UTF-8: %q", name, off, snippet)
+				}
+			}
+			// The hit itself must survive the window.
+			if !strings.Contains(snippet, query) {
+				t.Errorf("%s body, query at %d: snippet lost the match: %q", name, off, snippet)
+			}
+		}
+	}
+	if invalid > 0 {
+		t.Errorf("%d/%d snippets were invalid UTF-8", invalid, len(bodies)*len(offsets))
 	}
 }

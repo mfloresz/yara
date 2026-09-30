@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -1086,6 +1087,12 @@ func (s *Store) SearchOwnedChapters(userID, novelID, query string, limit int) ([
 
 // buildSearchSnippet cuts a ±searchSnippetWindow window around the first
 // occurrence of query in body, collapsing newlines for the tool result.
+//
+// The window edges are snapped to rune boundaries. `strings.Index` returns a
+// byte offset and a byte-sized window can land inside a multi-byte character —
+// the agent serves accented and CJK text, so the raw slice produced invalid
+// UTF-8 in roughly a third of emoji/CJK bodies, and that corrupt snippet went
+// straight into the model-facing tool result.
 func buildSearchSnippet(body, query string) string {
 	index := strings.Index(body, query)
 	if index < 0 {
@@ -1098,6 +1105,12 @@ func buildSearchSnippet(body, query string) string {
 	end := index + len(query) + searchSnippetWindow
 	if end > len(body) {
 		end = len(body)
+	}
+	for start > 0 && !utf8.RuneStart(body[start]) {
+		start--
+	}
+	for end < len(body) && !utf8.RuneStart(body[end]) {
+		end++
 	}
 	snippet := strings.ReplaceAll(body[start:end], "\n", " ")
 	snippet = strings.TrimSpace(snippet)

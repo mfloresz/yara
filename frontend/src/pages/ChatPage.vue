@@ -446,7 +446,15 @@ function mapHistory(messages: AgentSessionMessage[]): void {
       continue;
     }
     if (message.role === "assistant") {
-      const toolCallsThisMessage = (message.toolCalls ?? []).length;
+      // Narration first, then the chips. Live streaming shows the text before
+      // the tool call, so this is the order the user saw. Building the chips
+      // first and splicing the narration in front of them afterwards also
+      // invalidated every index recorded for the tool results, so after a
+      // reload every chip came back with no result at all.
+      if (message.content) {
+        mapped.push({ kind: "message", role: "assistant", content: message.content });
+        lastQuestionIndex = -1;
+      }
       for (const call of message.toolCalls ?? []) {
         if (call.name === "ask_user") {
           const parsed = parseAskUserQuestion(call.args);
@@ -463,18 +471,6 @@ function mapHistory(messages: AgentSessionMessage[]): void {
         }
         pendingResults.set(call.id, { index: mapped.length });
         mapped.push({ kind: "tool", name: call.name, args: call.args, running: false, open: false });
-      }
-      if (message.content) {
-        // The assistant narrates BEFORE calling a tool (live streaming shows
-        // text, then the chip). Replaying chips first inverted that order, so
-        // the transcript read differently after a reload. The narration was
-        // pushed first here for the same reason.
-        mapped.splice(mapped.length - toolCallsThisMessage, 0, {
-          kind: "message",
-          role: "assistant",
-          content: message.content,
-        });
-        lastQuestionIndex = -1;
       }
       continue;
     }
@@ -520,11 +516,15 @@ async function resetChat(): Promise<void> {
     // to resurrect it: the next send omits the id, the backend falls back to
     // the latest session, and the transcript the user just discarded comes
     // back. Report the failure instead of pretending the reset worked.
+    //
+    // Append the error instead of replacing the transcript: the session still
+    // exists server-side, so wiping the visible conversation over a transient
+    // network error loses the user's context for nothing.
     const detail =
       error instanceof Error && error.message
         ? error.message
         : "no se pudo reiniciar el chat";
-    items.value = [{ kind: "error", content: detail }];
+    items.value.push({ kind: "error", content: detail });
     return;
   }
   sessionId.value = "";
@@ -553,7 +553,14 @@ async function sendMessage(message: string): Promise<void> {
   scrollToBottom();
 
   streaming.value = true;
-  abortController = new AbortController();
+  // Captured locally. stopStreaming clears `streaming` while this turn's
+  // promise is still pending, so the user can send again immediately; the
+  // catch/finally below then run against the NEW turn's controller. Reading
+  // the module-level one made an aborted turn report a phantom network error
+  // on the fresh turn, push a bogus "cut off mid-answer" notice, and finally
+  // null out the controller the Stop button now controls.
+  const controller = new AbortController();
+  abortController = controller;
 
   let assistantText = "";
   // Text already committed to the transcript for the step in progress. A
@@ -564,14 +571,21 @@ async function sendMessage(message: string): Promise<void> {
   let sawError = false;
 
   const commitAssistant = (): void => {
+    if (assistantText === committedText) return;
     committedText = assistantText;
     if (!assistantText) return;
     const last = items.value[items.value.length - 1];
-    // Reuse an empty assistant bubble we just created, never overwrite one
-    // that already holds text.
-    if (last && last.kind === "message" && last.role === "assistant" && !last.content) {
-      last.content = assistantText;
-      return;
+    // Reuse the bubble already carrying this text — whether it is empty or was
+    // filled by a live delta or the `done` event. Idempotence matters here
+    // because several exit paths call this (done, error, catch, finally): the
+    // guard must match on the text, not on emptiness, or a `done` that already
+    // wrote the final answer makes the next call push a duplicate bubble.
+    if (last && last.kind === "message" && last.role === "assistant") {
+      if (!last.content) {
+        last.content = assistantText;
+        return;
+      }
+      if (last.content === assistantText) return;
     }
     items.value.push({ kind: "message", role: "assistant", content: assistantText });
   };
@@ -677,12 +691,14 @@ async function sendMessage(message: string): Promise<void> {
         message,
       },
       handleEvent,
-      abortController.signal,
+      controller.signal,
     );
   } catch (error) {
     // An intentional stop is not a failure: keep whatever partial answer
-    // already streamed in and stay silent.
-    if (!abortController?.signal.aborted) {
+    // already streamed in and stay silent. Read this turn's own controller,
+    // not the module-level one, which a turn started after this one has
+    // already replaced.
+    if (!controller.signal.aborted) {
       flushStreamNow(commitAssistant);
       const detail =
         error instanceof Error && error.message
@@ -695,15 +711,20 @@ async function sendMessage(message: string): Promise<void> {
     // A stream that ends without a done event was cut off (proxy timeout,
     // dropped connection). Without this the partial answer is left on screen
     // looking exactly like a finished one.
-    if (!sawDone && !sawError && !abortController?.signal.aborted) {
+    if (!sawDone && !sawError && !controller.signal.aborted) {
       items.value.push({
         kind: "error",
         content: "La respuesta se cortó a mitad. Vuelve a intentarlo.",
       });
     }
     settleRunningTools();
-    streaming.value = false;
-    abortController = null;
+    // Only tear down shared state if this turn still owns it. A turn that was
+    // stopped and superseded must not clear the new turn's controller or flip
+    // its streaming flag.
+    if (abortController === controller) {
+      streaming.value = false;
+      abortController = null;
+    }
     scrollToBottom();
   }
 }

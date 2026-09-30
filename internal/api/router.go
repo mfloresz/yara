@@ -108,7 +108,10 @@ type Server struct {
 	agentLimiter *rateLimiter
 	// agentTurnLocks serializes agent chat turns per user so two concurrent
 	// chats cannot interleave history reads/writes on the same session.
-	agentTurnLocks sync.Map
+	// Entries are reference-counted and removed once idle: keyed by user id
+	// the map would otherwise grow for the process lifetime, one entry per
+	// account that ever chatted, on a long-lived self-hosted instance.
+	agentTurnLocks sync.Map // userID -> *agentTurnLock
 	// NewAIProvider allows tests to inject a mock provider.
 	NewAIProvider func(store.AISettings, string) (ai.Provider, error)
 }

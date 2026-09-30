@@ -3,8 +3,13 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 
@@ -218,14 +223,11 @@ func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
 	_ = bobNovelID
 	ctx := context.Background()
 
-	db, err := agentAnalyticsRO()
+	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID, true, true))
 	if err != nil {
 		t.Fatalf("open sandbox: %v", err)
 	}
 	defer db.Close()
-	if err := st.populateAgentSandbox(ctx, db, aliceID, true, true); err != nil {
-		t.Fatalf("populate sandbox: %v", err)
-	}
 
 	// Only the two documented relations exist in the sandbox.
 	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
@@ -303,14 +305,11 @@ func TestAgentSandboxSchemaRevealsOnlyTheTwoViews(t *testing.T) {
 	ctx := context.Background()
 
 	// Every relation the sandbox knows about must be one of the two views.
-	db, err := agentAnalyticsRO()
+	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID, true, true))
 	if err != nil {
 		t.Fatalf("open sandbox: %v", err)
 	}
 	defer db.Close()
-	if err := st.populateAgentSandbox(ctx, db, aliceID, true, true); err != nil {
-		t.Fatalf("populate sandbox: %v", err)
-	}
 	rows, err := db.QueryContext(ctx,
 		"SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
 	if err != nil {
@@ -426,8 +425,142 @@ func TestTruncateRunesKeepsMultibyteTextIntact(t *testing.T) {
 	}
 }
 
-// parseAgentAnalyticsRows converts the positional {columns, rows} payload
-// into per-row maps for assertions.
+// buildAgentSandboxForTest materialises a sandbox and removes it when the test
+// ends, so tests that need to inspect the sandbox file directly can do so
+// without leaking directories.
+func (s *Store) buildAgentSandboxForTest(t *testing.T, ownerID string, needNovels, needChapters bool) string {
+	t.Helper()
+	path, err := s.buildAgentSandbox(context.Background(), ownerID, needNovels, needChapters)
+	if err != nil {
+		t.Fatalf("build agent sandbox: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(path)) })
+	return path
+}
+
+// TestAgentAnalyticsByteCapReportsTheRealRowCount pins that the payload cap
+// tells the model how many rows it actually got.
+//
+// The byte cap used to reuse the row cap's message verbatim, so a result cut
+// at 5 rows by the payload limit was reported as "truncated at 200 rows". The
+// model is told to refine and re-query on truncation, so a wrong count sends
+// it after a filter that was never the problem.
+func TestAgentAnalyticsByteCapReportsTheRealRowCount(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	// Pad every title so 12 rows comfortably exceed the 64 KB payload cap
+	// while staying under the 200-row cap.
+	if _, err := st.App.DB().NewQuery(
+		"UPDATE chapters SET title = 'x' || substr(hex(zeroblob(0)), 1, 0) || printf('%.*c', 9000, 'ñ')",
+	).Execute(); err != nil {
+		t.Fatalf("pad chapter titles: %v", err)
+	}
+
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT chapter_id, title FROM "+AgentAnalyticsChapterView, 200)
+	if err != nil {
+		t.Fatalf("analytics query: %v", err)
+	}
+	var result struct {
+		Rows      [][]any `json:"rows"`
+		Truncated bool    `json:"truncated"`
+		Note      string  `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("invalid payload: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected the payload cap to trip on padded titles, got %s", out)
+	}
+	if result.Note == "" {
+		t.Fatal("expected an explanatory note when truncating")
+	}
+	// The note must name the row count actually returned, not the row cap.
+	if want := strconv.Itoa(len(result.Rows)); !strings.Contains(result.Note, want) {
+		t.Errorf("note = %q, want it to report the %d rows actually returned", result.Note, len(result.Rows))
+	}
+	if strings.Contains(result.Note, "200 rows") {
+		t.Errorf("note = %q, must not claim the row cap (200) tripped when the payload cap did", result.Note)
+	}
+	if len(result.Rows) == 0 {
+		t.Error("a truncated result should still carry the rows it did return")
+	}
+}
+
+// TestAgentAnalyticsBoundsEngineSideAllocation pins that a validated query
+// cannot make SQLite build an arbitrarily large value in engine memory.
+//
+// The payload limits (rows, cell chars, total bytes) are applied in Go after
+// rows.Next()/Scan() has already materialised the cell, so on their own they
+// bound nothing at the engine: a four-byte novel title is enough to write
+// `SELECT printf('%.'||20000000||'d',1)`, which allocated ~1.1GB in ~3s and
+// then arrived as a 400-rune truncated cell. SQLITE_LIMIT_LENGTH is the only
+// thing that stops it, and it is a C API (sqlite3_limit), not a PRAGMA — it
+// has to be set on the connection that runs the statement.
+func TestAgentAnalyticsBoundsEngineSideAllocation(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	for _, q := range []string{
+		"SELECT printf('%.'||20000000||'d',1) FROM " + AgentAnalyticsNovelView,
+		"SELECT zeroblob(200000000) FROM " + AgentAnalyticsNovelView,
+		"SELECT replace(hex(zeroblob(10000000)),'0','AAAA') FROM " + AgentAnalyticsNovelView,
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+
+		begin := time.Now()
+		_, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID, q, 10)
+		elapsed := time.Since(begin)
+		runtime.ReadMemStats(&after)
+		allocated := after.TotalAlloc - before.TotalAlloc
+
+		// The engine must refuse the value, not build it and hand Go a
+		// truncatable copy.
+		if err == nil {
+			t.Errorf("query %q should have been rejected by the engine limit", q)
+		}
+		const budget = 32 << 20
+		if allocated > budget {
+			t.Errorf("query %q allocated %d MB; the engine-level cell limit is not applied", q, allocated>>20)
+		}
+		if elapsed > 2*time.Second {
+			t.Errorf("query %q took %s; the engine-level cell limit is not applied", q, elapsed)
+		}
+	}
+}
+
+// TestAgentAnalyticsEngineLimitDoesNotBreakRealQueries is the other half: the
+// limit bounds pathological values without rejecting the aggregates the
+// assistant actually runs.
+func TestAgentAnalyticsEngineLimitDoesNotBreakRealQueries(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, aliceNovelID, _, _ := seedAnalyticsLibrary(t, st)
+
+	for _, q := range []string{
+		"SELECT title, total, pending FROM " + AgentAnalyticsNovelView + " WHERE pending < 10",
+		"SELECT COUNT(*) FROM " + AgentAnalyticsChapterView,
+		"SELECT novel_id, status, COUNT(*) FROM " + AgentAnalyticsChapterView + " GROUP BY novel_id, status",
+		"SELECT novel_id, MAX(LENGTH(title)) FROM " + AgentAnalyticsChapterView + " GROUP BY novel_id",
+		"SELECT SUM(original_chars) FROM " + AgentAnalyticsChapterView + " WHERE novel_id = '" + aliceNovelID + "'",
+	} {
+		out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID, q, 50)
+		if err != nil {
+			t.Errorf("query %q failed under the engine limits: %v", q, err)
+			continue
+		}
+		if strings.Contains(out, "too big") {
+			t.Errorf("query %q was rejected by the engine limit but is a legitimate aggregate", q)
+		}
+	}
+}
+
+// parseAgentAnalyticsRows unpacks an analytics payload into row maps.
 func parseAgentAnalyticsRows(t *testing.T, payload string) []map[string]any {
 	t.Helper()
 	var result struct {
@@ -480,6 +613,125 @@ func TestValidateAgentAnalyticsSQLIgnoresDataInLiterals(t *testing.T) {
 	for _, q := range rejected {
 		if err := validateAgentAnalyticsSQL(q); err == nil {
 			t.Errorf("expected rejection, got none for: %s", q)
+		}
+	}
+}
+
+// TestAgentSandboxDoesNotDependOnTmpDir is the Termux regression.
+//
+// The sandbox used to be created with os.MkdirTemp("", ...), which resolves
+// through os.TempDir(). On any GOOS=linux build that falls back to /tmp, and
+// the Makefile's Termux target (linux-arm64) is exactly that, so the
+// runtime.GOOS == "android" branch that would pick /data/local/tmp never
+// fires. On a real Android device /tmp does not exist, os.MkdirTemp fails
+// outright, and query_library stops working on the project's primary mobile
+// target.
+//
+// The sandbox must therefore live under the server's data dir: already
+// resolved, already writable, and already holding the database we attach.
+// The test points TMPDIR at a path that does not exist — the exact shape of
+// the Termux failure — and requires the query to still work.
+func TestAgentSandboxDoesNotDependOnTmpDir(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, aliceNovelID, _, _ := seedAnalyticsLibrary(t, st)
+
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT novel_id, total FROM "+AgentAnalyticsNovelView, 50)
+	if err != nil {
+		t.Fatalf("analytics must not depend on TMPDIR: %v", err)
+	}
+	rows := parseAgentAnalyticsRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("expected alice's single novel, got %d rows: %s", len(rows), out)
+	}
+	if rows[0]["novel_id"] != aliceNovelID {
+		t.Errorf("novel_id = %v, want %s", rows[0]["novel_id"], aliceNovelID)
+	}
+}
+
+// TestAgentSandboxLivesUnderDataDir pins where the sandbox is actually created:
+// inside the data dir, not in the system temp dir.
+func TestAgentSandboxLivesUnderDataDir(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	path := st.buildAgentSandboxForTest(t, aliceID, false, true)
+	dataDir, err := filepath.Abs(st.App.DataDir())
+	if err != nil {
+		t.Fatalf("abs data dir: %v", err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("abs sandbox path: %v", err)
+	}
+	if !strings.HasPrefix(abs, dataDir+string(filepath.Separator)) {
+		t.Errorf("sandbox at %s is outside the data dir %s; it must not use the system temp dir", abs, dataDir)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, agentSandboxDirName)); err != nil {
+		t.Errorf("sandbox root dir missing: %v", err)
+	}
+}
+
+// TestAgentSandboxLeavesNothingBehind pins the cleanup. An earlier version
+// removed only the sandbox file, so every single query left an empty
+// directory behind — 171 of them accumulated in tmpfs during a test run, which
+// is RAM on most Linux systems.
+func TestAgentSandboxLeavesNothingBehind(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	const queries = 5
+	for i := 0; i < queries; i++ {
+		if _, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+			"SELECT novel_id, status, COUNT(*) FROM "+AgentAnalyticsChapterView+" GROUP BY novel_id, status", 50); err != nil {
+			t.Fatalf("query %d: %v", i, err)
+		}
+	}
+	root := filepath.Join(st.App.DataDir(), agentSandboxDirName)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read sandbox root: %v", err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("%d sandbox directories left after %d queries (want 0): %v", len(entries), queries, names)
+	}
+}
+
+// TestAgentSandboxFailureIsModelActionable pins the degradation path: when the
+// sandbox cannot be created the tool must say analytics is unavailable and
+// point at the alternatives, so the model stops retrying the same SQL instead
+// of looping. The turn itself must not fail.
+func TestAgentSandboxFailureIsModelActionable(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	// Make the sandbox root impossible to create: a regular file where the
+	// directory needs to be.
+	root := filepath.Join(st.App.DataDir(), agentSandboxDirName)
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("block sandbox root: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(root) })
+
+	_, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT novel_id FROM "+AgentAnalyticsNovelView, 50)
+	if err == nil {
+		t.Fatal("expected an error when the sandbox cannot be created")
+	}
+	msg := err.Error()
+	for _, want := range []string{"unavailable", agentSandboxDirName} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q should mention %q so the model can act on it", msg, want)
 		}
 	}
 }

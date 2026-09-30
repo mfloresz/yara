@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
@@ -20,6 +21,58 @@ import (
 // agentChatTurnTimeout caps one whole agent turn (model steps + tool
 // executions). Per-model HTTP timeouts still apply underneath.
 const agentChatTurnTimeout = 8 * time.Minute
+
+// agentTurnLock serializes one user's agent turns and is reference-counted so
+// the map entry can be dropped once the last turn using it finishes.
+//
+// meta is separate from mu because refs is touched both before and after a
+// turn takes the lock; using mu for both would self-deadlock.
+type agentTurnLock struct {
+	mu      sync.Mutex // the turn lock itself
+	meta    sync.Mutex // guards refs and dropped
+	refs    int
+	dropped bool
+}
+
+// acquireAgentTurnLock takes the per-user turn lock and returns the release
+// function.
+//
+// The entry is removed from the map once no turn holds or awaits it. Leaving
+// it forever would accumulate one entry per account that ever used the chat —
+// on a long-lived self-hosted instance with rotating accounts that is an
+// unbounded leak keyed on user id, unlike the novel-keyed redownload locks
+// whose cardinality is bounded by library size.
+func (s *Server) acquireAgentTurnLock(userID string) func() {
+	for {
+		entry, _ := s.agentTurnLocks.LoadOrStore(userID, &agentTurnLock{})
+		lock := entry.(*agentTurnLock)
+
+		// Claim a reference BEFORE waiting on the turn lock, so a turn that is
+		// queued behind another can never have the entry pulled out from under
+		// it — which would let a third turn create a second lock for the same
+		// user and run concurrently.
+		lock.meta.Lock()
+		if lock.dropped {
+			lock.meta.Unlock()
+			continue // lost the race with the last holder; retry with a new entry
+		}
+		lock.refs++
+		lock.meta.Unlock()
+
+		lock.mu.Lock()
+		return func() {
+			lock.mu.Unlock()
+
+			lock.meta.Lock()
+			defer lock.meta.Unlock()
+			lock.refs--
+			if lock.refs == 0 {
+				lock.dropped = true
+				s.agentTurnLocks.CompareAndDelete(userID, entry)
+			}
+		}
+	}
+}
 
 // agentChatBodyLimit caps the chat request body: one message plus session and
 // novel ids.
@@ -74,7 +127,11 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		if message == "" {
 			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "message is required")
 		}
-		if len(message) > agentMaxMessageChars {
+		// Counted in runes, matching the constant's name and the tool-result
+		// caps in the same feature. len() is bytes, so a CJK or emoji user was
+		// rejected at ~2,667 characters against a documented 8,000 — three
+		// times tighter than the limit says, and only for non-Latin text.
+		if utf8.RuneCountInString(message) > agentMaxMessageChars {
 			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "message too long")
 		}
 		userID := e.Auth.Id
@@ -85,10 +142,8 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		// start from the same history and the second SaveAgentSessionMessages
 		// silently discards the first turn — a lost message with no error
 		// anywhere. Taking the lock here makes read-modify-write atomic.
-		lockAny, _ := s.agentTurnLocks.LoadOrStore(userID, &sync.Mutex{})
-		lock := lockAny.(*sync.Mutex)
-		lock.Lock()
-		defer lock.Unlock()
+		lock := s.acquireAgentTurnLock(userID)
+		defer lock()
 
 		session, err := resolveAgentSession(s, userID, in.SessionID)
 		if err != nil {

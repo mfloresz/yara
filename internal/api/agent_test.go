@@ -1295,3 +1295,106 @@ func (s *slowAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput)
 	}
 	return s.fakeAgentProvider.AgentChat(ctx, in)
 }
+
+// TestAgentMessageCapCountsRunes pins that the per-message cap is measured in
+// characters, as its name and the tool documentation say.
+//
+// It used to be `len(message) > agentMaxMessageChars`, which is bytes: 8,000
+// CJK or emoji characters are 24,000 bytes, so those users were cut off at
+// ~2,667 characters — three times tighter than the documented limit, and only
+// for non-Latin text. Latin text passed either way, which is why this went
+// unnoticed.
+func TestAgentMessageCapCountsRunes(t *testing.T) {
+	env := newAPITestEnv(t)
+	user := registerUser(t, env, "rune-cap@example.com", "secret123", "Rune")
+
+	provider := &slowAgentProvider{
+		fakeAgentProvider: fakeAgentProvider{OpenAIProvider: &ai.OpenAIProvider{APIKey: "k"}},
+		delay:             0,
+	}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	post := func(msg string) *httptest.ResponseRecorder {
+		return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", user.Token,
+			map[string]any{"message": msg})
+	}
+
+	// 5,000 two-byte characters is 10,000 bytes — over the byte limit, well
+	// under the 8,000-character one, and under the 16 KB body cap so the
+	// message cap is what decides. It must be accepted.
+	accents := strings.Repeat("ñ", agentMaxMessageChars*5/8)
+	if got := utf8.RuneCountInString(accents); got != agentMaxMessageChars*5/8 {
+		t.Fatalf("fixture has %d runes", got)
+	}
+	if len(accents) <= agentMaxMessageChars {
+		t.Fatalf("fixture must exceed the byte limit to be meaningful, got %d bytes", len(accents))
+	}
+	if len(accents)+64 >= int(agentChatBodyLimit) {
+		t.Fatalf("fixture must fit the body cap to reach the message cap, got %d bytes", len(accents))
+	}
+	assertStatus(t, post(accents), http.StatusOK)
+
+	// Past the character limit is still rejected, counted in characters.
+	tooLong := strings.Repeat("a", agentMaxMessageChars+1)
+	resp := post(tooLong)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("a %d-character message must be rejected, got %d", agentMaxMessageChars+1, resp.Code)
+	}
+	if !strings.Contains(resp.Body.String(), "too long") {
+		t.Errorf("expected a 'message too long' error, got %s", resp.Body.String())
+	}
+}
+
+// TestAgentTurnLockMapDoesNotGrow pins that the per-user turn lock is released
+// from the map once the turn that created it finishes.
+//
+// The map is keyed by user id, so leaving an entry behind accumulates one per
+// account that ever used the chat for the lifetime of the process. On a
+// self-hosted instance with rotating accounts that never stops growing. The
+// lock must also stay correct while a turn is queued behind another: the entry
+// cannot be dropped while a second turn is still waiting on it, or a third
+// turn would create a second lock for the same user and run concurrently.
+func TestAgentTurnLockMapDoesNotGrow(t *testing.T) {
+	env := newAPITestEnv(t)
+	users := make([]string, 0, 5)
+	for i := 0; i < 5; i++ {
+		users = append(users, registerUser(t, env, fmt.Sprintf("lockmap%d@example.com", i), "secret123", "Lock").Token)
+	}
+
+	provider := &slowAgentProvider{
+		fakeAgentProvider: fakeAgentProvider{OpenAIProvider: &ai.OpenAIProvider{APIKey: "k"}},
+		delay:             20 * time.Millisecond,
+	}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	// Two concurrent turns per user: the second one queues on the lock, so a
+	// naive "delete when unlocked" would drop the entry underneath it.
+	var wg sync.WaitGroup
+	for _, token := range users {
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func(tok string) {
+				defer wg.Done()
+				resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", tok,
+					map[string]any{"message": "hola"})
+				if resp.Code != http.StatusOK {
+					t.Errorf("chat failed with %d: %s", resp.Code, resp.Body.String())
+				}
+			}(token)
+		}
+	}
+	wg.Wait()
+
+	remaining := 0
+	env.server.agentTurnLocks.Range(func(_, _ any) bool {
+		remaining++
+		return true
+	})
+	if remaining != 0 {
+		t.Errorf("agentTurnLocks still holds %d entries after every turn finished; the map grows per user", remaining)
+	}
+}

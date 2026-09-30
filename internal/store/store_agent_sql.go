@@ -5,26 +5,27 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/pocketbase/dbx"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 // Agent analytics SQL: one read-only query surface for the library assistant.
 //
 // The model never reaches the application database. Each turn is served from a
-// private in-memory SQLite database that is populated, per request, with the
-// requesting owner's novels and chapters and nothing else. Isolation is
-// structural rather than policed: user rows, superuser rows, provider keys,
-// other users' sessions and every base table are simply not present in that
-// database, so no SQL the model can write can reach them — a subquery over
-// _superusers, a JOIN onto agent_sessions or a second statement all fail at
-// the engine before any data is touched.
+// private SQLite sandbox, built per request from the requesting owner's novels
+// and chapters and nothing else. Isolation is structural rather than policed:
+// user rows, superuser rows, provider keys, other users' sessions and every
+// base table are simply not present in that database, so no SQL the model can
+// write can reach them — a subquery over _superusers, a JOIN onto
+// agent_sessions or a second statement all fail at the engine before any data
+// is touched.
 //
 // Ownership is therefore enforced by the backend, not by the model: the rows
 // loaded into the sandbox are selected by owner id server-side, and the
@@ -49,16 +50,40 @@ import (
 //     chapters, users, agent_sessions, _superusers). Blocking those by name
 //     means maintaining an allowlist that must track every PocketBase internal
 //     table, and one miss leaks. The copy cannot leak what it does not contain.
-//   - modernc.org/sqlite exposes no authorizer API, so a handle cannot be
-//     restricted at the engine to "these two relations" the way a read-only
-//     handle can be restricted to "no writes".
 //   - The copy scales with the OWNER's library, not the whole install: a
 //     100-novel library copies 100 rows, whether the server holds 1 user or
 //     1,000. Cost is per-user, not multiplied by tenant count.
 //
-// Only the view the query actually names is populated (see
-// agentAnalyticsReadsRelations), so a novel-level question never pays to copy
-// chapter rows.
+// How the copy is built — ATTACH + CREATE TABLE AS SELECT, not row-by-row:
+//
+// The obvious implementation reads the owner's rows in Go and INSERTs them into
+// the sandbox one at a time. That round-trips every row through Go twice, and
+// it dominated the cost: at 16k chapters the read took ~213ms and the insert
+// another ~150ms, so every chapter-level question paid ~360ms of pure copying
+// before SQLite did any work.
+//
+// Attaching data.db read-only and letting SQLite materialise the view itself
+// (CREATE TABLE ... AS SELECT) does the same transfer entirely inside the
+// engine: ~6ms for the same 16k rows, a ~57x difference. The ownership filter
+// is still a server-written WHERE clause over the owner's id; nothing the model
+// writes reaches it.
+//
+// The attach is scoped and then destroyed, never left open:
+//
+//   - The sandbox is a temp FILE database, not :memory:. database/sql treats
+//     ":memory:" as per-connection, so the builder must pin one connection
+//     (SetMaxOpenConns(1)) or a second statement would silently see an empty
+//     database. A file removes that class of bug entirely: the builder opens
+//     the file, creates the views, and closes the handle. The model's query
+//     then opens the SAME file through a brand-new connection that can only
+//     reach what the builder left in it.
+//   - The builder does not DETACH. It closes. Once that handle is gone there is
+//     no attachment left to name: `SELECT * FROM novels` fails with "no such
+//     table" for the same reason it does against any unrelated relation.
+//   - data.db is attached with mode=ro, so even inside the builder window the
+//     source cannot be written.
+//
+// Chapter bodies are never loaded into the sandbox; get_chapter serves those.
 
 const (
 	// AgentAnalyticsNovelView / AgentAnalyticsChapterView are the only
@@ -71,45 +96,22 @@ const (
 	agentAnalyticsMaxCellChars  = 400
 	agentAnalyticsMaxResultBody = 64 << 10 // 64 KB of JSON payload
 	agentAnalyticsTimeout       = 5 * time.Second
+
+	// agentAnalyticsMaxCellBytes bounds any single string or BLOB the engine
+	// will materialise (SQLITE_LIMIT_LENGTH). Without it the payload limits
+	// above are cosmetic: they are applied after rows.Next()/Scan() has already
+	// built the value, so a single cell like
+	// replace(hex(zeroblob(10000000)),'0','AAAA') allocates ~76MB and a
+	// zeroblob(200000000) ~381MB before Go ever sees a byte, then arrives as a
+	// 400-rune truncated cell the model pays full price for. Measured: with the
+	// limit the same queries fail in ~90us with "string or blob too big" and
+	// 0MB allocated, while ordinary aggregates are unaffected.
+	agentAnalyticsMaxCellBytes = 1 << 20 // 1 MB
+	// agentAnalyticsMaxExprDepth bounds expression-tree nesting, which is what a
+	// deeply nested recursive CTE walks up. The query deadline catches those
+	// too, but this fails them in microseconds instead of seconds.
+	agentAnalyticsMaxExprDepth = 64
 )
-
-// agentNovelProgressRow / agentChapterOverviewRow mirror the sandbox table
-// columns. Values are aggregated in Go while building the snapshot, so the
-// model's filters and ORDER BY run over already-reduced rows.
-type agentNovelProgressRow struct {
-	NovelID         string
-	Title           string
-	Author          string
-	Status          string
-	SourceLanguage  string
-	TargetLanguage  string
-	IsPublic        bool
-	HasDescription  bool
-	Total           int
-	Translated      int
-	Completed       int
-	Pending         int
-	OriginalChars   int64
-	TranslatedChars int64
-	RefinedChars    int64
-	MaxChapterOrder int
-	Updated         string
-}
-
-type agentChapterOverviewRow struct {
-	NovelID         string
-	ChapterID       string
-	ChapterOrder    int
-	Title           string
-	TranslatedTitle string
-	Status          string
-	Excluded        bool
-	OriginalChars   int64
-	TranslatedChars int64
-	RefinedChars    int64
-	ErrorMessage    string
-	Updated         string
-}
 
 var (
 	// agentAnalyticsForbiddenWords blocks statement keywords. It is applied to
@@ -179,27 +181,50 @@ func validateAgentAnalyticsSQL(query string) error {
 	return fmt.Errorf("queries must read %s or %s", AgentAnalyticsNovelView, AgentAnalyticsChapterView)
 }
 
-// agentAnalyticsRO opens a private in-memory database for one query. It never
-// opens data.db: the sandbox is a separate, empty database populated per
-// request.
+// agentAnalyticsRO opens the sandbox as a temp file database and pins the one
+// connection the engine limits are set on.
 //
-// ponytail: one handle per query rather than a pooled/shared one. Opening an
-// in-memory SQLite database is cheap relative to the snapshot rebuild that
-// always follows it, and a per-request handle removes the global mutex that
-// previously serialized every user's analytics call behind this owner's
-// library size. If open cost ever showed up in a profile, pool handles here
-// and key the population by owner instead.
-func agentAnalyticsRO() (*sql.DB, error) {
-	db, err := sql.Open("sqlite", ":memory:")
+// ponytail: a temp file per query rather than a pooled handle. Opening an
+// in-memory SQLite database is cheap relative to the materialisation that
+// follows, and a fresh handle per request removes any chance of one user's
+// sandbox outliving its query. If open cost ever showed up in a profile, pool
+// the file handles here instead.
+//
+// The engine limits are set on the pinned connection because sqlite3_limit is
+// per-connection, not per-database: a limit applied to a connection the pool
+// later replaced would silently not apply at all. SetMaxOpenConns(1) is what
+// makes the pin real, and the DSN is private-cache so the file is not shared.
+func agentAnalyticsRO(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?cache=private&_pragma=query_only(1)")
 	if err != nil {
 		return nil, err
 	}
-	// One connection keeps every statement of a request on the same private
-	// in-memory database.
+	// One connection: it keeps every statement of a request on the same
+	// database AND keeps the engine limits below attached to the connection
+	// they were set on.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	return db, nil
 }
+
+// setAgentAnalyticsLimits applies the engine-level bounds on the connection the
+// query will run on. It must be called on the same *sql.Conn that later runs
+// the statement, since sqlite3_limit is per-connection.
+func setAgentAnalyticsLimits(ctx context.Context, conn *sql.Conn) error {
+	if _, err := sqlite.Limit(conn, sqliteLimitLength, agentAnalyticsMaxCellBytes); err != nil {
+		return fmt.Errorf("set cell size limit: %w", err)
+	}
+	if _, err := sqlite.Limit(conn, sqliteLimitExprDepth, agentAnalyticsMaxExprDepth); err != nil {
+		return fmt.Errorf("set expression depth limit: %w", err)
+	}
+	return nil
+}
+
+// SQLITE_LIMIT_* ids from <sqlite3.h>, as used by sqlite3_limit.
+const (
+	sqliteLimitLength    = 0 // SQLITE_LIMIT_LENGTH
+	sqliteLimitExprDepth = 3 // SQLITE_LIMIT_EXPR_DEPTH
+)
 
 // RunAgentAnalyticsQuery validates and runs one read-only analytics query for
 // the given user and returns the model-facing JSON payload. Rows are capped
@@ -219,37 +244,50 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 		limit = agentAnalyticsMaxLimit
 	}
 
-	db, err := agentAnalyticsRO()
-	if err != nil {
-		return "", fmt.Errorf("open analytics sandbox: %w", err)
-	}
-	defer db.Close()
-
 	ctx, cancel := context.WithTimeout(ctx, agentAnalyticsTimeout)
 	defer cancel()
 
 	// ponytail: the sandbox is rebuilt from the owner's rows on every query, so
-	// a call costs O(the caller's own library) rather than O(1). Two things
-	// keep that cheap. The novel view is one row per novel (trivial). The
-	// chapter view is only populated when the query actually names it, which
-	// is the whole cost: most questions ("which novels are missing fewer than
-	// 10 chapters") never touch chapter rows at all. Measured in-memory insert
-	// cost of the chapter view is ~86ms at 10k chapters and ~478ms at 50k, so
-	// skipping it is the difference between instant and visibly slow. If a
-	// query that DOES read chapters proves slow on a large library, cache the
-	// snapshot per user and invalidate it on novel/chapter writes rather than
-	// rebuilding.
+	// a call costs O(the caller's own library) rather than O(1). It is
+	// materialised inside SQLite (see the ATTACH note at the top of this file),
+	// which is what keeps that proportional but small: ~6ms at 16k chapters.
+	// Only the view the query names is built, so a novel-level question never
+	// pays for chapter rows at all.
 	needNovels, needChapters := agentAnalyticsReadsRelations(trimmedAgentQuery(query))
-	if err := s.populateAgentSandbox(ctx, db, userID, needNovels, needChapters); err != nil {
-		return "", err
+	sandboxPath, err := s.buildAgentSandbox(ctx, userID, needNovels, needChapters)
+	if err != nil {
+		// A sandbox that cannot be created is an environment problem, not a
+		// bad query, and retrying the same SQL cannot fix it. Say so plainly:
+		// the model stops trying this tool and answers from the other eleven
+		// instead of looping on a query that will never run.
+		return "", fmt.Errorf("library analytics is unavailable on this server (%w); answer from the other tools instead", err)
 	}
+	// RemoveAll, not Remove: it drops the per-query directory as well as the
+	// file inside it. Removing only the file left an empty directory behind on
+	// every single query.
+	defer os.RemoveAll(filepath.Dir(sandboxPath))
+
+	db, err := agentAnalyticsRO(sandboxPath)
+	if err != nil {
+		return "", fmt.Errorf("open analytics sandbox: %w", err)
+	}
+	defer db.Close()
 
 	// Outer LIMIT: the model's own LIMIT/ORDER BY survive inside the
 	// subquery; the wrapper only caps the payload. limit+1 probes for
 	// truncation without claiming more rows than the caller asked for.
 	wrapped := fmt.Sprintf("SELECT * FROM ( %s ) agent_result LIMIT %d", query, limit+1)
 
-	rows, err := db.QueryContext(ctx, wrapped)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	if err := setAgentAnalyticsLimits(ctx, conn); err != nil {
+		return "", err
+	}
+
+	rows, err := conn.QueryContext(ctx, wrapped)
 	if err != nil {
 		return "", fmt.Errorf("query failed (only %s and %s exist here): %w", AgentAnalyticsNovelView, AgentAnalyticsChapterView, err)
 	}
@@ -282,8 +320,12 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 		}
 		result.Rows = append(result.Rows, row)
 		if totalBytes > agentAnalyticsMaxResultBody {
+			// Report what was actually returned, not the row cap: telling the
+			// model "truncated at 200 rows" when the payload cap cut it at 5
+			// sends it off to re-run a query that was never the problem.
 			result.Truncated = true
-			result.Note = fmt.Sprintf("results truncated at %d rows; refine the query (filters, smaller projection) and query again", limit)
+			result.Note = fmt.Sprintf("results cut to %d rows to stay under %d KB; project fewer columns or add filters",
+				len(result.Rows), agentAnalyticsMaxResultBody>>10)
 			break
 		}
 	}
@@ -301,98 +343,160 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 	return string(out), nil
 }
 
-// populateAgentSandbox (re)creates the two sandbox tables and fills them with
-// the owner's own library rows. The WHERE clauses are the ownership filter:
-// they are written here, server-side, and are not part of anything the model
-// can influence.
+// agentSandboxDirName is the subdirectory of the server's data dir where the
+// per-query sandboxes are created.
 //
-// Both tables are always created, so a query naming a view the caller did not
-// ask for still fails with "no such table" rather than a confusing error; only
-// the inserts are conditional. Skipping an unrequested view is what keeps a
-// novel-level question from paying for every chapter row.
-func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID string, needNovels, needChapters bool) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+// It lives under the data dir rather than in os.TempDir() for two reasons, both
+// of which are correctness issues on a real deployment:
+//
+//   - Termux has no /tmp. os.TempDir() falls back to /tmp on any GOOS=linux
+//     build, and the Makefile's Termux target (linux-arm64) is exactly that, so
+//     the runtime GOOS check for the /data/local/tmp branch never fires. On a
+//     device the directory simply does not exist and os.MkdirTemp fails
+//     outright, taking query_library down entirely. The data dir is already
+//     resolved, already writable and already holds the database we attach.
+//   - /tmp is usually tmpfs, so the sandbox would occupy RAM for the duration
+//     of every query. The data dir is on the filesystem the server already
+//     stores its library in, so the copy costs disk instead.
+const agentSandboxDirName = "agent-sandbox"
 
-	for _, ddl := range []string{
-		"DROP TABLE IF EXISTS " + AgentAnalyticsNovelView,
-		"DROP TABLE IF EXISTS " + AgentAnalyticsChapterView,
-		fmt.Sprintf(`CREATE TABLE %s (
-	novel_id TEXT, title TEXT, author TEXT, status TEXT, source_language TEXT,
-	target_language TEXT, is_public INTEGER, has_description INTEGER, total INTEGER,
-	translated INTEGER, completed INTEGER, pending INTEGER, original_chars INTEGER,
-	translated_chars INTEGER, refined_chars INTEGER, max_chapter_order INTEGER,
-	updated TEXT)`, AgentAnalyticsNovelView),
-		fmt.Sprintf(`CREATE TABLE %s (
-	novel_id TEXT, chapter_id TEXT, chapter_order INTEGER, title TEXT,
-	translated_title TEXT, status TEXT, excluded INTEGER, original_chars INTEGER,
-	translated_chars INTEGER, refined_chars INTEGER, error_message TEXT,
-	updated TEXT)`, AgentAnalyticsChapterView),
+// agentSandboxRoot returns the directory holding per-query sandboxes, creating
+// it if needed.
+//
+// Kept separate from buildAgentSandbox so the resolution and its failure
+// modes are testable in one place: every caller funnels through here.
+func (s *Store) agentSandboxRoot() (string, error) {
+	root := filepath.Join(s.App.DataDir(), agentSandboxDirName)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+// buildAgentSandbox materialises the two views for one owner into a fresh temp
+// file and returns its path.
+//
+// The views are created by SQLite itself from an attached, read-only copy of
+// data.db, so no row ever round-trips through Go. The attachment lives only
+// inside this function: the builder handle is closed before the path is
+// returned, so by the time the model can run a statement there is nothing left
+// to name but the file — which contains two tables and no owner column.
+//
+// The owner id is a bound parameter, never interpolated into SQL text.
+func (s *Store) buildAgentSandbox(ctx context.Context, ownerID string, needNovels, needChapters bool) (string, error) {
+	root, err := s.agentSandboxRoot()
+	if err != nil {
+		return "", fmt.Errorf("create analytics sandbox directory: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "query-")
+	if err != nil {
+		return "", fmt.Errorf("create analytics sandbox directory: %w", err)
+	}
+	// The directory is ours to remove: the caller defers RemoveAll on the
+	// returned file's parent, and this is the path it is removing. Until the
+	// build succeeds nothing else owns it, so failures clean up here.
+	path := filepath.Join(dir, "sandbox.db")
+	built := false
+	defer func() {
+		if !built {
+			os.RemoveAll(dir)
+		}
+	}()
+
+	builder, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return "", fmt.Errorf("open analytics sandbox: %w", err)
+	}
+	builder.SetMaxOpenConns(1)
+	builder.SetMaxIdleConns(1)
+
+	// Close before returning: the attachment does not outlive this handle.
+	defer func() {
+		if cerr := builder.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close analytics sandbox builder: %w", cerr)
+		}
+	}()
+
+	// mode=ro: even inside this short window the source database cannot be
+	// written, and the engine refuses any write through the attachment.
+	attach := "file:" + filepath.Join(s.App.DataDir(), "data.db") + "?mode=ro"
+	if _, err := builder.ExecContext(ctx, "ATTACH DATABASE ? AS src", attach); err != nil {
+		return "", fmt.Errorf("attach library database: %w", err)
+	}
+
+	// Both tables are always created, so a query naming a view the caller did
+	// not ask for still fails with "no such table" rather than a confusing
+	// error; only the materialisation is conditional.
+	for _, stmt := range []struct {
+		name string
+		sql  string
+		need bool
+	}{
+		{AgentAnalyticsNovelView, agentNovelProgressCTAS, needNovels},
+		{AgentAnalyticsChapterView, agentChapterOverviewCTAS, needChapters},
 	} {
-		if _, err := tx.ExecContext(ctx, ddl); err != nil {
-			return fmt.Errorf("prepare agent sandbox: %w", err)
+		if _, err := builder.ExecContext(ctx, "CREATE TABLE "+stmt.name+" AS "+stmt.sql, ownerID); err != nil {
+			return "", fmt.Errorf("prepare agent sandbox: %w", err)
+		}
+		if !stmt.need {
+			// Emptied so the view exists with the right shape but no rows,
+			// which is what a novel-only question should see.
+			if _, err := builder.ExecContext(ctx, "DELETE FROM "+stmt.name); err != nil {
+				return "", fmt.Errorf("trim agent sandbox: %w", err)
+			}
 		}
 	}
 
-	if needNovels {
-		if err := s.populateAgentNovels(ctx, tx, ownerID); err != nil {
-			return err
-		}
-	}
-	if needChapters {
-		if err := s.populateAgentChapters(ctx, tx, ownerID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	built = true
+	return path, nil
 }
 
-func (s *Store) populateAgentNovels(ctx context.Context, tx *sql.Tx, ownerID string) error {
-	novels, err := s.agentSnapshotNovels(ownerID)
-	if err != nil {
-		return err
-	}
-	novelStmt, err := tx.PrepareContext(ctx, "INSERT INTO "+AgentAnalyticsNovelView+
-		" (novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated)"+
-		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-	if err != nil {
-		return err
-	}
-	defer novelStmt.Close()
-	for _, n := range novels {
-		if _, err := novelStmt.ExecContext(ctx, n.NovelID, n.Title, n.Author, n.Status, n.SourceLanguage,
-			n.TargetLanguage, boolToInt(n.IsPublic), boolToInt(n.HasDescription), n.Total, n.Translated,
-			n.Completed, n.Pending, n.OriginalChars, n.TranslatedChars, n.RefinedChars, n.MaxChapterOrder, n.Updated); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// agentNovelProgressCTAS / agentChapterOverviewCTAS materialise the two
+// analytics surfaces. Columns and aggregate semantics mirror
+// RecalculateNovelStats and the assistant's other read tools: only
+// non-excluded chapters count, and pending is the complement of
+// translated/refined/done. The WHERE clause is the ownership filter —
+// server-written, bound as a parameter, and not something the model can
+// influence.
+const agentNovelProgressCTAS = `
+	SELECT n.id AS novel_id,
+		COALESCE(NULLIF(n.target_title, ''), n.source_title) AS title,
+		COALESCE(NULLIF(n.target_author, ''), n.source_author) AS author,
+		n.status AS status,
+		n.source_language AS source_language,
+		n.target_language AS target_language,
+		n.is_public AS is_public,
+		CASE WHEN TRIM(COALESCE(n.target_description, '')) <> '' THEN 1 ELSE 0 END AS has_description,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN 1 ELSE 0 END), 0) AS total,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS translated,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('refined','done') THEN 1 ELSE 0 END), 0) AS completed,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status NOT IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS pending,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.original_char_count ELSE 0 END), 0) AS original_chars,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.translated_char_count ELSE 0 END), 0) AS translated_chars,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.refined_char_count ELSE 0 END), 0) AS refined_chars,
+		COALESCE(MAX(c.chapter_order), 0) AS max_chapter_order,
+		n.updated AS updated
+	FROM src.novels n
+	LEFT JOIN src.chapters c ON c.novel = n.id
+	WHERE n.owner = ?
+	GROUP BY n.id`
 
-func (s *Store) populateAgentChapters(ctx context.Context, tx *sql.Tx, ownerID string) error {
-	chapters, err := s.agentSnapshotChapters(ownerID)
-	if err != nil {
-		return err
-	}
-	chapterStmt, err := tx.PrepareContext(ctx, "INSERT INTO "+AgentAnalyticsChapterView+
-		" (novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated)"+
-		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-	if err != nil {
-		return err
-	}
-	defer chapterStmt.Close()
-	for _, c := range chapters {
-		if _, err := chapterStmt.ExecContext(ctx, c.NovelID, c.ChapterID, c.ChapterOrder, c.Title,
-			c.TranslatedTitle, c.Status, boolToInt(c.Excluded), c.OriginalChars, c.TranslatedChars,
-			c.RefinedChars, c.ErrorMessage, c.Updated); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+const agentChapterOverviewCTAS = `
+	SELECT c.novel AS novel_id,
+		c.id AS chapter_id,
+		c.chapter_order AS chapter_order,
+		c.title AS title,
+		c.translated_title AS translated_title,
+		c.status AS status,
+		c.excluded AS excluded,
+		COALESCE(c.original_char_count, 0) AS original_chars,
+		COALESCE(c.translated_char_count, 0) AS translated_chars,
+		COALESCE(c.refined_char_count, 0) AS refined_chars,
+		COALESCE(c.error_message, '') AS error_message,
+		c.updated AS updated
+	FROM src.chapters c
+	JOIN src.novels n ON n.id = c.novel
+	WHERE n.owner = ?`
 
 // trimmedAgentQuery strips surrounding whitespace and a trailing semicolon,
 // matching what validateAgentAnalyticsSQL accepts, so the relation scan below
@@ -415,145 +519,6 @@ func agentAnalyticsReadsRelations(query string) (novels, chapters bool) {
 		}
 	}
 	return novels, chapters
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// agentSnapshotNovels aggregates the owner's novels in one pass. Counters are
-// computed here rather than read from the novel's pre-aggregated fields so the
-// sandbox always reports the same numbers as the assistant's other tools:
-// only non-excluded chapters count, and pending is the complement of
-// translated/refined/done.
-func (s *Store) agentSnapshotNovels(ownerID string) ([]agentNovelProgressRow, error) {
-	rows := []struct {
-		ID              string `db:"id"`
-		SourceTitle     string `db:"source_title"`
-		TargetTitle     string `db:"target_title"`
-		SourceAuthor    string `db:"source_author"`
-		TargetAuthor    string `db:"target_author"`
-		Status          string `db:"status"`
-		SourceLanguage  string `db:"source_language"`
-		TargetLanguage  string `db:"target_language"`
-		IsPublic        bool   `db:"is_public"`
-		TargetDescr     string `db:"target_description"`
-		OriginalChars   int64  `db:"original_chars"`
-		TranslatedChars int64  `db:"translated_chars"`
-		RefinedChars    int64  `db:"refined_chars"`
-		Total           int    `db:"total"`
-		Translated      int    `db:"translated"`
-		Completed       int    `db:"completed"`
-		Pending         int    `db:"pending"`
-		MaxOrder        int    `db:"max_order"`
-		Updated         string `db:"updated"`
-	}{}
-	if err := s.App.DB().NewQuery(`
-		SELECT n.id, n.source_title, n.target_title, n.source_author, n.target_author,
-			n.status, n.source_language, n.target_language, n.is_public, n.target_description,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.original_char_count ELSE 0 END), 0) AS original_chars,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.translated_char_count ELSE 0 END), 0) AS translated_chars,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.refined_char_count ELSE 0 END), 0) AS refined_chars,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 THEN 1 ELSE 0 END), 0) AS total,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS translated,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('refined','done') THEN 1 ELSE 0 END), 0) AS completed,
-			COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status NOT IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS pending,
-			COALESCE(MAX(c.chapter_order), 0) AS max_order,
-			n.updated
-		FROM novels n
-		LEFT JOIN chapters c ON c.novel = n.id
-		WHERE n.owner = {:owner}
-		GROUP BY n.id
-	`).Bind(dbx.Params{"owner": ownerID}).All(&rows); err != nil {
-		return nil, err
-	}
-	out := make([]agentNovelProgressRow, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, agentNovelProgressRow{
-			NovelID:         r.ID,
-			Title:           firstNonBlank(r.TargetTitle, r.SourceTitle),
-			Author:          firstNonBlank(r.TargetAuthor, r.SourceAuthor),
-			Status:          r.Status,
-			SourceLanguage:  r.SourceLanguage,
-			TargetLanguage:  r.TargetLanguage,
-			IsPublic:        r.IsPublic,
-			HasDescription:  strings.TrimSpace(r.TargetDescr) != "",
-			Total:           r.Total,
-			Translated:      r.Translated,
-			Completed:       r.Completed,
-			Pending:         r.Pending,
-			OriginalChars:   r.OriginalChars,
-			TranslatedChars: r.TranslatedChars,
-			RefinedChars:    r.RefinedChars,
-			MaxChapterOrder: r.MaxOrder,
-			Updated:         r.Updated,
-		})
-	}
-	return out, nil
-}
-
-// agentSnapshotChapters returns the owner's chapter metadata rows, ordered by
-// novel then chapter order.
-func (s *Store) agentSnapshotChapters(ownerID string) ([]agentChapterOverviewRow, error) {
-	rows := []struct {
-		NovelID        string `db:"novel_id"`
-		ID             string `db:"chapter_id"`
-		ChapterOrder   int    `db:"chapter_order"`
-		Title          string `db:"title"`
-		TranslatedTitl string `db:"translated_title"`
-		Status         string `db:"status"`
-		Excluded       bool   `db:"excluded"`
-		OriginalChars  int64  `db:"original_chars"`
-		TranslatedChar int64  `db:"translated_chars"`
-		RefinedChars   int64  `db:"refined_chars"`
-		ErrorMessage   string `db:"error_message"`
-		Updated        string `db:"updated"`
-	}{}
-	if err := s.App.DB().NewQuery(`
-		SELECT c.novel AS novel_id, c.id AS chapter_id, c.chapter_order, c.title,
-			c.translated_title, c.status, c.excluded,
-			COALESCE(c.original_char_count, 0) AS original_chars,
-			COALESCE(c.translated_char_count, 0) AS translated_chars,
-			COALESCE(c.refined_char_count, 0) AS refined_chars,
-			COALESCE(c.error_message, '') AS error_message,
-			c.updated
-		FROM chapters c
-		JOIN novels n ON n.id = c.novel
-		WHERE n.owner = {:owner}
-		ORDER BY c.novel, c.chapter_order
-	`).Bind(dbx.Params{"owner": ownerID}).All(&rows); err != nil {
-		return nil, err
-	}
-	out := make([]agentChapterOverviewRow, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, agentChapterOverviewRow{
-			NovelID:         r.NovelID,
-			ChapterID:       r.ID,
-			ChapterOrder:    r.ChapterOrder,
-			Title:           r.Title,
-			TranslatedTitle: r.TranslatedTitl,
-			Status:          r.Status,
-			Excluded:        r.Excluded,
-			OriginalChars:   r.OriginalChars,
-			TranslatedChars: r.TranslatedChar,
-			RefinedChars:    r.RefinedChars,
-			ErrorMessage:    r.ErrorMessage,
-			Updated:         r.Updated,
-		})
-	}
-	return out, nil
-}
-
-func firstNonBlank(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // AgentAnalyticsResult is the JSON-friendly shape returned to the model.
