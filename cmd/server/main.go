@@ -30,6 +30,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Check mode runs before anything else: it must not touch PocketBase, the
+	// store or the on-disk data dir, so a parser can be debugged on a live
+	// install without any side effects.
+	if cfg.CheckParser != "" {
+		os.Exit(api.RunParserCheck(cfg))
+	}
+
 	encryptor, err := secure.NewEncryptorFromConfig(cfg.AppEncryptionKey, cfg.AppEncryptionPath)
 	if err != nil {
 		slog.Error("failed to create encryptor", "error", err)
@@ -101,11 +108,19 @@ func main() {
 		os.Exit(0)
 	}
 
+	// The parser dir is user-editable content, so it is created if missing and
+	// left empty rather than seeded: a site is parsed only once a script for it
+	// is dropped in.
+	if err := os.MkdirAll(cfg.ParsersDir, 0o755); err != nil {
+		slog.Error("failed to create parsers dir", "path", cfg.ParsersDir, "error", err)
+		os.Exit(1)
+	}
+
 	server := api.New(st, cfg)
 	server.Version = Version
 	handler := api.Router(server)
 
-	slog.Info("translator-server listening", "addr", cfg.Addr, "dataDir", cfg.DataDir)
+	slog.Info("translator-server listening", "addr", cfg.Addr, "dataDir", cfg.DataDir, "parsersDir", cfg.ParsersDir)
 	// ReadHeaderTimeout neutralizes slowloris (headers must arrive complete
 	// within 20s) and IdleTimeout reclaims keep-alive sockets. ReadTimeout and
 	// WriteTimeout stay unlimited on purpose: they would kill large epub

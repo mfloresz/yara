@@ -2,7 +2,7 @@ BIN    := translator-server
 VERSION ?= dev
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 
-.PHONY: frontend build android android-armv7 linux-arm64 linux-armv7 compress dev run clean
+.PHONY: frontend build android android-armv7 linux-arm64 linux-armv7 compress parsers-manifest dev run clean
 
 frontend:
 	cd frontend && npm install && npm run build
@@ -43,6 +43,16 @@ compress:
 		echo "Error: UPX no está instalado. Instálalo con: apt install upx-ucl o brew install upx"; \
 		exit 1; \
 	fi
+
+## parsers-manifest: Regenera parsers/index.json, el manifiesto que el servidor
+## consulta para auto-actualizar los parsers instalados antes de ejecutarlos.
+## Ejecutarlo tras añadir o editar un parser del repositorio. También firma el
+## manifiesto con la clave de .parsers-signing.key (o PARSERS_SIGNING_KEY):
+## sin firma válida, las instalaciones ignoran el manifiesto y ejecutan lo
+## instalado. Ver tools/sign-parsers-manifest (usa -keygen para rotar la clave
+## y PARSERS_MANIFEST_PUBKEY en el servidor para el despliegue).
+parsers-manifest:
+	go run ./tools/gen-parser-manifest && go run ./tools/sign-parsers-manifest
 
 dev:
 	@echo "Run in two terminals:"

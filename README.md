@@ -146,7 +146,7 @@ Anti-references: no dense "admin dashboard" look, and no mobile-as-afterthought 
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
 | AI | 8 registered providers: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — keys stored with AES-GCM |
 | Persistence | SQLite (via PocketBase), idempotent schema in `store_schema.go`, `--migrate-db` flag for breaking changes |
-| Scraper | `internal/noveldownloader` — 17 parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired); `RequiresBrowser()` marks the ones behind Cloudflare |
+| Scraper | `parsers/*.js` — 17 site parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), each a CommonJS script run by the embedded goja engine in `internal/parserhost`; `requiresBrowser: true` marks the ones behind Cloudflare. Contract: [`docs/parsers.md`](docs/parsers.md) |
 | EPUB | `internal/epubimport` + `internal/epubexport` (pure packages, no HTTP/store dependencies) |
 | Mobile | `android-arm64` build for Termux, plus the [yara-app](https://github.com/mfloresz/yara-app) client |
 
@@ -218,7 +218,8 @@ internal/api/          HTTP layer — one router_*.go per resource, job worker i
 internal/store/        PocketBase persistence — collections seeded by EnsureSchema()
 internal/ai/           Provider interface + OpenAIProvider + registry.go
 internal/secure/       AES-GCM for API keys
-internal/noveldownloader/  Pure parsers
+internal/parserhost/   Embedded goja engine that runs the site parser scripts
+parsers/               Tracked site parsers (parsers/<site>.js); runtime dir defaults to <data-dir>/parsers
 internal/epubimport/ / epubexport/
 frontend/              Vue 3 SPA — pages/, components/, composables/, app/services.ts
 frontend_embed.go      //go:embed all:frontend/dist
@@ -232,10 +233,13 @@ docs/                  API docs and architecture codemaps
 
 ```bash
 go test ./...            # unit + integration (real PocketBase in t.TempDir, no mocks)
-go test -short ./...     # skips live-URL tests in noveldownloader/realtest_test.go
+go test -short ./...     # skips the slower live-URL tests
 npm run build            # the real typecheck (vue-tsc -b && vite build)
 go vet ./...
 ```
+
+Parser scripts are hot-reloaded: the server re-reads the parsers directory on every job, so editing a `parsers/<site>.js` takes effect on the next download with no rebuild and no restart. Debug one against a live site with
+`./bin/translator-server -check-parser parsers/<site>.js -check-url <novel-url>`.
 
 The integration tests in `internal/api/` lock the v1 envelope shape, status codes, and `Location` headers.
 

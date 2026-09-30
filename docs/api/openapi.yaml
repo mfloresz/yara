@@ -1760,6 +1760,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/PreviewFromUrl' }
+        '400':
+          description: 'Missing url, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /novels/import-from-url:
     post:
@@ -1797,6 +1802,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/ImportFromUrlResult' }
+        '400':
+          description: 'Missing/invalid fields, startChapter out of range, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /novels/{id}/check-preview:
     parameters:
@@ -1815,6 +1825,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/CheckPreviewResult' }
+        '400':
+          description: 'Novel has no source URL, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /novels/{id}/update-from-url:
     parameters:
@@ -1842,6 +1857,11 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/UpdateFromUrlResult' }
+        '400':
+          description: 'Invalid chapter range, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: The novel already has an active (pending or running) job — only one job per novel is allowed.
           content:
@@ -1869,6 +1889,11 @@ paths:
           description: Plan returned (or nothing to do).
         '202':
           description: Job enqueued.
+        '400':
+          description: 'Invalid body, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: Another active job for the same novel.
           content:

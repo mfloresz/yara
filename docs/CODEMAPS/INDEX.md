@@ -62,8 +62,8 @@ User → HTTP → PocketBase Auth → api.Server → store.Store → SQLite
                     (goroutine)           (goroutine)
                            │                     │
                            ▼                     ▼
-                    noveldownloader          ai.Provider
-                    (8 site parsers)         (5 AI providers)
+                    parserhost + parsers/      ai.Provider
+                    (17 site parsers)          (5 AI providers)
 ```
 
 ## Key modules
@@ -76,7 +76,8 @@ User → HTTP → PocketBase Auth → api.Server → store.Store → SQLite
 | `internal/ai` | AI providers | `registry.go`, `openai.go`, `provider.go` | goai |
 | `internal/secure` | Encryption | `encryption.go` | crypto stdlib |
 | `internal/epubimport` | EPUB parser | `parser.go`, `manifest.go`, etc. | goquery, html-to-markdown |
-| `internal/noveldownloader` | Web scrapers | 8 site parsers + downloader | goquery, html-to-markdown |
+| `internal/parserhost` | Embedded goja engine for site parser scripts | `contract.go`, `engine.go`, `bindings.go` | goja, goquery |
+| `parsers/` | Tracked site parsers (tracked source; runtime dir defaults to `<data-dir>/parsers`) | 17 files, one `.js` per site | — |
 | `frontend/` | Vue 3 SPA | 8 pages, 6 components, 8 composables | vue, naive-ui |
 | `cmd/debug-proxy` | Debug proxy micro-server | `main.go` | gorilla/websocket |
 | `extensions/browser-worker-chrome/` | Chrome extension (production) | `service-worker.js` | — |

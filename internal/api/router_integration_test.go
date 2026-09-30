@@ -1650,7 +1650,11 @@ func newAPITestEnv(t *testing.T) *apiTestEnv {
 		t.Fatalf("ensure schema: %v", err)
 	}
 
-	server := New(st, &config.Config{DataDir: dataDir})
+	server := New(st, &config.Config{DataDir: dataDir, ParsersDir: testParsersDir(t)})
+	// Parser scripts are read from disk per request (no cache), so a temporary
+	// copy of the testdata dir keeps tests independent of each other and lets a
+	// test edit a script to exercise hot reload.
+	server.ParserHTTPClientFactory = nil
 	// Cleanups run LIFO: stop the job workers and unbootstrap PocketBase
 	// before t.TempDir removes the data dir, so no background writer races
 	// the removal.

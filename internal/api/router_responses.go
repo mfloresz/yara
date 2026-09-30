@@ -29,7 +29,7 @@ func parseJSONFields(n *store.Novel) map[string]any {
 		"refinedCharCount": n.RefinedCharCount, "totalCharCount": n.TotalCharCount,
 		"maxChapterOrder": n.MaxChapterOrder, "lastCheckedAt": n.LastCheckedAt,
 		"lastCheckNewChapters": n.LastCheckNewChapters, "lastReadAt": n.LastReadAt,
-		"createdAt":       n.CreatedAt, "updatedAt": n.UpdatedAt,
+		"createdAt": n.CreatedAt, "updatedAt": n.UpdatedAt,
 	}
 	var gl, tags, aio, tro, cr any
 	_ = json.Unmarshal([]byte(n.Glossary), &gl)
@@ -53,9 +53,8 @@ func parseJSONFields(n *store.Novel) map[string]any {
 // does not need to duplicate the list of supported domains.
 func (s *Server) novelResponse(n *store.Novel) map[string]any {
 	m := parseJSONFields(n)
-	dl := s.DownloaderFactory(n.OwnerID)
-	m["canUpdate"] = dl.IsSupportedURL(n.URL)
-	m["requiresBrowser"] = dl.RequiresBrowser(n.URL)
+	m["canUpdate"] = s.parserSupportsURL(n.OwnerID, n.URL)
+	m["requiresBrowser"] = s.parserURLRequiresBrowser(n.OwnerID, n.URL)
 	return m
 }
 

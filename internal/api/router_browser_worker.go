@@ -68,7 +68,7 @@ var (
 // attackers — the tokenless extension never connects) from squatting
 // sockets or injecting job results.
 const (
-	workerAuthGrace          = 30 * time.Second
+	workerAuthGrace           = 30 * time.Second
 	maxUnauthenticatedWorkers = 16
 )
 
@@ -471,6 +471,16 @@ func (s *Server) resolvePending(jobID string, result *BrowserWorkerJobResult) bo
 }
 
 // ── Public enqueue API ─────────────────────────────────────────────────────
+
+// enqueueBrowserJob routes worker job requests through the BrowserJobEnqueuer
+// override when one is installed, mirroring parserHTTPClient. Production
+// always goes to the real queue.
+func (s *Server) enqueueBrowserJob(operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error) {
+	if s.BrowserJobEnqueuer != nil {
+		return s.BrowserJobEnqueuer(operation, url, params, userID)
+	}
+	return s.EnqueueBrowserJob(operation, url, params, userID)
+}
 
 // EnqueueBrowserJob sends a job request to the browser worker queue and
 // waits for the result. All callers are serialized through a single

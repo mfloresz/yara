@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"translator-server/internal/noveldownloader"
 )
 
 const testNovelfireHTML = `<!doctype html><html><head>
@@ -83,13 +82,8 @@ func TestImportUrlNovelAttachesCoverAndCreatesNovel(t *testing.T) {
 	rewrites := map[string]string{
 		"novelfire.net": mock.URL,
 	}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-import-url@example.com", "secret123", "Alice")
 
@@ -209,13 +203,8 @@ func TestPreviewUrlNovelReturnsMetadata(t *testing.T) {
 	rewrites := map[string]string{
 		"novelfire.net": mock.URL,
 	}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-preview-url@example.com", "secret123", "Alice")
 
@@ -300,13 +289,8 @@ func TestUpdateUrlPreviewReturnsComparison(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-update-preview@example.com", "secret123", "Alice")
 
@@ -379,13 +363,8 @@ func TestUpdateUrlPreviewReportsNoneWhenUpToDate(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-update-ok@example.com", "secret123", "Alice")
 
@@ -453,17 +432,12 @@ func TestUpdateUrlPreviewDetectsEpisodesHiddenByPartNumberTitles(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"skydemonorder.com": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	// Park download jobs in the dispatch queue without executing them: the
 	// mock fixtures only serve planning-time responses and a running job
 	// would retry failed chapter fetches for minutes during cleanup.
 	env.server.dispatchDisabled = true
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-part-titles@example.com", "secret123", "Alice")
 
@@ -560,17 +534,12 @@ func TestUpdateFromUrlKeepsDecimalNumberedChapters(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	// Park download jobs in the dispatch queue without executing them: the
 	// mock fixtures only serve planning-time responses and a running job
 	// would retry failed chapter fetches for minutes during cleanup.
 	env.server.dispatchDisabled = true
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-decimal-chapters@example.com", "secret123", "Alice")
 
@@ -683,17 +652,12 @@ func TestUpdateFromUrlRangeIncludesEndChapter(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	// Park download jobs in the dispatch queue without executing them: the
 	// mock fixtures only serve planning-time responses and a running job
 	// would retry failed chapter fetches for minutes during cleanup.
 	env.server.dispatchDisabled = true
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-update-range@example.com", "secret123", "Alice")
 
@@ -744,14 +708,9 @@ func TestUpdateFromUrlQueueRejectionReturns503(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	forceJobQueueSaturation(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-update-queue@example.com", "secret123", "Alice")
 
@@ -812,17 +771,12 @@ func TestUpdateFromUrlUsesCacheFromPreview(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	// Park download jobs in the dispatch queue without executing them: the
 	// mock fixtures only serve planning-time responses and a running job
 	// would retry failed chapter fetches for minutes during cleanup.
 	env.server.dispatchDisabled = true
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-cache-test@example.com", "secret123", "Alice")
 
@@ -883,17 +837,12 @@ func TestUpdateFromUrlFallsBackWithoutPreview(t *testing.T) {
 	defer mock.Close()
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	transport := &hostRewritingTransport{rewrites: rewrites}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
 	// Park download jobs in the dispatch queue without executing them: the
 	// mock fixtures only serve planning-time responses and a running job
 	// would retry failed chapter fetches for minutes during cleanup.
 	env.server.dispatchDisabled = true
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-fallback-test@example.com", "secret123", "Alice")
 
@@ -971,18 +920,11 @@ func TestDownloadJobCancelAfterSavedChapterKeepsNovelStatsConsistent(t *testing.
 	}))
 	defer mock.Close()
 
-	transport := &hostRewritingTransport{rewrites: map[string]string{"novelfire.net": mock.URL}}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		dl := noveldownloader.NewDownloaderWithClient(client)
-		// A fixed 5s inter-chapter delay guarantees SleepBetweenChapters
-		// blocks long enough for the test to cancel while the worker waits.
-		dl.MinChapterDelay = 5 * time.Second
-		dl.MaxChapterDelay = 5 * time.Second
-		return dl
-	}
+	useRewritingClient(env, map[string]string{"novelfire.net": mock.URL})
+	// A fixed 5s inter-fetch delay guarantees the fetcher blocks long enough
+	// for the test to cancel while the worker waits between chapters.
+	setParserThrottle(env, 5000, 5000)
 
 	alice := registerUser(t, env, "alice-dl-cancel@example.com", "secret123", "Alice")
 

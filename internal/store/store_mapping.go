@@ -87,6 +87,7 @@ func chapterFromRecord(record *core.Record) Chapter {
 		Position:          asInt(record.GetFloat("position"), 0),
 		Excluded:          record.GetBool("excluded"),
 		Title:             record.GetString("title"),
+		SourceKey:         record.GetString("source_key"),
 		TranslatedTitle:   record.GetString("translated_title"),
 		OriginalContent:   record.GetString("original_content"),
 		TranslatedContent: record.GetString("translated_content"),

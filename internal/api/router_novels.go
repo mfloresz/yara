@@ -78,10 +78,10 @@ func (sharedNovelHandlers) list(s *Server) func(*core.RequestEvent) error {
 			for i := range list {
 				item := parseJSONFieldsSubset(&list[i], fields)
 				if wantCanUpdate {
-					item["canUpdate"] = s.DownloaderFactory(e.Auth.Id).IsSupportedURL(list[i].URL)
+					item["canUpdate"] = s.parserSupportsURL(e.Auth.Id, list[i].URL)
 				}
 				if wantRequiresBrowser {
-					item["requiresBrowser"] = s.DownloaderFactory(e.Auth.Id).RequiresBrowser(list[i].URL)
+					item["requiresBrowser"] = s.parserURLRequiresBrowser(e.Auth.Id, list[i].URL)
 				}
 				items = append(items, item)
 			}
@@ -188,10 +188,10 @@ func (sharedNovelHandlers) get(s *Server) func(*core.RequestEvent) error {
 			fields := strings.Split(fieldsParam, ",")
 			item := parseJSONFieldsSubset(novel, fields)
 			if containsField(fields, "canUpdate") {
-				item["canUpdate"] = s.DownloaderFactory(e.Auth.Id).IsSupportedURL(novel.URL)
+				item["canUpdate"] = s.parserSupportsURL(e.Auth.Id, novel.URL)
 			}
 			if containsField(fields, "requiresBrowser") {
-				item["requiresBrowser"] = s.DownloaderFactory(e.Auth.Id).RequiresBrowser(novel.URL)
+				item["requiresBrowser"] = s.parserURLRequiresBrowser(e.Auth.Id, novel.URL)
 			}
 			return v1Respond(e, http.StatusOK, item, nil, nil)
 		}

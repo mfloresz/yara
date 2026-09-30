@@ -27,7 +27,7 @@ enqueueJob(jobID)
              processCheckJob()
                     │                         │
                     ▼                         ▼
-             noveldownloader             ai.Provider
+             parserhost + parsers/       ai.Provider
              (per chapter)               (per chapter)
 ```
 
@@ -146,5 +146,5 @@ For long chapters (configurable via `translation_options`):
 ## Related codemaps
 
 - [Backend](backend.md) — Runtime files (`runtime_translate.go`, `runtime_refine.go`, `runtime_config.go`)
-- [Integrations](integrations.md) — Providers and downloaders used by workers
+- [Integrations](integrations.md) — Providers and site parsers used by workers
 - [Database](database.md) — `translation_jobs` collection schema
