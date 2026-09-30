@@ -4,7 +4,7 @@
       <header class="page-header">
         <div class="page-context">
           <h1 class="page-title">Asistente</h1>
-          <p class="muted small" aria-live="polite">
+          <p class="muted small">
             Consulta y edita tu biblioteca conversando
           </p>
         </div>
@@ -22,7 +22,18 @@
         </div>
       </header>
 
-      <div ref="scrollContainer" class="chat-scroll" aria-live="polite">
+      <!-- role="log" announces appended messages instead of re-reading the
+                 whole transcript; the pending/streaming indicator below carries its
+                 own status so token-by-token deltas stay silent. -->
+            <div
+              ref="scrollContainer"
+              class="chat-scroll"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              :aria-busy="streaming"
+              aria-label="Conversación con el asistente"
+            >
         <div v-if="items.length === 0" class="chat-empty">
           <n-icon :size="42" class="chat-empty-icon"><ChatbubbleEllipsesOutline /></n-icon>
           <h2 class="chat-empty-title">Pregúntale a tu biblioteca</h2>
@@ -47,11 +58,15 @@
         <template v-for="(item, index) in items" :key="index">
           <div v-if="item.kind === 'message'" class="chat-row" :class="`chat-row--${item.role}`">
             <div class="chat-bubble" :class="`chat-bubble--${item.role}`">
-              <div
-                v-if="item.role === 'assistant' && item.content"
-                class="markdown-preview chat-markdown"
-                v-html="renderMarkdown(item.content)"
-              ></div>
+              <template v-if="item.role === 'assistant' && item.content">
+                <!-- Streaming assistant text is excluded from the live region:
+                     aria-live="off" keeps per-token mutations from re-announcing. -->
+                <div
+                  class="markdown-preview chat-markdown"
+                  :aria-live="isStreamingTail(index) ? 'off' : undefined"
+                  v-html="renderMarkdown(item.content)"
+                ></div>
+              </template>
               <p v-else class="chat-plain">{{ item.content }}</p>
             </div>
           </div>
@@ -59,17 +74,17 @@
           <div v-else-if="item.kind === 'tool'" class="chat-row chat-row--tool">
             <div class="chat-tool" :class="{ 'chat-tool--running': item.running }">
               <n-icon :size="14" class="chat-tool-icon"><BuildOutline /></n-icon>
-              <span class="chat-tool-name">{{ item.name }}</span>
+              <span class="chat-tool-name">{{ toolLabel(item.name) }}</span>
               <n-spin v-if="item.running" :size="12" />
-              <n-button
+              <button
                 v-else-if="item.result"
-                quaternary
-                size="tiny"
+                type="button"
                 class="chat-tool-toggle"
+                :aria-expanded="item.open"
                 @click="item.open = !item.open"
               >
                 {{ item.open ? "Ocultar resultado" : "Ver resultado" }}
-              </n-button>
+              </button>
               <pre v-if="item.open && item.result" class="chat-tool-result">{{ item.result }}</pre>
             </div>
           </div>
@@ -97,7 +112,11 @@
           </div>
         </template>
 
-        <div v-if="streaming && waitingForFirstToken" class="chat-row chat-row--assistant">
+        <div
+          v-if="streaming && waitingForFirstToken"
+          class="chat-row chat-row--assistant"
+          role="status"
+        >
           <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
             <span class="chat-pending-dot" aria-hidden="true"></span>
             <span class="muted small">Pensando…</span>
@@ -119,7 +138,6 @@
             circle
             class="touch-target"
             aria-label="Seleccionar novela sobre la que preguntar"
-            :disabled="streaming"
             @click="pickerOpen = true"
           >
             <template #icon><n-icon><BookOutline /></n-icon></template>
@@ -129,17 +147,26 @@
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 6 }"
             placeholder="Escribe una pregunta… (Enter para enviar)"
-            :disabled="streaming"
             class="chat-input"
             @keydown.enter.exact.prevent="send"
           />
           <n-button
+            v-if="streaming"
+            quaternary
+            circle
+            class="touch-target"
+            aria-label="Detener la respuesta"
+            @click="stopStreaming"
+          >
+            <template #icon><n-icon><StopOutline /></n-icon></template>
+          </n-button>
+          <n-button
+            v-else
             type="primary"
             circle
             class="touch-target"
             aria-label="Enviar mensaje"
             :disabled="!canSend"
-            :loading="streaming"
             @click="send"
           >
             <template #icon><n-icon><SendOutline /></n-icon></template>
@@ -200,6 +227,7 @@ import {
   CloseOutline,
   RefreshOutline,
   SendOutline,
+  StopOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
@@ -240,11 +268,39 @@ const suggestions = [
   "¿Cómo va la traducción de la novela que estoy leyendo?",
 ];
 
+// Tool identifiers are an implementation detail of the agent loop; the UI
+// speaks the user's language, not the backend's.
+const TOOL_LABELS: Record<string, string> = {
+  list_novels: "Consultando novelas",
+  get_novel: "Leyendo la novela",
+  get_novel_stats: "Consultando el progreso",
+  get_novel_chapters: "Consultando capítulos",
+  get_chapter: "Leyendo el capítulo",
+  query_library: "Consultando la biblioteca",
+  search_chapters: "Buscando en capítulos",
+  update_novel: "Actualizando la novela",
+  update_chapter: "Actualizando el capítulo",
+  set_chapter_status: "Cambiando el estado",
+  set_chapter_excluded: "Cambiando la visibilidad",
+};
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? "Trabajando";
+}
+
 const canSend = computed(() => !streaming.value && draft.value.trim().length > 0);
 const waitingForFirstToken = computed(() => {
   const last = items.value[items.value.length - 1];
   return last?.kind === "message" && last.role === "user";
 });
+
+// The last assistant message is the one still receiving token deltas.
+function isStreamingTail(index: number): boolean {
+  if (!streaming.value) return false;
+  const item = items.value[index];
+  if (item?.kind !== "message" || item.role !== "assistant") return false;
+  return index === items.value.length - 1;
+}
 
 function novelTitle(novel: PickerNovel): string {
   return novel.targetTitle || novel.sourceTitle || "(sin título)";
@@ -258,11 +314,29 @@ function renderMarkdown(content: string): string {
   return markdownToHtml(content);
 }
 
-function scrollToBottom(): void {
+// Distance from the bottom, in px, within which the transcript still counts
+// as "pinned". Beyond this the user has deliberately scrolled up to re-read,
+// so streaming must not drag them back down.
+const STICK_THRESHOLD_PX = 64;
+
+function isPinnedToBottom(): boolean {
+  const el = scrollContainer.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX;
+}
+
+// Call before mutating `items` so the pinned check reflects the pre-update
+// geometry, then restore the pin once Vue has flushed the DOM.
+function scrollToBottom(force = false): void {
+  if (!force && !isPinnedToBottom()) return;
   void nextTick(() => {
     const el = scrollContainer.value;
     if (el) el.scrollTop = el.scrollHeight;
   });
+}
+
+function stopStreaming(): void {
+  abortController?.abort();
 }
 
 function fillSuggestion(text: string): void {
@@ -468,11 +542,15 @@ async function sendMessage(message: string): Promise<void> {
       abortController.signal,
     );
   } catch (error) {
-    const detail =
-      error instanceof Error && error.message
-        ? error.message
-        : "no se pudo contactar al servidor";
-    items.value.push({ kind: "error", content: detail });
+    // An intentional stop is not a failure: keep whatever partial answer
+    // already streamed in and stay silent.
+    if (!abortController?.signal.aborted) {
+      const detail =
+        error instanceof Error && error.message
+          ? error.message
+          : "no se pudo contactar al servidor";
+      items.value.push({ kind: "error", content: detail });
+    }
   } finally {
     streaming.value = false;
     abortController = null;
@@ -517,12 +595,17 @@ function chooseNovel(novel: PickerNovel): void {
 </script>
 
 <style scoped>
+/* The transcript owns the leftover viewport height instead of pinning a
+   480px floor: on a short viewport (landscape phone) a min-height would push
+   the composer below the fold while the transcript still refuses to scroll.
+   The header offset is the app-topbar's min-height; it lives in one place so
+   the desktop and mobile values can be corrected side by side. */
 .chat-page {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.75rem;
   height: calc(100dvh - 56px - 2.5rem);
-  min-height: 480px;
+  min-height: 0;
 }
 
 .page-header {
@@ -540,6 +623,13 @@ function chooseNovel(novel: PickerNovel): void {
   letter-spacing: -0.02em;
 }
 
+/* Reset the UA's 1em block margin: as written it opened ~32px of dead air
+   above and below the subtitle. */
+.page-context p {
+  margin: 0.25rem 0 0;
+  line-height: 1.4;
+}
+
 .chat-scroll {
   flex: 1;
   min-height: 0;
@@ -547,12 +637,13 @@ function chooseNovel(novel: PickerNovel): void {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding: 0.25rem 0.125rem;
+  padding: 0.25rem 0.125rem 0.5rem;
+  overscroll-behavior: contain;
 }
 
 .chat-empty {
   margin: auto;
-  max-width: 26rem;
+  width: 100%;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -562,7 +653,7 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .chat-empty-icon {
-  color: var(--muted);
+  color: var(--text-tertiary);
 }
 
 .chat-empty-title {
@@ -571,27 +662,43 @@ function chooseNovel(novel: PickerNovel): void {
   font-weight: 600;
 }
 
+/* Keep the intro copy inside a readable measure even though the column
+   widened, so it does not run to the full edge on wide screens. */
+.chat-empty p {
+  max-width: 34rem;
+  margin: 0;
+  line-height: 1.55;
+}
+
 .chat-suggestions {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
   width: 100%;
-  margin-top: 0.5rem;
+  max-width: 34rem;
+  margin-top: 0.75rem;
 }
 
 .chat-suggestion {
   border: 1px solid var(--divide);
   background: var(--surface-elevated);
   border-radius: var(--radius-md);
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.75rem;
   font-size: 0.875rem;
   color: var(--foreground);
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out;
 }
 
-.chat-suggestion:hover {
+.chat-suggestion:hover:not(:disabled) {
   background: var(--mock-row);
+  border-color: var(--border-strong);
+}
+
+.chat-suggestion:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-options {
@@ -617,7 +724,7 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .chat-bubble {
-  max-width: min(46rem, 88%);
+  max-width: 100%;
   border-radius: var(--radius-lg);
   padding: 0.625rem 0.875rem;
   font-size: 0.9375rem;
@@ -625,7 +732,11 @@ function chooseNovel(novel: PickerNovel): void {
   overflow-wrap: anywhere;
 }
 
+/* User turns stay narrower than assistant turns: they are typically a question
+   or a short instruction, and the asymmetry is what makes the thread readable
+   without alternating heavy blocks. */
 .chat-bubble--user {
+  max-width: min(38rem, 82%);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-fg);
   white-space: pre-wrap;
@@ -636,7 +747,9 @@ function chooseNovel(novel: PickerNovel): void {
   border: 1px solid var(--divide);
 }
 
-.chat-bubble--assistant .chat-plain {
+/* Reset the UA's 1em block margin on the plain-text path. This was scoped to
+   assistant bubbles only, so user turns carried a stray gap inside the bubble. */
+.chat-plain {
   margin: 0;
 }
 
@@ -674,7 +787,7 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .chat-markdown :deep(code) {
-  font-family: ui-monospace, monospace;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
   font-size: 0.875em;
   background: var(--mock-row);
   border-radius: var(--radius-sm);
@@ -686,7 +799,7 @@ function chooseNovel(novel: PickerNovel): void {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.375rem;
-  max-width: min(46rem, 88%);
+  max-width: 100%;
   border: 1px dashed var(--divide);
   border-radius: var(--radius-md);
   background: color-mix(in oklab, var(--surface-elevated) 70%, transparent);
@@ -699,18 +812,33 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .chat-tool-icon {
-  color: var(--muted);
+  color: var(--text-tertiary);
 }
 
 .chat-tool-name {
-  font-family: ui-monospace, monospace;
   font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
+/* A real <button> so the 44px touch target and keyboard focus come for free;
+   n-button's tiny variant collapsed to well under both. */
 .chat-tool-toggle {
   margin-left: auto;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
   font-size: 0.75rem;
+  color: var(--accent-link);
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+
+.chat-tool-toggle:hover {
+  background: var(--mock-row);
+  color: var(--accent-link-hover);
 }
 
 .chat-tool-result {
@@ -719,21 +847,22 @@ function chooseNovel(novel: PickerNovel): void {
   max-height: 12rem;
   overflow: auto;
   white-space: pre-wrap;
-  font-family: ui-monospace, monospace;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--text-secondary);
   background: var(--page-bg);
   border-radius: var(--radius-sm);
   padding: 0.5rem;
 }
 
 .chat-error {
-  max-width: min(46rem, 88%);
+  max-width: 100%;
   border: 1px solid var(--danger);
   color: var(--danger);
   border-radius: var(--radius-md);
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.75rem;
   font-size: 0.875rem;
+  line-height: 1.5;
 }
 
 .chat-composer {
@@ -762,6 +891,11 @@ function chooseNovel(novel: PickerNovel): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-composer-row {
+  align-items: flex-end;
+  gap: 0.5rem;
 }
 
 .chat-composer-row {
@@ -799,12 +933,15 @@ function chooseNovel(novel: PickerNovel): void {
   flex-direction: column;
   align-items: flex-start;
   gap: 0.125rem;
+  min-height: 44px;
+  justify-content: center;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--radius-md);
   padding: 0.5rem 0.625rem;
   cursor: pointer;
   text-align: left;
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out;
 }
 
 .chat-picker-item:hover {
@@ -820,11 +957,37 @@ function chooseNovel(novel: PickerNovel): void {
 
 @media (max-width: 768px) {
   .chat-page {
-    height: calc(100dvh - 52px - 2.5rem);
+    height: calc(100dvh - 52px - 2rem);
   }
 
-  .chat-bubble {
-    max-width: 94%;
+  .page-title {
+    font-size: 1.5rem;
+  }
+
+  /* Narrow viewports: the measure cap has to yield so bubbles use the width
+     they actually have. User turns keep the tighter share. */
+  .chat-bubble--user {
+    max-width: 88%;
+  }
+
+  /* 44px minimum touch target for every tappable chip. */
+  .chat-suggestion {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-suggestion,
+  .chat-tool-toggle,
+  .chat-picker-item {
+    transition: none;
+  }
+
+  .chat-pending-dot {
+    animation: none;
+    opacity: 0.7;
   }
 }
 </style>
