@@ -223,7 +223,7 @@ func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
 	_ = bobNovelID
 	ctx := context.Background()
 
-	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID, true, true))
+	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID))
 	if err != nil {
 		t.Fatalf("open sandbox: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestAgentSandboxSchemaRevealsOnlyTheTwoViews(t *testing.T) {
 	ctx := context.Background()
 
 	// Every relation the sandbox knows about must be one of the two views.
-	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID, true, true))
+	db, err := agentAnalyticsRO(st.buildAgentSandboxForTest(t, aliceID))
 	if err != nil {
 		t.Fatalf("open sandbox: %v", err)
 	}
@@ -359,6 +359,48 @@ func TestAgentAnalyticsRunsConcurrentlyWithoutBlocking(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent analytics query failed: %v", err)
 		}
+	}
+}
+
+// TestAgentAnalyticsAcceptsTrailingSemicolon pins that the accepted trailing
+// ';' survives execution. The validator trims it and the executor used to wrap
+// the raw query, so the semicolon landed inside the subquery and a query the
+// validator approved died with a syntax error. LLMs append ';' constantly.
+func TestAgentAnalyticsAcceptsTrailingSemicolon(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT novel_id, pending FROM "+AgentAnalyticsNovelView+";", 50)
+	if err != nil {
+		t.Fatalf("a trailing semicolon must execute, not fail: %v", err)
+	}
+	rows := parseAgentAnalyticsRows(t, out)
+	if len(rows) != 1 || rows[0]["pending"] != float64(7) {
+		t.Fatalf("expected alice's novel with pending 7, got %s", out)
+	}
+}
+
+// TestAgentAnalyticsCommaJoinSeesBothViews pins the silent-empty-result bug:
+// a comma join spans both views, but FROM/JOIN scanning only saw the first,
+// so the chapter view was materialised and then emptied — and the query
+// returned "no rows matched" as if it were the truth. Alice has 12 chapters;
+// the join must count them, not zero.
+func TestAgentAnalyticsCommaJoinSeesBothViews(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT count(*) AS chapters FROM "+AgentAnalyticsNovelView+
+			" n, "+AgentAnalyticsChapterView+" c WHERE c.novel_id = n.novel_id", 50)
+	if err != nil {
+		t.Fatalf("comma join across both views: %v", err)
+	}
+	rows := parseAgentAnalyticsRows(t, out)
+	if len(rows) != 1 || rows[0]["chapters"] != float64(12) {
+		t.Fatalf("expected 12 chapters from the comma join, got %s", out)
 	}
 }
 
@@ -428,9 +470,9 @@ func TestTruncateRunesKeepsMultibyteTextIntact(t *testing.T) {
 // buildAgentSandboxForTest materialises a sandbox and removes it when the test
 // ends, so tests that need to inspect the sandbox file directly can do so
 // without leaking directories.
-func (s *Store) buildAgentSandboxForTest(t *testing.T, ownerID string, needNovels, needChapters bool) string {
+func (s *Store) buildAgentSandboxForTest(t *testing.T, ownerID string) string {
 	t.Helper()
-	path, err := s.buildAgentSandbox(context.Background(), ownerID, needNovels, needChapters)
+	path, err := s.buildAgentSandbox(context.Background(), ownerID)
 	if err != nil {
 		t.Fatalf("build agent sandbox: %v", err)
 	}
@@ -659,7 +701,7 @@ func TestAgentSandboxLivesUnderDataDir(t *testing.T) {
 	defer cleanup()
 	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
 
-	path := st.buildAgentSandboxForTest(t, aliceID, false, true)
+	path := st.buildAgentSandboxForTest(t, aliceID)
 	dataDir, err := filepath.Abs(st.App.DataDir())
 	if err != nil {
 		t.Fatalf("abs data dir: %v", err)

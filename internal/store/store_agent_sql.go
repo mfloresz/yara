@@ -251,10 +251,9 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 	// a call costs O(the caller's own library) rather than O(1). It is
 	// materialised inside SQLite (see the ATTACH note at the top of this file),
 	// which is what keeps that proportional but small: ~6ms at 16k chapters.
-	// Only the view the query names is built, so a novel-level question never
-	// pays for chapter rows at all.
-	needNovels, needChapters := agentAnalyticsReadsRelations(trimmedAgentQuery(query))
-	sandboxPath, err := s.buildAgentSandbox(ctx, userID, needNovels, needChapters)
+	// Both views are always built — see buildAgentSandbox for why this is not
+	// narrowed to the ones the query names.
+	sandboxPath, err := s.buildAgentSandbox(ctx, userID)
 	if err != nil {
 		// A sandbox that cannot be created is an environment problem, not a
 		// bad query, and retrying the same SQL cannot fix it. Say so plainly:
@@ -275,8 +274,11 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 
 	// Outer LIMIT: the model's own LIMIT/ORDER BY survive inside the
 	// subquery; the wrapper only caps the payload. limit+1 probes for
-	// truncation without claiming more rows than the caller asked for.
-	wrapped := fmt.Sprintf("SELECT * FROM ( %s ) agent_result LIMIT %d", query, limit+1)
+	// truncation without claiming more rows than the caller asked for. The
+	// query is trimmed the way validateAgentAnalyticsSQL trims it (a trailing
+	// ';' is accepted there), otherwise the semicolon lands inside the
+	// subquery and the statement dies with a syntax error pointing nowhere.
+	wrapped := fmt.Sprintf("SELECT * FROM ( %s ) agent_result LIMIT %d", trimmedAgentQuery(query), limit+1)
 
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -383,7 +385,7 @@ func (s *Store) agentSandboxRoot() (string, error) {
 // to name but the file — which contains two tables and no owner column.
 //
 // The owner id is a bound parameter, never interpolated into SQL text.
-func (s *Store) buildAgentSandbox(ctx context.Context, ownerID string, needNovels, needChapters bool) (string, error) {
+func (s *Store) buildAgentSandbox(ctx context.Context, ownerID string) (string, error) {
 	root, err := s.agentSandboxRoot()
 	if err != nil {
 		return "", fmt.Errorf("create analytics sandbox directory: %w", err)
@@ -424,26 +426,25 @@ func (s *Store) buildAgentSandbox(ctx context.Context, ownerID string, needNovel
 		return "", fmt.Errorf("attach library database: %w", err)
 	}
 
-	// Both tables are always created, so a query naming a view the caller did
-	// not ask for still fails with "no such table" rather than a confusing
-	// error; only the materialisation is conditional.
+	// Both views are always materialised. An earlier version built only the
+	// views a FROM/JOIN scan found in the query — but SQLite's legacy comma
+	// join is neither keyword, so `FROM a, b` materialised both and then
+	// emptied b, and the query returned a silent, wrong empty result as if it
+	// were the truth. A relation scan cannot enumerate every syntax form a
+	// view is reachable by (comma joins, CTE bodies, subqueries), and a missed
+	// view is not an error but a wrong answer, so the conditional population
+	// is not worth its failure mode. The copy runs inside the engine and is
+	// cheap (~6ms at 16k chapters; see the ATTACH note at the top of this
+	// file).
 	for _, stmt := range []struct {
 		name string
 		sql  string
-		need bool
 	}{
-		{AgentAnalyticsNovelView, agentNovelProgressCTAS, needNovels},
-		{AgentAnalyticsChapterView, agentChapterOverviewCTAS, needChapters},
+		{AgentAnalyticsNovelView, agentNovelProgressCTAS},
+		{AgentAnalyticsChapterView, agentChapterOverviewCTAS},
 	} {
 		if _, err := builder.ExecContext(ctx, "CREATE TABLE "+stmt.name+" AS "+stmt.sql, ownerID); err != nil {
 			return "", fmt.Errorf("prepare agent sandbox: %w", err)
-		}
-		if !stmt.need {
-			// Emptied so the view exists with the right shape but no rows,
-			// which is what a novel-only question should see.
-			if _, err := builder.ExecContext(ctx, "DELETE FROM "+stmt.name); err != nil {
-				return "", fmt.Errorf("trim agent sandbox: %w", err)
-			}
 		}
 	}
 
@@ -499,26 +500,10 @@ const agentChapterOverviewCTAS = `
 	WHERE n.owner = ?`
 
 // trimmedAgentQuery strips surrounding whitespace and a trailing semicolon,
-// matching what validateAgentAnalyticsSQL accepts, so the relation scan below
-// sees the same statement that will be executed.
+// matching what validateAgentAnalyticsSQL accepts, so the statement the
+// executor wraps is exactly the statement the validator approved.
 func trimmedAgentQuery(query string) string {
 	return strings.TrimSuffix(strings.TrimSpace(query), ";")
-}
-
-// agentAnalyticsReadsRelations reports which sandbox views the query names.
-// A view nobody named stays empty, and the engine reports "no such table" —
-// the same error it already produced for any other relation, so this adds no
-// new failure mode while letting novel-only questions skip the chapter copy.
-func agentAnalyticsReadsRelations(query string) (novels, chapters bool) {
-	for _, rel := range agentAnalyticsRelation.FindAllStringSubmatch(query, -1) {
-		switch strings.ToLower(rel[1]) {
-		case AgentAnalyticsNovelView:
-			novels = true
-		case AgentAnalyticsChapterView:
-			chapters = true
-		}
-	}
-	return novels, chapters
 }
 
 // AgentAnalyticsResult is the JSON-friendly shape returned to the model.

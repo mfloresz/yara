@@ -253,6 +253,16 @@ func TestRetryClassifier(t *testing.T) {
 		errors.New("dial tcp: connection reset by peer"),
 		errors.New("unexpected EOF"),
 		errors.New("server closed idle connection"),
+		// In-band SSE errors: delivered over HTTP 200, so they carry no HTTP
+		// status — only the typed code (the standard shape for OpenRouter rate
+		// limits and gateway overloads). eino forwards them wrapped.
+		&goopenai.APIError{Code: "rate_limit_exceeded", Message: "Rate limit exceeded: free-models-per-day"},
+		&goopenai.APIError{Code: "overloaded_error", Message: "overloaded"},
+		&goopenai.APIError{Code: "server_error", Message: "internal error"},
+		&goopenai.APIError{Code: float64(429), Message: "rate limited"},
+		&goopenai.APIError{Message: "Rate limit exceeded: free-models-per-day"},
+		fmt.Errorf("failed to receive stream chunk: %w",
+			&goopenai.APIError{Code: "rate_limit_exceeded", Message: "Rate limit exceeded"}),
 	}
 	for _, err := range retryable {
 		if !isRetryableModelError(err) {
@@ -267,6 +277,12 @@ func TestRetryClassifier(t *testing.T) {
 		&openai.APIError{HTTPStatusCode: 401, Message: "x"},
 		&openai.APIError{HTTPStatusCode: 400, Message: "x"},
 		&openai.APIError{HTTPStatusCode: 404, Message: "x"},
+		// In-band errors with a deterministic code stay terminal, and an
+		// in-band error with no recognizable code or transient substring does
+		// not retry either.
+		&goopenai.APIError{Code: "insufficient_quota", Message: "quota exceeded"},
+		&goopenai.APIError{Code: "invalid_api_key", Message: "bad key"},
+		&goopenai.APIError{Message: "unknown in-band failure"},
 		fmt.Errorf("wrapped: %w", errNoRetry),
 	}
 	for _, err := range terminal {

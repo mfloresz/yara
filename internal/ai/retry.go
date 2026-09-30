@@ -79,6 +79,19 @@ func isRetryableModelError(err error) bool {
 	if errors.As(err, &reqErr) {
 		return isRetryableStatus(reqErr.HTTPStatusCode)
 	}
+	// In-band SSE errors: an error event delivered over HTTP 200 — the standard
+	// shape for OpenRouter rate limits and gateway overloads — reaches the
+	// stream reader unconverted and builds a *goopenai.APIError purely from the
+	// JSON body, so HTTPStatusCode is 0 and the branches above see nothing.
+	// Classify on the typed error code first; with no recognizable code the
+	// message may still carry a transient marker, so fall through to the
+	// substring list instead of ruling the error terminal here.
+	var sseErr *goopenai.APIError
+	if errors.As(err, &sseErr) {
+		if isRetryableStatus(sseErr.HTTPStatusCode) || isRetryableAPIErrorCode(sseErr.Code) {
+			return true
+		}
+	}
 	// Transport-level failures (connection reset, DNS, EOF mid-response).
 	var netErr net.Error
 	if errors.As(err, &netErr) {
@@ -91,12 +104,31 @@ func isRetryableModelError(err error) bool {
 	for _, transient := range []string{
 		"connection reset", "connection refused", "broken pipe",
 		"no such host", "timeout", "temporarily unavailable", "eof",
-		"server closed idle", "too many requests", "overloaded", "bad gateway",
+		"server closed idle", "too many requests", "rate limit",
+		"overloaded", "bad gateway",
 		"service unavailable", "gateway timeout", "internal server error",
 	} {
 		if strings.Contains(msg, transient) {
 			return true
 		}
+	}
+	return false
+}
+
+// isRetryableAPIErrorCode reports whether an in-band error code is transient.
+// The code arrives decoded from JSON, so numeric codes come through as
+// float64; string codes follow the OpenAI-compatible spellings. An error with
+// no recognizable code stays non-retryable, preserving fail-fast for
+// deterministic failures.
+func isRetryableAPIErrorCode(code any) bool {
+	switch c := code.(type) {
+	case string:
+		switch strings.ToLower(c) {
+		case "rate_limit_exceeded", "overloaded_error", "server_error":
+			return true
+		}
+	case float64:
+		return isRetryableStatus(int(c))
 	}
 	return false
 }

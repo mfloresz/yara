@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### ⚠️ Breaking changes
+
+- The AI layer was migrated to [eino](https://github.com/cloudwego/eino), which speaks Chat Completions only: the OpenAI **Responses API is no longer supported**. Providers configured against a Responses-API-only endpoint must switch to one that exposes `/chat/completions` (the old `useResponsesAPI` provider option is gone).
+- The `muse-spark-1.3-contributor` and `muse-spark-1.3-contributor-free` models were **removed from the OpenCode Go and OpenCode Zen catalogs**: they only support the Responses API and cannot work over Chat Completions. `muse-spark-1.2-contributor` remains available on the Meta provider. Any user config still pointing at the removed models must be switched to another model.
+
 ## [v0.38.0] - 2026-09-29
 
 ### What's new
