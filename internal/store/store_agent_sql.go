@@ -37,6 +37,10 @@ import (
 //	v_agent_chapter_overview — one row per chapter, metadata only
 //
 // Chapter bodies are never loaded into the sandbox; get_chapter serves those.
+//
+// The sandbox holds no owner column: rows are selected by owner id before
+// they are inserted, so the model has nothing to filter on and nothing to
+// override.
 
 const (
 	// AgentAnalyticsNovelView / AgentAnalyticsChapterView are the only
@@ -55,23 +59,23 @@ const (
 // columns. Values are aggregated in Go while building the snapshot, so the
 // model's filters and ORDER BY run over already-reduced rows.
 type agentNovelProgressRow struct {
-	NovelID          string
-	Title            string
-	Author           string
-	Status           string
-	SourceLanguage   string
-	TargetLanguage   string
-	IsPublic         bool
-	HasDescription   bool
-	Total            int
-	Translated       int
-	Completed        int
-	Pending          int
-	OriginalChars    int64
-	TranslatedChars  int64
-	RefinedChars     int64
-	MaxChapterOrder  int
-	Updated          string
+	NovelID         string
+	Title           string
+	Author          string
+	Status          string
+	SourceLanguage  string
+	TargetLanguage  string
+	IsPublic        bool
+	HasDescription  bool
+	Total           int
+	Translated      int
+	Completed       int
+	Pending         int
+	OriginalChars   int64
+	TranslatedChars int64
+	RefinedChars    int64
+	MaxChapterOrder int
+	Updated         string
 }
 
 type agentChapterOverviewRow struct {
@@ -96,21 +100,17 @@ var (
 	agentAnalyticsForbiddenWords = regexp.MustCompile(`(?i)\b(insert|update|delete|drop|alter|create|attach|detach|pragma|vacuum|reindex|load_extension|readfile|writefile)\b`)
 	agentAnalyticsForbiddenChars = regexp.MustCompile(`;|--|/\*|\*/`)
 	agentAnalyticsLeadingWord    = regexp.MustCompile(`(?i)^\s*(select|with)\b`)
-	// agentAnalyticsRelation finds every FROM/JOIN target, including the ones
-	// inside subqueries and CTEs, so nothing can be smuggled past the
-	// allowlist by nesting the read.
-	agentAnalyticsRelation  = regexp.MustCompile(`(?is)\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	// agentAnalyticsCTEName matches "WITH x AS (" / ", y AS (" declarations.
-	agentAnalyticsCTEName   = regexp.MustCompile(`(?is)(?:\bwith\b|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s*\(`)
+	// agentAnalyticsRelation finds FROM/JOIN targets so a query must read at
+	// least one of the two sandbox views. This is a requirement, not an
+	// allowlist: naming any other relation is not rejected here because the
+	// sandbox holds nothing else, so the engine fails it on its own.
+	//
+	// Matched against the raw query rather than the literal-stripped one, so a
+	// quoted relation name ("v_agent_novel_progress") still counts.
+	agentAnalyticsRelation  = regexp.MustCompile(`(?is)\b(?:from|join)\s+["'\x60]?([A-Za-z_][A-Za-z0-9_]*)`)
 	agentAnalyticsStringLit = regexp.MustCompile(`'(?:[^']|'')*'|"(?:[^"]|"")*"`)
-	agentAnalyticsUIDChars   = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	agentAnalyticsUIDChars  = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
-
-// agentAnalyticsAllowlist is the closed set of relations the model may read.
-var agentAnalyticsAllowlist = map[string]bool{
-	AgentAnalyticsNovelView:   true,
-	AgentAnalyticsChapterView: true,
-}
 
 // stripAgentLiterals blanks out quoted string literals so keyword checks run
 // against SQL structure, not against user data that happens to spell a
@@ -120,8 +120,16 @@ func stripAgentLiterals(query string) string {
 }
 
 // validateAgentAnalyticsSQL rejects anything that is not a single,
-// comment-free SELECT whose every relation is one of the two sandbox tables.
-// Error strings double as model-facing teaching messages.
+// comment-free SELECT that reads one of the two sandbox views.
+//
+// The only thing it polices is statement shape. It deliberately does NOT
+// police which relations the query names: the sandbox is a private database
+// holding only the caller's own rows, so a reference to anything else fails
+// at the engine with "no such table" and reaches no data. An earlier version
+// tried to enforce an allowlist by scanning every FROM/JOIN target, which was
+// both incomplete (SQLite's legacy comma join is not a FROM/JOIN keyword, so
+// `FROM v_agent_novel_progress, "sqlite_master"` slipped through) and
+// unnecessary. Error strings double as model-facing teaching messages.
 func validateAgentAnalyticsSQL(query string) error {
 	trimmed := strings.TrimSpace(query)
 	trimmed = strings.TrimSuffix(trimmed, ";")
@@ -138,45 +146,35 @@ func validateAgentAnalyticsSQL(query string) error {
 	if agentAnalyticsForbiddenWords.MatchString(structural) {
 		return fmt.Errorf("read-only surface: mutations and pragmas are not allowed")
 	}
-	relations := agentAnalyticsRelation.FindAllStringSubmatch(structural, -1)
-	if len(relations) == 0 {
-		return fmt.Errorf("queries must read %s or %s", AgentAnalyticsNovelView, AgentAnalyticsChapterView)
-	}
-	// Names bound by the query's own CTEs read nothing on their own: they
-	// resolve to the allowed views they were built from, which are checked
-	// separately.
-	ctes := agentAnalyticsCTEName.FindAllStringSubmatch(structural, -1)
-	bound := make(map[string]bool, len(ctes))
-	for _, cte := range ctes {
-		bound[strings.ToLower(cte[1])] = true
-	}
-	for _, rel := range relations {
-		name := strings.ToLower(strings.Trim(rel[1], `"`))
-		if bound[name] || agentAnalyticsAllowlist[name] {
-			continue
+	for _, rel := range agentAnalyticsRelation.FindAllStringSubmatch(trimmed, -1) {
+		name := strings.ToLower(rel[1])
+		if name == AgentAnalyticsNovelView || name == AgentAnalyticsChapterView {
+			return nil
 		}
-		// The allowlist is what makes this safe, so the message says why:
-		// the sandbox only ever holds the caller's own library rows.
-		return fmt.Errorf("relation %q does not exist here: this surface only exposes the caller's own novels and chapters through %s and %s", name, AgentAnalyticsNovelView, AgentAnalyticsChapterView)
 	}
-	return nil
+	return fmt.Errorf("queries must read %s or %s", AgentAnalyticsNovelView, AgentAnalyticsChapterView)
 }
 
-// agentAnalyticsRO returns the dedicated in-memory handle. It never opens
-// data.db: the sandbox is a separate, empty database populated per request.
-func (s *Store) agentAnalyticsRO() (*sql.DB, error) {
-	s.agentAnalyticsOnce.Do(func() {
-		db, err := sql.Open("sqlite", ":memory:")
-		if err == nil {
-			// One connection keeps every statement of a request on the same
-			// private in-memory database.
-			db.SetMaxOpenConns(1)
-			db.SetMaxIdleConns(1)
-		}
-		s.agentAnalyticsRODB = db
-		s.agentAnalyticsROErr = err
-	})
-	return s.agentAnalyticsRODB, s.agentAnalyticsROErr
+// agentAnalyticsRO opens a private in-memory database for one query. It never
+// opens data.db: the sandbox is a separate, empty database populated per
+// request.
+//
+// ponytail: one handle per query rather than a pooled/shared one. Opening an
+// in-memory SQLite database is cheap relative to the snapshot rebuild that
+// always follows it, and a per-request handle removes the global mutex that
+// previously serialized every user's analytics call behind this owner's
+// library size. If open cost ever showed up in a profile, pool handles here
+// and key the population by owner instead.
+func agentAnalyticsRO() (*sql.DB, error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, err
+	}
+	// One connection keeps every statement of a request on the same private
+	// in-memory database.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	return db, nil
 }
 
 // RunAgentAnalyticsQuery validates and runs one read-only analytics query for
@@ -197,10 +195,11 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 		limit = agentAnalyticsMaxLimit
 	}
 
-	db, err := s.agentAnalyticsRO()
+	db, err := agentAnalyticsRO()
 	if err != nil {
 		return "", fmt.Errorf("open analytics sandbox: %w", err)
 	}
+	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(ctx, agentAnalyticsTimeout)
 	defer cancel()
@@ -211,8 +210,6 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 	// pays ~10k inserts per query_library call. Ceiling is fine for personal
 	// libraries; if it ever bites, cache the snapshot per user and invalidate
 	// it on novel/chapter writes instead of rebuilding.
-	s.agentAnalyticsMu.Lock()
-	defer s.agentAnalyticsMu.Unlock()
 	if err := s.populateAgentSandbox(ctx, db, userID); err != nil {
 		return "", err
 	}

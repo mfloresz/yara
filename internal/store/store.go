@@ -1,10 +1,8 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -58,13 +56,6 @@ var ErrInvalidReorder = errors.New("invalid chapter order list")
 type Store struct {
 	App       core.App
 	Encryptor *secure.Encryptor
-	// Agent analytics sandbox handle, built lazily once. It is a private
-	// in-memory database that never holds anything but the querying owner's
-	// own library rows; the mutex serializes snapshot rebuilds on it.
-	agentAnalyticsOnce  sync.Once
-	agentAnalyticsMu    sync.Mutex
-	agentAnalyticsRODB  *sql.DB
-	agentAnalyticsROErr error
 }
 
 func New(app core.App, encryptor *secure.Encryptor) *Store {

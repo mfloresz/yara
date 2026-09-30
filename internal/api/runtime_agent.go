@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"translator-server/internal/ai"
 	"translator-server/internal/store"
@@ -14,8 +15,11 @@ import (
 // Limits bounding one agent chat turn. Tool results are additionally
 // truncated inside internal/ai before they reach the model.
 const (
-	agentMaxMessageChars        = 8000
-	agentMaxHistoryMessages     = 60
+	agentMaxMessageChars    = 8000
+	agentMaxHistoryMessages = 60
+	// agentMaxHistoryBytes bounds the JSON-ENCODED trail, which is what the
+	// agent_sessions.messages field cap measures. It is deliberately under
+	// store's field max (1M) so a trail always saves.
 	agentMaxHistoryBytes        = 800_000
 	agentListNovelsDefaultLimit = 20
 	agentListNovelsMaxLimit     = 50
@@ -398,10 +402,10 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name: "query_library",
-		Description: "Run ONE read-only analytics SELECT over the library progress views (SQLite dialect). Cheapest way to answer aggregate questions like 'novels missing fewer than 10 chapters to be complete', counts, filters, rankings. Only these two views exist here (owner filtering is automatic, never filter by owner yourself):\n" +
-			"- v_agent_novel_progress: owner_id, novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated\n" +
-			"- v_agent_chapter_overview: owner_id, novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated\n" +
-			"Rules: one SELECT (or WITH ... SELECT), no ';' and no comments, base tables (novels, chapters, users...) are not readable, chapter bodies are not in the views (use get_chapter).",
+		Description: "Run ONE read-only analytics SELECT over the library progress views (SQLite dialect). Cheapest way to answer aggregate questions like 'novels missing fewer than 10 chapters to be complete', counts, filters, rankings. Only these two views exist here (owner filtering is automatic, there is no owner column to filter by):\n" +
+			"- v_agent_novel_progress: novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated\n" +
+			"- v_agent_chapter_overview: novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated\n" +
+			"Rules: one SELECT (or WITH ... SELECT) that reads at least one of these views, no ';' and no comments, any other table is absent here and will error, chapter bodies are not in the views (use get_chapter).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -644,11 +648,15 @@ func (s *Server) agentToolSetChapterExcluded(userID string) ai.AgentTool {
 	}
 }
 
+// truncateAgentContent caps a chapter body for the model context. The cut is
+// rune-safe: a byte-wise cut would land inside a multi-byte character and
+// marshal as U+FFFD, which matters because the library serves accented Spanish
+// and CJK text.
 func truncateAgentContent(s string) string {
-	if len(s) <= agentChapterContentMaxChars {
+	if utf8.RuneCountInString(s) <= agentChapterContentMaxChars {
 		return s
 	}
-	return s[:agentChapterContentMaxChars] + "\n…[truncated]"
+	return store.TruncateRunes(s, agentChapterContentMaxChars) + "\n…[truncated]"
 }
 
 func firstNonEmpty(values ...string) string {
@@ -700,17 +708,21 @@ func trimAgentHistory(messages []ai.AgentMessage) []ai.AgentMessage {
 	return messages[start:]
 }
 
-// agentHistoryBytes accumulates the encoded size of a trail, used to keep the
-// persisted JSON under the collection's field cap.
-func agentHistoryBytes(messages []ai.AgentMessage) int {
-	total := 0
-	for _, m := range messages {
-		total += len(m.Content) + len(m.ToolCallID) + len(m.ToolName)
-		for _, call := range m.ToolCalls {
-			total += len(call.Name) + len(call.Args)
-		}
+// agentHistoryEncodedSize reports the exact byte length of a trail once
+// JSON-encoded, which is what the collection's field cap actually measures.
+//
+// An earlier version summed raw string lengths, which undercounts: JSON escapes
+// expand, and literary text is full of quotes and newlines. A quote, newline
+// and tab (9 bytes) encode to 15, so a raw-length budget of 800k could encode to
+// well over the 1M field cap — and the save would then fail on every turn
+// until the session was reset, because the oversized trail is what never
+// persists. Measuring the encoding removes the guesswork.
+func agentHistoryEncodedSize(messages []ai.AgentMessage) (int, error) {
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		return 0, err
 	}
-	return total
+	return len(encoded), nil
 }
 
 // runAgentTurn executes one chat turn: replay history, stream events through
@@ -739,22 +751,37 @@ func (s *Server) runAgentTurn(ctx context.Context, runner ai.AgentProvider, user
 	// Tool call arguments are unbounded (update_chapter carries whole
 	// chapters), so a count-bounded trail can still blow past the collection's
 	// field cap. Drop whole turns from the front until the encoded trail fits.
-	for len(full) > 0 && agentHistoryBytes(full) > agentMaxHistoryBytes {
-		cut := 0
+	var encoded []byte
+	trims := 0
+	for {
+		encoded, err = json.Marshal(full)
+		if err != nil {
+			return output, session, fmt.Errorf("encode agent history: %w", err)
+		}
+		if len(full) == 0 || len(encoded) <= agentMaxHistoryBytes {
+			break
+		}
+		// Each pass must strictly shorten the trail, so it cannot exceed the
+		// message count; the guard turns a future regression here into a
+		// failed save rather than a hung request.
+		if trims >= len(full) {
+			return output, session, fmt.Errorf("agent history did not converge below %d bytes", agentMaxHistoryBytes)
+		}
+		trims++
+		// The first message of a well-formed trail is a user turn, which would
+		// make the cut a no-op and spin forever. Advance past it so every
+		// iteration strictly shortens the trail.
+		cut := 1
 		for cut < len(full) && full[cut].Role != "user" {
 			cut++
 		}
 		if cut >= len(full) {
 			full = nil
-			break
+			continue
 		}
 		full = full[cut:]
 	}
 
-	encoded, err := json.Marshal(full)
-	if err != nil {
-		return output, session, fmt.Errorf("encode agent history: %w", err)
-	}
 	saved, err := s.Store.SaveAgentSessionMessages(userID, session.ID, string(encoded))
 	if err != nil {
 		return output, session, fmt.Errorf("save agent session: %w", err)

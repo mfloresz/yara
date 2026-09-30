@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"translator-server/internal/ai"
 	"translator-server/internal/store"
@@ -588,6 +589,60 @@ func TestAgentChatQueryLibraryTool(t *testing.T) {
 	}
 }
 
+// TestAgentChatQueryLibraryDocumentedColumnsRun keeps the query_library
+// description honest. It previously advertised an owner_id column that the
+// sandbox never created, so any query the model wrote from the prompt failed
+// with "no such column". This runs every column the description advertises.
+func TestAgentChatQueryLibraryDocumentedColumnsRun(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-cols@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Columnas", "en", "es")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":      1,
+		"title":             "Uno",
+		"originalContent":   "body",
+		"translatedContent": "cuerpo",
+		"status":            "translated",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+
+	queries := []string{
+		"SELECT novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated FROM v_agent_novel_progress",
+		"SELECT novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated FROM v_agent_chapter_overview",
+	}
+	for _, q := range queries {
+		env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+			return &scriptedAgentProvider{toolCalls: []string{
+				`{"_tool":"query_library","args":{"sql":` + mustJSON(t, q) + `}}`,
+			}}, nil
+		}
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+			"message": "datos",
+		})
+		assertStatus(t, resp, http.StatusOK)
+		var result string
+		for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+			if ev["type"] == "tool_result" && ev["tool"] == "query_library" {
+				result, _ = ev["result"].(string)
+			}
+		}
+		if strings.HasPrefix(result, "error: ") {
+			t.Errorf("documented query must run, got tool error for %q: %s", q, result)
+		}
+	}
+}
+
+// mustJSON encodes v as a JSON string literal, for embedding in a scripted
+// tool call.
+func mustJSON(t *testing.T, v string) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal %q: %v", v, err)
+	}
+	return string(b)
+}
+
 // runAgentTools executes one chat turn and returns the concatenated tool
 // results, so a test can assert on what the model actually read or wrote.
 func runAgentTools(t *testing.T, env *apiTestEnv, token string, calls []string, body map[string]any) []string {
@@ -892,4 +947,156 @@ func sessionIDFrom(t *testing.T, resp *httptest.ResponseRecorder) string {
 		}
 	}
 	return ""
+}
+
+// TestTruncateAgentContentKeepsMultibyteTextIntact guards the rune-safe cut.
+// A byte-wise cut landed inside a multi-byte character and marshaled to U+FFFD
+// on the way to the model — which is the common case for this library, since
+// it serves accented Spanish and CJK novels.
+func TestTruncateAgentContentKeepsMultibyteTextIntact(t *testing.T) {
+	// A body whose byte length is just over the cap, so a byte-wise cut would
+	// split the trailing rune.
+	body := strings.Repeat("a", agentChapterContentMaxChars-1) + "第一章内容"
+	got := truncateAgentContent(body)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncation produced invalid UTF-8: %q", got[len(got)-10:])
+	}
+	if !strings.HasSuffix(got, "\n…[truncated]") {
+		t.Fatalf("expected truncation marker, got %q", got[len(got)-20:])
+	}
+
+	// CJK counted as runes, not bytes: 8000 CJK chars far exceed the 24000-byte
+	// body, but only 8000 runes, so a rune-budget cut still applies.
+	cjk := strings.Repeat("第一章", 4000)
+	gotCJK := truncateAgentContent(cjk)
+	if !utf8.ValidString(gotCJK) {
+		t.Fatal("CJK truncation produced invalid UTF-8")
+	}
+	// Short text passes through untouched.
+	if got := truncateAgentContent("corto"); got != "corto" {
+		t.Fatalf("short text must pass through, got %q", got)
+	}
+}
+
+// TestAgentHistoryEncodedSizeMeasuresJSON pins the size accounting the save
+// path depends on. The old raw-length sum undercounted: JSON escapes expand,
+// so a raw-bounded trail could still encode past the 1M field cap and fail to
+// save on every turn.
+func TestAgentHistoryEncodedSizeMeasuresJSON(t *testing.T) {
+	// Text whose encoded form is materially larger than its raw form.
+	raw := strings.Repeat("\"q\"\n\t", 50) // 9 bytes each
+	msgs := []ai.AgentMessage{{Role: "user", Content: raw}}
+
+	rawLen := len(raw)
+	size, err := agentHistoryEncodedSize(msgs)
+	if err != nil {
+		t.Fatalf("measure encoded size: %v", err)
+	}
+	encoded, _ := json.Marshal(msgs)
+	if size != len(encoded) {
+		t.Fatalf("agentHistoryEncodedSize=%d, want the encoded length %d", size, len(encoded))
+	}
+	if size <= rawLen {
+		t.Fatalf("encoded size %d must exceed raw content %d (escapes expand)", size, rawLen)
+	}
+}
+
+// TestAgentChatTrimsHistoryToFitEncodedFieldCap is the regression guard for the
+// oversized-trail save failure. The trimming loop budgeted RAW string bytes
+// while the agent_sessions.messages cap applies to the JSON-ENCODED trail, and
+// JSON escapes expand (`"quote"\n` is 8 raw bytes and 11 encoded).
+//
+// The fixture lands in the exact window the old accounting missed: raw under
+// the 800k budget, so the old loop trimmed nothing, while the encoded trail
+// that this turn produces exceeds the 1M field cap and the save is rejected.
+func TestAgentChatTrimsHistoryToFitEncodedFieldCap(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-wedge@example.com", "secret123", "Alice")
+
+	// Seed just under the field cap: it must be storable, and escape-heavy
+	// enough that appending one more turn crosses 1M.
+	segment := "\"quote\"\n" // 8 raw bytes, 11 encoded (1.38x)
+	const fieldCap = 1_000_000
+
+	// n=92000 is the discriminating point measured against this schema: raw
+	// 736k (under the old 800k budget, so the old loop trimmed nothing) and
+	// encoded 1,012,068 (over the 1M field cap, so the save is rejected).
+	seed := []ai.AgentMessage{
+		{Role: "user", Content: "hola"},
+		{Role: "assistant", Content: strings.Repeat(segment, 92_000)},
+	}
+	seedEncoded, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatalf("marshal seed: %v", err)
+	}
+	// The seed is over the cap by design, so it cannot be written through the
+	// store's validating save. Shrink to the largest trail that still stores,
+	// which keeps the same property: raw under budget, encoded over the cap
+	// once this turn appends to it.
+	for n := 92_000; n > 0; n-- {
+		candidate := []ai.AgentMessage{
+			{Role: "user", Content: "hola"},
+			{Role: "assistant", Content: strings.Repeat(segment, n)},
+		}
+		b, err := json.Marshal(candidate)
+		if err != nil {
+			t.Fatalf("marshal candidate: %v", err)
+		}
+		if len(b) > fieldCap {
+			continue
+		}
+		seed, seedEncoded = candidate, b
+		break
+	}
+	if raw := agentHistoryRawSize(seed); raw >= agentMaxHistoryBytes {
+		t.Fatalf("fixture raw size %d must be under the old budget %d to be discriminating", raw, agentMaxHistoryBytes)
+	}
+
+	session, err := env.store.CreateAgentSession(alice.User.ID, string(seedEncoded))
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	// Each turn appends to the trail, so the encoded size must be trimmed back
+	// under the cap every time. Before the fix this save was rejected and the
+	// session wedged permanently.
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{}, nil
+	}
+	for i, msg := range []string{"resume", "otra vez", "y otra", "sigue", "mas", "fin"} {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+			"message":   msg,
+			"sessionId": session.ID,
+		})
+		assertStatus(t, resp, http.StatusOK)
+		for _, ev := range parseNDJSON(t, []byte(resp.Body.String())) {
+			if ev["type"] == "error" {
+				t.Fatalf("turn %d must not error: %v", i, ev)
+			}
+		}
+		saved, err := env.store.GetAgentSession(alice.User.ID, session.ID)
+		if err != nil {
+			t.Fatalf("reload session: %v", err)
+		}
+		if len(saved.Messages) > fieldCap {
+			t.Fatalf("saved trail is %d bytes, over the %d field cap", len(saved.Messages), fieldCap)
+		}
+		if !json.Valid([]byte(saved.Messages)) {
+			t.Fatal("saved trail is not valid JSON")
+		}
+	}
+}
+
+// agentHistoryRawSize is the raw-length accounting the trimming loop used
+// before it was corrected to measure the encoded trail. Kept here so the
+// fixture above can assert it sits in that accounting's blind spot.
+func agentHistoryRawSize(msgs []ai.AgentMessage) int {
+	total := 0
+	for _, m := range msgs {
+		total += len(m.Content) + len(m.ToolCallID) + len(m.ToolName)
+		for _, call := range m.ToolCalls {
+			total += len(call.Name) + len(call.Args)
+		}
+	}
+	return total
 }

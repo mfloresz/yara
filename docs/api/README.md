@@ -581,23 +581,32 @@ next message).
 #### `query_library` isolation
 
 The assistant's SQL never touches the application database. Each call is served
-from a private in-memory SQLite database that is rebuilt per request with the
-requesting owner's novels and chapters, and contains nothing else: no `users`,
-no `_superusers`, no provider keys, no `agent_sessions`, and no other user's
-novels. Two layers back that up:
+from a private in-memory SQLite database, opened per request and rebuilt with
+the requesting owner's novels and chapters. It contains nothing else: no
+`users`, no `_superusers`, no provider keys, no `agent_sessions`, and no other
+user's novels. Two layers back that up:
 
-1. **Structural** — the sandbox only has the two analytics tables, so a
-   subquery, `JOIN` or `sqlite_master` read has nothing to find. The rows are
-   selected by owner server-side, and the sandbox carries no owner column, so
-   there is no filter for the model to omit or override.
+1. **Structural** — the sandbox holds only the two analytics tables, so a
+   subquery, `JOIN` or `sqlite_master` read finds nothing beyond those two
+   views' own definitions; any other relation fails at the engine with "no
+   such table". The rows are selected by owner server-side, and the sandbox
+   carries no owner column, so there is no filter for the model to omit or
+   override.
 2. **Validation** — the query must be a single comment-free `SELECT`/`WITH`
-   whose every `FROM`/`JOIN` target is one of the two tables (CTE names bound by
-   the query itself are allowed, since they read nothing). The check runs
-   against the query with string literals blanked out, so a `LIKE '%update%'`
-   pattern is not mistaken for the `UPDATE` keyword.
+   that reads at least one of the two tables. Statement keywords, `;` and
+   comments are rejected, and the check runs against the query with string
+   literals blanked out, so a `LIKE '%update%'` pattern is not mistaken for the
+   `UPDATE` keyword. The validator deliberately does *not* police which
+   relations a query names: an earlier allowlist scanned every `FROM`/`JOIN`
+   target, but SQLite's legacy comma join is neither keyword, so
+   `FROM v_agent_novel_progress, "sqlite_master"` slipped past it. Layer 1
+   covers what the scan could not.
 
 Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
-Row results are capped (`limit`, default 50, max 200) and cells are truncated.
+Row results are capped (`limit`, default 50, max 200) and cells are truncated
+on a rune boundary. The message trail persisted per session is trimmed to fit
+the `messages` field cap by its **JSON-encoded** size, since JSON escapes
+expand and a raw-length budget undercounts.
 
 ## WebSocket
 

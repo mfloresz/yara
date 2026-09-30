@@ -153,11 +153,12 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 	}
 }
 
-// TestValidateAgentAnalyticsSQLAllowlist locks the allowlist the sandbox
-// relies on. The model may only read the two sandbox tables, and only through
-// FROM/JOIN — a subquery naming anything else is rejected before any SQL runs.
-// A CTE is allowed to name its own result table, since that reads nothing.
-func TestValidateAgentAnalyticsSQLAllowlist(t *testing.T) {
+// TestValidateAgentAnalyticsSQL pins the only thing the validator polices:
+// statement shape (one comment-free SELECT reading a sandbox view). It
+// deliberately does not police which relations a query names — the sandbox
+// holds only the caller's own rows, so a foreign relation fails at the engine.
+// See TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd for that layer.
+func TestValidateAgentAnalyticsSQL(t *testing.T) {
 	allowed := []string{
 		"SELECT novel_id, title, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending",
 		"SELECT count(*) FROM v_agent_chapter_overview WHERE status = 'pending'",
@@ -165,8 +166,15 @@ func TestValidateAgentAnalyticsSQLAllowlist(t *testing.T) {
 		// A literal that spells a forbidden word must not trip the check.
 		"SELECT novel_id FROM v_agent_novel_progress WHERE title LIKE '%update%'",
 		"SELECT novel_id FROM v_agent_novel_progress WHERE title = 'Create a novel'",
-		// Reading through a subquery of an allowed view is still an allowed relation.
+		// Reading through a subquery of a view is fine.
 		"SELECT * FROM (SELECT * FROM v_agent_novel_progress) x",
+		// CTEs: the trailing SELECT reads the CTE name, which resolves to the
+		// views it was built from.
+		"WITH low AS (SELECT novel_id FROM v_agent_novel_progress WHERE pending < 10) SELECT * FROM low",
+		"WITH c AS (SELECT * FROM v_agent_chapter_overview) SELECT count(*) FROM c",
+		// A quoted or backticked view name still counts as reading a view.
+		`SELECT novel_id FROM "v_agent_novel_progress"`,
+		"SELECT novel_id FROM `v_agent_novel_progress`",
 	}
 	for _, q := range allowed {
 		if err := validateAgentAnalyticsSQL(q); err != nil {
@@ -174,37 +182,21 @@ func TestValidateAgentAnalyticsSQLAllowlist(t *testing.T) {
 		}
 	}
 
-	// CTEs: the trailing SELECT reads the CTE name, which resolves to the
-	// allowed views it was built from.
-	for _, q := range []string{
-		"WITH low AS (SELECT novel_id FROM v_agent_novel_progress WHERE pending < 10) SELECT * FROM low",
-		"WITH c AS (SELECT * FROM v_agent_chapter_overview) SELECT count(*) FROM c",
-	} {
-		if err := validateAgentAnalyticsSQL(q); err != nil {
-			t.Errorf("expected CTE query to be allowed, got %v: %s", err, q)
-		}
-	}
-
 	rejected := []string{
-		// The payloads that escaped the old table blocklist.
-		"SELECT email, tokenKey FROM _superusers WHERE 'v_agent_'='v_agent_'",
-		"SELECT (SELECT group_concat(messages) FROM agent_sessions) AS leak FROM v_agent_novel_progress LIMIT 1",
-		"SELECT * FROM _authOrigins WHERE 'v_agent_'='v_agent_'",
-		"SELECT (SELECT group_concat(source_title) FROM novels) AS leak FROM v_agent_chapter_overview LIMIT 1",
-		"SELECT (SELECT count(*) FROM users) AS n FROM v_agent_novel_progress",
-		"SELECT (SELECT group_concat(token_key) FROM worker_tokens) AS n FROM v_agent_novel_progress",
-		"SELECT (SELECT group_concat(password) FROM _superusers) AS n FROM v_agent_novel_progress",
+		// Must read a sandbox view.
+		"SELECT 1",
+		"SELECT * FROM novels",
 		"SELECT * FROM sqlite_master",
-		"SELECT * FROM pragma_table_info('chapters')",
-		"SELECT 1 FROM v_agent_novel_progress JOIN users ON 1=1",
+		`SELECT * FROM "sqlite_master"`,
+		"SELECT * FROM users",
 		// Statement/mutation surface.
 		"SELECT novel_id FROM v_agent_novel_progress; DROP TABLE novels",
 		"DELETE FROM v_agent_novel_progress",
 		"INSERT INTO v_agent_novel_progress SELECT * FROM v_agent_novel_progress",
-		"SELECT * FROM v_agent_novel_progress UNION SELECT * FROM agent_sessions",
 		"ATTACH DATABASE 'x' AS y",
 		"SELECT novel_id FROM v_agent_novel_progress -- comment",
 		"UPDATE novels SET title = 'x'",
+		"PRAGMA journal_mode",
 		"",
 		"not a query",
 	}
@@ -226,10 +218,11 @@ func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
 	_ = bobNovelID
 	ctx := context.Background()
 
-	db, err := st.agentAnalyticsRO()
+	db, err := agentAnalyticsRO()
 	if err != nil {
 		t.Fatalf("open sandbox: %v", err)
 	}
+	defer db.Close()
 	if err := st.populateAgentSandbox(ctx, db, aliceID); err != nil {
 		t.Fatalf("populate sandbox: %v", err)
 	}
@@ -268,8 +261,9 @@ func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
 }
 
 // TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd drives the payloads
-// that used to escape the blocklist through the real entry point, which must
-// now fail on validation or because the relation does not exist in the sandbox.
+// that used to escape the blocklist through the real entry point. They now
+// pass validation — the validator only checks statement shape — and must fail
+// because the sandbox has no such relation, reaching no data either way.
 func TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd(t *testing.T) {
 	st, cleanup := agentAnalyticsTestStore(t)
 	defer cleanup()
@@ -284,9 +278,87 @@ func TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd(t *testing.T) {
 		"SELECT (SELECT group_concat(password) FROM _superusers) AS n FROM " + AgentAnalyticsNovelView,
 		"SELECT * FROM sqlite_master",
 		"SELECT * FROM users",
+		// Regression: the legacy comma join is not a FROM/JOIN keyword, so an
+		// allowlist built on those two missed it entirely. These base tables
+		// have no counterpart in the sandbox, so the engine rejects them.
+		"SELECT n.title, m.source_title FROM " + AgentAnalyticsNovelView + " n, novels m",
+		"SELECT n.title, m.messages FROM " + AgentAnalyticsNovelView + " n, agent_sessions m",
+		"SELECT n.title, m.email FROM " + AgentAnalyticsNovelView + " n, users m",
 	} {
 		if _, err := st.RunAgentAnalyticsQuery(ctx, aliceID, query, 50); err == nil {
 			t.Errorf("query must be rejected: %q", query)
+		}
+	}
+}
+
+// TestAgentSandboxSchemaRevealsOnlyTheTwoViews pins what the model can learn
+// from the sandbox's own sqlite_master. The comma join is reachable by design
+// now that the allowlist is gone, so the guarantee it must uphold is that the
+// schema it exposes describes the two generated views and nothing else — no
+// application table, no other user's data, no base schema.
+func TestAgentSandboxSchemaRevealsOnlyTheTwoViews(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+	ctx := context.Background()
+
+	// Every relation the sandbox knows about must be one of the two views.
+	db, err := agentAnalyticsRO()
+	if err != nil {
+		t.Fatalf("open sandbox: %v", err)
+	}
+	defer db.Close()
+	if err := st.populateAgentSandbox(ctx, db, aliceID); err != nil {
+		t.Fatalf("populate sandbox: %v", err)
+	}
+	rows, err := db.QueryContext(ctx,
+		"SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+	if err != nil {
+		t.Fatalf("list sandbox relations: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name != AgentAnalyticsNovelView && name != AgentAnalyticsChapterView {
+			t.Errorf("sandbox exposes unexpected relation %q", name)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Errorf("expected exactly the 2 sandbox views, found %d", count)
+	}
+}
+
+// TestAgentAnalyticsRunsConcurrentlyWithoutBlocking keeps the per-request
+// sandbox honest: a slow query for one user must not stall another's. The
+// previous shared handle serialized every analytics call behind a global mutex.
+func TestAgentAnalyticsRunsConcurrentlyWithoutBlocking(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
+
+	// A cross join over the views forces real work, so overlap is observable.
+	q := "SELECT count(*) FROM " + AgentAnalyticsNovelView + " a, " +
+		AgentAnalyticsChapterView + " b WHERE a.novel_id = b.novel_id"
+
+	const workers = 8
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			if _, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID, q, 50); err != nil {
+				errs <- err
+				return
+			}
+			errs <- nil
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent analytics query failed: %v", err)
 		}
 	}
 }
