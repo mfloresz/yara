@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"translator-server/internal/ai"
@@ -1099,4 +1101,197 @@ func agentHistoryRawSize(msgs []ai.AgentMessage) int {
 		}
 	}
 	return total
+}
+
+// TestSliceAgentLines pins the line-window contract that replaced the fixed
+// character truncation. A silent cut destroyed the tail of a chapter with no
+// way for the model to notice or page past it; a window is resumable and
+// reports where the next slice starts.
+func TestSliceAgentLines(t *testing.T) {
+	body := "l1\nl2\nl3\nl4\nl5\nl6\nl7"
+
+	t.Run("first window", func(t *testing.T) {
+		got, meta := sliceAgentLines(body, 0, 3)
+		if got != "l1\nl2\nl3" {
+			t.Errorf("slice = %q", got)
+		}
+		if meta["totalLines"] != 7 || meta["hasMore"] != true || meta["nextStartLine"] != 3 {
+			t.Errorf("meta = %v", meta)
+		}
+	})
+
+	t.Run("middle window", func(t *testing.T) {
+		got, meta := sliceAgentLines(body, 2, 2)
+		if got != "l3\nl4" {
+			t.Errorf("slice = %q", got)
+		}
+		if meta["nextStartLine"] != 4 {
+			t.Errorf("nextStartLine = %v, want 4", meta["nextStartLine"])
+		}
+	})
+
+	t.Run("last window has no next", func(t *testing.T) {
+		got, meta := sliceAgentLines(body, 5, 10)
+		if got != "l6\nl7" {
+			t.Errorf("slice = %q", got)
+		}
+		if meta["hasMore"] != false {
+			t.Errorf("hasMore = %v, want false", meta["hasMore"])
+		}
+		if _, ok := meta["nextStartLine"]; ok {
+			t.Error("an exhausted chapter must not advertise a next window")
+		}
+	})
+
+	t.Run("start past end is empty not an error", func(t *testing.T) {
+		got, meta := sliceAgentLines(body, 99, 5)
+		if got != "" {
+			t.Errorf("slice = %q, want empty", got)
+		}
+		if meta["hasMore"] != false {
+			t.Errorf("hasMore = %v, want false", meta["hasMore"])
+		}
+	})
+
+	t.Run("defaults and clamps", func(t *testing.T) {
+		// 7 lines with the default 60: the whole body comes back.
+		got, meta := sliceAgentLines(body, 0, 0)
+		if got != body {
+			t.Errorf("default window = %q, want the whole body", got)
+		}
+		if meta["lineCount"] != 7 {
+			t.Errorf("lineCount = %v, want 7", meta["lineCount"])
+		}
+		if _, meta := sliceAgentLines(body, -5, 1); meta["startLine"] != 0 {
+			t.Errorf("negative startLine should clamp to 0, got %v", meta["startLine"])
+		}
+		// An over-large request clamps to the max instead of returning a body
+		// the model could never use.
+		long := strings.Repeat("x\n", agentChapterMaxLineCount+50)
+		if _, meta := sliceAgentLines(long, 0, agentChapterMaxLineCount*10); meta["lineCount"] != agentChapterMaxLineCount {
+			t.Errorf("lineCount = %v, want the %d cap", meta["lineCount"], agentChapterMaxLineCount)
+		}
+	})
+
+	t.Run("multibyte is preserved", func(t *testing.T) {
+		got, _ := sliceAgentLines("日本語の行\n segunda línea á\ntercera", 0, 2)
+		if got != "日本語の行\n segunda línea á" {
+			t.Errorf("slice = %q", got)
+		}
+	})
+}
+
+// TestOrderRangeBounds pins the fromOrder/toOrder normalization used by the
+// chapter-range addressing.
+func TestOrderRangeBounds(t *testing.T) {
+	one, ten := 1, 10
+
+	if r := orderRangeBounds(nil, nil); r.set {
+		t.Error("no bounds should not be a range")
+	}
+	if r := orderRangeBounds(&one, &ten); !r.set || r.min != 1 || r.max != 10 {
+		t.Errorf("got %+v, want min 1 max 10", r)
+	}
+	// Only a lower bound: "everything from here on".
+	if r := orderRangeBounds(&ten, nil); !r.set || r.min != 10 {
+		t.Errorf("open upper bound got %+v", r)
+	}
+	// Inverted bounds are normalized rather than returning nothing.
+	if r := orderRangeBounds(&ten, &one); r.min != 1 || r.max != 10 {
+		t.Errorf("inverted bounds not swapped: %+v", r)
+	}
+}
+
+// TestConcurrentAgentTurnsDoNotLoseHistory pins that two chat turns issued
+// back to back for the same user both survive in the session.
+//
+// The per-user turn lock used to be taken AFTER the session was read, while
+// runAgentTurn rebuilds the trail from that already-read snapshot. Two
+// concurrent chats therefore started from the same history and the second
+// SaveAgentSessionMessages overwrote the first turn: a silently lost message,
+// with no error on either request.
+func TestConcurrentAgentTurnsDoNotLoseHistory(t *testing.T) {
+	env := newAPITestEnv(t)
+	user := registerUser(t, env, "concurrent-iso@example.com", "secret123", "Concurrent")
+
+	for _, title := range []string{"Alfa", "Beta"} {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels", user.Token, map[string]any{
+			"sourceTitle":    title,
+			"sourceLanguage": "es",
+			"targetLanguage": "en",
+		})
+		assertStatus(t, resp, http.StatusCreated)
+	}
+
+	// A slow provider widens the window in which the two requests overlap, so
+	// the second request is reliably inside the first turn. It deliberately
+	// does NOT block on a barrier: with the lock in the right place the second
+	// request never reaches the provider until the first turn finishes, so a
+	// two-party barrier would deadlock rather than test anything.
+	provider := &slowAgentProvider{
+		fakeAgentProvider: fakeAgentProvider{OpenAIProvider: &ai.OpenAIProvider{APIKey: "k"}},
+		delay:             150 * time.Millisecond,
+	}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	post := func(msg string) {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", user.Token, map[string]any{
+			"message": msg,
+		})
+		assertStatus(t, resp, http.StatusOK)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); post("primera pregunta") }()
+	go func() { defer wg.Done(); post("segunda pregunta") }()
+	wg.Wait()
+
+	sessionResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", user.Token, nil)
+	assertStatus(t, sessionResp, http.StatusOK)
+	var envelope struct {
+		Data struct {
+			Messages []ai.AgentMessage `json:"messages"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(sessionResp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+
+	var users []string
+	for _, m := range envelope.Data.Messages {
+		if m.Role == "user" {
+			users = append(users, m.Content)
+		}
+	}
+	for _, want := range []string{"primera pregunta", "segunda pregunta"} {
+		found := false
+		for _, got := range users {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("turn %q was lost; persisted user turns: %v", want, users)
+		}
+	}
+}
+
+// slowAgentProvider widens the overlap window between two concurrent turns
+// without deadlocking, so the read-modify-write of the session is genuinely
+// contended rather than serialized by scheduling luck.
+type slowAgentProvider struct {
+	fakeAgentProvider
+	delay time.Duration
+}
+
+func (s *slowAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput) (ai.AgentChatOutput, error) {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return ai.AgentChatOutput{}, ctx.Err()
+	}
+	return s.fakeAgentProvider.AgentChat(ctx, in)
 }

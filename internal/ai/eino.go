@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
@@ -26,13 +27,38 @@ func (p *OpenAIProvider) einoChatModel(format *einoopenai.ChatCompletionResponse
 	if p == nil || p.APIKey == "" {
 		return nil, fmt.Errorf("openai not configured")
 	}
+	// Timeout is deliberately NOT set on the config. eino turns it into
+	// &http.Client{Timeout: ...}, which covers the whole exchange INCLUDING the
+	// body read, so it would kill a long streaming answer mid-flight. The
+	// deadline is applied as a context instead (see einoCallContext), which is
+	// what goai's WithTimeout did on main: it stops the work without
+	// truncating a response that is actively arriving.
+	client := &http.Client{Transport: http.DefaultTransport}
 	return einoopenai.NewChatModel(context.Background(), &einoopenai.ChatModelConfig{
 		APIKey:         p.APIKey,
 		BaseURL:        p.BaseURL,
 		Model:          p.modelID(),
-		Timeout:        p.resolveTimeout(),
+		HTTPClient:     client,
 		ResponseFormat: format,
 	})
+}
+
+// einoCallContext applies this provider's configured timeout to ctx.
+//
+// This is the per-call deadline that translation and refine jobs rely on. The
+// job worker passes a context.WithCancel (no deadline), so the timeout from
+// Settings — or from the per-novel AI settings — reaches the provider only
+// here. Dropping it, as an earlier version of this file did, left those jobs
+// with no bound at all: a hung provider would keep a job running until the
+// process died.
+//
+// The agent chat overrides it with agentIdleTimeout, because a turn makes
+// several calls and each needs its own budget rather than one shared one.
+func (p *OpenAIProvider) einoCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.Timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, p.Timeout)
 }
 
 // einoCallOptions carries the per-call headers and body extensions that goai
@@ -103,7 +129,9 @@ func (p *OpenAIProvider) generateStructured(ctx context.Context, system, user, s
 		if err != nil {
 			return "", err
 		}
-		out, err := m.Generate(ctx, systemUserMessages(system, user), p.einoCallOptions()...)
+		ctx, cancel := p.einoCallContext(ctx)
+		defer cancel()
+		out, err := generateWithRetry(ctx, m, systemUserMessages(system, user), p.einoCallOptions())
 		if err != nil {
 			return "", err
 		}
@@ -113,8 +141,10 @@ func (p *OpenAIProvider) generateStructured(ctx context.Context, system, user, s
 	if err != nil {
 		return "", err
 	}
+	ctx, cancel := p.einoCallContext(ctx)
+	defer cancel()
 	system = system + "\n\nRespond with a single JSON object matching this schema and nothing else:\n" + schemaJSON
-	out, err := m.Generate(ctx, systemUserMessages(system, user), p.einoCallOptions()...)
+	out, err := generateWithRetry(ctx, m, systemUserMessages(system, user), p.einoCallOptions())
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +204,7 @@ func runToolLoop(ctx context.Context, m model.ToolCallingChatModel, msgs []*sche
 	}
 	opts = append(opts, model.WithTools(infos))
 	for step := 0; step < maxSteps; step++ {
-		msg, err := m.Generate(ctx, msgs, opts...)
+		msg, err := generateWithRetry(ctx, m, msgs, opts)
 		if err != nil {
 			return msgs, err
 		}

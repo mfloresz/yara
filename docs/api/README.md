@@ -566,17 +566,50 @@ per user — one session each, enforced by a unique index on the owner.
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
 Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
-`get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries),
-`get_chapter` (body text, truncated), `search_chapters` (case-sensitive literal
-search over titles and bodies with snippets), `query_library` (one read-only
-analytics SELECT over the `v_agent_novel_progress` / `v_agent_chapter_overview`
-tables — aggregates like "novels missing fewer than 10 chapters" in a single
-call), `update_novel` (target title / description / notes), `update_chapter`
-(titles + translated/refined body replacement; refused while the novel has
-active jobs), `set_chapter_status` (`pending|translated|refined|done|failed`),
+`get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries, paged by
+`offset`/`limit` **or** selected as a contiguous block with
+`fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a line
+window: `startLine` + `lineCount`, default 60 / max 400, returning `totalLines`
+and `nextStartLine` so long chapters are paged rather than cut),
+`search_chapters` (case-sensitive literal search over titles and bodies with
+snippets), `query_library` (one read-only analytics SELECT over the
+`v_agent_novel_progress` / `v_agent_chapter_overview` tables — aggregates like
+"novels missing fewer than 10 chapters" in a single call), `update_novel`
+(target title / description / notes), `update_chapter` (titles +
+translated/refined body replacement; refused while the novel has active jobs),
+`set_chapter_status` (`pending|translated|refined|done|failed`),
 `set_chapter_excluded` and `ask_user` (clarifying question with clickable
 options; ends the turn and the picked option's value arrives as the user's
 next message).
+
+Chapter bodies are never silently truncated: the model controls how much it
+reads (`startLine`/`lineCount`) and is told whether more remains, so it can
+fetch a slice, inspect it and continue. A fixed character cut destroyed the
+tail of a chapter with no way for the model to notice or page past it.
+
+#### Turn timeouts
+
+A turn is bounded by two limits, and neither truncates an answer that is still
+arriving:
+
+- **Idle gap (60s)** — the provider has 60 seconds to deliver the next stream
+  chunk. A provider that accepts the request and then goes silent produces no
+  error and no output, which would otherwise leave the chat hanging; this
+  catches that case and surfaces it as an `error` event with code
+  `provider_stalled`. It bounds the gap *between* chunks, not the total, so a
+  slow but active response is never cut off.
+- **Whole turn (8 min)** — an upper bound on the turn, including tool
+  executions.
+
+Transient provider failures (429, 5xx, dropped connections) are retried twice
+with exponential backoff. A retry only happens while the step has emitted
+nothing, so a resumed stream can never duplicate text already delivered.
+
+The agent deliberately does **not** use the per-provider timeout from Settings:
+a turn is up to 8 sequential model calls, so a deadline sized for a single
+translation would abort a legitimate long turn. Translation and refine jobs are
+unaffected and keep using their own Settings (or per-novel) timeout, applied as
+a per-call context deadline.
 
 #### `query_library` isolation
 
@@ -603,6 +636,10 @@ user's novels. Two layers back that up:
    covers what the scan could not.
 
 Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
+Only the table a query actually names is populated, so a novel-level question
+never pays to copy every chapter row — the cost of a call scales with the
+owner's own library, not with the size of the install.
+
 Row results are capped (`limit`, default 50, max 200) and cells are truncated
 on a rune boundary. The message trail persisted per session is trimmed to fit
 the `messages` field cap by its **JSON-encoded** size, since JSON escapes

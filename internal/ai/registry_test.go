@@ -291,3 +291,81 @@ func TestProviderByIDUnknown(t *testing.T) {
 		t.Fatal("unknown provider should not be found")
 	}
 }
+
+// TestOptionsForModelMerge pins the per-model override mechanism. It is the
+// extension point for provider quirks that only apply to one model of a
+// provider, and it is exercised by runtime_config.go when building a provider
+// for the selected model. No catalog entry populates it today, so without this
+// test the merge branch could rot silently.
+func TestOptionsForModelMerge(t *testing.T) {
+	info := ProviderInfo{
+		GoAIOptions: map[string]any{
+			"strictJsonSchema": true,
+			"shared":           "base",
+		},
+		ModelOptions: map[string]map[string]any{
+			"model-a": {"strictJsonSchema": false, "extra": 1},
+		},
+	}
+
+	// A model with overrides: keys merge, and the override wins.
+	got := info.OptionsForModel("model-a")
+	if v, _ := got["strictJsonSchema"].(bool); v {
+		t.Error("per-model override should disable strictJsonSchema")
+	}
+	if got["shared"] != "base" {
+		t.Errorf("base option lost during merge: %v", got)
+	}
+	if got["extra"] != 1 {
+		t.Errorf("per-model extra option missing: %v", got)
+	}
+
+	// A model without overrides: the base map is returned as-is.
+	if got := info.OptionsForModel("model-b"); got["strictJsonSchema"] != true {
+		t.Errorf("model without overrides should keep base options: %v", got)
+	}
+}
+
+// TestOpenRouterAttributionHeaders pins the HTTP-Referer/X-Title pair that
+// OpenRouter uses for app attribution. goai's OpenRouter provider injected
+// them unconditionally and the eino migration dropped them, so they are now
+// set explicitly for OpenRouter requests.
+func TestOpenRouterAttributionHeaders(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		respondChatCompletion(w, "ok")
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{
+		APIKey:     "test-key",
+		BaseURL:    srv.URL,
+		Model:      "deepseek/deepseek-v4-flash-0731",
+		OpenRouter: true,
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+	if got.Get("HTTP-Referer") != openRouterReferer {
+		t.Errorf("HTTP-Referer = %q, want %q", got.Get("HTTP-Referer"), openRouterReferer)
+	}
+	if got.Get("X-Title") == "" {
+		t.Error("X-Title attribution header is missing")
+	}
+
+	// Non-OpenRouter providers must not claim OpenRouter attribution.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		respondChatCompletion(w, "ok")
+	}))
+	defer other.Close()
+	provider.BaseURL = other.URL
+	provider.OpenRouter = false
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+	if got.Get("HTTP-Referer") != "" {
+		t.Errorf("HTTP-Referer should only be set for OpenRouter, got %q", got.Get("HTTP-Referer"))
+	}
+}

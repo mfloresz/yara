@@ -203,31 +203,41 @@ export function createHttpClient(config: HttpClientConfig) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line) {
-          try {
-            onEvent(JSON.parse(line) as T);
-          } catch {
-            // Skip malformed lines instead of aborting the stream.
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) {
+            try {
+              onEvent(JSON.parse(line) as T);
+            } catch {
+              // Skip malformed lines instead of aborting the stream.
+            }
           }
+          newline = buffer.indexOf("\n");
         }
-        newline = buffer.indexOf("\n");
       }
-    }
-    const tail = buffer.trim();
-    if (tail) {
-      try {
-        onEvent(JSON.parse(tail) as T);
-      } catch {
-        // Ignore trailing garbage.
+      // Flush the decoder: a multi-byte character split across the final chunk
+      // boundary is only complete after the last decode.
+      buffer += decoder.decode();
+      const tail = buffer.trim();
+      if (tail) {
+        try {
+          onEvent(JSON.parse(tail) as T);
+        } catch {
+          // Ignore trailing garbage.
+        }
       }
+    } finally {
+      // Release the body. Without this the stream stays locked forever if
+      // onEvent throws, and the connection is never drained on the normal
+      // early-exit paths.
+      reader.releaseLock();
     }
   }
 

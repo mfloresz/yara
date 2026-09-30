@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type OpenAIProvider struct {
@@ -28,10 +29,19 @@ type OpenAIProvider struct {
 
 // headers identifies the app and, when SessionID is set, the job conversation.
 // User-Agent is always yara so OpenCode does not see a generic Go HTTP client.
+//
+// OpenRouter needs HTTP-Referer/X-Title: the gateway uses them for app
+// attribution. goai's OpenRouter provider injected them unconditionally; the
+// eino migration lost them, so they are re-added here rather than left to the
+// gateway's default attribution.
 func (p *OpenAIProvider) headers() map[string]string {
 	h := map[string]string{"User-Agent": yaraUserAgent}
 	if trimmed := strings.TrimSpace(p.SessionID); trimmed != "" {
 		h[opencodeSessionHeader] = trimmed
+	}
+	if p.OpenRouter {
+		h["HTTP-Referer"] = openRouterReferer
+		h["X-Title"] = yaraUserAgent
 	}
 	return h
 }
@@ -83,9 +93,11 @@ func (p *OpenAIProvider) TranslateTitle(ctx context.Context, in TranslateTitleIn
 	if err != nil {
 		return "", err
 	}
-	out, err := m.Generate(ctx,
+	ctx, cancel := p.einoCallContext(ctx)
+	defer cancel()
+	out, err := generateWithRetry(ctx, m,
 		systemUserMessages(buildTranslationTitleSystemPrompt(in), buildTranslationTitlePrompt(in)),
-		p.einoCallOptions()...,
+		p.einoCallOptions(),
 	)
 	if err != nil {
 		return "", fmt.Errorf("openai translate title: %w", err)
@@ -98,9 +110,11 @@ func (p *OpenAIProvider) TranslateText(ctx context.Context, in TranslateTextInpu
 	if err != nil {
 		return "", err
 	}
-	out, err := m.Generate(ctx,
+	ctx, cancel := p.einoCallContext(ctx)
+	defer cancel()
+	out, err := generateWithRetry(ctx, m,
 		systemUserMessages(buildTranslationContentSystemPrompt(in), buildTranslationContentPrompt(in)),
-		p.einoCallOptions()...,
+		p.einoCallOptions(),
 	)
 	if err != nil {
 		return "", fmt.Errorf("openai translate text: %w", err)
@@ -233,12 +247,15 @@ const refineApplyEditsSchema = `{
   "required": ["edits"]
 }`
 
+// truncateForFeedback caps an echoed edit fragment. The cut is rune-safe: a
+// byte-wise slice lands inside a multi-byte character and produces invalid
+// UTF-8, which the library serves in abundance (accented Spanish, CJK).
 func truncateForFeedback(s string) string {
 	const maxLen = 200
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "\u2026"
+	return truncateRunes(s, maxLen) + "…"
 }
 
 // checkOutputSchema mirrors CheckOutput in strict json_schema form. Every

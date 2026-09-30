@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pocketbase/dbx"
 	_ "modernc.org/sqlite"
@@ -41,6 +42,23 @@ import (
 // The sandbox holds no owner column: rows are selected by owner id before
 // they are inserted, so the model has nothing to filter on and nothing to
 // override.
+//
+// Why a per-request copy instead of a read-only handle on data.db:
+//
+//   - A read-only handle would expose the real base tables by name (novels,
+//     chapters, users, agent_sessions, _superusers). Blocking those by name
+//     means maintaining an allowlist that must track every PocketBase internal
+//     table, and one miss leaks. The copy cannot leak what it does not contain.
+//   - modernc.org/sqlite exposes no authorizer API, so a handle cannot be
+//     restricted at the engine to "these two relations" the way a read-only
+//     handle can be restricted to "no writes".
+//   - The copy scales with the OWNER's library, not the whole install: a
+//     100-novel library copies 100 rows, whether the server holds 1 user or
+//     1,000. Cost is per-user, not multiplied by tenant count.
+//
+// Only the view the query actually names is populated (see
+// agentAnalyticsReadsRelations), so a novel-level question never pays to copy
+// chapter rows.
 
 const (
 	// AgentAnalyticsNovelView / AgentAnalyticsChapterView are the only
@@ -136,13 +154,19 @@ func validateAgentAnalyticsSQL(query string) error {
 	if strings.TrimSpace(trimmed) == "" {
 		return fmt.Errorf("empty query: write one SELECT over %s or %s", AgentAnalyticsNovelView, AgentAnalyticsChapterView)
 	}
-	if agentAnalyticsForbiddenChars.MatchString(trimmed) {
+	// Structure first, then the checks that must not see user data. Running
+	// the character/word blocklist on the raw query made a novel titled
+	// "A -- B" (or any title containing ';', '--' or '/*') fail validation
+	// with a message about statement shape, which the model reads as "my SQL
+	// is malformed" and cannot act on. Literals are blanked first so those
+	// checks only ever see SQL structure.
+	structural := stripAgentLiterals(trimmed)
+	if agentAnalyticsForbiddenChars.MatchString(structural) {
 		return fmt.Errorf("only a single statement without ';' or comments is allowed")
 	}
-	if !agentAnalyticsLeadingWord.MatchString(trimmed) {
+	if !agentAnalyticsLeadingWord.MatchString(strings.TrimSpace(structural)) {
 		return fmt.Errorf("only SELECT (or WITH ... SELECT) queries are allowed")
 	}
-	structural := stripAgentLiterals(trimmed)
 	if agentAnalyticsForbiddenWords.MatchString(structural) {
 		return fmt.Errorf("read-only surface: mutations and pragmas are not allowed")
 	}
@@ -204,13 +228,19 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 	ctx, cancel := context.WithTimeout(ctx, agentAnalyticsTimeout)
 	defer cancel()
 
-	// ponytail: the sandbox is rebuilt from the owner's rows on every query
-	// (one aggregate over novels + one over their chapters), so a call costs
-	// O(the caller's own library) rather than O(1) and a 10k-chapter library
-	// pays ~10k inserts per query_library call. Ceiling is fine for personal
-	// libraries; if it ever bites, cache the snapshot per user and invalidate
-	// it on novel/chapter writes instead of rebuilding.
-	if err := s.populateAgentSandbox(ctx, db, userID); err != nil {
+	// ponytail: the sandbox is rebuilt from the owner's rows on every query, so
+	// a call costs O(the caller's own library) rather than O(1). Two things
+	// keep that cheap. The novel view is one row per novel (trivial). The
+	// chapter view is only populated when the query actually names it, which
+	// is the whole cost: most questions ("which novels are missing fewer than
+	// 10 chapters") never touch chapter rows at all. Measured in-memory insert
+	// cost of the chapter view is ~86ms at 10k chapters and ~478ms at 50k, so
+	// skipping it is the difference between instant and visibly slow. If a
+	// query that DOES read chapters proves slow on a large library, cache the
+	// snapshot per user and invalidate it on novel/chapter writes rather than
+	// rebuilding.
+	needNovels, needChapters := agentAnalyticsReadsRelations(trimmedAgentQuery(query))
+	if err := s.populateAgentSandbox(ctx, db, userID, needNovels, needChapters); err != nil {
 		return "", err
 	}
 
@@ -275,7 +305,12 @@ func (s *Store) RunAgentAnalyticsQuery(ctx context.Context, userID, query string
 // the owner's own library rows. The WHERE clauses are the ownership filter:
 // they are written here, server-side, and are not part of anything the model
 // can influence.
-func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID string) error {
+//
+// Both tables are always created, so a query naming a view the caller did not
+// ask for still fails with "no such table" rather than a confusing error; only
+// the inserts are conditional. Skipping an unrequested view is what keeps a
+// novel-level question from paying for every chapter row.
+func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID string, needNovels, needChapters bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -302,6 +337,20 @@ func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID st
 		}
 	}
 
+	if needNovels {
+		if err := s.populateAgentNovels(ctx, tx, ownerID); err != nil {
+			return err
+		}
+	}
+	if needChapters {
+		if err := s.populateAgentChapters(ctx, tx, ownerID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) populateAgentNovels(ctx context.Context, tx *sql.Tx, ownerID string) error {
 	novels, err := s.agentSnapshotNovels(ownerID)
 	if err != nil {
 		return err
@@ -320,7 +369,10 @@ func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID st
 			return err
 		}
 	}
+	return nil
+}
 
+func (s *Store) populateAgentChapters(ctx context.Context, tx *sql.Tx, ownerID string) error {
 	chapters, err := s.agentSnapshotChapters(ownerID)
 	if err != nil {
 		return err
@@ -339,7 +391,30 @@ func (s *Store) populateAgentSandbox(ctx context.Context, db *sql.DB, ownerID st
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// trimmedAgentQuery strips surrounding whitespace and a trailing semicolon,
+// matching what validateAgentAnalyticsSQL accepts, so the relation scan below
+// sees the same statement that will be executed.
+func trimmedAgentQuery(query string) string {
+	return strings.TrimSuffix(strings.TrimSpace(query), ";")
+}
+
+// agentAnalyticsReadsRelations reports which sandbox views the query names.
+// A view nobody named stays empty, and the engine reports "no such table" —
+// the same error it already produced for any other relation, so this adds no
+// new failure mode while letting novel-only questions skip the chapter copy.
+func agentAnalyticsReadsRelations(query string) (novels, chapters bool) {
+	for _, rel := range agentAnalyticsRelation.FindAllStringSubmatch(query, -1) {
+		switch strings.ToLower(rel[1]) {
+		case AgentAnalyticsNovelView:
+			novels = true
+		case AgentAnalyticsChapterView:
+			chapters = true
+		}
+	}
+	return novels, chapters
 }
 
 func boolToInt(b bool) int {
@@ -510,7 +585,7 @@ func truncateAgentCell(cell any, totalBytes *int) any {
 		s = fmt.Sprint(v)
 	}
 	*totalBytes += len(s)
-	if len(s) > agentAnalyticsMaxCellChars {
+	if utf8.RuneCountInString(s) > agentAnalyticsMaxCellChars {
 		return TruncateRunes(s, agentAnalyticsMaxCellChars) + "…"
 	}
 	return s

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -293,22 +294,28 @@ func (s *Server) agentToolGetNovelStats(userID string) ai.AgentTool {
 
 func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 	return ai.AgentTool{
-		Name:        "get_novel_chapters",
-		Description: "List chapter summaries for one of the user's OWN novels (ordered): titles, translation status, exclusion flag and character counts. Summaries never include chapter bodies; use get_chapter for those.",
+		Name: "get_novel_chapters",
+		Description: "List chapter summaries for one of the user's OWN novels, ordered: titles, translation status, exclusion flag and character counts. " +
+			"Page with offset/limit, or select a contiguous block of chapters with fromOrder/toOrder (inclusive chapter orders, e.g. fromOrder 5, toOrder 20). " +
+			"Summaries never include chapter bodies; use get_chapter for those. Use query_library for aggregate questions over many chapters at once.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "id": {"type": "string", "description": "Novel id."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Summaries per page (default 50)."},
-    "offset": {"type": "integer", "minimum": 0, "description": "Offset for paging through long chapter lists."}
+    "offset": {"type": "integer", "minimum": 0, "description": "Offset for paging through long chapter lists."},
+    "fromOrder": {"type": "integer", "minimum": 0, "description": "Return chapters from this chapter order (inclusive)."},
+    "toOrder": {"type": "integer", "minimum": 0, "description": "Return chapters up to this chapter order (inclusive)."}
   },
   "required": ["id"]
 }`),
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a struct {
-				ID     string `json:"id"`
-				Limit  int    `json:"limit"`
-				Offset int    `json:"offset"`
+				ID        string `json:"id"`
+				Limit     int    `json:"limit"`
+				Offset    int    `json:"offset"`
+				FromOrder *int   `json:"fromOrder"`
+				ToOrder   *int   `json:"toOrder"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.ID) == "" {
 				return "", fmt.Errorf("invalid id")
@@ -323,7 +330,23 @@ func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 			if a.Offset < 0 {
 				a.Offset = 0
 			}
-			summaries, total, err := s.Store.GetOwnedChapterSummaries(userID, strings.TrimSpace(a.ID), limit, a.Offset)
+			var summaries []store.ChapterSummary
+			var total int
+			var err error
+			bounds := orderRangeBounds(a.FromOrder, a.ToOrder)
+			if bounds.set {
+				// Range mode addresses a contiguous block of chapters directly,
+				// which is how the model inspects a slice of a long novel
+				// without walking it in fixed pages.
+				minOrder, maxOrder := bounds.min, bounds.max
+				if maxOrder == 0 {
+					maxOrder = -1
+				}
+				summaries, total, err = s.Store.GetOwnedChapterSummariesInOrderRange(
+					userID, strings.TrimSpace(a.ID), minOrder, maxOrder, limit)
+			} else {
+				summaries, total, err = s.Store.GetOwnedChapterSummaries(userID, strings.TrimSpace(a.ID), limit, a.Offset)
+			}
 			if err != nil {
 				return "", err
 			}
@@ -343,25 +366,65 @@ func (s *Server) agentToolGetNovelChapters(userID string) ai.AgentTool {
 					"translatedChars":      c.TranslatedChars,
 				})
 			}
-			return marshalToolResult(map[string]any{
+			result := map[string]any{
 				"total":    total,
 				"offset":   a.Offset,
+				"returned": len(out),
 				"chapters": out,
-			})
+			}
+			if bounds.set {
+				result["mode"] = "orderRange"
+				if bounds.min > 0 || a.FromOrder != nil {
+					result["fromOrder"] = bounds.min
+				}
+				if a.ToOrder != nil {
+					result["toOrder"] = bounds.max
+				}
+			}
+			return marshalToolResult(result)
 		},
 	}
 }
 
+// orderRange normalizes the fromOrder/toOrder pair, accepting either bound
+// independently so the model can ask for "everything from 40 onwards".
+type orderRange struct {
+	min int
+	max int
+	set bool
+}
+
+func orderRangeBounds(from, to *int) orderRange {
+	r := orderRange{}
+	if from != nil && *from >= 0 {
+		r.min = *from
+		r.set = true
+	}
+	if to != nil && *to >= 0 {
+		r.max = *to
+		r.set = true
+	}
+	if r.set && r.max > 0 && r.min > r.max {
+		r.min, r.max = r.max, r.min
+	}
+	return r
+}
+
 func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 	return ai.AgentTool{
-		Name:        "get_chapter",
-		Description: "Read one chapter of the user's OWN novel by novel id + chapter id. Without content it returns metadata only; set content to original, translated or refined to include that text (truncated for context safety).",
+		Name: "get_chapter",
+		Description: "Read one chapter of the user's OWN novel by novel id + chapter id. Without content it returns metadata only. " +
+			"Set content to original, translated or refined to include that text, and control how much comes back with startLine (0-based, default 0) and lineCount (default " + strconv.Itoa(agentChapterDefaultLineCount) + ", max " + strconv.Itoa(agentChapterMaxLineCount) + "). " +
+			"The response reports totalLines and nextStartLine, so you can page through a long chapter in slices instead of loading it whole. " +
+			"Omitting both returns the opening slice of the chapter, never a silently cut text.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "novelId": {"type": "string", "description": "Novel id."},
     "chapterId": {"type": "string", "description": "Chapter id (from get_novel_chapters)."},
-    "content": {"type": "string", "enum": ["", "original", "translated", "refined"], "description": "Which body text to include, if any."}
+    "content": {"type": "string", "enum": ["", "original", "translated", "refined"], "description": "Which body text to include, if any."},
+    "startLine": {"type": "integer", "minimum": 0, "description": "0-based line to start at (default 0)."},
+    "lineCount": {"type": "integer", "minimum": 1, "maximum": 400, "description": "How many lines to return (default 60)."}
   },
   "required": ["novelId", "chapterId"]
 }`),
@@ -370,6 +433,8 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 				NovelID   string `json:"novelId"`
 				ChapterID string `json:"chapterId"`
 				Content   string `json:"content"`
+				StartLine int    `json:"startLine"`
+				LineCount int    `json:"lineCount"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" {
 				return "", fmt.Errorf("invalid novelId/chapterId")
@@ -386,14 +451,22 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 				"translatedTitle": chapter.TranslatedTitle,
 				"status":          chapter.Status,
 			}
+			var body string
+			field := ""
 			switch a.Content {
 			case "original":
-				out["originalContent"] = truncateAgentContent(chapter.OriginalContent)
+				body, field = chapter.OriginalContent, "originalContent"
 			case "translated":
-				out["translatedContent"] = truncateAgentContent(chapter.TranslatedContent)
+				body, field = chapter.TranslatedContent, "translatedContent"
 			case "refined":
-				out["refinedContent"] = truncateAgentContent(chapter.RefinedContent)
+				body, field = chapter.RefinedContent, "refinedContent"
 			}
+			if field == "" {
+				return marshalToolResult(out)
+			}
+			slice, meta := sliceAgentLines(body, a.StartLine, a.LineCount)
+			out[field] = slice
+			out["contentWindow"] = meta
 			return marshalToolResult(out)
 		},
 	}
@@ -657,6 +730,57 @@ func truncateAgentContent(s string) string {
 		return s
 	}
 	return store.TruncateRunes(s, agentChapterContentMaxChars) + "\n…[truncated]"
+}
+
+// Chapter bodies are returned as explicit line windows rather than a fixed
+// character cut. A silent truncation destroys the tail of a chapter with no
+// way for the model to notice or page past it; a window is self-limiting (the
+// model controls the size) and resumable (it is told where the next slice
+// starts). The default slice is deliberately small so the first read of an
+// unknown chapter stays cheap.
+const (
+	agentChapterDefaultLineCount = 60
+	agentChapterMaxLineCount     = 400
+)
+
+// sliceAgentLines returns the [startLine, startLine+lineCount) window of body
+// plus a descriptor telling the model how to continue. Clamps out-of-range
+// requests instead of erroring: the model paging near the end of a chapter
+// should get an empty slice and a null nextStartLine, not a tool failure.
+func sliceAgentLines(body string, startLine, lineCount int) (string, map[string]any) {
+	lines := strings.Split(body, "\n")
+	total := len(lines)
+	if lineCount <= 0 {
+		lineCount = agentChapterDefaultLineCount
+	}
+	if lineCount > agentChapterMaxLineCount {
+		lineCount = agentChapterMaxLineCount
+	}
+	if startLine < 0 {
+		startLine = 0
+	}
+	if startLine > total {
+		startLine = total
+	}
+	end := startLine + lineCount
+	if end > total {
+		end = total
+	}
+	slice := strings.Join(lines[startLine:end], "\n")
+	meta := map[string]any{
+		"startLine":  startLine,
+		"lineCount":  end - startLine,
+		"totalLines": total,
+	}
+	// Only advertise a next window when one exists, so an exhausted chapter is
+	// unambiguous rather than sending the model back to an empty slice.
+	if end < total {
+		meta["nextStartLine"] = end
+		meta["hasMore"] = true
+	} else {
+		meta["hasMore"] = false
+	}
+	return slice, meta
 }
 
 func firstNonEmpty(values ...string) string {

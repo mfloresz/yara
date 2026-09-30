@@ -148,6 +148,46 @@ func (s *Store) GetOwnedChapterSummaries(userID, novelID string, limit, offset i
 	return summaries, novel.ChapterCount, nil
 }
 
+// maxOrderGuard caps an unbounded upper chapter-order filter. Real novels do
+// not come close; the bound just keeps the generated filter finite.
+const maxOrderGuard = 1 << 30
+
+// GetOwnedChapterSummariesInOrderRange returns the chapter summaries of an
+// owned novel whose chapter_order falls in [minOrder, maxOrder].
+//
+// A bound of -1 means "unbounded on that side", so the model can ask for
+// "everything from chapter 40 onwards" without inventing a ceiling. Range
+// addressing lets it inspect a contiguous slice of a long novel directly,
+// instead of walking the whole list in fixed pages.
+func (s *Store) GetOwnedChapterSummariesInOrderRange(userID, novelID string, minOrder, maxOrder, limit int) ([]ChapterSummary, int, error) {
+	novel, err := s.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if minOrder < 0 {
+		minOrder = 0
+	}
+	if maxOrder < 0 || maxOrder > maxOrderGuard {
+		maxOrder = maxOrderGuard
+	}
+	summaries, err := s.findChapterSummaries(
+		"novel = {:novel} AND excluded = 0 AND chapter_order >= {:min} AND chapter_order <= {:max}",
+		limit, 0,
+		dbx.Params{"novel": novelID, "min": minOrder, "max": maxOrder},
+		"chapter_order ASC",
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	return summaries, novel.ChapterCount, nil
+}
+
 func (s *Store) GetChapterStatsAccessible(userID, novelID string) (*ChapterStats, error) {
 	novel, err := s.GetNovelAccessible(userID, novelID)
 	if err != nil {

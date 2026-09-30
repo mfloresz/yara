@@ -79,6 +79,17 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		}
 		userID := e.Auth.Id
 
+		// Serialize the whole turn, including the session/history READ, not
+		// just the write. runAgentTurn rebuilds the trail from the session
+		// snapshot, so a read taken before the lock lets two concurrent chats
+		// start from the same history and the second SaveAgentSessionMessages
+		// silently discards the first turn — a lost message with no error
+		// anywhere. Taking the lock here makes read-modify-write atomic.
+		lockAny, _ := s.agentTurnLocks.LoadOrStore(userID, &sync.Mutex{})
+		lock := lockAny.(*sync.Mutex)
+		lock.Lock()
+		defer lock.Unlock()
+
 		session, err := resolveAgentSession(s, userID, in.SessionID)
 		if err != nil {
 			return notFoundOrForbidden(e, err)
@@ -137,13 +148,9 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 			return nil
 		}
 
-		// Serialize turns per user: two concurrent chats would interleave
-		// history reads/writes on the same session record.
-		lockAny, _ := s.agentTurnLocks.LoadOrStore(userID, &sync.Mutex{})
-		lock := lockAny.(*sync.Mutex)
-		lock.Lock()
-		defer lock.Unlock()
-
+		// Serialize turns per user (lock taken above, before the session read):
+		// two concurrent chats would interleave history reads/writes on the
+		// same session record.
 		ctx, cancel := context.WithTimeout(e.Request.Context(), agentChatTurnTimeout)
 		defer cancel()
 
@@ -172,6 +179,19 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				writeEvent(agentChatEvent{Type: "error", Code: "timeout", ErrorDetail: "the agent turn timed out"})
+				return nil
+			}
+			// The provider stopped sending without closing the response. This
+			// is worth naming: it is the one failure the user can act on
+			// (their provider or a proxy in front of it is wedged), and a
+			// generic message would read as "yara is broken".
+			if ai.IsStreamStalled(err) {
+				slog.Warn("agent provider stalled mid-stream", "error", err, "userID", userID, "sessionID", session.ID)
+				writeEvent(agentChatEvent{
+					Type:        "error",
+					Code:        "provider_stalled",
+					ErrorDetail: "the AI provider stopped responding, try again",
+				})
 				return nil
 			}
 			// The full error chain (store, PocketBase validation, provider

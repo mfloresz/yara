@@ -64,8 +64,19 @@
                 <div
                   class="markdown-preview chat-markdown"
                   :aria-live="isStreamingTail(index) ? 'off' : undefined"
-                  v-html="renderMarkdown(item.content)"
-                ></div>
+                >
+                  <!-- markstream-vue parses incrementally and keeps partial
+                       markdown stable, so an unterminated heading or code fence
+                       does not flicker while the answer is still arriving.
+                       htmlPolicy="escape" matters here: this is LLM output, a
+                       lower-trust source than the novel text markdownToHtml
+                       was written for. -->
+                  <MarkdownRender
+                    :content="item.content"
+                    :final="!isStreamingTail(index)"
+                    html-policy="escape"
+                  />
+                </div>
               </template>
               <p v-else class="chat-plain">{{ item.content }}</p>
             </div>
@@ -91,7 +102,9 @@
 
           <div v-else-if="item.kind === 'question'" class="chat-row chat-row--assistant">
             <div class="chat-bubble chat-bubble--assistant">
-              <div class="markdown-preview chat-markdown" v-html="renderMarkdown(item.question)"></div>
+              <div class="markdown-preview chat-markdown">
+                <MarkdownRender :content="item.question" final html-policy="escape" />
+              </div>
               <div class="chat-options">
                 <button
                   v-for="opt in item.options"
@@ -212,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   NButton,
   NIcon,
@@ -231,7 +244,8 @@ import {
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import { useAppServices } from "@/app/services";
-import { markdownToHtml } from "@/utils/markdown";
+import { MarkdownRender } from "markstream-vue";
+import "markstream-vue/index.css";
 import type { AgentChatEvent, AgentChatOption, AgentSessionMessage } from "@/api/types";
 import type { Novel } from "@/domain";
 
@@ -310,8 +324,35 @@ function novelAuthor(novel: PickerNovel): string {
   return novel.targetAuthor || novel.sourceAuthor || "";
 }
 
-function renderMarkdown(content: string): string {
-  return markdownToHtml(content);
+// Streaming coalescing. Deltas arrive far faster than a frame, so mutating
+// the reactive message on every one of them re-renders the whole bubble (and
+// forces a layout for the scroll pin) dozens of times per second. Deltas are
+// accumulated into a local string and the reactive update happens at most
+// once per frame. Parsing itself is incremental now: markstream-vue handles
+// partial markdown instead of re-running marked over the whole message.
+const STREAM_FLUSH_MS = 60;
+
+let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let streamDirty = false;
+
+function scheduleStreamFlush(apply: () => void): void {
+  streamDirty = true;
+  if (streamFlushTimer) return;
+  streamFlushTimer = setTimeout(() => {
+    streamFlushTimer = null;
+    if (!streamDirty) return;
+    streamDirty = false;
+    apply();
+  }, STREAM_FLUSH_MS);
+}
+
+function flushStreamNow(apply: () => void): void {
+  if (streamFlushTimer) {
+    clearTimeout(streamFlushTimer);
+    streamFlushTimer = null;
+  }
+  streamDirty = false;
+  apply();
 }
 
 // Distance from the bottom, in px, within which the transcript still counts
@@ -337,6 +378,26 @@ function scrollToBottom(force = false): void {
 
 function stopStreaming(): void {
   abortController?.abort();
+  // Stop the UI immediately. Without this the button stays inert until the
+  // pending read() rejects, which is bounded only by the server's per-turn
+  // timeout — up to eight minutes of a frozen page after the user asked to
+  // stop.
+  if (streamFlushTimer) {
+    clearTimeout(streamFlushTimer);
+    streamFlushTimer = null;
+  }
+  streamDirty = false;
+  streaming.value = false;
+  settleRunningTools();
+}
+
+// settleRunningTools clears the spinner on any tool chip left mid-flight. A
+// turn can end without a tool_result (a mid-stream error, an abort, a
+// malformed ask_user) and an eternally spinning chip reads as a hang.
+function settleRunningTools(): void {
+  for (const item of items.value) {
+    if (item.kind === "tool" && item.running) item.running = false;
+  }
 }
 
 function fillSuggestion(text: string): void {
@@ -347,33 +408,56 @@ function clearSelectedNovel(): void {
   selectedNovel.value = null;
 }
 
-// parseAskUserQuestion extracts the question text from a persisted ask_user
-// tool call so past questions replay as plain assistant messages (their
-// options were already answered).
-function parseAskUserQuestion(args?: string): string {
-  if (!args) return "";
+// parseAskUserQuestion rebuilds a persisted ask_user call into a question card
+// with its options intact, so an unanswered question survives a page reload.
+// It used to flatten to plain text, which meant reloading the page silently
+// removed the user's only way to answer.
+function parseAskUserQuestion(args?: string): { question: string; options: AgentChatOption[] } | null {
+  if (!args) return null;
   try {
-    const parsed = JSON.parse(args) as { question?: string };
-    return parsed.question ?? "";
+    const parsed = JSON.parse(args) as {
+      question?: string;
+      options?: AgentChatOption[];
+    };
+    const question = parsed.question?.trim();
+    const options = (parsed.options ?? []).filter(
+      (o) => o.label?.trim() && o.value?.trim(),
+    );
+    if (!question || options.length === 0) return null;
+    return { question, options };
   } catch {
-    return "";
+    return null;
   }
 }
 
 function mapHistory(messages: AgentSessionMessage[]): void {
   const mapped: ChatItem[] = [];
   const pendingResults = new Map<string, { index: number }>();
+  // Index of the last ask_user card, so the user's next message can mark it
+  // answered instead of leaving a stale clickable card in the transcript.
+  let lastQuestionIndex = -1;
   for (const message of messages) {
     if (message.role === "user") {
+      if (lastQuestionIndex >= 0 && mapped[lastQuestionIndex]?.kind === "question") {
+        (mapped[lastQuestionIndex] as Extract<ChatItem, { kind: "question" }>).answered = true;
+        lastQuestionIndex = -1;
+      }
       mapped.push({ kind: "message", role: "user", content: message.content ?? "" });
       continue;
     }
     if (message.role === "assistant") {
+      const toolCallsThisMessage = (message.toolCalls ?? []).length;
       for (const call of message.toolCalls ?? []) {
         if (call.name === "ask_user") {
-          const question = parseAskUserQuestion(call.args);
-          if (question) {
-            mapped.push({ kind: "message", role: "assistant", content: question });
+          const parsed = parseAskUserQuestion(call.args);
+          if (parsed) {
+            lastQuestionIndex = mapped.length;
+            mapped.push({
+              kind: "question",
+              question: parsed.question,
+              options: parsed.options,
+              answered: false,
+            });
           }
           continue;
         }
@@ -381,7 +465,16 @@ function mapHistory(messages: AgentSessionMessage[]): void {
         mapped.push({ kind: "tool", name: call.name, args: call.args, running: false, open: false });
       }
       if (message.content) {
-        mapped.push({ kind: "message", role: "assistant", content: message.content });
+        // The assistant narrates BEFORE calling a tool (live streaming shows
+        // text, then the chip). Replaying chips first inverted that order, so
+        // the transcript read differently after a reload. The narration was
+        // pushed first here for the same reason.
+        mapped.splice(mapped.length - toolCallsThisMessage, 0, {
+          kind: "message",
+          role: "assistant",
+          content: message.content,
+        });
+        lastQuestionIndex = -1;
       }
       continue;
     }
@@ -411,14 +504,28 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   abortController?.abort();
+  if (streamFlushTimer) {
+    clearTimeout(streamFlushTimer);
+    streamFlushTimer = null;
+  }
+  if (pickerDebounce) clearTimeout(pickerDebounce);
 });
 
 async function resetChat(): Promise<void> {
   if (streaming.value) return;
   try {
     await api.agent.resetSession();
-  } catch {
-    // Even if the server reset fails, clear the local view.
+  } catch (error) {
+    // Clearing sessionId locally while the server still holds the session used
+    // to resurrect it: the next send omits the id, the backend falls back to
+    // the latest session, and the transcript the user just discarded comes
+    // back. Report the failure instead of pretending the reset worked.
+    const detail =
+      error instanceof Error && error.message
+        ? error.message
+        : "no se pudo reiniciar el chat";
+    items.value = [{ kind: "error", content: detail }];
+    return;
   }
   sessionId.value = "";
   selectedNovel.value = null;
@@ -449,18 +556,24 @@ async function sendMessage(message: string): Promise<void> {
   abortController = new AbortController();
 
   let assistantText = "";
-  const ensureAssistant = (): Extract<ChatItem, { kind: "message" }> => {
+  // Text already committed to the transcript for the step in progress. A
+  // terminal step (ask_user) is not the final answer, so the next user reply
+  // starts a new assistant bubble instead of overwriting this one.
+  let committedText = "";
+  let sawDone = false;
+  let sawError = false;
+
+  const commitAssistant = (): void => {
+    committedText = assistantText;
+    if (!assistantText) return;
     const last = items.value[items.value.length - 1];
-    if (last && last.kind === "message" && last.role === "assistant") {
-      return last;
+    // Reuse an empty assistant bubble we just created, never overwrite one
+    // that already holds text.
+    if (last && last.kind === "message" && last.role === "assistant" && !last.content) {
+      last.content = assistantText;
+      return;
     }
-    const created: Extract<ChatItem, { kind: "message" }> = {
-      kind: "message",
-      role: "assistant",
-      content: "",
-    };
-    items.value.push(created);
-    return created;
+    items.value.push({ kind: "message", role: "assistant", content: assistantText });
   };
 
   const handleEvent = (event: AgentChatEvent): void => {
@@ -470,13 +583,23 @@ async function sendMessage(message: string): Promise<void> {
         break;
       case "text_delta": {
         assistantText += event.text ?? "";
-        const assistant = ensureAssistant();
-        assistant.content = assistantText;
-        scrollToBottom();
+        scheduleStreamFlush(() => {
+          if (assistantText === committedText) return;
+          const last = items.value[items.value.length - 1];
+          if (last && last.kind === "message" && last.role === "assistant") {
+            last.content = assistantText;
+          } else {
+            items.value.push({ kind: "message", role: "assistant", content: assistantText });
+          }
+          committedText = assistantText;
+          scrollToBottom();
+        });
         break;
       }
       case "tool_call": {
+        flushStreamNow(commitAssistant);
         assistantText = "";
+        committedText = "";
         items.value.push({
           kind: "tool",
           name: event.tool ?? "tool",
@@ -500,7 +623,9 @@ async function sendMessage(message: string): Promise<void> {
         break;
       }
       case "question": {
+        flushStreamNow(commitAssistant);
         assistantText = "";
+        committedText = "";
         items.value.push({
           kind: "question",
           question: event.question ?? "",
@@ -511,19 +636,32 @@ async function sendMessage(message: string): Promise<void> {
         break;
       }
       case "done": {
-        const content = event.message?.content ?? assistantText;
-        if (content) {
-          const assistant = ensureAssistant();
-          assistant.content = content;
-        }
+        sawDone = true;
+        // The final answer replaces the in-progress bubble; a terminal step
+        // sends an empty content, in which case what streamed stays.
+        flushStreamNow(() => {
+          const finalText = event.message?.content || assistantText;
+          const last = items.value[items.value.length - 1];
+          if (finalText && last && last.kind === "message" && last.role === "assistant") {
+            last.content = finalText;
+          } else if (finalText) {
+            items.value.push({ kind: "message", role: "assistant", content: finalText });
+          }
+          committedText = finalText;
+          assistantText = finalText;
+        });
+        settleRunningTools();
         sessionId.value = event.sessionId ?? sessionId.value;
         streaming.value = false;
         scrollToBottom();
         break;
       }
       case "error": {
+        sawError = true;
+        flushStreamNow(commitAssistant);
         const detail = event.error || event.code || "error del servidor";
         items.value.push({ kind: "error", content: detail });
+        settleRunningTools();
         streaming.value = false;
         scrollToBottom();
         break;
@@ -545,6 +683,7 @@ async function sendMessage(message: string): Promise<void> {
     // An intentional stop is not a failure: keep whatever partial answer
     // already streamed in and stay silent.
     if (!abortController?.signal.aborted) {
+      flushStreamNow(commitAssistant);
       const detail =
         error instanceof Error && error.message
           ? error.message
@@ -552,6 +691,17 @@ async function sendMessage(message: string): Promise<void> {
       items.value.push({ kind: "error", content: detail });
     }
   } finally {
+    flushStreamNow(commitAssistant);
+    // A stream that ends without a done event was cut off (proxy timeout,
+    // dropped connection). Without this the partial answer is left on screen
+    // looking exactly like a finished one.
+    if (!sawDone && !sawError && !abortController?.signal.aborted) {
+      items.value.push({
+        kind: "error",
+        content: "La respuesta se cortó a mitad. Vuelve a intentarlo.",
+      });
+    }
+    settleRunningTools();
     streaming.value = false;
     abortController = null;
     scrollToBottom();
@@ -559,6 +709,17 @@ async function sendMessage(message: string): Promise<void> {
 }
 
 let pickerDebounce: ReturnType<typeof setTimeout> | null = null;
+
+// The debounced search is driven by watching the query. It used to exist with
+// no caller at all — the input had no @input/@watch — so the modal always
+// rendered "Sin resultados." and picking a novel to ask about was impossible.
+watch(pickerQuery, () => searchPicker());
+
+// Opening the picker with an empty query should already show something
+// pickable, so a click on the button is never a dead end.
+watch(pickerOpen, (open) => {
+  if (open && pickerResults.value.length === 0) searchPicker();
+});
 
 function searchPicker(): void {
   if (pickerDebounce) clearTimeout(pickerDebounce);
@@ -587,6 +748,9 @@ function selectFirstResult(): void {
 }
 
 function chooseNovel(novel: PickerNovel): void {
+  // The selected novel rides along as the request's novelId on every turn, so
+  // the assistant treats it as the default subject. It is a context marker, not
+  // something written into the transcript.
   selectedNovel.value = { id: novel.id, title: novelTitle(novel) };
   pickerOpen.value = false;
   pickerQuery.value = "";

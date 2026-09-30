@@ -2561,9 +2561,11 @@ paths:
         A novel or session owned by another user is refused with 404 even when
         that novel is public. Responses stream as
         newline-delimited JSON events:
-        `session`, `text_delta`, `tool_call`, `tool_result`, `done`, `error`.
+        `session`, `text_delta`, `tool_call`, `tool_result`, `question`,
+        `done`, `error`.
         When no sessionId is sent, the user's latest session is reused, or a
-        new one is created. Rate limited per client IP.
+        new one is created. Turns are serialized per user, so concurrent chats
+        cannot interleave history writes. Rate limited per client IP.
       requestBody:
         required: true
         content:

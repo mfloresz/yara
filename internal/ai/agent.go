@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -120,26 +120,24 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 	trail = append(trail, in.Messages...)
 
 	for step := 0; step < maxSteps; step++ {
-		stream, err := m.Stream(ctx, msgs, opts...)
-		if err != nil {
-			return AgentChatOutput{}, err
-		}
-		var chunks []*schema.Message
-		for {
-			chunk, recvErr := stream.Recv()
-			if recvErr == io.EOF {
-				break
-			}
-			if recvErr != nil {
-				stream.Close()
-				return AgentChatOutput{}, recvErr
-			}
+		// The agent deliberately does NOT use the provider's Settings timeout
+		// (einoCallContext). A turn is up to maxSteps sequential model calls,
+		// so a per-call deadline sized for a single translation would abort a
+		// legitimate long turn. The bounds that matter here are the idle gap
+		// between stream chunks (agentStreamIdleTimeout) and the whole-turn
+		// deadline the API layer sets — together they stop a hung turn without
+		// ever cutting a response that is still arriving.
+		// Retries transient provider failures (429/5xx/dropped connection) but
+		// only while this step has emitted nothing, so a resumed stream can
+		// never duplicate text already shown to the user.
+		chunks, err := streamWithRetry(ctx, m, msgs, opts, func(chunk *schema.Message) {
 			if chunk.Content != "" {
 				emit(AgentEvent{Type: "text_delta", Step: step + 1, Text: chunk.Content})
 			}
-			chunks = append(chunks, chunk)
+		})
+		if err != nil {
+			return AgentChatOutput{}, err
 		}
-		stream.Close()
 		if len(chunks) == 0 {
 			return AgentChatOutput{}, fmt.Errorf("openai agent chat: empty stream on step %d", step+1)
 		}
@@ -189,7 +187,7 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 	// Step exhaustion with pending tool results: force one final no-tools
 	// call so the turn ends with an assistant message instead of dangling
 	// tool results.
-	final, err := m.Generate(ctx, msgs, p.einoCallOptions()...)
+	final, err := generateWithRetry(ctx, m, msgs, p.einoCallOptions())
 	if err != nil {
 		return AgentChatOutput{}, err
 	}
@@ -271,8 +269,13 @@ func truncateRunes(s string, maxChars int) string {
 	return s
 }
 
+// truncateToolResult caps one tool result at maxToolResultChars RUNES. The
+// gate and the cut must measure the same unit: gating on bytes while cutting
+// on runes returned a result LARGER than the input for any multi-byte text
+// (6000 CJK runes in, 18015 bytes out against an 8000 limit), which defeats
+// the cap on exactly the content this app serves.
 func truncateToolResult(s string) string {
-	if len(s) <= maxToolResultChars {
+	if utf8.RuneCountInString(s) <= maxToolResultChars {
 		return s
 	}
 	return truncateRunes(s, maxToolResultChars) + "\n…[truncated]"
@@ -280,7 +283,7 @@ func truncateToolResult(s string) string {
 
 func toolResultPreview(s string) string {
 	preview := strings.ReplaceAll(s, "\n", " ")
-	if len(preview) > maxEventToolResultChars {
+	if utf8.RuneCountInString(preview) > maxEventToolResultChars {
 		preview = truncateRunes(preview, maxEventToolResultChars) + "…"
 	}
 	return preview

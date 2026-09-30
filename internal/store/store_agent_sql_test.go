@@ -223,7 +223,7 @@ func TestAgentSandboxHoldsOnlyOwnerData(t *testing.T) {
 		t.Fatalf("open sandbox: %v", err)
 	}
 	defer db.Close()
-	if err := st.populateAgentSandbox(ctx, db, aliceID); err != nil {
+	if err := st.populateAgentSandbox(ctx, db, aliceID, true, true); err != nil {
 		t.Fatalf("populate sandbox: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestAgentSandboxSchemaRevealsOnlyTheTwoViews(t *testing.T) {
 		t.Fatalf("open sandbox: %v", err)
 	}
 	defer db.Close()
-	if err := st.populateAgentSandbox(ctx, db, aliceID); err != nil {
+	if err := st.populateAgentSandbox(ctx, db, aliceID, true, true); err != nil {
 		t.Fatalf("populate sandbox: %v", err)
 	}
 	rows, err := db.QueryContext(ctx,
@@ -446,4 +446,40 @@ func parseAgentAnalyticsRows(t *testing.T, payload string) []map[string]any {
 		rows = append(rows, m)
 	}
 	return rows
+}
+
+// TestValidateAgentAnalyticsSQLIgnoresDataInLiterals pins that the blocklist
+// only ever sees SQL structure. Running it against the raw query made a novel
+// titled "A -- B" (or any title containing ';', '--' or '/*') fail validation
+// with a message about statement shape, which the model reads as "my SQL is
+// malformed" and cannot act on. The data lives in string literals, which are
+// blanked before the check runs.
+func TestValidateAgentAnalyticsSQLIgnoresDataInLiterals(t *testing.T) {
+	tolerated := []string{
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE title LIKE '%A -- B%'",
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE title LIKE '%; DROP TABLE%'",
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE title LIKE '%/* x */%'",
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE title = 'O''Brien -- update'",
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE title LIKE '%\"quoted\" --%'",
+		"SELECT * FROM " + AgentAnalyticsChapterView + " WHERE title LIKE '%-- INSERT INTO t%'",
+	}
+	for _, q := range tolerated {
+		if err := validateAgentAnalyticsSQL(q); err != nil {
+			t.Errorf("literal content should not trip validation:\n  query: %s\n  error: %v", q, err)
+		}
+	}
+
+	// Structure violations must still be rejected.
+	rejected := []string{
+		"SELECT * FROM " + AgentAnalyticsNovelView + " WHERE 1=1; DROP TABLE x",
+		"SELECT * FROM " + AgentAnalyticsNovelView + " -- comment",
+		"DELETE FROM " + AgentAnalyticsNovelView,
+		"SELECT * FROM users",
+		"",
+	}
+	for _, q := range rejected {
+		if err := validateAgentAnalyticsSQL(q); err == nil {
+			t.Errorf("expected rejection, got none for: %s", q)
+		}
+	}
 }
