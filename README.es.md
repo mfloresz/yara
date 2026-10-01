@@ -90,9 +90,9 @@ Las sesiones usan una cookie HttpOnly con `SameSite=Strict`, y también hay un t
 
 ## Sitios soportados
 
-Yara importa novelas directamente desde 17 sitios:
+Yara importa novelas directamente desde 16 sitios:
 
-- **Descarga directa** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
+- **Descarga directa** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
 - **Requieren la extensión browser-worker** — 69Shuba, EmpireNovel, FloraeGarden, SkyDemonOrder, Inkitt, Inkspired: desafíos de Cloudflare o contenido que un cliente HTTP plano no puede leer (ver abajo).
 
 También se pueden importar novelas desde archivos EPUB o ZIP, así que cualquier fuente fuera del catálogo sigue funcionando.
@@ -152,7 +152,7 @@ Anti-referencias: nada de “admin dashboard” denso ni móvil como breakpoint 
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
 | IA | 8 providers registrados: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — claves almacenadas con AES-GCM |
 | Persistencia | SQLite (vía PocketBase), esquema idempotente en `store_schema.go`, flag `--migrate-db` para breaking changes |
-| Scraper | `internal/noveldownloader` — 17 parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired); `RequiresBrowser()` marca los que están detrás de Cloudflare |
+| Scraper | `parsers/*.js` — 16 parsers de sitio (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), cada uno un script CommonJS ejecutado por el motor goja embebido en `internal/parserhost`; `requiresBrowser: true` marca los que están detrás de Cloudflare. Contrato: [`docs/parsers.md`](docs/parsers.md) |
 | EPUB | `internal/epubimport` + `internal/epubexport` (paquetes puros, sin dependencias de HTTP/store) |
 | Móvil | Build `android-arm64` para Termux, más el cliente [yara-app](https://github.com/mfloresz/yara-app) |
 
@@ -224,7 +224,8 @@ internal/api/          Capa HTTP — un router_*.go por recurso, worker de traba
 internal/store/        Persistencia PocketBase — colecciones sembradas por EnsureSchema()
 internal/ai/           Interfaz Provider + OpenAIProvider + registry.go
 internal/secure/       AES-GCM para las API keys
-internal/noveldownloader/  Parsers puros
+internal/parserhost/   Motor goja embebido que ejecuta los scripts de parser
+parsers/               Parsers de sitio versionados (parsers/<site>.js); en runtime, <data-dir>/parsers
 internal/epubimport/ / epubexport/
 frontend/              SPA Vue 3 — pages/, components/, composables/, app/services.ts
 frontend_embed.go      //go:embed all:frontend/dist
@@ -238,10 +239,13 @@ docs/                  Documentación de API y codemaps de arquitectura
 
 ```bash
 go test ./...            # unitarios + integración (PocketBase real en t.TempDir, sin mocks)
-go test -short ./...     # salta los tests live-URL en noveldownloader/realtest_test.go
+go test -short ./...     # salta los tests live-URL más lentos
 npm run build            # el typecheck real (vue-tsc -b && vite build)
 go vet ./...
 ```
+
+Los scripts de parser se recargan en caliente: el servidor vuelve a leer el directorio de parsers en cada trabajo, así que editar un `parsers/<site>.js` surte efecto en la siguiente descarga sin recompilar ni reiniciar. Para depurar uno contra el sitio real:
+`./bin/translator-server -check-parser parsers/<site>.js -check-url <novel-url>`.
 
 Los tests de integración en `internal/api/` bloquean la forma del envelope v1, los status codes y los headers `Location`.
 

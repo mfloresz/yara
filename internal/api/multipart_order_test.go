@@ -3,7 +3,6 @@ package api
 import (
 	"testing"
 
-	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
 
@@ -12,7 +11,7 @@ import (
 // batch must never hand out a duplicate that would hit the
 // (novel, chapter_order) unique index.
 func TestClaimChapterOrderMultipart(t *testing.T) {
-	chs := []noveldownloader.ChapterURL{
+	chs := []sourceChapter{
 		{URL: "https://example.com/23-1", Title: "ASFTB 23: Have You Forgotten Who Your Man Is 1"},
 		{URL: "https://example.com/23-2", Title: "ASFTB 23: Have You Forgotten Who Your Man Is 2"},
 		{URL: "https://example.com/24", Title: "ASFTB 24: Li Lingfeng Isn't Going to Beat Me to Death, Right?"},
@@ -42,7 +41,7 @@ func TestClaimChapterOrderMultipart(t *testing.T) {
 func TestPlanRedownloadMultipartSchedulesOnce(t *testing.T) {
 	existing := store.Chapter{ID: "ch23", ChapterOrder: 23, Title: "ASFTB 23: Have You Forgotten Who Your Man Is 1"}
 	plan := planRedownload(
-		[]noveldownloader.ChapterURL{
+		[]sourceChapter{
 			{URL: "https://example.com/23-1", Title: "ASFTB 23: Have You Forgotten Who Your Man Is 1"},
 			{URL: "https://example.com/23-2", Title: "ASFTB 23: Have You Forgotten Who Your Man Is 2"},
 		},

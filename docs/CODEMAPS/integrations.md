@@ -1,7 +1,7 @@
 # Integrations Codemap
 
 **Last Updated:** 2026-07-14
-**Entry Points:** `internal/ai/registry.go`, `internal/noveldownloader/`
+**Entry Points:** `internal/ai/registry.go`, `internal/parserhost/`, `parsers/`
 
 ## AI Providers
 
@@ -44,52 +44,64 @@ type Provider interface {
 | `openai.go` | `OpenAIProvider` full implementation |
 | `translation_schema.go` | JSON schemas for structured output |
 
-## Web novel scrapers
+## Web novel parsers
 
-Module: `internal/noveldownloader/` (30+ files)
+Site-specific logic lives in editable JavaScript under `parsers/`, one CommonJS
+file per site, executed by the embedded goja engine in `internal/parserhost/`.
+The contract (and the error taxonomy) is documented in
+[`docs/parsers.md`](../../docs/parsers.md); `internal/parserhost/contract.go` is
+the source of truth.
 
 ### Supported sites
 
-| Site | Parser | Features |
-|------|--------|----------|
-| NovelFire | `novelfire.go`, `novelfire_metadata.go`, `novelfire_chapters.go`, `novelfire_content.go` | Metadata, chapter list, content |
-| Fenrir Realm | `fenrirealm.go`, `fenrirealm_metadata.go`, `fenrirealm_content.go` | Metadata, chapter list, content |
-| Florae Garden | `floraegarden.go` | Metadata, chapter list, content |
-| Cherry Mist | `cherrymist.go` | Metadata, chapter list, content |
-| Empire Novel | `empirenovel.go` | Metadata, chapter list, content |
-| 69shuba | `69shuba.go`, `69shuba_metadata.go`, `69shuba_chapters.go` | Metadata, chapter list, content |
-| Sky Novels | `skynovels.go`, `skynovels_metadata.go`, `skynovels_chapters.go` | Metadata, chapter list, content |
-| Fictioneer | `fictioneer.go` | Generic Fictioneer-based sites |
-| RSS | `rss.go` | RSS feed-based content |
+| Site | Parser script |
+|------|---------------|
+| NovelFire | `novelfire.js` |
+| Fenrir Realm | `fenrirealm.js` |
+| Florae Garden | `floraegarden.js` |
+| Cherry Mist | `cherrymist.js` |
+| Empire Novel | `empirenovel.js` |
+| 69shuba | `69shuba.js` (GBK pages) |
+| Sky Novels | `skynovels.js` (JSON API; requires a `Referer` header) |
+| SkyDemonOrder | `skydemonorder.js` (Livewire/JSON catalog) |
+| Literotica | `literotica.js` |
+| NovelArrow | `novelarrow.js` |
+| Wattpad | `wattpad.js` |
+| Webnovel | `webnovel.js` |
+| Inkitt | `inkitt.js` |
+| GayDemon | `gaydemon.js` |
+| ChrysanthemumGarden | `chrysanthemumgarden.js` |
+| Inkspired | `inkspired.js` |
 
-### Cloudflare bypass
-
-| File | Purpose |
-|------|---------|
-| `browser_worker_provider.go` | Fetches content through browser extension |
-| `fallback_client.go` | Falls back to browser worker on HTTP errors |
-
-Each parser's `RequiresBrowser()` method documents whether the site needs this bypass (Cloudflare or JS-rendered pages); it does not change fetch behavior.
-
-### Downloader — `internal/noveldownloader/downloader.go`
+### Engine — `internal/parserhost/`
 
 | Feature | Detail |
 |---------|--------|
-| Rate limiting | Random delay between `MinChapterDelay` (5s) and `MaxChapterDelay` (10s) |
-| Env config | `DOWNLOAD_MIN_DELAY_MS`, `DOWNLOAD_MAX_DELAY_MS` |
-| HTML→Markdown | Via `html-to-markdown/v2` |
-| Parser selection | URL-based pattern matching in `FindParser()` |
+| Runtime | `goja` VM, a fresh one per invocation; module state never leaks between jobs |
+| Load | `LoadFile` / `LoadDir` — the directory is re-read per job (no cache), so edits are hot-reloaded |
+| Entry points | `probe(url)`, `toc(ctx,url)`, `chapter(ctx,url)`, optional `chapterKey(ref)` |
+| Bindings | `ctx.get/css/css1/resolveUrl/fail/log` in `bindings.go` |
+| Limits | 30s wall-clock, 200 fetches, 5 MiB response body per invocation |
+| Errors | `ScriptError` taxonomy: `not_my_site`, `site_layout_changed`, `blocked`, `parser_timeout`, `script_error` |
 
-### Key files
+### Host side — `internal/api/parser_*.go`
 
 | File | Purpose |
 |------|---------|
-| `downloader.go` | `Downloader` struct, `DownloadChapters()`, `SleepBetweenChapters()` |
-| `client.go` | HTTP client setup |
-| `parser.go` | `Parser` interface |
-| `models.go` | `ChapterURL`, `Chapter` types |
-| `url_helpers.go` | URL parsing and normalization |
-| `html_helpers.go` | HTML cleaning utilities |
+| `parser_engine.go` | Script loading/selection, TOC snapshot, new/missing diff, `canUpdate`/`requiresBrowser` |
+| `parser_fetcher.go` | `parserhost.Fetcher` impl: throttling, direct HTTP, browser-worker routing |
+| `parser_cgfont.go` | Hybrid helpers: host-side response post-processing a script cannot do (chrysanthemumgarden obfuscation-font decoding) |
+| `parser_check.go` | `-check-parser` / `-check-url` mode — prints the snapshot as JSON, touches no store |
+| `parser_http_compat.go` | GBK charset decoding and host-keyed request headers |
+| `chapter_markdown.go` | HTML→Markdown conversion and title/whitespace cleanup |
+
+| Feature | Detail |
+|---------|--------|
+| Rate limiting | Random delay between fetches, `DOWNLOAD_MIN_DELAY_MS` (5s) / `DOWNLOAD_MAX_DELAY_MS` (10s); shared process-wide |
+| Charset | GBK / GB2312 / GB18030 decoded from `Content-Type` or `<meta charset>` |
+| Cloudflare bypass | Direct HTTP first; on transport error, 4xx/5xx or a challenge page, relay through the owner's browser worker. `requiresBrowser: true` routes straight to the worker |
+| Parser selection | Per-script `probe()`, first match wins; no match is `not_my_site` |
+| Runtime dir | `-parsers-dir` / `PARSERS_DIR`, default `<data-dir>/parsers` |
 
 ## EPUB import
 
@@ -127,10 +139,10 @@ Job → resolveJobConfig() → aiOptions.provider + model
   → registry.ProviderByID() → baseURL, goai options
   → openai.NewProvider() → goai.Client → HTTP → external API
                                                     ↑
-Download Job → noveldownloader.Downloader
-  → FindParser(url) → Parser matching domain
-  → HTTP GET → HTML → goquery → html-to-markdown → Markdown
-  → store (chapters)
+Download Job → parserhost engine + parsers/<site>.js
+  → probe(url) → LoadDir selects the matching script
+  → toc(ctx,url) → chapter(ctx,url) per new chapter
+  → HTML → html-to-markdown → Markdown → store (chapters)
 ```
 
 ## Related codemaps

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -14,7 +13,6 @@ import (
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/ai"
 	"translator-server/internal/config"
-	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
 
@@ -43,9 +41,9 @@ type pendingBrowserJob struct {
 }
 
 type Server struct {
-	Store                *store.Store
-	Cfg                  *config.Config
-	Version              string
+	Store   *store.Store
+	Cfg     *config.Config
+	Version string
 	// Job scheduler state, guarded by jobMu: one admission point
 	// (enqueueJob), a FIFO pending queue per class (pendingAI/pendingWeb),
 	// exclusive resource keys (reservedKeys, one holder per key) and per-class
@@ -68,8 +66,30 @@ type Server struct {
 	dispatchDisabled bool
 	workerWG         sync.WaitGroup
 	cancelMu         sync.Mutex
-	jobCancels           map[string]context.CancelFunc
-	DownloaderFactory    func(userID string) *noveldownloader.Downloader
+	jobCancels       map[string]context.CancelFunc
+	// ParserHTTPClientFactory overrides the direct HTTP client parser scripts
+	// fetch through. Tests set it to rewrite site hosts onto an httptest
+	// server; production leaves it nil and gets a plain client.
+	ParserHTTPClientFactory func(userID string) *http.Client
+	// BrowserJobEnqueuer overrides EnqueueBrowserJob for the parser fetcher's
+	// worker relay. Tests set it to stub the connected browser worker;
+	// production leaves it nil and jobs go through the real queue.
+	BrowserJobEnqueuer func(operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error)
+	// parserThrottle spaces parser fetches per site (URL host). It is shared
+	// rather than per-job because each script reload builds a new fetcher.
+	// Bounds are set once here from the config and never mutated afterwards
+	// (see setDelays, tests only), so concurrent fetchers share it race-free.
+	parserThrottle *parseThrottle
+	// parserUpdates caches the release manifest for parser auto-update and
+	// serializes parser file replacement (see parser_update.go). Value field:
+	// the zero value is ready to use.
+	parserUpdates parserUpdateCache
+	// probeCache memoizes read-only probe outcomes (canUpdate,
+	// requiresBrowser) per URL host so the novel list does not recompile
+	// every script per row. Lazily initialized; see cachedProbe/storeProbe.
+	// Execution paths always resolve fresh and never consult it.
+	probeCacheMu         sync.Mutex
+	probeCache           map[string]probeCacheEntry
 	previewCacheMu       sync.RWMutex
 	previewCache         map[string]previewCacheEntry
 	importInfoCacheMu    sync.RWMutex
@@ -117,6 +137,10 @@ type Server struct {
 }
 
 func New(st *store.Store, cfg *config.Config) *Server {
+	minDelayMs, maxDelayMs := 0, 0
+	if cfg != nil {
+		minDelayMs, maxDelayMs = cfg.DownloadMinDelayMs, cfg.DownloadMaxDelayMs
+	}
 	s := &Server{
 		Store:              st,
 		Cfg:                cfg,
@@ -129,36 +153,12 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		importInfoCache:    make(map[string]importInfoCacheEntry),
 		browserQueue:       make(chan BrowserJob, 64),
 		pendingBrowserJobs: make(map[string]*pendingBrowserJob),
-		loginLimiter:       newRateLimiter(5, 5),     // 5 attempts per minute per IP
-		invitationLimiter:  newRateLimiter(10, 10),   // 10 redemptions per minute per IP
-		wsLimiter:          newRateLimiter(16, 16),   // 16 WS upgrades per minute per IP
+		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
+		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
+		wsLimiter:          newRateLimiter(16, 16), // 16 WS upgrades per minute per IP
+		parserThrottle:     newParseThrottle(minDelayMs, maxDelayMs),
 		globalLimiter:      newRateLimiter(600, 600), // global backstop: 600 requests per minute per IP
 		agentLimiter:       newRateLimiter(10, 20),   // agent chat: burst 10, 20 turns per minute per IP
-	}
-	s.DownloaderFactory = func(userID string) *noveldownloader.Downloader {
-		directClient := noveldownloader.NewHTTPClient()
-
-		// Always wrap with the lazy fallback client. It checks for an
-		// available browser worker per-request, so it transparently starts
-		// using the proxy the moment a worker connects — even mid-job — and
-		// adds no overhead when none is connected. The checker is scoped to
-		// the owning user so proxy fetches only ever run on that user's own
-		// connected browser worker.
-		checker := NewBrowserWorkerChecker(s, userID)
-		client := noveldownloader.NewLazyFallbackClient(directClient, checker)
-
-		dl := noveldownloader.NewDownloaderWithClient(client)
-		dl.MinChapterDelay = noveldownloader.DefaultMinChapterDelay
-		dl.MaxChapterDelay = noveldownloader.DefaultMaxChapterDelay
-		if cfg != nil {
-			if cfg.DownloadMinDelayMs > 0 {
-				dl.MinChapterDelay = time.Duration(cfg.DownloadMinDelayMs) * time.Millisecond
-			}
-			if cfg.DownloadMaxDelayMs > 0 {
-				dl.MaxChapterDelay = time.Duration(cfg.DownloadMaxDelayMs) * time.Millisecond
-			}
-		}
-		return dl
 	}
 	s.startJobWorker()
 	go s.processBrowserJobs()

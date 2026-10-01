@@ -1,0 +1,102 @@
+{
+  "apiVersion": 1,
+  "parsers": [
+    {
+      "name": "69shuba",
+      "file": "69shuba.js",
+      "sha256": "91c03b556f391e7ce83e567a8a0d8efa0c6c2815208199dc29c75bbdb5abb42f",
+      "requiresBrowser": true
+    },
+    {
+      "name": "cherrymist",
+      "file": "cherrymist.js",
+      "sha256": "0c142f332abc2f238b809c994fb5678066b9e5ab80bc4a3a34746223ce210743",
+      "requiresBrowser": false
+    },
+    {
+      "name": "chrysanthemumgarden",
+      "file": "chrysanthemumgarden.js",
+      "sha256": "b463d727ca9f5542cb26d05988f61d6c1bbcada2e8e82eb8b9e3aeab9261a126",
+      "requiresBrowser": false
+    },
+    {
+      "name": "empirenovel",
+      "file": "empirenovel.js",
+      "sha256": "bf5632c8fdf186350dcb1f1291e7804c83153d3f3c0cbf6337ad8bdc33c28d36",
+      "requiresBrowser": true
+    },
+    {
+      "name": "fenrirealm",
+      "file": "fenrirealm.js",
+      "sha256": "2b45bab9a4778213fa20eda7e2f8877dd4f05a8e488c196ccd6429a324d5c375",
+      "requiresBrowser": false
+    },
+    {
+      "name": "floraegarden",
+      "file": "floraegarden.js",
+      "sha256": "3a467bcb2c76ea0ddeae3ba63cbc6ff4562da11467736826802526c31bd18413",
+      "requiresBrowser": true
+    },
+    {
+      "name": "gaydemon",
+      "file": "gaydemon.js",
+      "sha256": "f9793f9b8dc902884ee91442ad5ca51a8d3f7e94758b19350d0f9bc1fb54a01b",
+      "requiresBrowser": false
+    },
+    {
+      "name": "inkitt",
+      "file": "inkitt.js",
+      "sha256": "470da4504c25fed7e44be2da6d7ee2d136ea14246c2250b28ea90d60eed752e1",
+      "requiresBrowser": true
+    },
+    {
+      "name": "inkspired",
+      "file": "inkspired.js",
+      "sha256": "523e9e4b4744a639406981449ad2526be73df4b65969a2ba36724308d857c56f",
+      "requiresBrowser": true
+    },
+    {
+      "name": "literotica",
+      "file": "literotica.js",
+      "sha256": "3871db825fc461bb405323395e929d275ef2587c2e31453bb8afe77560e44912",
+      "requiresBrowser": false
+    },
+    {
+      "name": "novelarrow",
+      "file": "novelarrow.js",
+      "sha256": "ccbf198cc0bd22883a03c31fab5f107ea760dc518e504a71223f21b4c1cc1bc8",
+      "requiresBrowser": false
+    },
+    {
+      "name": "novelfire",
+      "file": "novelfire.js",
+      "sha256": "b2107cca6074278569a64c2fc2ada49f500d3c6d0e756e315ab5abbe2ac22d8c",
+      "requiresBrowser": false
+    },
+    {
+      "name": "skydemonorder",
+      "file": "skydemonorder.js",
+      "sha256": "783fb06e32468b2fb2fe929d0c5bebe9ce06e471c5f250b588d36e31257c0f55",
+      "requiresBrowser": true
+    },
+    {
+      "name": "skynovels",
+      "file": "skynovels.js",
+      "sha256": "af9ea7e4155ef25f8205e2d5d62f98aa42beda4c359cae9b20d7670a56d661c0",
+      "requiresBrowser": false
+    },
+    {
+      "name": "wattpad",
+      "file": "wattpad.js",
+      "sha256": "7e0bec285f4a1376bd7a7a501c95c789c397fe6523ed2806d14d783541e8f3d0",
+      "requiresBrowser": false
+    },
+    {
+      "name": "webnovel",
+      "file": "webnovel.js",
+      "sha256": "c0c4afd06f47f93bce0b36cf99173cd3c7a0257506cb15649b100ab2da974ebf",
+      "requiresBrowser": false
+    }
+  ],
+  "signature": "c5c300d88116b01da0eccd587222fcfc866f6698052af8a2e1c9ad49c8ecf144b3bfb8d2f02f7717b0e4091e8861d1f964f0fbc8d22e1ba417afff24e2cec70a"
+}

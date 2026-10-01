@@ -412,6 +412,12 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 			// existing databases are never bulk-processed on a normal boot.
 			&core.NumberField{Name: "position"},
 			&core.BoolField{Name: "excluded"},
+			// source_key is the parser script's stable identity for a chapter
+			// (chapterKey, defaulting to the chapter URL). It is the primary
+			// input to the new/missing diff against a parser TOC snapshot. Rows
+			// written before this field existed have it empty and fall back to
+			// the title/order heuristic in GetExistingChapterURLs.
+			&core.TextField{Name: "source_key", Max: 1000},
 		} {
 			if err := s.ensureField(c, field); err != nil {
 				return nil, err
@@ -441,6 +447,7 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 	c.Fields.Add(&core.NumberField{Name: "original_char_count"})
 	c.Fields.Add(&core.NumberField{Name: "translated_char_count"})
 	c.Fields.Add(&core.NumberField{Name: "refined_char_count"})
+	c.Fields.Add(&core.TextField{Name: "source_key", Max: 1000})
 	addSystemDateFields(c)
 	c.AddIndex("idx_chapters_novel_order_unique", true, "novel,chapter_order", "")
 	c.AddIndex("idx_chapters_novel_position_unique", true, "novel,position", "")
@@ -496,9 +503,9 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 			&core.NumberField{Name: "auto_segment_count"},
 			&core.NumberField{Name: "auto_segment_current_index"},
 			&core.NumberField{Name: "auto_segment_completed_count"},
-		&core.TextField{Name: "auto_segment_chapter_id", Max: 64},
-		&core.TextField{Name: "auto_segment_chapter_title", Max: 500},
-		&core.NumberField{Name: "new_chapters"},
+			&core.TextField{Name: "auto_segment_chapter_id", Max: 64},
+			&core.TextField{Name: "auto_segment_chapter_title", Max: 500},
+			&core.NumberField{Name: "new_chapters"},
 		} {
 			if err := s.ensureField(c, field); err != nil {
 				return nil, err

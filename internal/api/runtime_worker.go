@@ -3,14 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"translator-server/internal/noveldownloader"
+	"translator-server/internal/parserhost"
 	"translator-server/internal/store"
 )
 
@@ -289,7 +291,6 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			return fmt.Errorf("redownload blocked by active job %s", activeJob.ID)
 		}
 	}
-	dl := s.DownloaderFactory(job.OwnerID)
 	if len(opts.Chapters) == 0 {
 		// Nothing was fetched, so there is no request to space out: the job
 		// ends here rather than holding the origin keys for a pointless wait.
@@ -299,29 +300,34 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		return nil
 	}
 	if err := s.Store.UpdateJob(job.ID, map[string]interface{}{
-		"status":        "running",
-		"totalChapters": len(opts.Chapters),
-		"errorMessage":  "",
+		"status":                  "running",
+		"totalChapters":           len(opts.Chapters),
+		"errorMessage":            "",
 		"autoSegmentChapterTitle": "",
 	}); err != nil {
 		return fmt.Errorf("set job running: %w", err)
 	}
 
-	parser := dl.FindParser(opts.URL)
-
-	if parser == nil && !s.HasBrowserWorkerForUser(job.OwnerID) {
-		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": "unsupported URL"}); ue != nil {
+	// Site data comes exclusively from the parser engine: resolve the script
+	// for the novel's source URL once, so every chapter in the job is fetched
+	// through the same (possibly browser-routed) path.
+	scriptEntry, scriptErr := s.resolveScriptForExecution(ctx, job.OwnerID, opts.URL)
+	if scriptErr != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{"status": "failed", "errorMessage": parserErrorMessage(scriptErr)}); ue != nil {
 			slog.Error("update job status on unsupported URL", "jobId", job.ID, "error", ue)
 		}
-		return fmt.Errorf("unsupported URL: %s", opts.URL)
+		return scriptErr
 	}
+	// One fetcher for the whole job so the inter-fetch throttle spans every
+	// chapter instead of restarting per script reload. It is routed exactly
+	// like routedScript routes a per-request engine: browser relay when the
+	// script asks for it, Livewire operation for URLs matching the catalog
+	// pattern.
+	fetcher := newParserFetcher(s, job.OwnerID, scriptEntry.script.RequiresBrowser(), scriptEntry.script.LivewireCatalogPattern())
+	cooldown := func(ctx context.Context) error { return fetcher.sleepBetweenFetches(ctx, opts.URL) }
 
 	completed := 0
 	failed := 0
-	var proxyDL *noveldownloader.Downloader
-	if parser == nil && s.HasBrowserWorkerForUser(job.OwnerID) {
-		proxyDL = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, job.OwnerID))
-	}
 	// Last line of defense for jobs enqueued before the multi-part planning
 	// fix (or any planner that emits duplicate orders): seed claimed orders
 	// from what is already stored so a repeated site number never hits the
@@ -341,15 +347,6 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		if idx > 0 {
-			if err := dl.SleepBetweenChapters(ctx); err != nil {
-				if ctx.Err() != nil {
-					break
-				}
-				return err
-			}
-		}
-
 		// Report the in-flight chapter so the jobs drawer can show
 		// "Descargando capítulo: <título>" while the fetch runs.
 		if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
@@ -358,7 +355,7 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			slog.Warn("update job current chapter", "jobId", job.ID, "error", ue)
 		}
 
-		ch, downloadErr := s.downloadChapterWithRetry(ctx, dl, proxyDL, parser, chInfo, job.ID, job.OwnerID)
+		pageTitle, markdown, downloadErr := s.downloadChapterWithRetry(ctx, scriptEntry, chInfo, job.ID, job.OwnerID)
 
 		if downloadErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -366,61 +363,80 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 			}
 			failed++
 			slog.Error("failed to download chapter", "jobId", job.ID, "chapter", chInfo.Title, "error", downloadErr)
-		} else if ch != nil {
-			chOrder := chInfo.Order
-			if chOrder <= 0 {
-				chOrder = opts.StartOrder + idx
+			if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
+				"completedChapters": completed,
+				"failedChapters":    failed,
+			}); ue != nil {
+				slog.Warn("update job progress", "jobId", job.ID, "error", ue)
 			}
-			if !opts.ReDownload {
-				if claimed[chOrder] {
-					fixed := chOrder + 1
-					for claimed[fixed] {
-						fixed++
-					}
-					slog.Warn("download job duplicate order reassigned", "jobId", job.ID, "chapter", chInfo.Title, "from", chOrder, "to", fixed)
-					chOrder = fixed
+			continue
+		}
+		if strings.TrimSpace(markdown) == "" {
+			failed++
+			slog.Warn("empty download result", "jobId", job.ID, "chapter", chInfo.Title)
+			if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
+				"completedChapters": completed,
+				"failedChapters":    failed,
+			}); ue != nil {
+				slog.Warn("update job progress", "jobId", job.ID, "error", ue)
+			}
+			continue
+		}
+		chOrder := chInfo.Order
+		if chOrder <= 0 {
+			chOrder = opts.StartOrder + idx
+		}
+		if !opts.ReDownload {
+			if claimed[chOrder] {
+				fixed := chOrder + 1
+				for claimed[fixed] {
+					fixed++
 				}
-				claimed[chOrder] = true
+				slog.Warn("download job duplicate order reassigned", "jobId", job.ID, "chapter", chInfo.Title, "from", chOrder, "to", fixed)
+				chOrder = fixed
 			}
-			chTitle := ch.Title
-			if chTitle == "" {
-				chTitle = chInfo.Title
-			}
-			if chTitle == "" {
-				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
-			}
-			if opts.ReDownload {
-				// Re-download mode: update only the original content of an
-				// existing chapter (matched by id). Title, status and any
-				// existing translation/refinement are preserved because the
-				// upsert only overwrites non-empty fields.
-				if chInfo.ChapterID == "" {
-					failed++
-					slog.Error("re-download chapter without id", "jobId", job.ID, "chapter", chTitle)
-				} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
-					ID:              chInfo.ChapterID,
-					ChapterOrder:    chOrder,
-					OriginalContent: ch.Markdown,
-				}); err != nil {
-					failed++
-					slog.Error("failed to save re-downloaded chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
-				} else {
-					completed++
-				}
+			claimed[chOrder] = true
+		}
+		// The stored title comes from the chapter page first (TOC entries
+		// sometimes prefix every chapter with the novel name); the planned
+		// TOC title is only the fallback.
+		chTitle := pageTitle
+		if chTitle == "" {
+			chTitle = chInfo.Title
+		}
+		if chTitle == "" {
+			chTitle = fmt.Sprintf("Capítulo %d", chOrder)
+		}
+		if opts.ReDownload {
+			// Re-download mode: update only the original content of an
+			// existing chapter (matched by id). Title, status and any
+			// existing translation/refinement are preserved because the
+			// upsert only overwrites non-empty fields.
+			if chInfo.ChapterID == "" {
+				failed++
+				slog.Error("re-download chapter without id", "jobId", job.ID, "chapter", chTitle)
 			} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+				ID:              chInfo.ChapterID,
 				ChapterOrder:    chOrder,
-				Title:           chTitle,
-				OriginalContent: ch.Markdown,
-				Status:          "pending",
+				SourceKey:       chInfo.SourceKey,
+				OriginalContent: markdown,
 			}); err != nil {
 				failed++
-				slog.Error("failed to save chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
+				slog.Error("failed to save re-downloaded chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
 			} else {
 				completed++
 			}
-		} else {
+		} else if _, err := s.Store.UpsertChapterWithoutStats(job.OwnerID, job.NovelID, &store.Chapter{
+			ChapterOrder:    chOrder,
+			Title:           chTitle,
+			SourceKey:       chInfo.SourceKey,
+			OriginalContent: markdown,
+			Status:          "pending",
+		}); err != nil {
 			failed++
-			slog.Warn("empty download result", "jobId", job.ID, "chapter", chInfo.Title)
+			slog.Error("failed to save chapter", "jobId", job.ID, "chapter", chTitle, "error", err)
+		} else {
+			completed++
 		}
 		if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{
 			"completedChapters": completed,
@@ -472,19 +488,23 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 	// no gap at all; the upgrade path is a per-origin lastFetchAt timestamp and
 	// sleeping only the remaining time.
 	if ctx.Err() == nil && s.hasPendingWebJobForOrigins(job) {
-		if err := dl.SleepBetweenChapters(ctx); err != nil {
+		if err := cooldown(ctx); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// downloadChapterWithRetry downloads a single chapter, retrying transient
-// failures (Cloudflare challenges, timeouts, empty responses) a few times
-// with a small backoff before giving up. A single transient failure should
-// not permanently drop a chapter from the novel.
-func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *noveldownloader.Downloader, parser noveldownloader.Parser, chInfo store.DownloadChapterInfo, jobID, ownerID string) (*noveldownloader.Chapter, error) {
-	chURLs := []noveldownloader.ChapterURL{{URL: chInfo.URL, Title: chInfo.Title}}
+// downloadChapterWithRetry downloads a single chapter through the parser
+// script, retrying transient failures (Cloudflare challenges, timeouts, empty
+// responses) a few times with a small backoff before giving up. A single
+// transient failure should not permanently drop a chapter from the novel.
+//
+// The script is reloaded per attempt so a Cloudflare challenge solved by the
+// browser worker mid-retry is picked up by the fetcher's next fetch. The
+// returned title prefers the chapter page over the planned TOC title (see
+// fetchChapterThroughScript).
+func (s *Server) downloadChapterWithRetry(ctx context.Context, entry parserScript, chInfo store.DownloadChapterInfo, jobID, ownerID string) (pageTitle, markdown string, err error) {
 	var lastErr error
 	for attempt := 0; attempt <= chapterDownloadMaxRetries; attempt++ {
 		if attempt > 0 {
@@ -496,37 +516,40 @@ func (s *Server) downloadChapterWithRetry(ctx context.Context, dl, proxyDL *nove
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return nil, ctx.Err()
+				return "", "", ctx.Err()
 			case <-timer.C:
 			}
 		}
 
-		var downloaded []noveldownloader.Chapter
-		var err error
-		switch {
-		case parser != nil:
-			// Fallback to proxy is handled automatically by LazyFallbackClient
-			downloaded, err = dl.DownloadChapters(ctx, chURLs, 1, 1)
-		case s.HasBrowserWorkerForUser(ownerID):
-			localProxy := proxyDL
-			if localProxy == nil {
-				localProxy = s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, ownerID))
+		script, loadErr := s.routedScript(ownerID, entry)
+		if loadErr != nil {
+			return "", "", loadErr
+		}
+		chapter, err := script.Chapter(ctx, chInfo.URL)
+		if err != nil {
+			var scriptErr *parserhost.ScriptError
+			if errors.As(err, &scriptErr) {
+				// A repeatable script failure may be a stale parser; drop
+				// the manifest cache so the next resolve re-checks for a
+				// published fix. No mid-job update here on purpose: every
+				// chapter in the job runs through the same script version.
+				s.invalidateParserUpdates()
 			}
-			downloaded, err = localProxy.DownloadChapters(ctx, chURLs, 1, 1)
-		default:
-			return nil, fmt.Errorf("no download method available")
+			lastErr = err
+			continue
 		}
-
-		if err == nil && len(downloaded) > 0 {
-			return &downloaded[0], nil
+		title := chapter.Title
+		if title == "" {
+			title = chInfo.Title
 		}
+		markdown, err := htmlToChapterMarkdown(chapter.ContentHTML, title)
 		if err != nil {
 			lastErr = err
-		} else {
-			lastErr = fmt.Errorf("empty download result for %s", chInfo.URL)
+			continue
 		}
+		return chapter.Title, markdown, nil
 	}
-	return nil, lastErr
+	return "", "", lastErr
 }
 
 type checkJobOptions struct {
@@ -555,15 +578,11 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		return fmt.Errorf("set job running: %w", err)
 	}
 
-	dl := s.DownloaderFactory(job.OwnerID)
-	if err := dl.SleepBetweenChapters(ctx); err != nil {
-		return err
-	}
-	info, err := dl.GetNovelInfo(ctx, opts.URL)
+	snapshot, err := s.fetchSourceSnapshot(ctx, job.OwnerID, opts.URL)
 	if err != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
 			"status":       "failed",
-			"errorMessage": err.Error(),
+			"errorMessage": parserErrorMessage(err),
 		}); ue != nil {
 			slog.Error("update job status on fetch failure", "jobId", job.ID, "error", ue)
 		}
@@ -590,23 +609,42 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		}
 		return fmt.Errorf("get existing titles: %w", err)
 	}
-
-	newAvailable := 0
-	for _, ch := range info.Chapters {
-		chNum := chapterOrderOf(ch)
-		if chNum > 0 && existingOrders[chNum] {
-			continue
+	existingKeys, err := s.Store.GetExistingChapterKeys(job.OwnerID, job.NovelID)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on existing keys failure", "jobId", job.ID, "error", ue)
 		}
-		if existingTitles[ch.Title] {
-			continue
-		}
-		newAvailable++
+		return fmt.Errorf("get existing chapter keys: %w", err)
 	}
+
+	// Read-only, like check-preview: plan the key migration in memory so a
+	// mid-migration novel whose plan fails diffs by the legacy heuristic
+	// instead of reporting every legacy row as new. The plan is also merged
+	// into the stored keys, because a novel with only some rows keyed would
+	// otherwise run the keyed diff against an incomplete set and report its
+	// whole legacy remainder as new — the count this job writes for the
+	// library grid.
+	keyPlan, forceLegacy, err := s.legacySourceKeyPlan(job.OwnerID, job.NovelID, snapshot.Chapters)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on source key plan failure", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("plan source keys: %w", err)
+	}
+
+	newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
+	newAvailable := len(newChapters)
 
 	cacheKey := job.OwnerID + ":" + job.NovelID
 	s.previewCacheMu.Lock()
 	s.previewCache[cacheKey] = previewCacheEntry{
-		chapters:  info.Chapters,
+		chapters:  snapshot.Chapters,
 		createdAt: time.Now(),
 	}
 	s.previewCacheMu.Unlock()

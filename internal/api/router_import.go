@@ -19,7 +19,6 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/epubimport"
-	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
 
@@ -28,12 +27,12 @@ var chapterOrderRegex = regexp.MustCompile(`(\d+)`)
 const previewCacheTTL = 30 * time.Minute
 
 type previewCacheEntry struct {
-	chapters  []noveldownloader.ChapterURL
+	chapters  []sourceChapter
 	createdAt time.Time
 }
 
 type importInfoCacheEntry struct {
-	info      *noveldownloader.NovelInfo
+	info      *sourceSnapshot
 	createdAt time.Time
 }
 
@@ -259,9 +258,9 @@ func (sharedImportHandlers) previewFromURL(s *Server) func(*core.RequestEvent) e
 		if strings.TrimSpace(body.URL) == "" {
 			return e.BadRequestError("url is required", nil)
 		}
-		info, err := s.getNovelInfoWithFallback(e.Request.Context(), e.Auth.Id, body.URL)
+		info, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, body.URL)
 		if err != nil {
-			return e.BadRequestError(err.Error(), nil)
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 		}
 		// Cache the full list (with chapter URLs) so the subsequent import
 		// request reuses it instead of re-scraping every chapter page.
@@ -284,9 +283,9 @@ func (sharedImportHandlers) previewFromURL(s *Server) func(*core.RequestEvent) e
 			"description":   info.Description,
 			"coverURL":      info.CoverURL,
 			"totalChapters": len(info.Chapters),
-			"sourceURL":     info.SourceURL,
+			"sourceURL":     body.URL,
 		}
-			return v1Respond(e, http.StatusOK, body2, nil, nil)
+		return v1Respond(e, http.StatusOK, body2, nil, nil)
 	}
 }
 
@@ -320,7 +319,7 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 		cachedInfo, cached := s.importInfoCache[cacheKey]
 		s.importInfoCacheMu.RUnlock()
 
-		var info *noveldownloader.NovelInfo
+		var info *sourceSnapshot
 		var err error
 		if cached {
 			info = cachedInfo.info
@@ -328,9 +327,9 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 			delete(s.importInfoCache, cacheKey)
 			s.importInfoCacheMu.Unlock()
 		} else {
-			info, err = s.getNovelInfoWithFallback(e.Request.Context(), e.Auth.Id, body.URL)
+			info, err = s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, body.URL)
 			if err != nil {
-				return e.BadRequestError(err.Error(), nil)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
 		}
 		startCh := body.StartChapter
@@ -342,28 +341,16 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 			endCh = len(info.Chapters)
 		}
 
-		var firstChapter []noveldownloader.Chapter
-		dl := s.DownloaderFactory(e.Auth.Id)
-		parser := dl.FindParser(body.URL)
-
-		if parser != nil {
-			firstChapter, err = dl.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
-			if err != nil && s.HasBrowserWorkerForUser(e.Auth.Id) {
-				slog.Info("direct HTTP chapter download failed, retrying via browser proxy", "error", err)
-				proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, e.Auth.Id))
-				firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
-			}
-		} else if s.HasBrowserWorkerForUser(e.Auth.Id) {
-			proxyDL := s.DownloaderFactoryWithClient(NewProxyHTTPClient(s, e.Auth.Id))
-			firstChapter, err = proxyDL.DownloadChapters(e.Request.Context(), info.Chapters, startCh, startCh)
-		} else {
-			return e.InternalServerError("failed to download first chapter", fmt.Errorf("no download method available"))
+		if startCh < 1 || startCh > len(info.Chapters) {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "startChapter is out of range for this novel")
 		}
+		firstRef := info.Chapters[startCh-1]
+		// The stored title comes from the chapter page first: TOC entries
+		// sometimes prefix every chapter with the novel name, which would
+		// store redundant text on every row.
+		firstTitle, firstMarkdown, err := s.fetchChapterThroughScript(e.Request.Context(), e.Auth.Id, body.URL, firstRef.URL, firstRef.Title)
 		if err != nil {
 			return e.InternalServerError("failed to download first chapter", err)
-		}
-		if len(firstChapter) == 0 {
-			return e.InternalServerError("failed to download first chapter", fmt.Errorf("no content returned"))
 		}
 		result, err := s.Store.ImportUrlNovel(&store.ImportUrlNovelInput{
 			OwnerID:           e.Auth.Id,
@@ -379,26 +366,25 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 		if err != nil {
 			return e.InternalServerError("failed to create novel", err)
 		}
-		ch := firstChapter[0]
-		chTitle := ch.Title
+		chTitle := firstTitle
+		if chTitle == "" {
+			chTitle = firstRef.Title
+		}
 		if chTitle == "" {
 			chTitle = fmt.Sprintf("Capítulo %d", startCh)
 		}
 		if _, err := s.Store.UpsertChapterWithoutStats(e.Auth.Id, result.Novel.ID, &store.Chapter{
 			ChapterOrder:    startCh,
 			Title:           chTitle,
-			OriginalContent: ch.Markdown,
+			SourceKey:       firstRef.Key,
+			OriginalContent: firstMarkdown,
 			Status:          "pending",
 		}); err != nil {
 			return e.InternalServerError("failed to save chapter", err)
 		}
 
 		if info.CoverURL != "" {
-			coverBlob, coverMime, coverErr := dl.DownloadCover(e.Request.Context(), info.CoverURL)
-			if coverErr != nil && s.HasBrowserWorkerForUser(e.Auth.Id) {
-				slog.Info("direct cover download failed, retrying via browser worker", "novel", result.Novel.ID, "error", coverErr)
-				coverBlob, coverMime, coverErr = s.FetchImageViaWorker(e.Request.Context(), info.CoverURL, e.Auth.Id, 60)
-			}
+			coverBlob, coverMime, coverErr := s.fetchCoverBlob(e.Request.Context(), e.Auth.Id, info.CoverURL)
 			if coverErr != nil {
 				slog.Warn("failed to download cover", "novel", result.Novel.ID, "error", coverErr)
 			} else if err := s.Store.AttachCoverBlob(result.Novel.ID, coverBlob, coverMime); err != nil {
@@ -416,8 +402,9 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 				chTitle = fmt.Sprintf("Capítulo %d", i+1)
 			}
 			remainingChapters = append(remainingChapters, store.DownloadChapterInfo{
-				URL:   chURL.URL,
-				Title: chTitle,
+				URL:       chURL.URL,
+				Title:     chTitle,
+				SourceKey: chURL.Key,
 			})
 		}
 		var downloadJobID string
@@ -479,15 +466,14 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		if strings.TrimSpace(novel.URL) == "" {
 			return e.BadRequestError("novel has no source URL", nil)
 		}
-		dl := s.DownloaderFactory(e.Auth.Id)
-		info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
+		snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 		if err != nil {
-			return e.InternalServerError("failed to fetch novel info", err)
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 		}
 		cacheKey := e.Auth.Id + ":" + novelID
 		s.previewCacheMu.Lock()
 		s.previewCache[cacheKey] = previewCacheEntry{
-			chapters:  info.Chapters,
+			chapters:  snapshot.Chapters,
 			createdAt: time.Now(),
 		}
 		s.previewCacheMu.Unlock()
@@ -508,37 +494,30 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		if err != nil {
 			return e.InternalServerError("failed to check existing chapters", err)
 		}
-		newAvailable := 0
-		firstNew := 0
-		lastNew := 0
-		// seen mirrors the orders updateFromURL will claim so multi-part
-		// chapters sharing one site number (e.g. "... 23-1", "... 23-2")
-		// count with distinct orders. accounted marks site numbers whose
-		// stored first part was seen in this batch, proving a same-number
-		// entry with a new title is another part (not a rename, which stays
-		// skipped for the redownload path).
-		seen := make(map[int]bool, len(existingOrders)+len(info.Chapters))
+		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
+		if err != nil {
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
+		}
+		// Read-only: the backfill plan is computed in memory and never
+		// persisted here. Persisting happens in update-from-url, the flow
+		// that actually enqueues downloads.
+		keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novelID, snapshot.Chapters)
+		if err != nil {
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to plan source keys", v1ErrorDetail{Message: err.Error()})
+		}
+		newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
+		newAvailable := len(newChapters)
+		// The order preview mirrors what updateFromURL will claim, so multi-part
+		// chapters sharing one site number (e.g. "... 23-1", "... 23-2") are
+		// reported with distinct orders.
+		seen := make(map[int]bool, len(existingOrders))
 		for o := range existingOrders {
 			seen[o] = true
 		}
-		accounted := make(map[int]bool, len(info.Chapters))
-		seenTitles := make(map[string]bool, len(info.Chapters))
-		for i, ch := range info.Chapters {
-			chNum := chapterOrderOf(ch)
-			if ch.Title != "" && (existingTitles[ch.Title] || seenTitles[ch.Title]) {
-				if chNum > 0 {
-					accounted[chNum] = true
-				}
-				continue
-			}
-			if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
-				continue
-			}
-			if ch.Title != "" {
-				seenTitles[ch.Title] = true
-			}
-			pos := claimChapterOrder(seen, chNum, i+1)
-			newAvailable++
+		firstNew := 0
+		lastNew := 0
+		for i, ch := range newChapters {
+			pos := claimChapterOrder(seen, chapterOrderOf(ch), i+1)
 			if firstNew == 0 || pos < firstNew {
 				firstNew = pos
 			}
@@ -550,18 +529,18 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 			slog.Warn("update novel check result", "novel", novelID, "error", err)
 		}
 		body := map[string]any{
-			"title":           info.Title,
-			"author":          info.Author,
-			"description":     info.Description,
-			"coverURL":        info.CoverURL,
-			"sourceURL":       info.SourceURL,
+			"title":           snapshot.Title,
+			"author":          snapshot.Author,
+			"description":     snapshot.Description,
+			"coverURL":        snapshot.CoverURL,
+			"sourceURL":       novel.URL,
 			"currentChapters": len(existingTitles),
-			"totalChapters":   len(info.Chapters),
+			"totalChapters":   len(snapshot.Chapters),
 			"newChapters":     newAvailable,
 			"firstNewChapter": firstNew,
 			"lastNewChapter":  lastNew,
 		}
-			return v1Respond(e, http.StatusOK, body, nil, nil)
+		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
 }
 
@@ -590,19 +569,18 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		cached, found := s.previewCache[cacheKey]
 		s.previewCacheMu.RUnlock()
 
-		var chapters []noveldownloader.ChapterURL
+		var chapters []sourceChapter
 		if found {
 			chapters = cached.chapters
 			s.previewCacheMu.Lock()
 			delete(s.previewCache, cacheKey)
 			s.previewCacheMu.Unlock()
 		} else {
-			dl := s.DownloaderFactory(e.Auth.Id)
-			info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
+			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 			if err != nil {
-				return e.InternalServerError("failed to fetch novel info", err)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
-			chapters = info.Chapters
+			chapters = snapshot.Chapters
 		}
 		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
 		if err != nil {
@@ -612,24 +590,20 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		if err != nil {
 			return e.InternalServerError("failed to check existing chapters", err)
 		}
+		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
+		if err != nil {
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
+		}
+		forceLegacy, err := s.backfillLegacySourceKeys(e.Auth.Id, novelID, chapters, existingKeys)
+		if err != nil {
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to backfill source keys", v1ErrorDetail{Message: err.Error()})
+		}
+		// The new/missing diff is shared with checkPreview; this flow only
+		// applies the requested order range on top of it.
+		newChapters, _ := diffNovelSnapshot(&sourceSnapshot{Chapters: chapters}, existingKeys, existingOrders, existingTitles, forceLegacy)
 		sourceToDownload := make([]int, 0)
-		// accounted tracks site numbers whose stored first part was seen in
-		// this batch (same rule as checkPreview): a same-number entry with a
-		// new title is another part, not a rename.
-		accounted := make(map[int]bool)
-		batchTitles := make(map[string]bool)
-		for i, ch := range chapters {
-			chNum := chapterOrderOf(ch)
-			if ch.Title != "" && (existingTitles[ch.Title] || batchTitles[ch.Title]) {
-				if chNum > 0 {
-					accounted[chNum] = true
-				}
-				continue
-			}
-			if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
-				continue
-			}
-			pos := chNum
+		for i, ch := range newChapters {
+			pos := chapterOrderOf(ch)
 			if pos <= 0 {
 				pos = i + 1
 			}
@@ -639,14 +613,11 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			if body.EndChapter > 0 && pos > body.EndChapter {
 				continue
 			}
-			if ch.Title != "" {
-				batchTitles[ch.Title] = true
-			}
 			sourceToDownload = append(sourceToDownload, i)
 		}
 		if len(sourceToDownload) == 0 {
 			resp := map[string]any{"chaptersAdded": 0, "chapters": []map[string]any{}, "totalChapters": len(chapters), "message": "No hay capítulos nuevos. La novela ya está al día."}
-				return v1Respond(e, http.StatusOK, resp, nil, nil)
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
 		downloadChapters := make([]store.DownloadChapterInfo, 0, len(sourceToDownload))
 		// seen starts from what is stored so multi-part chapters sharing one
@@ -656,16 +627,17 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			seen[o] = true
 		}
 		for _, srcIdx := range sourceToDownload {
-			ch := chapters[srcIdx]
+			ch := newChapters[srcIdx]
+			chOrder := claimChapterOrder(seen, chapterOrderOf(ch), srcIdx+1)
 			chTitle := ch.Title
 			if chTitle == "" {
-				chTitle = fmt.Sprintf("Capítulo %d", srcIdx+1)
+				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 			}
-		chOrder := claimChapterOrder(seen, chapterOrderOf(ch), srcIdx+1)
 			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
-				URL:   ch.URL,
-				Title: chTitle,
-				Order: chOrder,
+				URL:       ch.URL,
+				Title:     chTitle,
+				Order:     chOrder,
+				SourceKey: ch.Key,
 			})
 		}
 		firstNewOrder := downloadChapters[0].Order
@@ -708,7 +680,7 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 			"downloadJobId":   job.ID,
 			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se están descargando en segundo plano.", len(downloadChapters)),
 		}
-			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}
 }
 
@@ -751,14 +723,13 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 		// stored ones, asks the user to confirm before a job is created. The
 		// confirmed request (confirm=true) reuses the cached list.
 		cacheKey := e.Auth.Id + ":" + novelID + ":redownload"
-		var chapters []noveldownloader.ChapterURL
+		var chapters []sourceChapter
 		loadFresh := func() error {
-			dl := s.DownloaderFactory(e.Auth.Id)
-			info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
+			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 			if err != nil {
-				return e.InternalServerError("failed to fetch novel info", err)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
-			chapters = info.Chapters
+			chapters = snapshot.Chapters
 			return nil
 		}
 		if !body.Confirm {
@@ -785,7 +756,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 				"pendingChapters": 0,
 				"message":         "No se encontraron capítulos para re-descargar. Verifica que la novela tenga capítulos o que el rango sea válido.",
 			}
-				return v1Respond(e, http.StatusOK, resp, nil, nil)
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
 		if !body.Confirm && len(plan.mismatches) > 0 {
 			// Cache the fresh list so the confirmed request does not re-scrape.
@@ -807,7 +778,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 				"needsConfirmation": true,
 				"chapters":          plan.mismatches,
 			}
-				return v1Respond(e, http.StatusOK, resp, nil, nil)
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
 
 		// Serialize check + create + enqueue per novel so two concurrent
@@ -851,7 +822,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 			"downloadJobId":   job.ID,
 			"message":         fmt.Sprintf("Re-descarga iniciada. %d capítulos se actualizarán en segundo plano conservando sus traducciones.", len(plan.chapters)),
 		}
-			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}
 }
 
@@ -866,12 +837,11 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				Results: []store.BatchCheckNovelResult{},
 				Checked: 0, WithUpdates: 0, Errors: 0,
 			}
-				return v1Respond(e, http.StatusOK, resp, nil, nil)
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
-		dl := s.DownloaderFactory(e.Auth.Id)
 		supported := make([]store.Novel, 0, len(novels))
 		for _, n := range novels {
-			if dl.IsSupportedURL(n.URL) {
+			if s.parserSupportsURL(e.Auth.Id, n.URL) {
 				supported = append(supported, n)
 			}
 		}
@@ -880,7 +850,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				Results: []store.BatchCheckNovelResult{},
 				Checked: 0, WithUpdates: 0, Errors: 0,
 			}
-				return v1Respond(e, http.StatusOK, resp, nil, nil)
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
 		results := make([]store.BatchCheckNovelResult, 0, len(supported))
 		checked := 0
@@ -888,16 +858,19 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 		errCount := 0
 		for i, novel := range supported {
 			if i > 0 {
-				if err := dl.SleepBetweenChapters(e.Request.Context()); err != nil {
+				// Space out requests across novels; the throttle bounds
+				// (DOWNLOAD_MIN_DELAY_MS/MAX) are what the server uses
+				// everywhere for site traffic.
+				if err := s.sleepBetweenSourceFetches(e.Request.Context(), novel.URL); err != nil {
 					break
 				}
 			}
-			info, err := dl.GetNovelInfo(e.Request.Context(), novel.URL)
+			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 			if err != nil {
 				errCount++
 				results = append(results, store.BatchCheckNovelResult{
 					NovelID: novel.ID, SourceTitle: novel.SourceTitle,
-					Error: err.Error(),
+					Error: parserErrorMessage(err),
 				})
 				continue
 			}
@@ -919,31 +892,39 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				})
 				continue
 			}
+			existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novel.ID)
+			if err != nil {
+				errCount++
+				results = append(results, store.BatchCheckNovelResult{
+					NovelID: novel.ID, SourceTitle: novel.SourceTitle,
+					Error: err.Error(),
+				})
+				continue
+			}
+			// Read-only like check-preview: plan the key migration in memory,
+			// never persist it. Keys are persisted by the update flow that
+			// enqueues downloads.
+			keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novel.ID, snapshot.Chapters)
+			if err != nil {
+				errCount++
+				results = append(results, store.BatchCheckNovelResult{
+					NovelID: novel.ID, SourceTitle: novel.SourceTitle,
+					Error: err.Error(),
+				})
+				continue
+			}
+			newCandidates, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
 			newCh := make([]store.DownloadChapterInfo, 0)
 			newAvailable := 0
 			firstNew := 0
 			lastNew := 0
 			startOrder := 0
-			seen := make(map[int]bool, len(existingOrders)+len(info.Chapters))
+			seen := make(map[int]bool, len(existingOrders)+len(newCandidates))
 			for o := range existingOrders {
 				seen[o] = true
 			}
-			accounted := make(map[int]bool)
-			batchTitles := make(map[string]bool)
-			for srcIdx, ch := range info.Chapters {
+			for srcIdx, ch := range newCandidates {
 				chNum := chapterOrderOf(ch)
-				if ch.Title != "" && (existingTitles[ch.Title] || batchTitles[ch.Title]) {
-					if chNum > 0 {
-						accounted[chNum] = true
-					}
-					continue
-				}
-				if chNum > 0 && existingOrders[chNum] && !accounted[chNum] {
-					continue
-				}
-				if ch.Title != "" {
-					batchTitles[ch.Title] = true
-				}
 				chOrder := claimChapterOrder(seen, chNum, srcIdx+1)
 				newAvailable++
 				if startOrder == 0 {
@@ -960,9 +941,10 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 					chTitle = fmt.Sprintf("Capítulo %d", chOrder)
 				}
 				newCh = append(newCh, store.DownloadChapterInfo{
-					URL:   ch.URL,
-					Title: chTitle,
-					Order: chOrder,
+					URL:       ch.URL,
+					Title:     chTitle,
+					Order:     chOrder,
+					SourceKey: ch.Key,
 				})
 			}
 			checked++
@@ -979,13 +961,13 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				NovelID:         novel.ID,
 				SourceTitle:     novel.SourceTitle,
 				SourceAuthor:    novel.SourceAuthor,
-				CoverURL:        info.CoverURL,
+				CoverURL:        snapshot.CoverURL,
 				NewChapters:     newAvailable,
 				FirstNewChapter: firstNew,
 				LastNewChapter:  lastNew,
 				StartOrder:      startOrder,
 				CurrentChapters: len(existingTitles),
-				TotalChapters:   len(info.Chapters),
+				TotalChapters:   len(snapshot.Chapters),
 				NewChapterInfo:  newCh,
 			})
 		}
@@ -993,7 +975,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 			Results: results, Checked: checked,
 			WithUpdates: withUpdates, Errors: errCount,
 		}
-			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
 
@@ -1090,7 +1072,7 @@ func (sharedImportHandlers) batchUpdate(s *Server) func(*core.RequestEvent) erro
 		resp := store.BatchUpdateResponse{
 			Jobs: jobs, TotalPending: totalPending,
 		}
-			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}
 }
 
@@ -1129,7 +1111,7 @@ func (sharedImportHandlers) batchTranslatePreview(s *Server) func(*core.RequestE
 			TotalNovels: len(results),
 			WithPending: withPending,
 		}
-			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
 
@@ -1208,7 +1190,7 @@ func (sharedImportHandlers) batchTranslate(s *Server) func(*core.RequestEvent) e
 		resp := store.BatchTranslateStartResponse{
 			Jobs: jobs, TotalPending: totalPending,
 		}
-			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}
 }
 
@@ -1261,7 +1243,7 @@ func (sharedImportHandlers) batchCheck(s *Server) func(*core.RequestEvent) error
 			results = append(results, result)
 		}
 		resp := map[string]any{"jobs": results}
-			return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}
 }
 
@@ -1347,12 +1329,14 @@ func extractChapterOrder(filename string) int {
 }
 
 // chapterOrderOf returns the chapter number to use for a parsed chapter.
-// Parsers that know the canonical position (e.g. SkyDemonOrder reports the
-// real episode number) set ChapterURL.Order — trust it first. The title
-// fallback is only a heuristic: multi-part titles such as "Some Arc (3)"
-// yield the part number, which collides with low episode orders already
-// stored and silently hides those chapters from update checks.
-func chapterOrderOf(ch noveldownloader.ChapterURL) int {
+//
+// The order the snapshot builder stamped from the TOC position wins: a parser
+// list is in reading order, and that stays true even when the site's titles
+// carry a different numbering of their own. The title fallback only applies to
+// hand-built slices that never went through a snapshot, and is only a
+// heuristic: multi-part titles such as "Some Arc (3)" yield the part number,
+// which collides with low orders already stored.
+func chapterOrderOf(ch sourceChapter) int {
 	if ch.Order > 0 {
 		return ch.Order
 	}
@@ -1435,7 +1419,7 @@ type redownloadPlan struct {
 // titles live in a separate field and re-downloads never touch them, so a
 // mismatch here means the pairing of original content to chapters may have
 // shifted.
-func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store.Chapter, byTitle map[string]store.Chapter, startChapter, endChapter int) redownloadPlan {
+func planRedownload(chapters []sourceChapter, byOrder map[int]store.Chapter, byTitle map[string]store.Chapter, startChapter, endChapter int) redownloadPlan {
 	plan := redownloadPlan{chapters: make([]store.DownloadChapterInfo, 0)}
 	scheduled := make(map[string]bool, len(chapters))
 	for i, ch := range chapters {
@@ -1477,6 +1461,7 @@ func planRedownload(chapters []noveldownloader.ChapterURL, byOrder map[int]store
 			Title:     chTitle,
 			Order:     chNum,
 			ChapterID: existingCh.ID,
+			SourceKey: ch.Key,
 		})
 		if ch.Title != "" && existingCh.Title != "" &&
 			!strings.EqualFold(strings.TrimSpace(ch.Title), strings.TrimSpace(existingCh.Title)) {

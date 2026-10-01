@@ -205,7 +205,7 @@ Request → PocketBase auth middleware → handler
   → store.Store method → PocketBase DAO → SQLite
   ↓ (if job)
   → enqueueJob() → channel → worker goroutine
-      → download: noveldownloader → store
+      → download: parserhost + parsers/ → store
       → translate: ai.Provider → store
 ```
 

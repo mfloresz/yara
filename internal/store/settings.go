@@ -142,12 +142,17 @@ type Novel struct {
 }
 
 type Chapter struct {
-	ID                string `json:"id,omitempty"`
-	NovelID           string `json:"novelId,omitempty"`
-	ChapterOrder      int    `json:"chapterOrder,omitempty"`
-	Position          int    `json:"position,omitempty"`
-	Excluded          bool   `json:"excluded,omitempty"`
-	Title             string `json:"title,omitempty"`
+	ID           string `json:"id,omitempty"`
+	NovelID      string `json:"novelId,omitempty"`
+	ChapterOrder int    `json:"chapterOrder,omitempty"`
+	Position     int    `json:"position,omitempty"`
+	Excluded     bool   `json:"excluded,omitempty"`
+	Title        string `json:"title,omitempty"`
+	// SourceKey is the parser script's stable identity for this chapter
+	// (chapterKey export, defaulting to the source chapter URL). Empty for
+	// rows created before the field existed, which is why the source-sync
+	// diff falls back to the title/order heuristic for those.
+	SourceKey         string `json:"sourceKey,omitempty"`
 	TranslatedTitle   string `json:"translatedTitle,omitempty"`
 	OriginalContent   string `json:"originalContent,omitempty"`
 	TranslatedContent string `json:"translatedContent,omitempty"`
@@ -302,6 +307,10 @@ type DownloadChapterInfo struct {
 	Title     string `json:"title"`
 	Order     int    `json:"order"`
 	ChapterID string `json:"chapterId,omitempty"` // id of an existing chapter when re-downloading
+	// SourceKey is the parser script's chapter identity (chapterKey export,
+	// defaulting to the chapter URL). Persisted as chapters.source_key so the
+	// next new/missing diff can match on identity instead of title heuristics.
+	SourceKey string `json:"sourceKey,omitempty"`
 }
 
 type BatchCheckNovelResult struct {

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
 
@@ -74,8 +73,8 @@ func TestHasPendingWebJobForOrigins(t *testing.T) {
 	}
 }
 
-// newCooldownTestEnv boots an env whose downloader hits a local mock for
-// novelfire.net, with a fixed inter-chapter delay so the cooldown window is
+// newCooldownTestEnv boots an env whose parser fetcher hits a local mock for
+// novelfire.net, with a fixed inter-fetch delay so the cooldown window is
 // predictable.
 func newCooldownTestEnv(t *testing.T, delay time.Duration) *apiTestEnv {
 	t.Helper()
@@ -91,16 +90,9 @@ func newCooldownTestEnv(t *testing.T, delay time.Duration) *apiTestEnv {
 	}))
 	t.Cleanup(mock.Close)
 
-	transport := &hostRewritingTransport{rewrites: map[string]string{"novelfire.net": mock.URL}}
-	client := noveldownloader.NewHTTPClientWithTransport(transport)
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		dl := noveldownloader.NewDownloaderWithClient(client)
-		dl.MinChapterDelay = delay
-		dl.MaxChapterDelay = delay
-		return dl
-	}
+	useRewritingClient(env, map[string]string{"novelfire.net": mock.URL})
+	setParserThrottle(env, int(delay.Milliseconds()), int(delay.Milliseconds()))
 	return env
 }
 

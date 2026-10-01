@@ -10,6 +10,7 @@ frontend/dist/
 *.test
 *.out
 app.key
+.parsers-signing.key
 .env
 docs/refine-process.md
 scripts/*

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"translator-server/internal/noveldownloader"
 	"translator-server/internal/store"
 )
 
@@ -88,12 +87,8 @@ func setupRedownloadFixture(t *testing.T, withChapters bool) *redownloadFixture 
 	t.Cleanup(mock.Close)
 
 	rewrites := map[string]string{"novelfire.net": mock.URL}
-	client := noveldownloader.NewHTTPClientWithTransport(&hostRewritingTransport{rewrites: rewrites})
-
 	env := newAPITestEnv(t)
-	env.server.DownloaderFactory = func(string) *noveldownloader.Downloader {
-		return noveldownloader.NewDownloaderWithClient(client)
-	}
+	useRewritingClient(env, rewrites)
 
 	alice := registerUser(t, env, "alice-redownload@example.com", "secret123", "Alice")
 

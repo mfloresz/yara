@@ -710,6 +710,14 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 	} else if record.IsNew() {
 		record.Set("title", "")
 	}
+	// source_key is written on create and on every parser-driven update, but is
+	// never cleared by an empty input: a re-download that omits it must not
+	// erase the identity the new/missing diff relies on.
+	if chapter.SourceKey != "" {
+		record.Set("source_key", chapter.SourceKey)
+	} else if record.IsNew() {
+		record.Set("source_key", "")
+	}
 	if chapter.TranslatedTitle != "" {
 		record.Set("translated_title", chapter.TranslatedTitle)
 	} else if record.IsNew() {
@@ -1374,6 +1382,39 @@ type chapterOrderRow struct {
 	ChapterOrder float64 `db:"chapter_order"`
 }
 
+type chapterKeyRow struct {
+	SourceKey string `db:"source_key"`
+}
+
+// GetExistingChapterKeys returns the source_key values stored for a novel's
+// chapters. Rows written before the source_key field existed are simply absent
+// from the set, which is what drives the title/order fallback in the sync diff.
+func (s *Store) GetExistingChapterKeys(userID, novelID string) (map[string]bool, error) {
+	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+		return nil, err
+	}
+	total, err := s.totalChapterCount(novelID)
+	if err != nil {
+		return nil, err
+	}
+	rows := []chapterKeyRow{}
+	err = s.App.DB().Select("source_key").From("chapters").
+		Where(dbx.NewExp("novel = {:novel}", dbx.Params{"novel": novelID})).
+		OrderBy("chapter_order ASC").
+		Limit(int64(dynamicChapterLimit(total))).
+		All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	existing := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if row.SourceKey != "" {
+			existing[row.SourceKey] = true
+		}
+	}
+	return existing, nil
+}
+
 func (s *Store) GetExistingChapterURLs(userID, novelID string) (map[string]bool, error) {
 	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
 		return nil, err
@@ -1429,6 +1470,94 @@ func (s *Store) GetExistingChapterOrders(userID, novelID string) (map[int]bool, 
 		}
 	}
 	return existing, nil
+}
+
+// ChapterSyncMeta is the identity projection of a stored chapter that the
+// source-sync backfill reasons about. It never carries chapter content.
+type ChapterSyncMeta struct {
+	ID           string
+	ChapterOrder int
+	Title        string
+	SourceKey    string
+}
+
+// chapterSyncRow is the narrow projection backing ListChapterSyncMeta.
+type chapterSyncRow struct {
+	ID           string  `db:"id"`
+	ChapterOrder float64 `db:"chapter_order"`
+	Title        string  `db:"title"`
+	SourceKey    string  `db:"source_key"`
+}
+
+// ListChapterSyncMeta returns the identity fields of every chapter of a
+// novel, excluded ones included: an excluded chapter still occupies its
+// source order, same policy as the GetExistingChapter* helpers.
+func (s *Store) ListChapterSyncMeta(userID, novelID string) ([]ChapterSyncMeta, error) {
+	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+		return nil, err
+	}
+	total, err := s.totalChapterCount(novelID)
+	if err != nil {
+		return nil, err
+	}
+	rows := []chapterSyncRow{}
+	err = s.App.DB().Select("id", "chapter_order", "title", "source_key").From("chapters").
+		Where(dbx.NewExp("novel = {:novel}", dbx.Params{"novel": novelID})).
+		OrderBy("chapter_order ASC").
+		Limit(int64(dynamicChapterLimit(total))).
+		All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChapterSyncMeta, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ChapterSyncMeta{
+			ID:           row.ID,
+			ChapterOrder: asInt(row.ChapterOrder, 0),
+			Title:        row.Title,
+			SourceKey:    row.SourceKey,
+		})
+	}
+	return out, nil
+}
+
+// BackfillSourceKeys writes the given source keys onto their chapters, but
+// only while the stored key is still empty: the backfill is a one-way
+// migration from the legacy heuristic to keyed identity and must never
+// overwrite a key some earlier sync already recorded.
+func (s *Store) BackfillSourceKeys(userID, novelID string, keysByChapterID map[string]string) (int, error) {
+	if len(keysByChapterID) == 0 {
+		return 0, nil
+	}
+	if _, err := s.GetNovelAccessible(userID, novelID); err != nil {
+		return 0, err
+	}
+	updated := 0
+	err := s.App.RunInTransaction(func(txApp core.App) error {
+		now := types.NowDateTime().String()
+		for id, key := range keysByChapterID {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			res, err := txApp.DB().NewQuery(
+				"UPDATE chapters SET source_key = {:key}, updated = {:updated} WHERE id = {:id} AND novel = {:novel} AND source_key = ''",
+			).Bind(dbx.Params{"key": key, "updated": now, "id": id, "novel": novelID}).Execute()
+			if err != nil {
+				return err
+			}
+			// Count only rows the write actually claimed: a concurrent sync
+			// may have filled the key first (the WHERE clause then matches
+			// nothing), and that must not inflate the reported count.
+			if affected, err := res.RowsAffected(); err == nil {
+				updated += int(affected)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return updated, nil
 }
 
 type ChapterGap struct {

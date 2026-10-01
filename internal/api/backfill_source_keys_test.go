@@ -1,0 +1,521 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+
+	"translator-server/internal/store"
+)
+
+func TestBackfillSourceKeyPlan(t *testing.T) {
+	threeChapters := []sourceChapter{
+		{Title: "Prologue", URL: "https://s/1", Key: "https://s/1", Order: 1},
+		{Title: "Growth", URL: "https://s/2", Key: "https://s/2", Order: 2},
+		{Title: "The Gate Opens", URL: "https://s/3", Key: "https://s/3", Order: 3},
+	}
+
+	t.Run("happy path fills every legacy row", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "Prologue"},
+			{ID: "c2", ChapterOrder: 2, Title: "Growth"},
+			{ID: "c3", ChapterOrder: 3, Title: "The Gate Opens"},
+		}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		want := map[string]string{
+			"c1": "https://s/1",
+			"c2": "https://s/2",
+			"c3": "https://s/3",
+		}
+		if !reflect.DeepEqual(plan, want) {
+			t.Errorf("plan = %v, want %v", plan, want)
+		}
+	})
+
+	t.Run("title match trims and ignores case", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "  prologue "},
+		}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if !ok || plan["c1"] != "https://s/1" {
+			t.Errorf("plan = %v ok = %v, want c1 keyed with its URL", plan, ok)
+		}
+	})
+
+	t.Run("duplicate titles resolve by position", func(t *testing.T) {
+		// The Growth case: the site reuses titles (episodes 2 and 5 are both
+		// "Growth" with different keys). Stored legacy 1-4 plus an already
+		// keyed chapter at order 6, with order 5 not downloaded yet: the gap
+		// must not abort the plan and the duplicate title must not matter.
+		chapters := []sourceChapter{
+			{Title: "One", Key: "k1", Order: 1},
+			{Title: "Growth", Key: "k2", Order: 2},
+			{Title: "Three", Key: "k3", Order: 3},
+			{Title: "Four", Key: "k4", Order: 4},
+			{Title: "Growth", Key: "k5", Order: 5},
+			{Title: "Six", Key: "k6", Order: 6},
+		}
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "One"},
+			{ID: "c2", ChapterOrder: 2, Title: "Growth"},
+			{ID: "c3", ChapterOrder: 3, Title: "Three"},
+			{ID: "c4", ChapterOrder: 4, Title: "Four"},
+			{ID: "c6", ChapterOrder: 6, Title: "Six", SourceKey: "k6"},
+		}
+		plan, ok := backfillSourceKeyPlan(chapters, stored)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		want := map[string]string{"c1": "k1", "c2": "k2", "c3": "k3", "c4": "k4"}
+		if !reflect.DeepEqual(plan, want) {
+			t.Errorf("plan = %v, want %v", plan, want)
+		}
+	})
+
+	t.Run("key falls back to URL when the script exports none", func(t *testing.T) {
+		chapters := []sourceChapter{{Title: "Alpha", URL: "https://s/1", Order: 1}}
+		stored := []store.ChapterSyncMeta{{ID: "c1", ChapterOrder: 1, Title: "Alpha"}}
+		plan, ok := backfillSourceKeyPlan(chapters, stored)
+		if !ok || plan["c1"] != "https://s/1" {
+			t.Errorf("plan = %v ok = %v, want c1 keyed with the URL", plan, ok)
+		}
+	})
+
+	t.Run("title drift aborts the whole plan", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "Prologue"},
+			{ID: "c2", ChapterOrder: 2, Title: "Renamed On Site"},
+		}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if ok || plan != nil {
+			t.Errorf("plan = %v ok = %v, want nil/false", plan, ok)
+		}
+	})
+
+	t.Run("stored order beyond the snapshot aborts", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "Prologue"},
+			{ID: "c4", ChapterOrder: 4, Title: "Extra"},
+		}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if ok || plan != nil {
+			t.Errorf("plan = %v ok = %v, want nil/false", plan, ok)
+		}
+	})
+
+	t.Run("empty snapshot title aborts", func(t *testing.T) {
+		chapters := []sourceChapter{{Title: "", Key: "k1", Order: 1}}
+		stored := []store.ChapterSyncMeta{{ID: "c1", ChapterOrder: 1, Title: "Prologue"}}
+		plan, ok := backfillSourceKeyPlan(chapters, stored)
+		if ok || plan != nil {
+			t.Errorf("plan = %v ok = %v, want nil/false", plan, ok)
+		}
+	})
+
+	t.Run("empty stored title aborts", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{{ID: "c1", ChapterOrder: 1, Title: ""}}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if ok || plan != nil {
+			t.Errorf("plan = %v ok = %v, want nil/false", plan, ok)
+		}
+	})
+
+	t.Run("all keyed stored is a vacuous no-op", func(t *testing.T) {
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "Prologue", SourceKey: "https://s/1"},
+		}
+		plan, ok := backfillSourceKeyPlan(threeChapters, stored)
+		if !ok || len(plan) != 0 {
+			t.Errorf("plan = %v ok = %v, want empty/true", plan, ok)
+		}
+	})
+
+	t.Run("no stored chapters is a vacuous no-op", func(t *testing.T) {
+		plan, ok := backfillSourceKeyPlan(threeChapters, nil)
+		if !ok || len(plan) != 0 {
+			t.Errorf("plan = %v ok = %v, want empty/true", plan, ok)
+		}
+	})
+
+	t.Run("duplicate snapshot key aborts the positional plan", func(t *testing.T) {
+		// A TOC listing the same identity twice must not stamp two rows with
+		// one key: the second claim would shadow a real chapter on every
+		// later sync.
+		chapters := []sourceChapter{
+			{Title: "One", URL: "https://s/1", Key: "k1", Order: 1},
+			{Title: "One again", URL: "https://s/1-dup", Key: "k1", Order: 2},
+		}
+		stored := []store.ChapterSyncMeta{
+			{ID: "c1", ChapterOrder: 1, Title: "One"},
+			{ID: "c2", ChapterOrder: 2, Title: "One again"},
+		}
+		plan, ok := backfillPositionalPlan(chapters, stored)
+		if ok || plan != nil {
+			t.Errorf("plan = %v ok = %v, want nil/false", plan, ok)
+		}
+	})
+}
+
+func TestLegacyDiffFallback(t *testing.T) {
+	mixed := []store.ChapterSyncMeta{
+		{ID: "c1", SourceKey: "k-1"},
+		{ID: "c2", SourceKey: ""},
+	}
+	if !legacyDiffFallback(false, mixed) {
+		t.Fatal("failed plan on a mid-migration novel must force legacy diffing")
+	}
+	allKeyed := []store.ChapterSyncMeta{{ID: "c1", SourceKey: "k-1"}}
+	if legacyDiffFallback(false, allKeyed) {
+		t.Fatal("failed plan with no legacy rows needs no fallback (novel diffs keyed)")
+	}
+	allLegacy := []store.ChapterSyncMeta{{ID: "c2", SourceKey: ""}}
+	if legacyDiffFallback(false, allLegacy) {
+		t.Fatal("failed plan on an all-legacy novel needs no fallback (empty key set diffs legacy anyway)")
+	}
+	if legacyDiffFallback(true, mixed) {
+		t.Fatal("a successful plan needs no fallback")
+	}
+}
+
+// A mid-migration novel — one chapter keyed, the rest legacy — whose backfill
+// plan keeps failing (stored titles drifted from the snapshot) must diff by
+// the legacy heuristic. In keyed mode every legacy row's snapshot entry is
+// "new": the whole legacy library is re-downloaded once as duplicate rows
+// with shifted orders, and the duplicates persist forever.
+func TestUpdateFromURLMixedNovelWithFailedPlanDoesNotDuplicate(t *testing.T) {
+	catalog := []map[string]any{
+		{"episode": 1, "title": "Alpha", "slug": "1-alpha"},
+		{"episode": 2, "title": "Beta", "slug": "2-beta"},
+		{"episode": 3, "title": "Gamma", "slug": "3-gamma"},
+	}
+	catalogJSON, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	escaped := strings.ReplaceAll(string(catalogJSON), `"`, `\u0022`)
+	projectHTML := `<!doctype html><html><head><meta name="csrf-token" content="x"></head><body>` +
+		`<h1 class="font-title">Sky Demon Test Novel</h1>` +
+		`<div wire:id="abc" wire:name="project.chapter-list" x-data="{ activeTab: 'free', freeChapters: JSON.parse('` + escaped + `') }"></div>` +
+		`</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, projectHTML)
+	}))
+	defer mock.Close()
+
+	env := newAPITestEnv(t)
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, map[string]string{"skydemonorder.com": mock.URL})
+
+	alice := registerUser(t, env, "alice-mixed-plan@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Stored library in the mid-migration state: chapter 1 carries a stale
+	// key (as if an earlier parser version keyed it differently), chapter 2's
+	// stored title drifted from the snapshot, chapter 3 is plain legacy.
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "1. Alpha")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "2. Beta drifted")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "3. Gamma")
+	metas, err := env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	ch1 := ""
+	for _, meta := range metas {
+		if meta.ChapterOrder == 1 {
+			ch1 = meta.ID
+		}
+	}
+	if ch1 == "" {
+		t.Fatalf("chapter 1 not found in %v", metas)
+	}
+	if _, err := env.store.BackfillSourceKeys(alice.User.ID, novel.ID, map[string]string{ch1: "stale-key-1"}); err != nil {
+		t.Fatalf("key chapter 1: %v", err)
+	}
+
+	// The plan cannot pair chapter 2 (title drift), so the sync must fall
+	// back to legacy matching: nothing is new, nothing is re-downloaded.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("update: expected 200 (nothing new under the legacy fallback), got %d: %s", resp.Code, resp.Body.String())
+	}
+	var out struct {
+		ChaptersAdded int `json:"chaptersAdded"`
+	}
+	decodeData(t, resp, &out)
+	if out.ChaptersAdded != 0 {
+		t.Errorf("chaptersAdded: got %d, want 0", out.ChaptersAdded)
+	}
+
+	// The library is untouched: still 3 chapters, only the pre-existing key.
+	metas, err = env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	if len(metas) != 3 {
+		t.Errorf("chapter rows: got %d, want 3 (no duplicate flood)", len(metas))
+	}
+	keyed := 0
+	for _, meta := range metas {
+		if meta.SourceKey != "" {
+			keyed++
+		}
+	}
+	if keyed != 1 {
+		t.Errorf("keyed rows: got %d, want 1 (the failed plan persists nothing)", keyed)
+	}
+}
+
+// The test-livewire-catalog parser (the one the test env loads for
+// skydemonorder.com URLs) prefixes every catalog title with its episode
+// number, so a duplicated site title is produced by repeating the episode:
+// two entries with episode 4 emit the identical title "4. Growth" with
+// different slugs, mirroring the real-world case (episodes 18 and 32 of a
+// production novel are both called "Growth"). A legacy novel — every chapter
+// stored before source_key existed — ran the title-first heuristic, so the
+// second duplicate-title episode was skipped as "already downloaded" and the
+// update reported the novel up to date. The sync now backfills source keys
+// from the TOC snapshot before diffing, which flips the novel to keyed
+// identity and makes the duplicate-title episode detectable.
+func TestSyncBackfillsLegacySourceKeysBeforeDiff(t *testing.T) {
+	catalog := []map[string]any{
+		{"episode": 1, "title": "Alpha", "slug": "1-alpha"},
+		{"episode": 2, "title": "Beta", "slug": "2-beta"},
+		{"episode": 3, "title": "Gamma", "slug": "3-gamma"},
+		// Same episode and title as the real duplicate-title case; the slugs
+		// differ, so the parser emits two chapters with identical titles.
+		{"episode": 4, "title": "Growth", "slug": "4-growth"},
+		{"episode": 4, "title": "Growth", "slug": "4-growth-bis"},
+	}
+	catalogJSON, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	// The real page stores the catalog as a JSON.parse() string with quotes
+	// escaped as \u0022; mirror that so the parser exercises the same path.
+	escaped := strings.ReplaceAll(string(catalogJSON), `"`, `\u0022`)
+	projectHTML := `<!doctype html><html><head><meta name="csrf-token" content="x"></head><body>` +
+		`<h1 class="font-title">Sky Demon Test Novel</h1>` +
+		`<div wire:id="abc" wire:name="project.chapter-list" x-data="{ activeTab: 'free', freeChapters: JSON.parse('` + escaped + `') }"></div>` +
+		`</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, projectHTML)
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"skydemonorder.com": mock.URL}
+	env := newAPITestEnv(t)
+	// Park download jobs in the dispatch queue without executing them, as in
+	// the other update-from-url tests.
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, rewrites)
+
+	alice := registerUser(t, env, "alice-dup-titles@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Legacy chapters 1-4: no source_key, so the novel starts in legacy mode.
+	// Titles carry the parser's "<episode>. <title>" prefix so the positional
+	// pairing in the backfill plan matches the TOC snapshot byte for byte.
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "1. Alpha")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "2. Beta")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "3. Gamma")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 4, "4. Growth")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var preview struct {
+		TotalChapters   int `json:"totalChapters"`
+		NewChapters     int `json:"newChapters"`
+		FirstNewChapter int `json:"firstNewChapter"`
+		LastNewChapter  int `json:"lastNewChapter"`
+	}
+	decodeData(t, resp, &preview)
+	if preview.TotalChapters != 5 {
+		t.Errorf("totalChapters: got %d, want 5", preview.TotalChapters)
+	}
+	// The second "4. Growth" shares its title with stored chapter 4; only
+	// keyed identity can tell them apart, so the backfill must have run
+	// before the diff. Without it the legacy title-first heuristic reports
+	// the novel as up to date.
+	if preview.NewChapters != 1 {
+		t.Errorf("newChapters: got %d, want 1 (second duplicate-title episode)", preview.NewChapters)
+	}
+	if preview.FirstNewChapter != 5 || preview.LastNewChapter != 5 {
+		t.Errorf("first/last new chapter: got %d/%d, want 5/5", preview.FirstNewChapter, preview.LastNewChapter)
+	}
+
+	// The legacy chapters are planned against the snapshot in memory, but the
+	// check itself is read-only: no source keys are persisted by a preview.
+	metas, err := env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	keyed := 0
+	for _, meta := range metas {
+		if meta.SourceKey != "" {
+			keyed++
+		}
+	}
+	if keyed != 0 {
+		t.Errorf("chapters with source_key after check-preview: got %d, want 0 (previews never persist the backfill plan)", keyed)
+	}
+
+	// The download path sees the same keyed novel through the preview cache.
+	updateResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/update-from-url", alice.Token, map[string]any{})
+	if updateResp.Code != http.StatusAccepted {
+		t.Fatalf("update: expected 202, got %d: %s", updateResp.Code, updateResp.Body.String())
+	}
+	var update struct {
+		PendingChapters int `json:"pendingChapters"`
+	}
+	decodeResponse(t, updateResp, &update)
+	if update.PendingChapters != 1 {
+		t.Errorf("pendingChapters: got %d, want 1", update.PendingChapters)
+	}
+
+	// The update flow — the one that actually enqueues downloads — persists
+	// the backfill plan computed from the same snapshot.
+	metas, err = env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	keyed = 0
+	for _, meta := range metas {
+		if meta.SourceKey != "" {
+			keyed++
+		}
+	}
+	if keyed != 4 {
+		t.Errorf("chapters with source_key after update-from-url: got %d, want 4 (backfill persisted by the update flow)", keyed)
+	}
+}
+
+// The async check job writes last_check_new_chapters — the count the library
+// grid shows. On a mid-migration novel (some rows keyed, some not) it must
+// merge the backfill plan before diffing, exactly as check-preview does;
+// diffing against the incomplete key set reports the whole legacy remainder as
+// new. This drives processCheckJob itself, since the merge is a property of
+// that call site, not of the diff helper.
+func TestCheckJobReportsSameCountAsPreviewOnMixedNovel(t *testing.T) {
+	catalog := []map[string]any{
+		{"episode": 1, "title": "Alpha", "slug": "1-alpha"},
+		{"episode": 2, "title": "Beta", "slug": "2-beta"},
+		{"episode": 3, "title": "Gamma", "slug": "3-gamma"},
+		{"episode": 4, "title": "Delta", "slug": "4-delta"},
+	}
+	catalogJSON, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	escaped := strings.ReplaceAll(string(catalogJSON), `"`, `\u0022`)
+	projectHTML := `<!doctype html><html><head><meta name="csrf-token" content="x"></head><body>` +
+		`<h1 class="font-title">Sky Demon Test Novel</h1>` +
+		`<div wire:id="abc" wire:name="project.chapter-list" x-data="{ activeTab: 'free', freeChapters: JSON.parse('` + escaped + `') }"></div>` +
+		`</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, projectHTML)
+	}))
+	defer mock.Close()
+
+	env := newAPITestEnv(t)
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, map[string]string{"skydemonorder.com": mock.URL})
+
+	alice := registerUser(t, env, "alice-checkjob@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Chapters 1-3 stored legacy; chapter 4 arrives as a genuinely new episode.
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "1. Alpha")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "2. Beta")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "3. Gamma")
+	// Key chapter 1 only: the novel is now mid-migration (some keyed, some not),
+	// which is the state that exposes an unmerged diff.
+	metas, err := env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	ch1 := ""
+	for _, meta := range metas {
+		if meta.ChapterOrder == 1 {
+			ch1 = meta.ID
+		}
+	}
+	if ch1 == "" {
+		t.Fatalf("chapter 1 not found in %v", metas)
+	}
+	if _, err := env.store.BackfillSourceKeys(alice.User.ID, novel.ID, map[string]string{ch1: "key-alpha"}); err != nil {
+		t.Fatalf("key chapter 1: %v", err)
+	}
+
+	// What the preview reports for the same snapshot.
+	previewResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
+	if previewResp.Code != http.StatusOK {
+		t.Fatalf("check-preview: got %d: %s", previewResp.Code, previewResp.Body.String())
+	}
+	var preview struct {
+		NewChapters int `json:"newChapters"`
+	}
+	decodeData(t, previewResp, &preview)
+
+	// The async job must agree.
+	job := &store.Job{
+		NovelID:     novel.ID,
+		OwnerID:     alice.User.ID,
+		Operation:   "check",
+		Status:      "pending",
+		OptionsJSON: `{"url":"https://skydemonorder.com/projects/12345-sky-demon-test-novel"}`,
+	}
+	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+		t.Fatalf("create check job: %v", err)
+	}
+	if err := env.server.processCheckJob(context.Background(), job); err != nil {
+		t.Fatalf("processCheckJob: %v", err)
+	}
+	// Assert on the count the library grid reads: the job's own new_chapters
+	// column is not written by updateJob (a pre-existing gap), while
+	// last_check_new_chapters is what UpdateNovelCheckResult persists here.
+	updated, err := env.store.GetOwnedNovel(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("get novel: %v", err)
+	}
+	if updated.LastCheckNewChapters != preview.NewChapters {
+		t.Fatalf("check job reported %d new chapters, preview reported %d — the job diffed without merging the backfill plan",
+			updated.LastCheckNewChapters, preview.NewChapters)
+	}
+	// Chapter 1 carries a stale key that matches nothing in the snapshot, so it
+	// and the genuinely new episode 4 are the only new entries. Without the
+	// merge the job would count the three legacy rows too (4 instead of 2).
+	if preview.NewChapters != 2 {
+		t.Errorf("expected 2 new chapters (stale key + episode 4), got %d", preview.NewChapters)
+	}
+}

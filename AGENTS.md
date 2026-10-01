@@ -19,7 +19,9 @@ Layout:
 - `internal/store/` — PocketBase-backed persistence. `store.go` defines collection name constants; per-domain files (`store_novels.go`, `store_chapters.go`, `store_jobs.go`, `store_epubs.go`, `store_providers.go`, `store_settings.go`, `store_auth.go`, `store_helpers.go`, `store_mapping.go`, `store_schema.go`, `store_db_migrations.go`). All collections are created/seeded by `Store.EnsureSchema()`.
 - `internal/ai/` — `Provider` interface plus a single `OpenAIProvider` implementation backed by `github.com/zendev-sh/goai`. The provider catalog lives in `registry.go` (currently: `venice`, `opencode-go`).
 - `internal/secure/encryption.go` — AES-GCM encryptor for provider API keys. Key comes from `APP_ENCRYPTION_KEY` (base64 or hex, must decode to 32 bytes) or is auto-generated to `<data-dir>/app.key`.
-- `internal/epubimport/`, `internal/noveldownloader/` — pure parsers/scrappers with no HTTP or store dependencies.
+- `internal/epubimport/` — pure parser with no HTTP or store dependencies.
+- `internal/parserhost/` — the embedded goja engine that runs site parsers. `contract.go` holds the canonical script contract and the `ScriptError` taxonomy (the source of truth for both); `engine.go` compiles scripts (`LoadFile`/`LoadDir`), runs `probe`/`toc`/`chapter`/`chapterKey` in a throwaway VM per invocation, and applies the per-invocation limits (30s / 200 fetches / 5 MiB). `bindings.go` exposes `ctx.get/css/css1/resolveUrl/fail/log` to scripts. The engine never issues HTTP itself — it calls back into the `Fetcher` the host supplies.
+- `parsers/` — the tracked site parsers, one CommonJS `.js` file per site (`parsers/<site>.js`). Site-specific scraping lives here, not in Go — the one exception is `internal/api/parser_cgfont.go`, the hybrid host-side helper for work goja cannot express (e.g. decoding chrysanthemumgarden's obfuscation fonts); see "Hybrid parsers" in `docs/parsers.md`. This directory is the development home; the **runtime** directory defaults to `<data-dir>/parsers` and is overridden with `-parsers-dir` / `PARSERS_DIR`. See `docs/parsers.md` for the contract. Loading is deliberately uncached — the directory is re-read per job — so editing a script takes effect on the next download or check with no restart.
 - `frontend/` — Vue 3 + Vite + PrimeVue SPA. Vite dev port is fixed at 5175 and proxies `/api` and `/ai` to the Go backend on `127.0.0.1:5176`.
 - `frontend_embed.go` — `package translatorserver`, `//go:embed all:frontend/dist`. The Go import alias `translatorserver "translator-server"` (note: matches the module name, NOT the kebab-case path) is what makes the embed reachable from `internal/api`.
 - `extensions/browser-worker-chrome/` — Chrome extension (Manifest V3) that proxies HTTP requests through a real browser to bypass Cloudflare. Requires user authentication via `/api/worker-auth/`.
@@ -115,16 +117,17 @@ The main server (`:5176`) and the Vite dev server (`:5175`) are the user's respo
 
 1. Fetch the novel info page via proxy to get the HTML structure
 2. Inspect the HTML to understand the site's layout (chapter list, pagination, etc.)
-3. Write the parser in `internal/noveldownloader/`
-4. Register it in the parser catalog
-5. Test with: `go test -short ./internal/noveldownloader/...`
+3. Write `parsers/<site>.js` following the contract in `docs/parsers.md`
+4. Syntax-check it: `node --check parsers/<site>.js`
+5. Validate it against the live site: `./bin/translator-server -check-parser parsers/<site>.js -check-url <novel-url>`
+6. Copy it into the runtime parsers directory (`<data-dir>/parsers`, or use `-parsers-dir parsers/`)
 
 ### If a parser already exists but fails
 
 1. Fetch the page via proxy to see what the real HTML looks like
 2. Compare with what the parser expects
-3. Fix the parser's selectors/regex
-4. Test again
+3. Fix the parser's selectors/regex in `parsers/<site>.js`
+4. Test again with `-check-parser`
 
 ## Release preparation
 
@@ -196,7 +199,7 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 
 - Backend: `go test ./...`. Integration tests live next to handlers (`internal/api/router_integration_test.go`, `import_url_test.go`, `runtime_config_test.go`, `refine_test.go`, `segmentation_test.go`, `cleaner_test.go`) and `internal/store/store_test.go`. They boot a real PocketBase against `t.TempDir()` via the shared `newAPITestEnv` helper — there is no in-memory mock.
 - Frontend: `npm run build` (which runs `vue-tsc -b && vite build`) is the typecheck. There is no separate `npm test`.
-- The `realtest_test.go` files in `internal/noveldownloader/` hit live URLs. They are gated by `if testing.Short() { t.Skip(...) }`, so use `go test -short ./...` in CI / local loops and full `go test ./...` only when you specifically want to exercise the scrapers.
+- Parser scripts under `parsers/` have no Go test counterpart. Exercise them with `./bin/translator-server -check-parser parsers/<site>.js -check-url <novel-url>`, which runs probe/toc/chapter and prints the snapshot as JSON. `internal/api` covers the engine wiring with testdata scripts in `internal/api/testdata/parsers/`.
 - No linter is configured in the repo. `go vet ./...` is the minimum sanity check used by the planning docs.
 - The planning docs (`docs/pocketbase-multiuser-plan.md`, `docs/go-backend-refactor-plan.md`) mention `rtk err go build ./cmd/server` / `rtk test go test ./...` as their validation steps — `rtk` is a third-party CLI wrapper for ripgrep-style output. Plain `go build ./cmd/server` and `go test ./...` work too.
 
@@ -216,7 +219,8 @@ When generating the changelog, run `git log --oneline vPREV..HEAD` and `git diff
 - `EnsureSchema()` no longer backfills chapter char counts or novel stats on boot. Those are kept current per-operation via `RecalculateNovelStats`, called after translate/refine/download jobs, chapter upsert/delete/bulk-delete, import, and copy (see `internal/store/store_chapters.go`, `internal/api/runtime_worker.go`). Don't reintroduce a boot-time full-table backfill; it made startup time scale with total library size instead of with what changed.
 - `--data-dir` is resolved to an absolute path at startup. Pass an absolute path (or one relative to the binary's CWD) — the binary does not chdir.
 - The job worker (`internal/api/runtime_worker.go`) is in-process with two buffered queues (`downloadQueue` cap 128, `translateQueue` cap 128) and one goroutine each. `AISettings.Concurrency` (per-provider, `1..10`, default `1`) **is wired** into translate/refine jobs via `errgroup.SetLimit`: `1` = secuencial (default, requiere opt-in), `>1` = jobs paralelos por capítulo (clamp a `min(concurrency, len(chapters))`). Cuando `includePreviousTitleHints=true` se desactiva automáticamente en modo concurrente (requiere orden secuencial) y se loggea `WARN`.
-- The downloader supports throttling via `DOWNLOAD_MIN_DELAY_MS` / `DOWNLOAD_MAX_DELAY_MS` env vars (random delay between chapter fetches). They only apply to the import-from-URL flow; they are not exposed as flags.
+- The downloader supports throttling via `DOWNLOAD_MIN_DELAY_MS` / `DOWNLOAD_MAX_DELAY_MS` env vars (random delay between parser fetches to the same site). The wait lives in the parser fetcher (`internal/api/parser_fetcher.go`) and is tracked per URL host, so different sites never block each other; the first fetch to each host is not delayed. Bounds are read once at boot into the shared throttle (never mutated per request — that was a data race). They are not exposed as flags.
+- Parser auto-update: before a script executes (TOC fetch, chapter download, download job), the installed copy's sha256 is checked against the release manifest (`parsers/index.json`, served from this repo via GitHub raw) and a different version is downloaded, validated and atomically swapped in (see `internal/api/parser_update.go`). Updates are scoped per host: only the selected script is ever updated, and a runtime script failure retries once against the published version before reporting the error. When nothing claims the URL, only manifest scripts missing locally are downloaded once and selection retried, so a fresh install bootstraps its catalog from the manifest on first use. Read-only lookups (`canUpdate`, `requiresBrowser`) never download (and cache probe outcomes per host: 5 min positive / 1 min negative), `-check-parser` never auto-updates, and any failure (unreachable/unsigned manifest, digest mismatch, invalid script) logs a WARN and execution proceeds with the installed copy. The manifest fetch runs outside the cache lock with in-flight coalescing; a script failure with no update available invalidates the cache so the next attempt re-checks immediately. The manifest is ed25519-signed (`signature` field; key embedded as `defaultParsersManifestPubkey`, overridable via `PARSERS_MANIFEST_PUBKEY`); unsigned/badly signed manifests are refused like unreachable ones. Direct script fetches are SSRF-guarded to public IPs (bypass with `PARSERS_ALLOW_PRIVATE_NETS=1` for local dev/tests only). **Regenerate AND sign the manifest after editing any tracked parser:** `make parsers-manifest` (tools: `tools/gen-parser-manifest` + `tools/sign-parsers-manifest`, key in `.parsers-signing.key` / `PARSERS_SIGNING_KEY`). Hand-edited scripts in the runtime directory get overwritten by updates; set `PARSERS_AUTO_UPDATE=0` while editing them locally.
 
 ## Code conventions worth knowing
 
@@ -310,7 +314,7 @@ This keeps migration code isolated, avoids boot-time overhead for non-migration 
 
 ## Frontend is a pure consumer
 
-All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA that only renders state and fires HTTP requests — it does not run jobs, parse EPUBs, call AI providers, or own any business rules. Anything that feels like "real work" (translation, refinement, cleaning, scoring, scheduling, downloading) belongs in `internal/api` / `internal/store` / `internal/ai` / `internal/noveldownloader` / `internal/epubimport`. When extending a feature, push the logic into a new backend handler/store method and have the frontend call it; do not duplicate the logic in TypeScript.
+All logic lives in the Go backend. The frontend (`frontend/`) is a thin Vue SPA that only renders state and fires HTTP requests — it does not run jobs, parse EPUBs, call AI providers, or own any business rules. Anything that feels like "real work" (translation, refinement, cleaning, scoring, scheduling, downloading) belongs in `internal/api` / `internal/store` / `internal/ai` / `internal/epubimport`, or in a `parsers/*.js` script when it is site-specific. When extending a feature, push the logic into a new backend handler/store method and have the frontend call it; do not duplicate the logic in TypeScript.
 
 ## API versioning & conventions
 
@@ -407,6 +411,9 @@ v1 handlers use `v1Respond` / `v1RespondList` from `internal/api/v1_envelope.go`
 - New HTTP route → `internal/api/router_v1.go` (wire-in via `registerV1Routes`) + a `router_*.go` file (handler). Public/unauthenticated routes go in `router.go` via `registerAuthRoutes` or `registerV1AuthRoutes`. Admin-only routes go in `internal/api/router_admin.go` and are wrapped by `requireAdmin()` (mounted in `router_v1.go` via `authed.Group("/admin").Bind(requireAdmin())`). See `## API versioning & conventions`.
 - New persistence field → `internal/store/store_schema.go` (collection def) + relevant `store_*.go` (record mapping in `store_mapping.go` and persistence) + `internal/store/settings.go` (struct type if it's a domain object).
 - New AI provider → `internal/ai/registry.go` (catalog entry; sets `GoAIOptions` like `useResponsesAPI` and `strictJsonSchema`) and verify `internal/ai/openai.go` honors those options.
+- New site parser / scraper → `parsers/<site>.js` (tracked source) following the contract in `docs/parsers.md`. Validate with `-check-parser` against a live URL. No Go changes: `internal/api/parser_engine.go` loads the directory per job and selects by `probe`.
+- New parser binding (a new capability scripts need) → `internal/parserhost/contract.go` (the canonical contract, source of truth) + `internal/parserhost/bindings.go` (the `ctx.*` implementation). The host-side implementation lives in `internal/api/parser_fetcher.go`.
+- Parser versioning / auto-update → `internal/api/parser_update.go` (manifest fetch, digest check, atomic swap). Regenerate the manifest with `make parsers-manifest` (`tools/gen-parser-manifest`).
 - New job operation → extend the switch in `internal/api/runtime_worker.go` (`enqueueJob`) and add a `runtime_*.go` workflow file. Status transitions live in `store_jobs.go`; the worker respects `cancelled` / `done` / `failed` short-circuits.
 - Schema/migration change → prefer `ensureField` over touching raw collection JSON; for breaking changes with existing data, use the manual migration flag pattern (see `## Database migrations`).
 - Anything that touches the persisted collection names in `internal/store/store.go` (e.g. `NovelsCollection`) is a breaking change for existing `data/` directories.
@@ -423,10 +430,13 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 | `-port` | `string` | `:5176` | Listen port. Falls back to `PORT` env, then `:5176`. |
 | `-data-dir` | `string` | `<binary-dir>/data` | PocketBase data directory. Falls back to `DATA_DIR` env. Resolved to absolute path. |
 | `-static-dir` | `string` | `""` (use embed) | Dev-only: serve frontend from disk instead of embed. Falls back to `STATIC_DIR` env. Also sets PocketBase `DefaultDev: true`. |
+| `-parsers-dir` | `string` | `<data-dir>/parsers` | Directory scanned for site parser scripts (`*.js`). Falls back to `PARSERS_DIR` env. Created on boot if missing and left empty. Re-read per job (no cache), so script edits take effect without a restart. |
+| `-check-parser` | `string` | `""` | Path to a single parser script to exercise against `-check-url`. Runs before the server starts, touches no database, prints the snapshot as indented JSON and exits (0 ok / 1 fail). |
 | `-migrate-db` | `bool` | `false` | Run legacy database migration and exit. |
 | `-promote-admin` | `string` | `""` | Grant the admin role to the user with this email and exit. Bootstrap for pre-existing installs. |
 | `-public-url` | `string` | `""` (derive from request Host) | Public origin (e.g. `https://novels.example.com`) used for absolute URLs shown to admins (invitation links). Falls back to `PUBLIC_URL` env. Set it in production: the request Host is client-controlled. |
 | `-migrate-thumbnails` | `bool` | `false` | Generate thumbnails for existing covers and exit. |
+| `-check-url` | `string` | `""` | Novel URL passed to the script's probe/toc/chapter in `-check-parser` mode. |
 | `-version` | `bool` | `false` | Print version and exit. |
 
 ### Environment variables
@@ -435,8 +445,13 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 |---|---|---|---|
 | `APP_ENCRYPTION_KEY` | `string` | auto-generated at `<data-dir>/app.key` | AES-GCM key for provider API keys. Must decode (base64/hex) to exactly 32 bytes. |
 | `STATIC_DIR` | `string` | `""` (use embed) | Dev-only: path to frontend dist files on disk. |
-| `DOWNLOAD_MIN_DELAY_MS` | `int` | `0` (default: 5000) | Lower bound (ms) of random wait between chapter fetches. Only for import-from-URL flow. |
-| `DOWNLOAD_MAX_DELAY_MS` | `int` | `0` (default: 10000) | Upper bound (ms) of random wait between chapter fetches. Only for import-from-URL flow. |
+| `PARSERS_DIR` | `string` | `<data-dir>/parsers` | Directory scanned for site parser scripts. Only used if `-parsers-dir` flag is empty. |
+| `PARSERS_MANIFEST_URL` | `string` | `https://raw.githubusercontent.com/mfloresz/yara/main/parsers/index.json` | Release manifest fetched before running a parser script to auto-update installed copies. Override to point at a fork or self-hosted mirror serving the same signed layout. |
+| `PARSERS_AUTO_UPDATE` | `bool` | on | Kill switch for the pre-execution parser update check (`0`/`false` disables it). Disabling also protects hand-edited runtime scripts from being overwritten. |
+| `PARSERS_MANIFEST_PUBKEY` | `string` | embedded release key | Hex ed25519 public key the manifest signature is verified against. Set it when `PARSERS_MANIFEST_URL` serves a fork signed with a different key. |
+| `PARSERS_ALLOW_PRIVATE_NETS` | `bool` | off | Disables the SSRF guard on direct site fetches. Local dev/tests only — never on an internet-exposed server. |
+| `DOWNLOAD_MIN_DELAY_MS` | `int` | `5000` | Lower bound (ms) of random wait between chapter fetches. Unset/`<= 0` falls back to the 5000 default. |
+| `DOWNLOAD_MAX_DELAY_MS` | `int` | `10000` | Upper bound (ms) of random wait between chapter fetches. Unset/`<= 0` falls back to the 10000 default. |
 | `ADDR` | `string` | `:5176` | Listen address. Only used if `-addr` flag is empty. |
 | `PORT` | `string` | `:5176` | Listen port. Only used if `-port` flag is empty. |
 | `DATA_DIR` | `string` | `<binary-dir>/data` | PocketBase data directory. Only used if `-data-dir` flag is empty. |
@@ -453,12 +468,14 @@ All configuration is centralized in `internal/config/config.go` (`config.Load()`
 
 ### Adding a new parser/scraper
 
-1. Create `internal/noveldownloader/yoursite.go` implementing the `Parser` interface (`Name`, `RequiresBrowser`, `CanHandle`, `GetNovelInfo`, `GetChapterURLs`, `ParseChapter`).
-2. Add `NewYourSiteParser()` to **both** `NewDownloader()` and `NewDownloaderWithClient()` in `downloader.go` (lines ~40-72). Both lists must stay in sync.
-3. Implement `RequiresBrowser()`: return `true` when the site is behind Cloudflare or serves pages via JavaScript rendering (i.e. reliable fetching needs the browser worker extension), `false` otherwise. State the reason in a brief comment above the method. This flag is documentation-only — it must not change fetch behavior.
-4. Write tests: unit tests in the same file; live-URL tests in `realtest_test.go` gated by `if testing.Short() { t.Skip(...) }`.
-5. Test with: `go test -short ./internal/noveldownloader/...`
-6. If behind Cloudflare, use the debug proxy workflow to fetch real HTML first (see `## Debug proxy for Cloudflare-protected sites`).
+1. Create `parsers/<site>.js` — a CommonJS module following the contract in `docs/parsers.md` (`name`, `apiVersion`, `requiresBrowser`, `probe`, `toc`, `chapter`, optional `chapterKey`).
+2. Implement `probe(url)` so it claims only this site's URLs, and return the chapters array **in the site's reading order** — the host uses each entry's position as its canonical chapter order.
+3. Set `requiresBrowser: true` when the site is behind Cloudflare or needs JS rendering. The host then routes the script's fetches through the owner's browser worker; the flag also drives the `requiresBrowser` field on the novel.
+4. Syntax-check: `node --check parsers/<site>.js`.
+5. Validate against the live site: `./bin/translator-server -check-parser parsers/<site>.js -check-url <novel-url>`.
+6. No Go registration and no rebuild — the parsers dir is re-read per job. For local testing either point the server at the repo dir (`-parsers-dir parsers/`) or copy the file into `<data-dir>/parsers`.
+7. If behind Cloudflare, use the debug proxy workflow to fetch real HTML first (see `## Debug proxy for Cloudflare-protected sites`).
+8. **Before committing any parser change (new or edited), regenerate the manifest: `make parsers-manifest`.** `parsers/index.json` carries the sha256 of every published script and the server auto-updates installed copies against it — a stale manifest makes running installs keep executing the old content. Always run it as the last step before commit; this applies to selector fixes and small edits too, not only new files.
 
 ### Adding a new API route
 
