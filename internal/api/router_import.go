@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -78,7 +79,11 @@ func (sharedImportHandlers) importEpub(s *Server) func(*core.RequestEvent) error
 		}
 		chapters := make([]store.ImportedEpubChapter, len(parsed.Chapters))
 		for i, ch := range parsed.Chapters {
-			chapters[i] = store.ImportedEpubChapter{Title: ch.Title, Content: ch.Content}
+			images := make([]store.ImportedNovelImage, len(ch.Images))
+			for j, img := range ch.Images {
+				images[j] = store.ImportedNovelImage{Alt: img.Alt, MimeType: img.MimeType, Blob: img.Blob}
+			}
+			chapters[i] = store.ImportedEpubChapter{Title: ch.Title, Content: ch.Content, Images: images}
 		}
 		mimeType := header.Header.Get("Content-Type")
 		if mimeType == "" {
@@ -119,9 +124,17 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 			name    string
 			content []byte
 		}, 0)
-		// Zip bomb guard: cap the total decompressed content the same way the
-		// EPUB import does (see epubimport.MaxDecompressedBytes).
-		remainingDecompressed := epubimport.MaxDecompressedBytes
+		// Image entries (jpg/png/gif/webp/svg anywhere in the archive) feed the
+		// inline-image convention and run under their own budget, mirroring
+		// epubimport's separate image limit; everything else keeps the 25MB
+		// zip-bomb text guard.
+		type zipImage struct {
+			name    string
+			content []byte
+		}
+		var imageEntries []zipImage
+		remainingText := epubimport.MaxDecompressedBytes
+		remainingImages := epubimport.MaxImagesBytes
 		for _, f := range reader.File {
 			if f.FileInfo().IsDir() {
 				continue
@@ -130,20 +143,36 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 			if openErr != nil {
 				return e.InternalServerError("failed to read zip entry", openErr)
 			}
-			data, readErr := io.ReadAll(io.LimitReader(rc, remainingDecompressed+1))
+			entryName := strings.TrimLeft(filepath.ToSlash(f.Name), "./")
+			if imgMime := zipImageMime(entryName); imgMime != "" {
+				data, readErr := io.ReadAll(io.LimitReader(rc, epubimport.MaxImageBytes+1))
+				rc.Close()
+				if readErr != nil {
+					return e.InternalServerError("failed to read zip entry", readErr)
+				}
+				if int64(len(data)) > epubimport.MaxImageBytes {
+					return e.BadRequestError(fmt.Sprintf("image %s exceeds the %dMB per-image limit", entryName, epubimport.MaxImageBytes>>20), nil)
+				}
+				remainingImages -= int64(len(data))
+				if remainingImages < 0 {
+					return e.BadRequestError(fmt.Sprintf("zip images exceed the %dMB total limit", epubimport.MaxImagesBytes>>20), nil)
+				}
+				imageEntries = append(imageEntries, zipImage{name: entryName, content: data})
+				continue
+			}
+			data, readErr := io.ReadAll(io.LimitReader(rc, remainingText+1))
 			rc.Close()
 			if readErr != nil {
 				return e.InternalServerError("failed to read zip entry", readErr)
 			}
-			if int64(len(data)) > remainingDecompressed {
+			if int64(len(data)) > remainingText {
 				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "zip decompressed size exceeds 25MB limit")
 			}
-			remainingDecompressed -= int64(len(data))
-			name := strings.TrimLeft(filepath.ToSlash(f.Name), "./")
+			remainingText -= int64(len(data))
 			rawEntries = append(rawEntries, struct {
 				name    string
 				content []byte
-			}{name, data})
+			}{entryName, data})
 		}
 		prefix := detectZipRoot(rawEntries)
 		var metadataJSON string
@@ -226,6 +255,23 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 				OriginalContent:   origContent,
 				TranslatedContent: transContent,
 			})
+		}
+		// Inline-image convention: chapter text may reference zip images via
+		// [[IMG:file.jpg]] markers. The originals tree is canonical — each
+		// distinct marker gets the token [[IMG-n]] in order of first
+		// appearance — and the translated tree is rewritten with the same
+		// mapping (markers unknown to the original are dropped).
+		zipImages := map[string]zipImageContent{}
+		for _, img := range imageEntries {
+			base := path.Base(img.name)
+			if _, exists := zipImages[base]; !exists {
+				zipImages[base] = zipImageContent{mime: zipImageMime(img.name), content: img.content}
+			}
+		}
+		for idx := range chapters {
+			if err := applyZipImageMarkers(&chapters[idx], zipImages, sorted[idx].name); err != nil {
+				return e.BadRequestError(err.Error(), nil)
+			}
 		}
 		result, err := s.Store.ImportZipNovel(&store.ImportZipNovelInput{
 			OwnerID:      e.Auth.Id,
@@ -1316,6 +1362,72 @@ func hasFileAtRoot(dir string, entries []struct {
 		}
 	}
 	return false
+}
+
+// zipImageMime maps a zip entry name to its image mime type, or "" when the
+// entry is not one of the supported inline image formats.
+func zipImageMime(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	default:
+		return ""
+	}
+}
+
+type zipImageContent struct {
+	mime    string
+	content []byte
+}
+
+// reZipImageMarker matches the [[IMG:file.jpg]] authoring markers of the
+// import-zip image convention.
+var reZipImageMarker = regexp.MustCompile(`\[\[IMG:([^\[\]\n]+)\]\]`)
+
+// applyZipImageMarkers rewrites an imported zip chapter's image markers into
+// [[IMG-n]] tokens. The originals content is canonical: each distinct marker
+// (order of first appearance) gets the next token number and its blob is
+// collected; the translated content is rewritten with the same mapping and
+// markers unknown to the original are dropped. Referencing an image that is
+// not in the zip is an authoring error and fails the import.
+func applyZipImageMarkers(ch *store.ImportedZipChapter, images map[string]zipImageContent, chapterFile string) error {
+	nums := map[string]int{}
+	var imgs []store.ImportedNovelImage
+	for _, m := range reZipImageMarker.FindAllStringSubmatch(ch.OriginalContent, -1) {
+		name := strings.TrimSpace(m[1])
+		if name == "" {
+			continue
+		}
+		if _, ok := nums[name]; ok {
+			continue
+		}
+		blob, ok := images[name]
+		if !ok {
+			return fmt.Errorf("chapter file %q references [[IMG:%s]] but images/%s is not present in the zip", chapterFile, name, name)
+		}
+		nums[name] = len(nums) + 1
+		imgs = append(imgs, store.ImportedNovelImage{MimeType: blob.mime, FileName: name, Blob: blob.content})
+	}
+	for name, num := range nums {
+		token := fmt.Sprintf("[[IMG-%d]]", num)
+		ch.OriginalContent = strings.ReplaceAll(ch.OriginalContent, "[[IMG:"+name+"]]", token)
+		if ch.TranslatedContent != "" {
+			ch.TranslatedContent = strings.ReplaceAll(ch.TranslatedContent, "[[IMG:"+name+"]]", token)
+		}
+	}
+	if ch.TranslatedContent != "" {
+		ch.TranslatedContent = reZipImageMarker.ReplaceAllString(ch.TranslatedContent, "")
+	}
+	ch.Images = imgs
+	return nil
 }
 
 func extractChapterOrder(filename string) int {

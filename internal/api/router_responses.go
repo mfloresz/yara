@@ -206,6 +206,50 @@ func chapterRecords(chapters []store.Chapter) []map[string]any {
 	return result
 }
 
+// imageRecord shapes a stored inline chapter image. url points at the
+// authenticated serve route; the frontend renders it directly in <img> tags.
+func imageRecord(novelID string, i store.NovelImage) map[string]any {
+	return map[string]any{
+		"id":       i.ID,
+		"chapterId": i.ChapterID,
+		"token":    i.ImageToken(),
+		"num":      i.Num,
+		"alt":      i.Alt,
+		"mime":     i.MimeType,
+		"url":      "/api/v1/novels/" + novelID + "/images/" + i.ID,
+	}
+}
+
+func imageRecords(novelID string, images []store.NovelImage) []map[string]any {
+	out := make([]map[string]any, 0, len(images))
+	for _, i := range images {
+		out = append(out, imageRecord(novelID, i))
+	}
+	return out
+}
+
+// withImages attaches the novel's inline images relevant to a full chapter
+// record, resolved against the chapter's [[IMG-n]] tokens. An empty list
+// omits the key entirely so tokenless chapters keep the exact response shape
+// they always had.
+func withImages(chapter map[string]any, novelID string, images []store.NovelImage) map[string]any {
+	if len(images) == 0 {
+		return chapter
+	}
+	chapterID, _ := chapter["id"].(string)
+	chapterImages := make([]store.NovelImage, 0, len(images))
+	for _, i := range images {
+		if i.ChapterID == chapterID {
+			chapterImages = append(chapterImages, i)
+		}
+	}
+	if len(chapterImages) == 0 {
+		return chapter
+	}
+	chapter["images"] = imageRecords(novelID, chapterImages)
+	return chapter
+}
+
 func chapterSummaryRecord(c store.ChapterSummary) map[string]any {
 	return map[string]any{
 		"id":                   c.ID,

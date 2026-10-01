@@ -55,6 +55,11 @@ func (s *Server) runRefineChapter(jc *jobContext, idx int, chapter *store.Chapte
 }
 
 func (s *Server) saveRefinedChapter(jc *jobContext, chapter *store.Chapter, baseline, refined string) error {
+	// A refine edit that drops, duplicates or mutates an [[IMG-n]] marker
+	// would break the novel's inline images; refuse to persist such a result.
+	if err := validateSegmentTokens(baseline, refined); err != nil {
+		return fmt.Errorf("refinement of chapter %s lost image markers, discarding: %w", chapter.ID, err)
+	}
 	chapter.RefinedContent = refined
 	applied, err := s.Store.SaveRefinedContentIfUnchanged(chapter.ID, baseline, chapter.RefinedContent, "refined")
 	if err != nil {

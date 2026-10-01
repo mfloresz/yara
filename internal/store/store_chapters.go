@@ -768,16 +768,19 @@ func (s *Store) upsertChapter(userID, novelID string, chapter *Chapter, recalcSt
 // target novel is expected to be fresh, so no position shifting happens
 // here) and content is stored verbatim. Import and copy flows use this to
 // avoid a per-chapter novel re-read and to make the whole batch atomic — a
-// crash can no longer leave a partially imported novel behind.
-func (s *Store) insertChaptersBulk(novelID string, chapters []Chapter) error {
+// crash can no longer leave a partially imported novel behind. It returns
+// the created chapter IDs in input order so callers can attach related
+// records (e.g. inline images).
+func (s *Store) insertChaptersBulk(novelID string, chapters []Chapter) ([]string, error) {
+	ids := make([]string, 0, len(chapters))
 	if len(chapters) == 0 {
-		return nil
+		return ids, nil
 	}
 	collection, err := s.App.FindCollectionByNameOrId(ChaptersCollection)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.App.RunInTransaction(func(txApp core.App) error {
+	err = s.App.RunInTransaction(func(txApp core.App) error {
 		for _, chapter := range chapters {
 			record := core.NewRecord(collection)
 			record.Set("novel", novelID)
@@ -795,9 +798,14 @@ func (s *Store) insertChaptersBulk(novelID string, chapters []Chapter) error {
 			if err := txApp.Save(record); err != nil {
 				return err
 			}
+			ids = append(ids, record.Id)
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // ExcludeChapter logically deletes a chapter: the record, content, ID and

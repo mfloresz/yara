@@ -565,6 +565,33 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/Novel' }
 
+  /novels/{id}/images/{imageId}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+      - name: imageId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Novels]
+      summary: Serve one stored inline chapter image.
+      description: >-
+        Cookie-authenticated serving of a novel's inline chapter image (the
+        blob behind the [[IMG-n]] tokens in chapter content). The file field
+        is protected, so PocketBase's native /api/files route requires a file
+        token; this endpoint is the replacement the chapter responses' image
+        URLs point at. Access follows novel visibility (owner or is_public).
+        Images are immutable after import; responses carry
+        `Cache-Control: private, max-age=31536000, immutable`.
+      responses:
+        '200':
+          description: OK
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /novels/{id}/recalculate-stats:
     parameters:
       - $ref: '#/components/parameters/IdParam'
@@ -3101,8 +3128,35 @@ components:
           type: string
           enum: [pending, processing, completed, failed, skipped]
         errorMessage: { type: string }
+        images:
+          type: array
+          description: >-
+            Inline chapter images backing the [[IMG-n]] tokens present in the
+            content fields. Only present on full chapter responses
+            (includeContent=true or single-chapter get) of novels that have
+            images; omitted (not empty) otherwise.
+          items: { $ref: '#/components/schemas/ChapterImage' }
         createdAt: { type: string }
         updatedAt: { type: string }
+
+    ChapterImage:
+      type: object
+      description: One stored inline image of a chapter. token matches the exact [[IMG-n]] placeholder in the chapter content.
+      required: [id, chapterId, token, num, url]
+      properties:
+        id: { type: string }
+        chapterId: { type: string }
+        token:
+          type: string
+          description: Exact placeholder string, e.g. "[[IMG-1]]".
+        num:
+          type: integer
+          description: Token number n of [[IMG-n]].
+        alt: { type: string }
+        mime: { type: string }
+        url:
+          type: string
+          description: Authenticated URL serving the image bytes.
 
     ChapterSummary:
       type: object

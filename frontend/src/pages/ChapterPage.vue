@@ -148,7 +148,7 @@
             <template v-if="viewMode === 'rich'">
               <RichTextEditor :key="`source-${chapter?.id}`" :model-value="originalContent" :editable="false" @update:model-value="() => {}" />
             </template>
-            <div v-else-if="viewMode === 'markdown'" class="markdown-preview ws-preview" v-html="markdownToHtml(originalContent || 'Sin contenido original')" />
+            <div v-else-if="viewMode === 'markdown'" class="markdown-preview ws-preview" v-html="markdownToHtml(originalContent || 'Sin contenido original', chapter?.images)" />
             <n-input v-else :value="originalContent" type="textarea" :rows="16" readonly :style="{ fontFamily: 'monospace' }" placeholder="Sin contenido original" tabindex="-1" />
           </div>
 
@@ -171,7 +171,7 @@
             <template v-else-if="viewMode === 'rich'">
               <RichTextEditor :key="`${activeTab}-${chapter?.id}`" :model-value="activeValue" @update:model-value="onActiveChange($event)" />
             </template>
-            <div v-else class="markdown-preview ws-preview" v-html="markdownToHtml(activeValue || activePlaceholder)" />
+            <div v-else class="markdown-preview ws-preview" v-html="markdownToHtml(activeValue || activePlaceholder, chapter?.images)" />
           </div>
         </div>
       </section>

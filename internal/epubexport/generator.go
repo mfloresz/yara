@@ -22,6 +22,17 @@ type EpubMetadata struct {
 type ChapterData struct {
 	Title   string
 	Content string
+	// Images are the blobs behind the [[IMG-n]] tokens present in Content,
+	// in token order: Images[j] backs the token [[IMG-(j+1)]].
+	Images []ImageFile
+}
+
+// ImageFile is one chapter image to embed in the exported EPUB.
+type ImageFile struct {
+	Name     string // file name inside OEBPS/images/ (resolved by the generator)
+	Alt      string
+	MimeType string
+	Blob     []byte
 }
 
 func deterministicBookID(meta EpubMetadata) string {
@@ -101,8 +112,19 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 	}
 
 	for i, ch := range chapters {
+		imgMap := make(map[string]ImageFile, len(ch.Images))
+		for j, img := range ch.Images {
+			if len(img.Blob) == 0 {
+				continue
+			}
+			zipPath, fileName := chapterImageZipPath(i, j, img.MimeType)
+			if err := writeFile(zipPath, img.Blob, false); err != nil {
+				return nil, err
+			}
+			imgMap[fmt.Sprintf("[[IMG-%d]]", j+1)] = ImageFile{Name: fileName, Alt: img.Alt, MimeType: img.MimeType}
+		}
 		filename := fmt.Sprintf("OEBPS/chapter%d.xhtml", i+1)
-		html := buildChapterXHTML(ch)
+		html := buildChapterXHTML(ch, imgMap)
 		if err := writeFile(filename, []byte(html), false); err != nil {
 			return nil, err
 		}
@@ -118,8 +140,17 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 	return buf.Bytes(), nil
 }
 
-func buildChapterXHTML(ch ChapterData) string {
-	body := ProcessChapter(ch.Content)
+// chapterImageZipPath is the single naming rule for embedded chapter images,
+// shared by the zip writer and the OPF manifest. Images of chapter i (0-based)
+// land at OEBPS/images/c<i+1>img<j+1><ext>; the extension follows the stored
+// mime type.
+func chapterImageZipPath(chapterIdx, imgIdx int, mimeType string) (zipPath, fileName string) {
+	fileName = fmt.Sprintf("c%di%d%s", chapterIdx+1, imgIdx+1, mimeToExt(mimeType))
+	return "OEBPS/images/" + fileName, fileName
+}
+
+func buildChapterXHTML(ch ChapterData, images map[string]ImageFile) string {
+	body := ProcessChapterWithImages(ch.Content, images)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -249,6 +280,14 @@ func buildContentOPF(meta EpubMetadata, chapters []ChapterData, hasCover bool, c
 	for i := range chapters {
 		b.WriteString(fmt.Sprintf(`
     <item id="chapter%d" href="chapter%d.xhtml" media-type="application/xhtml+xml"/>`, i+1, i+1))
+		for j, img := range chapters[i].Images {
+			if len(img.Blob) == 0 {
+				continue
+			}
+			zipPath, _ := chapterImageZipPath(i, j, img.MimeType)
+			b.WriteString(fmt.Sprintf(`
+    <item id="img-c%di%d" href="%s" media-type="%s"/>`, i+1, j+1, strings.TrimPrefix(zipPath, "OEBPS/"), escapeXML(img.MimeType)))
+		}
 	}
 
 	b.WriteString(`
@@ -354,6 +393,12 @@ func mimeToExt(mime string) string {
 	}
 	if strings.Contains(mime, "avif") {
 		return ".avif"
+	}
+	if strings.Contains(mime, "svg") {
+		return ".svg"
+	}
+	if strings.Contains(mime, "gif") {
+		return ".gif"
 	}
 	return ".jpg"
 }

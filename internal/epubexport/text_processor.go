@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"translator-server/internal/epubimport"
 )
 
 var (
@@ -154,6 +156,15 @@ func isLiOnlyBlock(trimmed string) bool {
 }
 
 func ProcessChapter(content string) string {
+	return ProcessChapterWithImages(content, nil)
+}
+
+// ProcessChapterWithImages converts a chapter's markdown to xhtml, resolving
+// [[IMG-n]] tokens into <img> elements backed by images the generator writes
+// into OEBPS/images/. Tokens without a matching entry in the images map are
+// dropped rather than leaking placeholders into the book. A nil map keeps
+// the plain text-only conversion.
+func ProcessChapterWithImages(content string, images map[string]ImageFile) string {
 	txt := strings.ReplaceAll(content, "\r\n", "\n")
 
 	// Escape entities before recognizing any markdown structure. None of the
@@ -162,6 +173,16 @@ func ProcessChapter(content string) string {
 	// ("&gt;") further down. This guarantees the output is always
 	// well-formed XML regardless of what the source text contains.
 	txt = escapeXML(txt)
+
+	if len(images) > 0 {
+		txt = epubimport.ImageTokenRe.ReplaceAllStringFunc(txt, func(token string) string {
+			img, ok := images[token]
+			if !ok {
+				return ""
+			}
+			return `<img src="images/` + img.Name + `" alt="` + escapeXML(img.Alt) + `"/>`
+		})
+	}
 
 	// Block-level structure is extracted first, on the raw (still
 	// un-emphasized) text, so inline markdown never eats a "- "/"* " list

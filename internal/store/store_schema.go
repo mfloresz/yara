@@ -626,6 +626,35 @@ func (s *Store) ensureEpubsCollection(novels *core.Collection) (*core.Collection
 	return c, nil
 }
 
+// novelImageMaxSize overrides PocketBase's 5MB default for the "file" field
+// of novel_images, matching epubimport.MaxImageBytes.
+const novelImageMaxSize int64 = 20 << 20 // 20MB
+
+func (s *Store) ensureNovelImagesCollection(novels, chapters *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(NovelImagesCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(NovelImagesCollection)
+	ownerOnly := "@request.auth.id != '' && novel.owner = @request.auth.id"
+	c.ListRule = types.Pointer(ownerOnly)
+	c.ViewRule = types.Pointer(ownerOnly)
+	c.CreateRule = types.Pointer(ownerOnly)
+	c.UpdateRule = types.Pointer(ownerOnly)
+	c.DeleteRule = types.Pointer(ownerOnly)
+	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.RelationField{Name: "chapter", Required: true, CollectionId: chapters.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.NumberField{Name: "num", Required: true})
+	c.Fields.Add(&core.TextField{Name: "alt", Max: 2000})
+	c.Fields.Add(&core.TextField{Name: "mime", Max: 64})
+	c.Fields.Add(&core.FileField{Name: "file", Required: true, MaxSelect: 1, MaxSize: novelImageMaxSize, Protected: true})
+	addSystemDateFields(c)
+	c.AddIndex("idx_novel_images_unique_token", true, "chapter,num", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // migrateEpubFileMaxSize raises the max upload size of the "file" field on
 // pre-existing epubs collections that were created before epubFileMaxSize
 // was introduced (they default to PocketBase's 5MB limit). It also flips the

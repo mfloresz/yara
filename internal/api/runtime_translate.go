@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"translator-server/internal/ai"
+	"translator-server/internal/epubimport"
 	"translator-server/internal/store"
 )
 
@@ -347,6 +348,15 @@ func (s *Server) translateSegmentText(ctx context.Context, jc *jobContext, segme
 			}
 			continue
 		}
+		if err := validateSegmentTokens(segment.Text, translatedText); err != nil {
+			lastErr = err
+			if attempt < maxRetries {
+				if err := sleepWithContext(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
+					return "", err
+				}
+			}
+			continue
+		}
 		return strings.TrimSpace(translatedText), nil
 	}
 	return "", lastErr
@@ -364,6 +374,32 @@ func validateTranslatedText(translatedText string) error {
 		return fmt.Errorf("model returned empty translated text")
 	}
 	return nil
+}
+
+// validateSegmentTokens fails a segment whose [[IMG-n]] image markers did not
+// survive translation verbatim (missing, duplicated, mutated, reordered or
+// renumbered). The retry loop treats it like any other validation failure;
+// prompts carry a matching preservation rule, this is the enforcement.
+func validateSegmentTokens(original, translated string) error {
+	want := imageTokenSequence(original)
+	got := imageTokenSequence(translated)
+	if len(want) == len(got) {
+		same := true
+		for i := range want {
+			if want[i] != got[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	return fmt.Errorf("image markers were altered by the model: want %v, got %v", want, got)
+}
+
+func imageTokenSequence(text string) []string {
+	return epubimport.ImageTokenRe.FindAllString(text, -1)
 }
 
 func joinSegments(segments []chapterSegment, partials []string) string {

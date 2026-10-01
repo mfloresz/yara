@@ -71,7 +71,7 @@
             <h1 class="reader-chapter-heading">{{ chapterDisplayTitle(activeChapter) }}</h1>
             <div class="reader-chapter-ornament">❧ ✦ ❧</div>
           </header>
-          <div class="reader-body markdown-preview" v-html="markdownToHtml(activeChapterContent)" />
+          <div class="reader-body markdown-preview" v-html="markdownToHtml(activeChapterContent, activeChapter?.images)" />
         </article>
       </main>
     </div>

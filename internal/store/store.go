@@ -19,6 +19,7 @@ const (
 	ChaptersCollection             = "chapters"
 	JobsCollection                 = "translation_jobs"
 	EpubsCollection                = "epubs"
+	NovelImagesCollection          = "novel_images"
 	ReadingProgressCollection      = "reading_progress"
 	WorkerTokensCollection         = "worker_tokens"
 	InvitationsCollection          = "invitations"
@@ -103,6 +104,9 @@ func (s *Store) EnsureSchema() error {
 		return err
 	}
 	if err := s.migrateEpubCascadeDelete(epubs); err != nil {
+		return err
+	}
+	if _, err := s.ensureNovelImagesCollection(novels, chapters); err != nil {
 		return err
 	}
 	if _, err := s.ensureReadingProgressCollection(users, novels); err != nil {

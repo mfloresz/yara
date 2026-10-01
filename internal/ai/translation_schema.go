@@ -43,6 +43,10 @@ func buildTranslationContentSystemPrompt(in TranslateTextInput) string {
 		"Translate only that content.",
 		"Return only the translated text.",
 		"Do not return JSON, labels, notes, or commentary.",
+		// Fixed image-marker rule: chapter content may carry [[IMG-n]]
+		// placeholders backed by stored images. They must survive translation
+		// verbatim; the job runtime enforces this per segment and retries.
+		"If the text contains image placeholder tokens like [[IMG-3]], copy each one exactly as written, in its original position. Never translate, alter, merge, or remove them.",
 	)
 	return strings.Join(instructions, "\n\n")
 }

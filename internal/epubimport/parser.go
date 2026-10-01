@@ -42,6 +42,10 @@ func Parse(blob []byte, filename string) (*Result, error) {
 
 	ncxNavPoints := parseNCXNavPoints(zb, opfPath, string(opfXML), manifestMap)
 
+	imgBudget := newImageBudget(zr)
+	imgIndex := imageManifestIndex(opfPath, manifest)
+	imgRefs := make(map[string]imageRef)
+
 	unmatchedLabels := make(map[string]bool)
 	for _, np := range ncxNavPoints {
 		unmatchedLabels[np.Label] = true
@@ -87,6 +91,12 @@ func Parse(blob []byte, filename string) (*Result, error) {
 			continue
 		}
 		htmlString := removeScriptTags(string(htmlBlob))
+		if rewritten, refs := replaceImagesWithRefs(htmlString, htmlPath, imgIndex); len(refs) > 0 {
+			htmlString = rewritten
+			for key, ref := range refs {
+				imgRefs[key] = ref
+			}
+		}
 
 		if len(unmatchedLabels) > 0 {
 			remaining := make([]ncxNavPoint, 0, len(unmatchedLabels))
@@ -145,6 +155,9 @@ func Parse(blob []byte, filename string) (*Result, error) {
 		result.Chapters = append(result.Chapters, Chapter{Title: np.Label, Content: markdown})
 	}
 
+	if err := finalizeChapterImages(imgBudget, result.Chapters, imgRefs); err != nil {
+		return nil, err
+	}
 	if len(result.Chapters) == 0 {
 		return nil, fmt.Errorf("no se encontraron capítulos legibles en el EPUB")
 	}

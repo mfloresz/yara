@@ -3,6 +3,18 @@ package epubimport
 type Chapter struct {
 	Title   string
 	Content string
+	// Images holds the blobs for the [[IMG-n]] tokens present in Content,
+	// in token order. Tokens are numbered per chapter by order of first
+	// appearance, so the same image referenced twice inside one chapter
+	// yields one entry referenced by two occurrences.
+	Images []Image
+}
+
+type Image struct {
+	Token    string
+	Alt      string
+	MimeType string
+	Blob     []byte
 }
 
 type Result struct {
