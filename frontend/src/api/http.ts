@@ -161,6 +161,98 @@ export function createHttpClient(config: HttpClientConfig) {
     return unwrapEnvelope<T>(responseBody);
   }
 
+  // streamNDJSON POSTs a JSON body and consumes the response as a
+  // newline-delimited JSON event stream (used by the agent chat endpoint).
+  // onEvent fires once per parsed event; the returned promise resolves when
+  // the stream ends. Errors thrown here are pre-stream failures (non-2xx
+  // problem+json); once streaming started, failures arrive as events.
+  async function streamNDJSON<T>(
+    path: string,
+    body: object,
+    onEvent: (event: T) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(`${config.baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as ApiErrorPayload;
+      if (response.status === 401) {
+        clearAuth();
+      }
+      if (response.status === 403 && payload.error?.code === "account_blocked") {
+        clearAuth();
+      }
+      throw new ApiError(
+        payload.error?.message ?? `HTTP ${response.status}`,
+        response.status,
+        payload.error?.code,
+      );
+    }
+    if (!response.body) {
+      throw new ApiError("empty response stream", 500);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) {
+            // Parse and dispatch are separate steps on purpose. Wrapping the
+            // onEvent call in the same try made a handler bug indistinguishable
+            // from a malformed line: the event vanished with no error anywhere
+            // and the stream carried on. Only a bad parse is skipped.
+            let parsed: T;
+            try {
+              parsed = JSON.parse(line) as T;
+            } catch {
+              // Skip malformed lines instead of aborting the stream.
+              newline = buffer.indexOf("\n");
+              continue;
+            }
+            onEvent(parsed);
+          }
+          newline = buffer.indexOf("\n");
+        }
+      }
+      // Flush the decoder: a multi-byte character split across the final chunk
+      // boundary is only complete after the last decode.
+      buffer += decoder.decode();
+      const tail = buffer.trim();
+      if (tail) {
+        // Same split as above: a parse failure is skipped, a handler failure
+        // propagates.
+        let parsed: T | undefined;
+        try {
+          parsed = JSON.parse(tail) as T;
+        } catch {
+          // Ignore trailing garbage.
+        }
+        if (parsed !== undefined) onEvent(parsed);
+      }
+    } finally {
+      // Release the body. Without this the stream stays locked forever if
+      // onEvent throws, and the connection is never drained on the normal
+      // early-exit paths.
+      reader.releaseLock();
+    }
+  }
+
   return {
     get: <T>(path: string) => request<T>(path),
     post: <T>(path: string, body?: BodyInit | object) =>
@@ -190,5 +282,6 @@ export function createHttpClient(config: HttpClientConfig) {
     delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
     deleteWithBody: deleteWithBody,
     downloadBlob: downloadBlob,
+    streamNDJSON: streamNDJSON,
   };
 }

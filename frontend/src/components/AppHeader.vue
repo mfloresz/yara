@@ -47,6 +47,19 @@
           </template>
         </n-button>
 
+        <n-button
+          quaternary
+          circle
+          size="small"
+          class="touch-target"
+          aria-label="Asistente"
+          @click="router.push('/chat')"
+        >
+          <template #icon>
+            <n-icon><ChatbubbleEllipsesOutline /></n-icon>
+          </template>
+        </n-button>
+
         <n-dropdown
           trigger="click"
           :options="userMenuOptions"
@@ -111,6 +124,10 @@
         <template #icon><n-icon :size="20"><FlashOutline /></n-icon></template>
         <span>Operaciones</span>
       </n-button>
+      <n-button text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/chat'))">
+        <template #icon><n-icon :size="20"><ChatbubbleEllipsesOutline /></n-icon></template>
+        <span>Asistente</span>
+      </n-button>
       <n-button v-if="auth.isAdmin.value" text block class="mobile-nav-item touch-target" @click="handleMobileNav(() => router.push('/admin'))">
         <template #icon><n-icon :size="20"><ShieldOutline /></n-icon></template>
         <span>Administración</span>
@@ -142,6 +159,7 @@ import {
   SettingsOutline,
   ShieldOutline,
   LogOutOutline,
+  ChatbubbleEllipsesOutline,
 } from "@vicons/ionicons5";
 import JobsDrawer from "@/components/JobsDrawer.vue";
 import GlobalNovelSearch from "@/components/GlobalNovelSearch.vue";

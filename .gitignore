@@ -17,3 +17,4 @@ scripts/*
 debug-proxy
 
 .zcode/
+.parsers-signing.key

@@ -25,6 +25,7 @@ const (
 	SharedProviderKeysCollection   = "shared_provider_keys"
 	PromptOverridesCollection      = "prompt_overrides"
 	PasswordResetsCollection       = "password_resets"
+	AgentSessionsCollection        = "agent_sessions"
 )
 
 // ErrEmailTaken is returned when creating a user or invitation for an email
@@ -120,6 +121,9 @@ func (s *Store) EnsureSchema() error {
 		return err
 	}
 	if _, err := s.ensurePasswordResetsCollection(users); err != nil {
+		return err
+	}
+	if _, err := s.ensureAgentSessionsCollection(users); err != nil {
 		return err
 	}
 	if err := s.seedProviders(); err != nil {

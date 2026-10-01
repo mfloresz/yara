@@ -6,9 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/zendev-sh/goai"
-	"github.com/zendev-sh/goai/provider/openai"
 )
 
 func TestProvidersContainKnownEntries(t *testing.T) {
@@ -34,7 +31,7 @@ func TestProvidersContainKnownEntries(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("provider %q default model %q not in models list %v", p.ID, p.DefaultModel, p.Models)
+			t.Fatalf("provider %q default model %q not in models list %v", p.DefaultModel, p.ID, p.Models)
 		}
 		if ids[p.ID] {
 			t.Fatalf("duplicate provider id %q", p.ID)
@@ -62,8 +59,8 @@ func TestProviderByIDMeta(t *testing.T) {
 	if !info.OpenAICompat {
 		t.Fatal("meta should be OpenAI compatible")
 	}
-	if got, _ := info.GoAIOptions["useResponsesAPI"].(bool); got {
-		t.Fatal("meta should force chat/completions instead of responses API")
+	if got, _ := info.GoAIOptions["strictJsonSchema"].(bool); !got {
+		t.Fatal("meta should enable strict JSON schema")
 	}
 	if info.DefaultModel != "muse-spark-1.2-contributor" {
 		t.Fatalf("unexpected default model: %q", info.DefaultModel)
@@ -84,9 +81,6 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 	if !info.OpenAICompat {
 		t.Fatal("opencode-go should be OpenAI compatible")
 	}
-	if got, _ := info.GoAIOptions["useResponsesAPI"].(bool); got {
-		t.Fatal("opencode-go should force chat/completions instead of responses API")
-	}
 	if got, _ := info.GoAIOptions["strictJsonSchema"].(bool); !got {
 		t.Fatal("opencode-go should enable strict JSON schema")
 	}
@@ -94,9 +88,8 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		"openai/gpt-5.6-luna (reasoning: none)":   true,
 		"openai/gpt-5.6-luna (reasoning: low)":    true,
 		"openai/gpt-5.6-luna (reasoning: medium)": true,
-		"mimo-v2.5":                  true,
-		"deepseek-v4.1-flash":             true,
-		"muse-spark-1.3-contributor": true,
+		"mimo-v2.5":           true,
+		"deepseek-v4.1-flash": true,
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)
@@ -105,9 +98,6 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		if !wantModels[m] {
 			t.Fatalf("unexpected model %q in opencode-go", m)
 		}
-	}
-	if got, _ := info.ModelOptions["muse-spark-1.3-contributor"]["useResponsesAPI"].(bool); !got {
-		t.Fatal("muse-spark-1.3-contributor on opencode-go should use the responses API")
 	}
 }
 
@@ -127,8 +117,7 @@ func TestOpenCodeGoLunaVariantWireFormat(t *testing.T) {
 		if _, ok := body["service_tier"]; ok {
 			t.Fatal("service_tier must not be set for OpenCode Go")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		respondChatCompletion(w, "ok")
 	}))
 	defer srv.Close()
 
@@ -136,42 +125,45 @@ func TestOpenCodeGoLunaVariantWireFormat(t *testing.T) {
 		APIKey:  "test-key",
 		BaseURL: srv.URL,
 		Model:   "openai/gpt-5.6-luna (reasoning: medium)",
-		ProviderOptions: map[string]any{
-			"useResponsesAPI": false,
-		},
 	}
 	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
 		t.Fatalf("TranslateText failed: %v", err)
 	}
 }
 
-func TestOpenCodeGoMuseSparkUsesResponsesAPI(t *testing.T) {
+// TestOpenAIProviderAlwaysUsesChatCompletions pins the eino migration
+// behavior: every OpenAI-compatible request goes to /chat/completions with a
+// messages array, regardless of legacy provider options. The useResponsesAPI
+// switch is gone, so a catalog endpoint that only speaks the OpenAI Responses
+// API (e.g. muse-spark) will not work until that provider exposes
+// /chat/completions; the catalog entry is kept so the provider stays
+// selectable, and the limitation is called out in the API docs.
+func TestOpenAIProviderAlwaysUsesChatCompletions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
-			t.Fatalf("expected requests against the responses endpoint, got %q", r.URL.Path)
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("expected chat completions endpoint, got %q", r.URL.Path)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
-		if body["model"] != "muse-spark-1.3-contributor" {
+		if body["model"] != "muse-spark-1.2-contributor" {
 			t.Fatalf("unexpected model: %v", body["model"])
 		}
-		if _, ok := body["input"]; !ok {
-			t.Fatalf("responses request should carry an input array, got: %v", body)
+		if _, ok := body["messages"]; !ok {
+			t.Fatalf("chat completions request must carry a messages array, got: %v", body)
 		}
-		if _, ok := body["messages"]; ok {
-			t.Fatalf("responses request must not carry a chat-completions messages array: %v", body)
+		if _, ok := body["input"]; ok {
+			t.Fatalf("chat completions request must not carry a responses input array: %v", body)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"test","model":"muse-spark-1.3-contributor","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
+		respondChatCompletion(w, "ok")
 	}))
 	defer srv.Close()
 
 	provider := &OpenAIProvider{
 		APIKey:  "test-key",
 		BaseURL: srv.URL,
-		Model:   "muse-spark-1.3-contributor",
+		Model:   "muse-spark-1.2-contributor",
 		ProviderOptions: map[string]any{
 			"useResponsesAPI": true,
 		},
@@ -191,20 +183,17 @@ func TestModelNameSuffixPassthrough(t *testing.T) {
 		if model != "e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true" {
 			t.Fatalf("model name suffix was stripped or modified:\n  want: e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true\n  got:  %q", model)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		respondChatCompletion(w, "ok")
 	}))
 	defer srv.Close()
 
-	model := openai.Chat("e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true",
-		openai.WithBaseURL(srv.URL),
-		openai.WithAPIKey("test-key"),
-	)
-	_, err := goai.GenerateText(context.Background(), model,
-		goai.WithPrompt("hi"),
-	)
-	if err != nil {
-		t.Fatalf("GenerateText failed: %v", err)
+	provider := &OpenAIProvider{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Model:   "e2ee-gemma-4-26b-a4b-uncensored-p:disable_thinking=true",
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hi"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
 	}
 }
 
@@ -237,8 +226,8 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 			t.Fatalf("model %d = %q, want %q", i, info.Models[i], want)
 		}
 	}
-	if got, _ := info.GoAIOptions["useResponsesAPI"].(bool); got {
-		t.Fatal("openrouter should use chat/completions")
+	if got, _ := info.GoAIOptions["strictJsonSchema"].(bool); !got {
+		t.Fatal("openrouter should enable strict JSON schema")
 	}
 }
 
@@ -258,18 +247,14 @@ func TestOpenRouterReasoningVariantWireFormat(t *testing.T) {
 		if tier, ok := body["service_tier"].(string); !ok || tier != "flex" {
 			t.Fatalf("luna models should ride the flex tier, got: %v", body["service_tier"])
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		respondChatCompletion(w, "ok")
 	}))
 	defer srv.Close()
 
 	provider := &OpenAIProvider{
-		APIKey:  "test-key",
-		BaseURL: srv.URL,
-		Model:   "openai/gpt-5.6-luna (reasoning: medium)",
-		ProviderOptions: map[string]any{
-			"useResponsesAPI": false,
-		},
+		APIKey:     "test-key",
+		BaseURL:    srv.URL,
+		Model:      "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenRouter: true,
 	}
 	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
@@ -286,18 +271,14 @@ func TestOpenRouterNonLunaModelOmitsServiceTier(t *testing.T) {
 		if _, ok := body["service_tier"]; ok {
 			t.Fatalf("service_tier must not be set for non-luna models: %v", body["service_tier"])
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		respondChatCompletion(w, "ok")
 	}))
 	defer srv.Close()
 
 	provider := &OpenAIProvider{
-		APIKey:  "test-key",
-		BaseURL: srv.URL,
-		Model:   "deepseek/deepseek-v4-flash-0731",
-		ProviderOptions: map[string]any{
-			"useResponsesAPI": false,
-		},
+		APIKey:     "test-key",
+		BaseURL:    srv.URL,
+		Model:      "deepseek/deepseek-v4-flash-0731",
 		OpenRouter: true,
 	}
 	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
@@ -308,5 +289,83 @@ func TestOpenRouterNonLunaModelOmitsServiceTier(t *testing.T) {
 func TestProviderByIDUnknown(t *testing.T) {
 	if _, ok := ProviderByID("does-not-exist"); ok {
 		t.Fatal("unknown provider should not be found")
+	}
+}
+
+// TestOptionsForModelMerge pins the per-model override mechanism. It is the
+// extension point for provider quirks that only apply to one model of a
+// provider, and it is exercised by runtime_config.go when building a provider
+// for the selected model. No catalog entry populates it today, so without this
+// test the merge branch could rot silently.
+func TestOptionsForModelMerge(t *testing.T) {
+	info := ProviderInfo{
+		GoAIOptions: map[string]any{
+			"strictJsonSchema": true,
+			"shared":           "base",
+		},
+		ModelOptions: map[string]map[string]any{
+			"model-a": {"strictJsonSchema": false, "extra": 1},
+		},
+	}
+
+	// A model with overrides: keys merge, and the override wins.
+	got := info.OptionsForModel("model-a")
+	if v, _ := got["strictJsonSchema"].(bool); v {
+		t.Error("per-model override should disable strictJsonSchema")
+	}
+	if got["shared"] != "base" {
+		t.Errorf("base option lost during merge: %v", got)
+	}
+	if got["extra"] != 1 {
+		t.Errorf("per-model extra option missing: %v", got)
+	}
+
+	// A model without overrides: the base map is returned as-is.
+	if got := info.OptionsForModel("model-b"); got["strictJsonSchema"] != true {
+		t.Errorf("model without overrides should keep base options: %v", got)
+	}
+}
+
+// TestOpenRouterAttributionHeaders pins the HTTP-Referer/X-Title pair that
+// OpenRouter uses for app attribution. goai's OpenRouter provider injected
+// them unconditionally and the eino migration dropped them, so they are now
+// set explicitly for OpenRouter requests.
+func TestOpenRouterAttributionHeaders(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		respondChatCompletion(w, "ok")
+	}))
+	defer srv.Close()
+
+	provider := &OpenAIProvider{
+		APIKey:     "test-key",
+		BaseURL:    srv.URL,
+		Model:      "deepseek/deepseek-v4-flash-0731",
+		OpenRouter: true,
+	}
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+	if got.Get("HTTP-Referer") != openRouterReferer {
+		t.Errorf("HTTP-Referer = %q, want %q", got.Get("HTTP-Referer"), openRouterReferer)
+	}
+	if got.Get("X-Title") == "" {
+		t.Error("X-Title attribution header is missing")
+	}
+
+	// Non-OpenRouter providers must not claim OpenRouter attribution.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		respondChatCompletion(w, "ok")
+	}))
+	defer other.Close()
+	provider.BaseURL = other.URL
+	provider.OpenRouter = false
+	if _, err := provider.TranslateText(context.Background(), TranslateTextInput{TextToTranslate: "hello"}); err != nil {
+		t.Fatalf("TranslateText failed: %v", err)
+	}
+	if got.Get("HTTP-Referer") != "" {
+		t.Errorf("HTTP-Referer should only be set for OpenRouter, got %q", got.Get("HTTP-Referer"))
 	}
 }

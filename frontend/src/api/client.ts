@@ -7,6 +7,8 @@ import type {
   AdminProviderKey,
   AdminUser,
   AdminUserStats,
+  AgentChatEvent,
+  AgentSession,
   AuthResponse,
   InvitationValidation,
   PasswordResetValidation,
@@ -966,6 +968,26 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       },
       async delete(tokenId: string): Promise<void> {
         await http.post<void>(`/api/v1/worker-auth/delete/${tokenId}`);
+      },
+    },
+    agent: {
+      async getSession(): Promise<AgentSession | null> {
+        return http.get<AgentSession | null>("/api/v1/agent/session");
+      },
+      async resetSession(): Promise<void> {
+        await http.delete<void>("/api/v1/agent/session");
+      },
+      chat(
+        payload: { sessionId?: string; novelId?: string; message: string },
+        onEvent: (event: AgentChatEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<void> {
+        return http.streamNDJSON<AgentChatEvent>(
+          "/api/v1/agent/chat",
+          payload,
+          onEvent,
+          signal,
+        );
       },
     },
   };
