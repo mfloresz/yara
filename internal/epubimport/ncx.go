@@ -7,8 +7,10 @@ import (
 )
 
 var (
-	reNCXNavPoint = regexp.MustCompile(`(?s)<navPoint[^>]*>.*?<navLabel>\s*<text>(.*?)</text>\s*</navLabel>.*?<content[^>]*src=["']([^"']+)["'].*?</navPoint>`)
-	reSpineToc    = regexp.MustCompile(`<spine[^>]*toc=["']([^"']+)["']`)
+	reNCXNavPointOpen = regexp.MustCompile(`<navPoint\b[^>]*>`)
+	reNCXLabel        = regexp.MustCompile(`<navLabel>\s*<text>(.*?)</text>\s*</navLabel>`)
+	reNCXContent      = regexp.MustCompile(`<content[^>]*src=["']([^"']+)["']`)
+	reSpineToc        = regexp.MustCompile(`<spine[^>]*toc=["']([^"']+)["']`)
 )
 
 func parseNCXNavPoints(zb *zipBudget, opfPath, opfXML string, manifestMap map[string]manifestItem) []ncxNavPoint {
@@ -27,18 +29,29 @@ func parseNCXNavPoints(zb *zipBudget, opfPath, opfXML string, manifestMap map[st
 	if err != nil {
 		return nil
 	}
+	ncx := string(ncxBlob)
 
-	matches := reNCXNavPoint.FindAllStringSubmatch(string(ncxBlob), -1)
+	// Scan per opening <navPoint> tag instead of matching whole blocks: NCX
+	// navPoints nest (chapter navPoints contain their sections), and a flat
+	// non-greedy block regex swallows nested siblings and drops entries. Per
+	// spec each navPoint carries its navLabel before its content, so from
+	// every opening tag the first label/content pair belongs to it.
 	var navPoints []ncxNavPoint
-	for _, match := range matches {
-		if len(match) < 3 {
+	for _, open := range reNCXNavPointOpen.FindAllStringIndex(ncx, -1) {
+		rest := ncx[open[1]:]
+		labelMatch := reNCXLabel.FindStringSubmatchIndex(rest)
+		if labelMatch == nil {
 			continue
 		}
-		label := normalizeInlineText(match[1])
+		label := normalizeInlineText(rest[labelMatch[2]:labelMatch[3]])
 		if label == "" {
 			continue
 		}
-		src := html.UnescapeString(strings.TrimSpace(match[2]))
+		contentMatch := reNCXContent.FindStringSubmatch(rest[labelMatch[1]:])
+		if contentMatch == nil {
+			continue
+		}
+		src := html.UnescapeString(strings.TrimSpace(contentMatch[1]))
 
 		var filePath, anchor string
 		if idx := strings.IndexByte(src, '#'); idx >= 0 {

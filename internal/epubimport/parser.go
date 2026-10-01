@@ -79,6 +79,7 @@ func Parse(blob []byte, filename string) (*Result, error) {
 	}
 
 	ncxFragments := make(map[string]string)
+	var collectedNotes []Note
 
 	for _, idref := range spine {
 		item, ok := manifestMap[idref]
@@ -96,6 +97,13 @@ func Parse(blob []byte, filename string) (*Result, error) {
 			for key, ref := range refs {
 				imgRefs[key] = ref
 			}
+		}
+
+		// Calibre-style notes files (one tiny note per file, no prose) must
+		// not become chapters: fold them into the end-of-book notes chapter.
+		if notes, isNotesOnly := extractNoteFile(htmlString, htmlPath); isNotesOnly {
+			collectedNotes = append(collectedNotes, notes...)
+			continue
 		}
 
 		if len(unmatchedLabels) > 0 {
@@ -157,6 +165,12 @@ func Parse(blob []byte, filename string) (*Result, error) {
 
 	if err := finalizeChapterImages(imgBudget, result.Chapters, imgRefs); err != nil {
 		return nil, err
+	}
+	for i := range result.Chapters {
+		result.Chapters[i].Content = cleanNoteRefLinks(result.Chapters[i].Content)
+	}
+	if len(collectedNotes) > 0 {
+		result.Chapters = append(result.Chapters, buildNotesChapter(collectedNotes))
 	}
 	if len(result.Chapters) == 0 {
 		return nil, fmt.Errorf("no se encontraron capítulos legibles en el EPUB")
