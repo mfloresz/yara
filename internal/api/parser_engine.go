@@ -58,6 +58,11 @@ type parserScript struct {
 
 func (p parserScript) name() string { return p.script.Name() }
 
+// maxCoverBytes caps a cover download. Cover URLs come from site data, so an
+// unbounded read would let a hostile page stream until the single-binary server
+// runs out of memory.
+const maxCoverBytes = int64(10 << 20)
+
 // parserHTTPClient returns the direct HTTP client used for parser fetches.
 // The factory indirection lets tests point site hosts at an httptest server,
 // mirroring the old DownloaderFactory override.
@@ -134,9 +139,12 @@ func (s *Server) fetchCoverBlob(ctx context.Context, userID, coverURL string) ([
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				err = fmt.Errorf("cover fetch returned status %d", resp.StatusCode)
 			} else {
-				blob, readErr := io.ReadAll(resp.Body)
+				blob, readErr := io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes+1))
 				if readErr != nil {
 					return nil, "", fmt.Errorf("reading cover: %w", readErr)
+				}
+				if int64(len(blob)) > maxCoverBytes {
+					return nil, "", fmt.Errorf("cover %s exceeds %d bytes", coverURL, maxCoverBytes)
 				}
 				return blob, coverContentType(blob, resp.Header.Get("Content-Type")), nil
 			}
@@ -283,6 +291,10 @@ func (s *Server) fetchSourceSnapshot(ctx context.Context, userID, rawURL string)
 			if fresh, retried := s.updatedScriptForRetry(ctx, userID, entry, rawURL); retried {
 				if retryTOC, retryErr := fresh.TOC(ctx, rawURL); retryErr == nil {
 					toc, err = retryTOC, nil
+					// Keys must come from the script that produced the TOC:
+					// a published fix can add or change chapterKey, and keys
+					// from the stale script would never match on the next sync.
+					script = fresh
 				} else {
 					// The fresh script fails too; its error is the one to
 					// report. The manifest was just refreshed, so the cache

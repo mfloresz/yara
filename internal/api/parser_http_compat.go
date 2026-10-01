@@ -50,11 +50,13 @@ func applySiteHeaders(req *http.Request) {
 //
 // Only http/https URLs whose host resolves exclusively to public IPs pass.
 // Set PARSERS_ALLOW_PRIVATE_NETS=1 to bypass (local development and tests,
-// where site hosts are rewritten onto 127.0.0.1 mocks). The browser-worker
-// path needs no guard: those requests run in the user's own browser, not on
-// the server. Manifest/script downloads are also exempt: their URLs are
-// admin-configured, and their protection is the ed25519 signature.
+// where site hosts are rewritten onto 127.0.0.1 mocks). Manifest/script
+// downloads are exempt: their URLs are admin-configured, and their protection
+// is the ed25519 signature.
 func (s *Server) validateSiteFetchURL(ctx context.Context, rawURL string) error {
+	if err := s.validateSiteFetchTarget(rawURL); err != nil {
+		return err
+	}
 	if s != nil && s.Cfg != nil && s.Cfg.ParsersAllowPrivateNets {
 		return nil
 	}
@@ -62,13 +64,7 @@ func (s *Server) validateSiteFetchURL(ctx context.Context, rawURL string) error 
 	if err != nil {
 		return fmt.Errorf("invalid URL %q", rawURL)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("refusing to fetch non-http(s) URL %q", rawURL)
-	}
 	host := u.Hostname()
-	if host == "" {
-		return fmt.Errorf("refusing to fetch URL without a host %q", rawURL)
-	}
 	var ips []net.IP
 	if ip := net.ParseIP(host); ip != nil {
 		ips = []net.IP{ip}
@@ -88,6 +84,41 @@ func (s *Server) validateSiteFetchURL(ctx context.Context, rawURL string) error 
 		if !isPublicFetchIP(ip) {
 			return fmt.Errorf("refusing to fetch %q: host resolves to non-public IP %s", rawURL, ip.String())
 		}
+	}
+	return nil
+}
+
+// validateSiteFetchTarget checks what a URL literally points at — scheme, and
+// an explicit private/loopback address or an internal-only hostname — without
+// resolving DNS. It is the guard for the browser-worker path, which runs on
+// the user's machine: the server's resolution says nothing about what that
+// machine can reach, and a site legitimately resolvable only in the user's
+// network must still be relayable. Blocking the literal forms is what stops a
+// page-controlled href from aiming the user's browser at its own LAN.
+func (s *Server) validateSiteFetchTarget(rawURL string) error {
+	if s != nil && s.Cfg != nil && s.Cfg.ParsersAllowPrivateNets {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q", rawURL)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("refusing to fetch non-http(s) URL %q", rawURL)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("refusing to fetch URL without a host %q", rawURL)
+	}
+	if ip := net.ParseIP(host); ip != nil && !isPublicFetchIP(ip) {
+		return fmt.Errorf("refusing to fetch %q: %s is not a public address", rawURL, ip.String())
+	}
+	// Hostnames that name the local machine without a lookup.
+	lower := strings.ToLower(strings.TrimSuffix(host, "."))
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") ||
+		lower == "local" || strings.HasSuffix(lower, ".local") ||
+		lower == "internal" || strings.HasSuffix(lower, ".internal") {
+		return fmt.Errorf("refusing to fetch internal hostname %q", host)
 	}
 	return nil
 }

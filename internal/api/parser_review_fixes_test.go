@@ -664,3 +664,69 @@ func TestDiffDropsDuplicateKeys(t *testing.T) {
 		t.Fatalf("new chapters = %d, want 1", len(got))
 	}
 }
+
+// When a stale script's TOC fails and the published version heals it, the
+// snapshot's chapter keys must come from the published version too. Computing
+// them with the stale script would persist identities the published script no
+// longer produces, so the next sync would report the whole library as new and
+// re-download it as permanent duplicates.
+func TestRetriedScriptSuppliesChapterKeys(t *testing.T) {
+	useTestManifestKey(t)
+	dir := t.TempDir()
+	v1 := `module.exports = {
+  name: 'keyswap', apiVersion: 1,
+  probe: function (u) { return String(u).indexOf('keyswap.example') >= 0; },
+  toc: function (ctx, url) { ctx.fail('site_layout_changed', 'selectors gone'); },
+  chapter: function () { return { title: 'c', contentHtml: '<p>x</p>' }; },
+  chapterKey: function (ch) { return 'stale:' + ch.url; },
+};`
+	v2 := `module.exports = {
+  name: 'keyswap', apiVersion: 1,
+  probe: function (u) { return String(u).indexOf('keyswap.example') >= 0; },
+  toc: function () {
+    return { novel: { title: 'Healed' }, chapters: [{ title: 'One', url: 'https://keyswap.example/c1' }] };
+  },
+  chapter: function () { return { title: 'c', contentHtml: '<p>x</p>' }; },
+  chapterKey: function (ch) { return 'stable:' + ch.url; },
+};`
+	if err := os.WriteFile(filepath.Join(dir, "keyswap.js"), []byte(v1), 0o644); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+	m := &parserManifest{APIVersion: 1, Parsers: []parserManifestEntry{
+		{Name: "keyswap", File: "keyswap.js", SHA256: sha256OfString(v2)},
+	}}
+	signTestManifest(t, m)
+	manifestBody, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	var manifestHits atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/parsers/index.json", func(w http.ResponseWriter, _ *http.Request) {
+		// First fetch fails so execution starts on the stale copy and only the
+		// retry picks up the published script.
+		if manifestHits.Add(1) == 1 {
+			http.Error(w, "outage", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(manifestBody)
+	})
+	mux.HandleFunc("/parsers/keyswap.js", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, v2)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	s := newParserUpdateServer(dir, ts.URL+"/parsers/index.json", true)
+
+	snapshot, err := s.fetchSourceSnapshot(context.Background(), "u1", "https://keyswap.example/n")
+	if err != nil {
+		t.Fatalf("fetchSourceSnapshot after published fix: %v", err)
+	}
+	if len(snapshot.Chapters) != 1 {
+		t.Fatalf("expected 1 chapter, got %d", len(snapshot.Chapters))
+	}
+	if got := snapshot.Chapters[0].Key; got != "stable:https://keyswap.example/c1" {
+		t.Fatalf("chapter key came from the stale script: %q", got)
+	}
+}

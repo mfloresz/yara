@@ -200,22 +200,30 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 	if err := f.throttle.wait(ctx, rawURL); err != nil {
 		return nil, err
 	}
+	// Every script-requested URL is checked before anything is fetched. The
+	// direct path additionally resolves the host; the worker path gets the
+	// literal checks only, because the server's DNS says nothing about what the
+	// user's machine can reach and a site only resolvable in the user's network
+	// must still be relayable. A refusal here is terminal — it is never
+	// re-routed through the worker.
 	useWorker := f.requiresBrowser && f.hasWorker()
+	if err := f.validateURL(ctx, rawURL, useWorker); err != nil {
+		return nil, err
+	}
 	if !useWorker {
 		result, err := f.fetchDirect(ctx, rawURL)
-		if isSiteFetchRefused(err) {
-			return nil, err
-		}
 		if err == nil && !looksBlocked(result) {
 			if herr := applySiteHelpers(ctx, result.FinalURL, result, f); herr != nil {
 				return nil, herr
 			}
 			return result, nil
 		}
-		// Either the transport failed or we got a challenge page. A real
-		// browser usually gets past both, so retry through the worker when
-		// one is connected before giving up.
-		if !f.hasWorker() {
+		// The direct attempt failed. Retry through the worker only when a real
+		// browser could plausibly fix it — a transport error, a challenge page,
+		// or a blocked/transient status. A definitive 404/410 is the site saying
+		// the page is gone: relaying it would burn a browser slot and hand the
+		// error page to the script as if it were content.
+		if !f.hasWorker() || !retryableThroughWorker(result, err) {
 			if err != nil {
 				return nil, err
 			}
@@ -233,17 +241,40 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 	return result, nil
 }
 
+// validateURL runs the literal SSRF checks on every path, and the DNS-resolving
+// guard when the fetch will actually leave from this machine. It types the
+// refusal so callers can tell a deliberate one from a transport failure. A nil
+// server (tests that build a bare fetcher) skips the guard.
+func (f *parserFetcher) validateURL(ctx context.Context, rawURL string, viaWorker bool) error {
+	if f.server == nil {
+		return nil
+	}
+	if viaWorker {
+		if err := f.server.validateSiteFetchTarget(rawURL); err != nil {
+			return &siteFetchRefusedError{err}
+		}
+		return nil
+	}
+	if err := f.server.validateSiteFetchURL(ctx, rawURL); err != nil {
+		return &siteFetchRefusedError{err}
+	}
+	return nil
+}
+
 func (f *parserFetcher) hasWorker() bool {
 	return f.server != nil && f.server.HasBrowserWorkerForUser(f.userID)
 }
 
+// maxDirectBodyBytes caps what the host will buffer from a direct site fetch.
+// The engine's MaxBodyBytes is checked by the script binding, but only after
+// the whole response is already in memory — too late to protect a single-binary
+// server from a site that streams for the full client timeout. This is the
+// limit that applies on the wire; it matches the binding's default so the two
+// never disagree about what a script can see.
+const maxDirectBodyBytes = int64(5 << 20)
+
 func (f *parserFetcher) fetchDirect(ctx context.Context, rawURL string) (*parserhost.FetchResult, error) {
-	// Script-requested URLs are untrusted: refuse private targets before any
-	// socket is opened (SSRF guard). The worker path is exempt — those
-	// requests run in the user's own browser.
-	if err := f.server.validateSiteFetchURL(ctx, rawURL); err != nil {
-		return nil, &siteFetchRefusedError{err}
-	}
+	// The SSRF guard already ran in Fetch, covering this path and the worker's.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -260,9 +291,14 @@ func (f *parserFetcher) fetchDirect(ctx context.Context, rawURL string) (*parser
 		return nil, fmt.Errorf("fetching %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	// Read one byte past the cap so an over-limit body is detectable without
+	// buffering the whole stream.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDirectBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", rawURL, err)
+	}
+	if int64(len(body)) > maxDirectBodyBytes {
+		return nil, fmt.Errorf("response from %s exceeds %d bytes", rawURL, maxDirectBodyBytes)
 	}
 	// Several Chinese sites still serve GBK-family bytes. Without this they
 	// reach the script as U+FFFD replacement characters, which the parser
@@ -272,7 +308,40 @@ func (f *parserFetcher) fetchDirect(ctx context.Context, rawURL string) (*parser
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	return &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}, nil
+	result := &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}
+	// An error page is not a page. Handing it to the script makes its selectors
+	// fail and reports site_layout_changed — "your parser is broken" for a
+	// chapter that was deleted — or, worse, stores the error page as chapter
+	// content. The blocked statuses are exempt: looksBlocked routes those
+	// through the browser worker, which is the actual fix for them.
+	if resp.StatusCode >= 400 && !blockedRetryStatus(resp.StatusCode) {
+		return result, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, rawURL)
+	}
+	return result, nil
+}
+
+// retryableThroughWorker decides whether a failed direct attempt should be
+// relayed to the browser worker. No response at all is a transport failure a
+// browser can fix; a response is only worth relaying when the site blocked the
+// request rather than answered it.
+func retryableThroughWorker(result *parserhost.FetchResult, err error) bool {
+	if result == nil {
+		return err != nil
+	}
+	return looksBlocked(result)
+}
+
+// blockedRetryStatus reports whether a direct-fetch status is one a real
+// browser can change: bot protection and transient overload. These match the
+// set the deleted Go scraper treated as retryable. Anything else (404, 410,
+// 500, 502) is the site's final answer and is not worth a browser slot.
+func blockedRetryStatus(status int) bool {
+	switch status {
+	case http.StatusForbidden, http.StatusNotAcceptable, http.StatusTooManyRequests,
+		http.StatusServiceUnavailable:
+		return true
+	}
+	return false
 }
 
 // fetchViaWorker relays the request through the browser worker extension,
@@ -307,13 +376,14 @@ func (f *parserFetcher) fetchViaWorker(ctx context.Context, rawURL string) (*par
 const cloudflareHint = "the site returned a challenge page (Cloudflare?) and no browser worker is connected — connect the extension and retry"
 
 // looksBlocked reports whether a successful HTTP response is actually a
-// challenge page. These answers come back 200/403, so status alone is not
-// enough to tell a blocked fetch from a real one.
+// challenge page or a blocked/transient answer. These come back 403/406/429/503
+// or as a 200 challenge body, so status alone is not enough to tell a blocked
+// fetch from a real one.
 func looksBlocked(res *parserhost.FetchResult) bool {
 	if res == nil {
 		return false
 	}
-	if res.Status == http.StatusTooManyRequests || res.Status == http.StatusForbidden {
+	if blockedRetryStatus(res.Status) {
 		return true
 	}
 	if res.Status < 400 {

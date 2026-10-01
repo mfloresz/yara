@@ -1,9 +1,11 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"translator-server/internal/config"
@@ -88,3 +90,25 @@ func writeParserScript(t *testing.T, env *apiTestEnv, name, body string) {
 		t.Fatalf("write parser script %s: %v", name, err)
 	}
 }
+
+// alwaysStatusClient returns a parser HTTP client that answers every request
+// with one status code and a small body, so tests can assert how the fetcher
+// treats 4xx/5xx without a live server.
+func alwaysStatusClient(status int) func(string) *http.Client {
+	return func(string) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: status,
+				Status:     http.StatusText(status),
+				Header:     http.Header{"Content-Type": []string{"text/html"}},
+				Body:       io.NopCloser(strings.NewReader("<html><body>error page</body></html>")),
+				Request:    req,
+			}, nil
+		})}
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

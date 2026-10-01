@@ -544,3 +544,59 @@ module.exports = {
 	// misreported as the wall-clock limit.
 	assertCode(t, err, CodeScriptError)
 }
+
+// A script must not be able to swallow the host's fetch budget with try/catch.
+// The budget aborts through the VM interrupt flag, which always escapes
+// try/catch, so a `while (true) { try { ctx.get() } catch {} }` loop still
+// stops at the limit instead of spinning for the whole wall-clock budget.
+func TestFetchBudgetCannotBeCaught(t *testing.T) {
+	script, fetcher := loadScript(t, `
+module.exports = {
+  name: "greedy", apiVersion: 1,
+  probe: () => true,
+  toc: (ctx, url) => {
+    for (var i = 0; i < 100; i++) {
+      try {
+        ctx.get(url + i);
+      } catch (e) {
+        // Swallowing the budget must not extend it.
+      }
+    }
+    return { novel: { title: "t" }, chapters: [] };
+  },
+  chapter: (ctx, url) => ({ title: "t", contentHtml: "<p>x</p>" })
+};`, Options{MaxFetches: 3, Timeout: 5 * time.Second})
+
+	_, err := script.TOC(context.Background(), "https://x.example/")
+	assertCode(t, err, CodeParserTimeout)
+	if fetcher.calls != 3 {
+		t.Errorf("expected the budget to stop the script at 3 fetches, got %d", fetcher.calls)
+	}
+}
+
+// The body-size limit is equally uncatchable: a script that catches it must not
+// be handed an over-limit body to parse.
+func TestBodyLimitCannotBeCaught(t *testing.T) {
+	script, fetcher := loadScript(t, `
+module.exports = {
+  name: "greedybody", apiVersion: 1,
+  probe: () => true,
+  toc: (ctx, url) => {
+    try {
+      ctx.get(url);
+    } catch (e) {
+    }
+    return { novel: { title: "t" }, chapters: [] };
+  },
+  chapter: (ctx, url) => ({ title: "t", contentHtml: "<p>x</p>" })
+};`, Options{MaxBodyBytes: 16, Timeout: 5 * time.Second})
+	fetcher.pages["https://x.example/big"] = "0123456789abcdefghij"
+
+	_, err := script.TOC(context.Background(), "https://x.example/big")
+	assertCode(t, err, CodeScriptError)
+	var scriptErr *ScriptError
+	errors.As(err, &scriptErr)
+	if !strings.Contains(scriptErr.Message, "exceeds limit") {
+		t.Errorf("unexpected message: %q", scriptErr.Message)
+	}
+}

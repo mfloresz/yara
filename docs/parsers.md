@@ -129,14 +129,29 @@ Per invocation, defaults from `internal/parserhost`:
 | Response body | 5 MiB | `script_error` |
 
 The `toc` ceiling is longer because a paginating catalog pays the download
-throttle on every page. Both timeouts are enforced by the engine and cannot be
-caught from the script.
+throttle on every page. Every one of these limits is enforced by the host and
+none of them can be caught from the script — including the fetch budget and the
+body size, which abort the invocation rather than throwing an ordinary `Error`.
+Do not wrap `ctx.get` in `try/catch` expecting to swallow them: a `catch` there
+covers a network failure on that one page, and nothing else.
+
+An HTTP error status is not content either. A direct fetch answering 404, 410
+or 500 fails the fetch and is reported as a network failure, not as a broken
+script, so the error page never reaches your selectors. 403, 406, 429 and 503
+are retried through the browser worker when one is connected, since those are
+answers a real browser can change.
 
 Between consecutive fetches to the same site (URL host), Yara waits a random
 interval in `[DOWNLOAD_MIN_DELAY_MS, DOWNLOAD_MAX_DELAY_MS]` (defaults
 5000/10000 ms). The first fetch to each host is not delayed, and sites never
 block each other: two concurrent downloads from different hosts run in
 parallel. Throttling is the server's job — do not add sleeps inside scripts.
+
+That throttle applies to *every* fetch, including the pages a paginating
+`toc` walks. A catalog that needs more than roughly 12–25 sequential page
+fetches cannot finish inside the `toc` budget at the default delays; prefer
+the site's own catalog payload over walking chapter by chapter, and treat a
+walk as the last-resort fallback.
 
 ## Error taxonomy
 
@@ -333,10 +348,12 @@ the extension connected.
 ### Fetch safety
 
 Script-requested URLs are untrusted (scripts are user-editable and
-auto-updated), so direct server-side fetches are SSRF-guarded: only
-`http(s)` URLs whose host resolves exclusively to public IPs are fetched.
-Cloud metadata endpoints, loopback and private ranges are refused; the fetch
-falls back to the user's browser worker when one is connected. Set
+auto-updated), so every fetch is SSRF-guarded — the direct one and the one
+relayed through the browser worker, which runs on the user's machine and can
+reach networks the server cannot. Only `http(s)` URLs whose host resolves
+exclusively to public IPs pass; cloud metadata endpoints, loopback and private
+ranges are refused, and the guard re-runs on every redirect hop. A refusal is
+terminal: it is never retried through the browser worker. Set
 `PARSERS_ALLOW_PRIVATE_NETS=1` to disable the guard for local development
 only — never on an internet-exposed server.
 
@@ -353,11 +370,14 @@ only — never on an internet-exposed server.
   title/order heuristic runs. This is what stops a pre-existing novel from
   reporting its entire library as new on the first sync after upgrading.
 
-A novel mid-migration (some chapters keyed, some not) is treated as keyed, so
-its untouched legacy chapters are reported as new and re-downloaded **once**,
-after which the sync self-heals. That costs a re-download; the alternative
-would silently skip chapters, which is the failure mode this field exists to
-prevent.
+A novel mid-migration (some chapters keyed, some not) is **not** treated as
+keyed. If its backfill plan cannot be built — a legacy row no longer pairs
+confidently with the snapshot, usually because a chapter title changed — the
+whole plan aborts and the novel is forced onto the legacy title/order
+heuristic for that sync, with its already-stored keys still authoritative.
+Without that fallback, keyed mode would report every legacy row as new and
+re-download the entire library as permanent duplicates on *every* sync. The
+novel returns to keyed identity once a later snapshot pairs cleanly again.
 
 Legacy rows acquire keys through an automatic, all-or-nothing backfill: before
 the update flow diffs, every still-keyless chapter is paired against the

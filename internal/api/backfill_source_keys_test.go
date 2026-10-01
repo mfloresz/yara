@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -410,5 +411,111 @@ func TestSyncBackfillsLegacySourceKeysBeforeDiff(t *testing.T) {
 	}
 	if keyed != 4 {
 		t.Errorf("chapters with source_key after update-from-url: got %d, want 4 (backfill persisted by the update flow)", keyed)
+	}
+}
+
+// The async check job writes last_check_new_chapters — the count the library
+// grid shows. On a mid-migration novel (some rows keyed, some not) it must
+// merge the backfill plan before diffing, exactly as check-preview does;
+// diffing against the incomplete key set reports the whole legacy remainder as
+// new. This drives processCheckJob itself, since the merge is a property of
+// that call site, not of the diff helper.
+func TestCheckJobReportsSameCountAsPreviewOnMixedNovel(t *testing.T) {
+	catalog := []map[string]any{
+		{"episode": 1, "title": "Alpha", "slug": "1-alpha"},
+		{"episode": 2, "title": "Beta", "slug": "2-beta"},
+		{"episode": 3, "title": "Gamma", "slug": "3-gamma"},
+		{"episode": 4, "title": "Delta", "slug": "4-delta"},
+	}
+	catalogJSON, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	escaped := strings.ReplaceAll(string(catalogJSON), `"`, `\u0022`)
+	projectHTML := `<!doctype html><html><head><meta name="csrf-token" content="x"></head><body>` +
+		`<h1 class="font-title">Sky Demon Test Novel</h1>` +
+		`<div wire:id="abc" wire:name="project.chapter-list" x-data="{ activeTab: 'free', freeChapters: JSON.parse('` + escaped + `') }"></div>` +
+		`</body></html>`
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, projectHTML)
+	}))
+	defer mock.Close()
+
+	env := newAPITestEnv(t)
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, map[string]string{"skydemonorder.com": mock.URL})
+
+	alice := registerUser(t, env, "alice-checkjob@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Test", "en", "es")
+	patchResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID, alice.Token, map[string]any{
+		"url": "https://skydemonorder.com/projects/12345-sky-demon-test-novel",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+
+	// Chapters 1-3 stored legacy; chapter 4 arrives as a genuinely new episode.
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "1. Alpha")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "2. Beta")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 3, "3. Gamma")
+	// Key chapter 1 only: the novel is now mid-migration (some keyed, some not),
+	// which is the state that exposes an unmerged diff.
+	metas, err := env.store.ListChapterSyncMeta(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapter sync meta: %v", err)
+	}
+	ch1 := ""
+	for _, meta := range metas {
+		if meta.ChapterOrder == 1 {
+			ch1 = meta.ID
+		}
+	}
+	if ch1 == "" {
+		t.Fatalf("chapter 1 not found in %v", metas)
+	}
+	if _, err := env.store.BackfillSourceKeys(alice.User.ID, novel.ID, map[string]string{ch1: "key-alpha"}); err != nil {
+		t.Fatalf("key chapter 1: %v", err)
+	}
+
+	// What the preview reports for the same snapshot.
+	previewResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/check-preview", alice.Token, nil)
+	if previewResp.Code != http.StatusOK {
+		t.Fatalf("check-preview: got %d: %s", previewResp.Code, previewResp.Body.String())
+	}
+	var preview struct {
+		NewChapters int `json:"newChapters"`
+	}
+	decodeData(t, previewResp, &preview)
+
+	// The async job must agree.
+	job := &store.Job{
+		NovelID:     novel.ID,
+		OwnerID:     alice.User.ID,
+		Operation:   "check",
+		Status:      "pending",
+		OptionsJSON: `{"url":"https://skydemonorder.com/projects/12345-sky-demon-test-novel"}`,
+	}
+	if err := env.store.CreateJob(alice.User.ID, job); err != nil {
+		t.Fatalf("create check job: %v", err)
+	}
+	if err := env.server.processCheckJob(context.Background(), job); err != nil {
+		t.Fatalf("processCheckJob: %v", err)
+	}
+	// Assert on the count the library grid reads: the job's own new_chapters
+	// column is not written by updateJob (a pre-existing gap), while
+	// last_check_new_chapters is what UpdateNovelCheckResult persists here.
+	updated, err := env.store.GetOwnedNovel(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("get novel: %v", err)
+	}
+	if updated.LastCheckNewChapters != preview.NewChapters {
+		t.Fatalf("check job reported %d new chapters, preview reported %d — the job diffed without merging the backfill plan",
+			updated.LastCheckNewChapters, preview.NewChapters)
+	}
+	// Chapter 1 carries a stale key that matches nothing in the snapshot, so it
+	// and the genuinely new episode 4 are the only new entries. Without the
+	// merge the job would count the three legacy rows too (4 instead of 2).
+	if preview.NewChapters != 2 {
+		t.Errorf("expected 2 new chapters (stale key + episode 4), got %d", preview.NewChapters)
 	}
 }

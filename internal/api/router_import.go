@@ -260,7 +260,7 @@ func (sharedImportHandlers) previewFromURL(s *Server) func(*core.RequestEvent) e
 		}
 		info, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, body.URL)
 		if err != nil {
-			return e.BadRequestError(parserErrorMessage(err), nil)
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 		}
 		// Cache the full list (with chapter URLs) so the subsequent import
 		// request reuses it instead of re-scraping every chapter page.
@@ -329,7 +329,7 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 		} else {
 			info, err = s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, body.URL)
 			if err != nil {
-				return e.BadRequestError(parserErrorMessage(err), nil)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
 		}
 		startCh := body.StartChapter
@@ -342,7 +342,7 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 		}
 
 		if startCh < 1 || startCh > len(info.Chapters) {
-			return e.BadRequestError("startChapter is out of range for this novel", nil)
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "startChapter is out of range for this novel")
 		}
 		firstRef := info.Chapters[startCh-1]
 		// The stored title comes from the chapter page first: TOC entries
@@ -468,7 +468,7 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		}
 		snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 		if err != nil {
-			return e.BadRequestError(parserErrorMessage(err), nil)
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 		}
 		cacheKey := e.Auth.Id + ":" + novelID
 		s.previewCacheMu.Lock()
@@ -496,14 +496,14 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		}
 		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
 		if err != nil {
-			return e.InternalServerError("failed to get existing chapter keys", err)
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
 		}
 		// Read-only: the backfill plan is computed in memory and never
 		// persisted here. Persisting happens in update-from-url, the flow
 		// that actually enqueues downloads.
 		keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novelID, snapshot.Chapters)
 		if err != nil {
-			return e.InternalServerError("failed to plan source keys", err)
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to plan source keys", v1ErrorDetail{Message: err.Error()})
 		}
 		newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
 		newAvailable := len(newChapters)
@@ -578,7 +578,7 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		} else {
 			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 			if err != nil {
-				return e.BadRequestError(parserErrorMessage(err), nil)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
 			chapters = snapshot.Chapters
 		}
@@ -592,11 +592,11 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		}
 		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
 		if err != nil {
-			return e.InternalServerError("failed to get existing chapter keys", err)
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
 		}
 		forceLegacy, err := s.backfillLegacySourceKeys(e.Auth.Id, novelID, chapters, existingKeys)
 		if err != nil {
-			return e.InternalServerError("failed to backfill source keys", err)
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to backfill source keys", v1ErrorDetail{Message: err.Error()})
 		}
 		// The new/missing diff is shared with checkPreview; this flow only
 		// applies the requested order range on top of it.
@@ -727,7 +727,7 @@ func (sharedImportHandlers) redownloadFromURL(s *Server) func(*core.RequestEvent
 		loadFresh := func() error {
 			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
 			if err != nil {
-				return e.BadRequestError(parserErrorMessage(err), nil)
+				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 			}
 			chapters = snapshot.Chapters
 			return nil

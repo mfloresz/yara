@@ -622,8 +622,12 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 
 	// Read-only, like check-preview: plan the key migration in memory so a
 	// mid-migration novel whose plan fails diffs by the legacy heuristic
-	// instead of reporting every legacy row as new.
-	_, forceLegacy, err := s.legacySourceKeyPlan(job.OwnerID, job.NovelID, snapshot.Chapters)
+	// instead of reporting every legacy row as new. The plan is also merged
+	// into the stored keys, because a novel with only some rows keyed would
+	// otherwise run the keyed diff against an incomplete set and report its
+	// whole legacy remainder as new — the count this job writes for the
+	// library grid.
+	keyPlan, forceLegacy, err := s.legacySourceKeyPlan(job.OwnerID, job.NovelID, snapshot.Chapters)
 	if err != nil {
 		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
 			"status":       "failed",
@@ -634,7 +638,7 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		return fmt.Errorf("plan source keys: %w", err)
 	}
 
-	newChapters, _ := diffNovelSnapshot(snapshot, existingKeys, existingOrders, existingTitles, forceLegacy)
+	newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
 	newAvailable := len(newChapters)
 
 	cacheKey := job.OwnerID + ":" + job.NovelID

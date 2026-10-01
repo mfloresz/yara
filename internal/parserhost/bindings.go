@@ -109,6 +109,16 @@ func (inv *invocation) throw(err error) goja.Value {
 	panic(inv.vm.NewGoError(err))
 }
 
+// limitExceeded aborts the invocation with a host limit the script cannot
+// catch. A plain throw would let `while (true) { try { ctx.get(u) } catch {} }`
+// swallow the fetch budget and keep going, which is why the documented limits
+// are enforced through the VM's interrupt flag: it is checked at safepoints and
+// always escapes try/catch, exactly like the wall-clock timeout.
+func (inv *invocation) limitExceeded(err error) goja.Value {
+	inv.vm.Interrupt(err)
+	return goja.Undefined()
+}
+
 func (inv *invocation) null() goja.Value {
 	return inv.vm.ToValue(nil)
 }
@@ -132,7 +142,7 @@ func (inv *invocation) get(call goja.FunctionCall) goja.Value {
 	rawURL := call.Argument(0).String()
 	inv.fetches++
 	if inv.fetches > inv.script.engine.opts.MaxFetches {
-		return inv.throw(&ScriptError{
+		return inv.limitExceeded(&ScriptError{
 			Code:    CodeParserTimeout,
 			Message: fmt.Sprintf("fetch budget of %d exceeded", inv.script.engine.opts.MaxFetches),
 		})
@@ -142,7 +152,7 @@ func (inv *invocation) get(call goja.FunctionCall) goja.Value {
 		return inv.throw(fmt.Errorf("fetching %s: %w", rawURL, err))
 	}
 	if int64(len(result.Body)) > inv.script.engine.opts.MaxBodyBytes {
-		return inv.throw(shapeError("response body exceeds limit (%d bytes)", inv.script.engine.opts.MaxBodyBytes))
+		return inv.limitExceeded(shapeError("response body exceeds limit (%d bytes)", inv.script.engine.opts.MaxBodyBytes))
 	}
 	// A fetcher that leaves FinalURL empty would silently break relative link
 	// resolution, so fall back to the requested URL.

@@ -27,9 +27,10 @@ const (
 
 // DefaultTOCTimeout covers the slowest legitimate TOC: one Livewire-aware
 // browser-worker fetch (tab + retries ≈ 60–90s) or, when that is missing, the
-// sequential walk fallback. ponytail: the walk still dies at this ceiling on
-// huge catalogs (~8-12 chapters at the download throttle); the real fix is
-// keeping each site's catalog payload fetch healthy.
+// sequential walk fallback. ponytail: the walk also pays the per-host download
+// throttle, so at the default 5–10s gap it only reaches ~12–25 chapters before
+// this ceiling turns it into a parser_timeout; the real fix is keeping each
+// site's catalog payload fetch healthy so the walk stays a last resort.
 
 // Options bounds a single script invocation. Zero-valued fields fall back to
 // the defaults, so only the limits a test cares about need to be set.
@@ -86,8 +87,9 @@ type Script struct {
 func (s *Script) Name() string { return s.name }
 
 // RequiresBrowser reports whether fetching from this site only works reliably
-// through the browser worker proxy. Documentation-only: it never changes fetch
-// behavior inside the engine.
+// through the browser worker proxy. The engine itself never acts on it: the
+// host reads it (see parserFetcher) and routes the whole TOC/chapter call
+// through the worker when it is set.
 func (s *Script) RequiresBrowser() bool { return s.requiresBrowser }
 
 // LivewireCatalogPattern is the compiled livewireCatalogPattern the script
@@ -335,6 +337,15 @@ func (inv *invocation) wrap(err error) error {
 		if marker, ok := interrupted.Value().(interruptMarker); ok && marker == markerCanceled {
 			if ctxErr := inv.ctx.Err(); ctxErr != nil {
 				return ctxErr
+			}
+		}
+		// A host limit (fetch budget, body size) aborts through the interrupt
+		// flag so the script cannot catch it; its error carries the taxonomy
+		// code the binding chose.
+		if limitErr, ok := interrupted.Value().(error); ok {
+			var scriptErr *ScriptError
+			if errors.As(limitErr, &scriptErr) {
+				return scriptErr
 			}
 		}
 		return &ScriptError{

@@ -13,7 +13,8 @@ import (
 //	module.exports = {
 //	  name: "site",             // required, non-empty
 //	  apiVersion: 1,            // required, must equal 1 (else load error)
-//	  requiresBrowser: false,   // bool; metadata only, never changes fetching
+//	  requiresBrowser: false,   // bool; true routes this script's fetches
+//	                             // through the user's browser worker
 //	  livewireCatalogPattern: "", // optional Go-regexp source; on the browser-worker
 //	                             // path, URLs matching it are fetched through the
 //	                             // worker's Livewire operation instead of fetch_page
