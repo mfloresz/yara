@@ -102,15 +102,18 @@ func isPublicFetchIP(ip net.IP) bool {
 		return false
 	}
 	// Ranges Go's IsPrivate does not cover but that are never public fetch
-	// targets: benchmarking (198.18/15), TEST-NETs, reserved 240/4, NAT64
-	// well-known prefix, documentation v6.
+	// targets: benchmarking (198.18/15), TEST-NETs, reserved 240/4, CGNAT
+	// (100.64/10), the NAT64 well-known prefix (64:ff9b::/96) and
+	// documentation v6 (2001:db8::/32).
 	_, bench, _ := net.ParseCIDR("198.18.0.0/15")
 	_, test1, _ := net.ParseCIDR("192.0.2.0/24")
 	_, test2, _ := net.ParseCIDR("198.51.100.0/24")
 	_, test3, _ := net.ParseCIDR("203.0.113.0/24")
 	_, reserved240, _ := net.ParseCIDR("240.0.0.0/4")
+	_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
+	_, nat64, _ := net.ParseCIDR("64:ff9b::/96")
 	_, docv6, _ := net.ParseCIDR("2001:db8::/32")
-	for _, blocked := range []*net.IPNet{bench, test1, test2, test3, reserved240, docv6} {
+	for _, blocked := range []*net.IPNet{bench, test1, test2, test3, reserved240, cgnat, nat64, docv6} {
 		if blocked.Contains(ip) {
 			return false
 		}

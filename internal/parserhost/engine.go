@@ -274,8 +274,16 @@ func (inv *invocation) finish() {
 	inv.stopCtx()
 }
 
+// parserMaxCallStack bounds JavaScript recursion per VM. goja's default cap
+// is math.MaxInt32, so runaway recursion would grow a heap-resident call
+// stack until the OOM killer takes the whole single-binary server down; the
+// wall-clock interrupt fires far too late to prevent that. 1024 frames is
+// orders of magnitude above any legitimate parser depth.
+const parserMaxCallStack = 1024
+
 func (e *Engine) newVM() *goja.Runtime {
 	vm := goja.New()
+	vm.SetMaxCallStackSize(parserMaxCallStack)
 	// js tags name the fields of the doc handle (status/url/body); uncapMethods
 	// exposes node methods to scripts as text/html/attr/href/src/remove.
 	vm.SetFieldNameMapper(goja.TagFieldNameMapper("js", true))

@@ -65,7 +65,24 @@ func (s *Server) parserHTTPClient(userID string) *http.Client {
 	if s.ParserHTTPClientFactory != nil {
 		return s.ParserHTTPClientFactory(userID)
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: 30 * time.Second, CheckRedirect: s.siteRedirectPolicy()}
+}
+
+// siteRedirectPolicy is the CheckRedirect policy for direct site clients:
+// every hop re-runs the SSRF guard, so a site-controlled redirect cannot hop
+// to loopback or private targets after the initial URL was validated. The
+// refusal is typed so the caller never retries the chain via the browser
+// worker.
+func (s *Server) siteRedirectPolicy() func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if err := s.validateSiteFetchURL(req.Context(), req.URL.String()); err != nil {
+			return &siteFetchRefusedError{fmt.Errorf("redirect to %s refused: %w", req.URL, err)}
+		}
+		return nil
+	}
 }
 
 // newParserEngine builds an engine whose fetcher honours the script's
@@ -101,10 +118,11 @@ func (s *Server) fetchCoverBlob(ctx context.Context, userID, coverURL string) ([
 		return nil, "", fmt.Errorf("creating cover request: %w", err)
 	}
 	// Cover URLs come from site data, so they go through the same SSRF guard
-	// as script fetches. A refused URL skips the direct path and may still
-	// resolve through the user's browser worker below.
+	// as script fetches. A refused URL never reaches the browser worker
+	// either: a deliberate refusal is not a transport failure to route
+	// around.
 	if guardErr := s.validateSiteFetchURL(ctx, coverURL); guardErr != nil {
-		err = guardErr
+		err = &siteFetchRefusedError{guardErr}
 	} else {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		req.Header.Set("Accept", "image/*,*/*;q=0.8")
@@ -124,7 +142,7 @@ func (s *Server) fetchCoverBlob(ctx context.Context, userID, coverURL string) ([
 			}
 		}
 	}
-	if s.HasBrowserWorkerForUser(userID) {
+	if s.HasBrowserWorkerForUser(userID) && !isSiteFetchRefused(err) {
 		slog.Info("direct cover download failed, retrying via browser worker", "cover", coverURL, "error", err)
 		return s.FetchImageViaWorker(ctx, coverURL, userID, 60)
 	}
@@ -568,16 +586,21 @@ func parserErrorMessage(err error) string {
 //     heuristic runs instead. This is what stops a pre-existing novel from
 //     reporting its whole library as new on the first sync after upgrading.
 //
-// A novel mid-migration (some keyed, some legacy) is treated as keyed, so its
-// untouched legacy chapters are reported as new and re-downloaded once rather
-// than silently skipped; the sync self-heals as they acquire keys.
+// forceLegacy forces legacy mode regardless of the stored keys. Stored keys
+// stay authoritative in both modes — the key check below runs first — so
+// forcing legacy only changes how the not-yet-keyed remainder is matched.
+// That is the escape hatch for a novel stuck mid-migration: partially keyed,
+// with a backfill plan that keeps failing (title drift). In keyed mode its
+// legacy rows would all be reported as new and re-downloaded as permanent
+// duplicates every sync; in legacy mode the title/order heuristic keeps
+// matching them until a snapshot pairs cleanly again.
 //
 // missingKeys is returned for observability only: no flow deletes, matching the
 // behavior of the update flows this replaces.
-func diffNovelSnapshot(snapshot *sourceSnapshot, existingKeys map[string]bool, existingOrders map[int]bool, existingTitles map[string]bool) ([]sourceChapter, []string) {
+func diffNovelSnapshot(snapshot *sourceSnapshot, existingKeys map[string]bool, existingOrders map[int]bool, existingTitles map[string]bool, forceLegacy bool) ([]sourceChapter, []string) {
 	newChapters := make([]sourceChapter, 0, len(snapshot.Chapters))
 	seenKeys := make(map[string]bool, len(snapshot.Chapters))
-	keyed := len(existingKeys) > 0
+	keyed := len(existingKeys) > 0 && !forceLegacy
 	// accounted tracks site numbers whose stored first part was seen in this
 	// batch, proving a same-number entry with a new title is another part.
 	accounted := make(map[int]bool, len(snapshot.Chapters))
@@ -677,9 +700,13 @@ func backfillSourceKeyPlan(chapters []sourceChapter, stored []store.ChapterSyncM
 }
 
 // backfillPositionalPlan pairs stored order N with snapshot position N-1,
-// gated on title equality.
+// gated on title equality. Like the title plan, it refuses to claim the same
+// snapshot key twice: a TOC listing one URL twice would otherwise stamp two
+// rows with one identity, and one of those keys would then shadow a real
+// chapter on every later sync.
 func backfillPositionalPlan(chapters []sourceChapter, stored []store.ChapterSyncMeta) (map[string]string, bool) {
 	plan := make(map[string]string)
+	claimed := make(map[string]bool)
 	for _, meta := range stored {
 		if meta.SourceKey != "" {
 			continue
@@ -692,10 +719,11 @@ func backfillPositionalPlan(chapters []sourceChapter, stored []store.ChapterSync
 		if key == "" {
 			key = ch.URL
 		}
-		if key == "" || ch.Title == "" || meta.Title == "" ||
+		if key == "" || claimed[key] || ch.Title == "" || meta.Title == "" ||
 			!strings.EqualFold(strings.TrimSpace(ch.Title), strings.TrimSpace(meta.Title)) {
 			return nil, false
 		}
+		claimed[key] = true
 		plan[meta.ID] = key
 	}
 	return plan, true
@@ -745,22 +773,47 @@ func normalizeChapterTitle(title string) string {
 	return strings.ToLower(strings.Join(strings.Fields(title), " "))
 }
 
+// legacyDiffFallback reports whether a failed backfill plan must force the
+// legacy diff heuristic. A plan only fails while legacy rows remain, so a
+// novel whose rows are all keyed (or all legacy) needs no override: the first
+// diffs as keyed, the second naturally diffs as legacy (its key set is
+// empty). The dangerous combination is the mid-migration novel — some rows
+// keyed, some not — where keyed mode would report every legacy row as new
+// and re-download the whole legacy library as permanent duplicates on every
+// sync.
+func legacyDiffFallback(planOK bool, stored []store.ChapterSyncMeta) bool {
+	if planOK {
+		return false
+	}
+	anyKeyed, anyLegacy := false, false
+	for _, meta := range stored {
+		if meta.SourceKey == "" {
+			anyLegacy = true
+		} else {
+			anyKeyed = true
+		}
+	}
+	return anyKeyed && anyLegacy
+}
+
 // legacySourceKeyPlan computes the backfill plan that would migrate a novel's
 // legacy chapters (empty source_key) to keyed identity, without writing
 // anything. Read-only flows (check-preview, batch-check, check jobs) use this
 // so a preview never mutates the database: they diff against the merged key
-// set in memory. Only the update flow that actually enqueues downloads
-// persists the plan (see backfillLegacySourceKeys).
-func (s *Server) legacySourceKeyPlan(userID, novelID string, chapters []sourceChapter) (map[string]string, error) {
+// set in memory. The second return value forces the legacy diff heuristic
+// when the plan failed on a mid-migration novel (see legacyDiffFallback).
+// Only the update flow that actually enqueues downloads persists the plan
+// (see backfillLegacySourceKeys).
+func (s *Server) legacySourceKeyPlan(userID, novelID string, chapters []sourceChapter) (map[string]string, bool, error) {
 	stored, err := s.Store.ListChapterSyncMeta(userID, novelID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	plan, ok := backfillSourceKeyPlan(chapters, stored)
-	if !ok || len(plan) == 0 {
-		return nil, nil
+	if ok && len(plan) > 0 {
+		return plan, false, nil
 	}
-	return plan, nil
+	return nil, legacyDiffFallback(ok, stored), nil
 }
 
 // mergeSourceKeys returns a new set with the plan's keys added to the stored
@@ -788,22 +841,26 @@ func mergeSourceKeys(existingKeys map[string]bool, plan map[string]string) map[s
 // Persisting is reserved for the write endpoint that enqueues downloads
 // (update-from-url): previews and checks plan in memory only. Novels that are
 // already keyed, or whose legacy rows cannot be confidently paired with the
-// snapshot, are left untouched; a write failure is the only error path.
-func (s *Server) backfillLegacySourceKeys(userID, novelID string, chapters []sourceChapter, existingKeys map[string]bool) error {
+// snapshot, are left untouched. The boolean return forces the legacy diff
+// heuristic when the plan failed on a mid-migration novel (see
+// legacyDiffFallback) — that keeps the sync matching by title/order instead
+// of re-downloading every legacy row as a duplicate. A write failure is the
+// only error path.
+func (s *Server) backfillLegacySourceKeys(userID, novelID string, chapters []sourceChapter, existingKeys map[string]bool) (bool, error) {
 	stored, err := s.Store.ListChapterSyncMeta(userID, novelID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	plan, ok := backfillSourceKeyPlan(chapters, stored)
-	if !ok || len(plan) == 0 {
-		return nil
+	if ok && len(plan) > 0 {
+		if _, err := s.Store.BackfillSourceKeys(userID, novelID, plan); err != nil {
+			return false, err
+		}
+		for _, key := range plan {
+			existingKeys[key] = true
+		}
+		slog.Info("backfilled legacy source keys", "novel", novelID, "chapters", len(plan))
+		return false, nil
 	}
-	if _, err := s.Store.BackfillSourceKeys(userID, novelID, plan); err != nil {
-		return err
-	}
-	for _, key := range plan {
-		existingKeys[key] = true
-	}
-	slog.Info("backfilled legacy source keys", "novel", novelID, "chapters", len(plan))
-	return nil
+	return legacyDiffFallback(ok, stored), nil
 }

@@ -84,9 +84,9 @@ Sessions use an HttpOnly, `SameSite=Strict` cookie, with a bearer token also ava
 
 ## Supported sites
 
-Yara imports novels directly from 17 sites:
+Yara imports novels directly from 16 sites:
 
-- **Direct download** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
+- **Direct download** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
 - **Need the browser-worker extension** — 69Shuba, EmpireNovel, FloraeGarden, SkyDemonOrder, Inkitt, Inkspired: Cloudflare challenges, or content a plain HTTP client can't read (see below).
 
 Novels can also be imported from EPUB or ZIP files, so any source outside the catalog still works.
@@ -146,7 +146,7 @@ Anti-references: no dense "admin dashboard" look, and no mobile-as-afterthought 
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
 | AI | 8 registered providers: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — keys stored with AES-GCM |
 | Persistence | SQLite (via PocketBase), idempotent schema in `store_schema.go`, `--migrate-db` flag for breaking changes |
-| Scraper | `parsers/*.js` — 17 site parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), each a CommonJS script run by the embedded goja engine in `internal/parserhost`; `requiresBrowser: true` marks the ones behind Cloudflare. Contract: [`docs/parsers.md`](docs/parsers.md) |
+| Scraper | `parsers/*.js` — 16 site parsers (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), each a CommonJS script run by the embedded goja engine in `internal/parserhost`; `requiresBrowser: true` marks the ones behind Cloudflare. Contract: [`docs/parsers.md`](docs/parsers.md) |
 | EPUB | `internal/epubimport` + `internal/epubexport` (pure packages, no HTTP/store dependencies) |
 | Mobile | `android-arm64` build for Termux, plus the [yara-app](https://github.com/mfloresz/yara-app) client |
 

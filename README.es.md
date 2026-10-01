@@ -90,9 +90,9 @@ Las sesiones usan una cookie HttpOnly con `SameSite=Strict`, y también hay un t
 
 ## Sitios soportados
 
-Yara importa novelas directamente desde 17 sitios:
+Yara importa novelas directamente desde 16 sitios:
 
-- **Descarga directa** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
+- **Descarga directa** — NovelFire, FenrirRealm, CherryMist, SkyNovels, Literotica, NovelArrow, Wattpad, Webnovel, GayDemon, ChrysanthemumGarden.
 - **Requieren la extensión browser-worker** — 69Shuba, EmpireNovel, FloraeGarden, SkyDemonOrder, Inkitt, Inkspired: desafíos de Cloudflare o contenido que un cliente HTTP plano no puede leer (ver abajo).
 
 También se pueden importar novelas desde archivos EPUB o ZIP, así que cualquier fuente fuera del catálogo sigue funcionando.
@@ -152,7 +152,7 @@ Anti-referencias: nada de “admin dashboard” denso ni móvil como breakpoint 
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
 | IA | 8 providers registrados: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — claves almacenadas con AES-GCM |
 | Persistencia | SQLite (vía PocketBase), esquema idempotente en `store_schema.go`, flag `--migrate-db` para breaking changes |
-| Scraper | `parsers/*.js` — 17 parsers de sitio (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, WTR-Lab, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), cada uno un script CommonJS ejecutado por el motor goja embebido en `internal/parserhost`; `requiresBrowser: true` marca los que están detrás de Cloudflare. Contrato: [`docs/parsers.md`](docs/parsers.md) |
+| Scraper | `parsers/*.js` — 16 parsers de sitio (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), cada uno un script CommonJS ejecutado por el motor goja embebido en `internal/parserhost`; `requiresBrowser: true` marca los que están detrás de Cloudflare. Contrato: [`docs/parsers.md`](docs/parsers.md) |
 | EPUB | `internal/epubimport` + `internal/epubexport` (paquetes puros, sin dependencias de HTTP/store) |
 | Móvil | Build `android-arm64` para Termux, más el cliente [yara-app](https://github.com/mfloresz/yara-app) |
 

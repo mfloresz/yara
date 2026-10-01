@@ -501,11 +501,11 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		// Read-only: the backfill plan is computed in memory and never
 		// persisted here. Persisting happens in update-from-url, the flow
 		// that actually enqueues downloads.
-		keyPlan, err := s.legacySourceKeyPlan(e.Auth.Id, novelID, snapshot.Chapters)
+		keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novelID, snapshot.Chapters)
 		if err != nil {
 			return e.InternalServerError("failed to plan source keys", err)
 		}
-		newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles)
+		newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
 		newAvailable := len(newChapters)
 		// The order preview mirrors what updateFromURL will claim, so multi-part
 		// chapters sharing one site number (e.g. "... 23-1", "... 23-2") are
@@ -594,12 +594,13 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		if err != nil {
 			return e.InternalServerError("failed to get existing chapter keys", err)
 		}
-		if err := s.backfillLegacySourceKeys(e.Auth.Id, novelID, chapters, existingKeys); err != nil {
+		forceLegacy, err := s.backfillLegacySourceKeys(e.Auth.Id, novelID, chapters, existingKeys)
+		if err != nil {
 			return e.InternalServerError("failed to backfill source keys", err)
 		}
 		// The new/missing diff is shared with checkPreview; this flow only
 		// applies the requested order range on top of it.
-		newChapters, _ := diffNovelSnapshot(&sourceSnapshot{Chapters: chapters}, existingKeys, existingOrders, existingTitles)
+		newChapters, _ := diffNovelSnapshot(&sourceSnapshot{Chapters: chapters}, existingKeys, existingOrders, existingTitles, forceLegacy)
 		sourceToDownload := make([]int, 0)
 		for i, ch := range newChapters {
 			pos := chapterOrderOf(ch)
@@ -903,7 +904,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 			// Read-only like check-preview: plan the key migration in memory,
 			// never persist it. Keys are persisted by the update flow that
 			// enqueues downloads.
-			keyPlan, err := s.legacySourceKeyPlan(e.Auth.Id, novel.ID, snapshot.Chapters)
+			keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novel.ID, snapshot.Chapters)
 			if err != nil {
 				errCount++
 				results = append(results, store.BatchCheckNovelResult{
@@ -912,7 +913,7 @@ func (sharedImportHandlers) checkBatchUpdates(s *Server) func(*core.RequestEvent
 				})
 				continue
 			}
-			newCandidates, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles)
+			newCandidates, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
 			newCh := make([]store.DownloadChapterInfo, 0)
 			newAvailable := 0
 			firstNew := 0

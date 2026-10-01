@@ -3,15 +3,25 @@
 // are hidden with inline "height:1px … overflow:hidden" styles and carry random
 // alphanumeric noise or a watermark. Those are dropped here.
 //
-// NOT PORTED: the plugin also renders real prose through per-page obfuscation
-// fonts (52-letter Open Sans subsets with permuted glyph assignments, served
-// from .../cg-scrape-protection/resources/fonts/used/). The Go parser recovers
-// the substitution by parsing the WOFF2 (Brotli-compressed) tables and matching
-// glyph bounding boxes against an embedded reference. ctx.get hands scripts a
-// UTF-8 string, so binary fonts are unreachable, and goja has no Brotli.
-// Chapter text therefore keeps the raw (permuted) letters of protected spans.
-// See the deviations note in the port report.
+// HYBRID PARSER: the plugin also renders real prose through per-page
+// obfuscation fonts (52-letter Open Sans subsets with permuted glyph
+// assignments). This script cannot decode them — ctx.get hands scripts a
+// UTF-8 string and goja has no Brotli — so the server does it: the host-side
+// helper in internal/api/parser_cgfont.go rewrites every protected span to
+// its true letters before this script sees the HTML. If the protection is
+// present but undecodable, the fetch fails loudly and the chapter is never
+// stored with scrambled text.
 const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+
+function host(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(u || "");
+  return m ? m[1].toLowerCase().replace(/^www\./, "") : "";
+}
+
+function pathOf(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*(\/[^?#]*)/i.exec(u || "");
+  return m ? m[1] : "/";
+}
 
 function metaContent(ctx, doc, selector) {
   const n = ctx.css1(doc, selector);
@@ -95,7 +105,7 @@ module.exports = {
   apiVersion: 1,
   requiresBrowser: false,
 
-  probe: (url) => (url || "").indexOf("chrysanthemumgarden.com/novel-tl/") >= 0,
+  probe: (url) => host(url) === "chrysanthemumgarden.com" && pathOf(url).toLowerCase().indexOf("/novel-tl/") === 0,
 
   toc: (ctx, url) => {
     const doc = ctx.get(url);

@@ -1650,7 +1650,11 @@ func newAPITestEnv(t *testing.T) *apiTestEnv {
 		t.Fatalf("ensure schema: %v", err)
 	}
 
-	server := New(st, &config.Config{DataDir: dataDir, ParsersDir: testParsersDir(t)})
+	// The download throttle defaults to production pacing (5-10s per host);
+	// tests override it explicitly via setParserThrottle when they need real
+	// spacing, so the ambient default stays at 1ms or the job-finish deadline
+	// (15s) races the crawl on every multi-chapter fixture.
+	server := New(st, &config.Config{DataDir: dataDir, ParsersDir: testParsersDir(t), DownloadMinDelayMs: 1, DownloadMaxDelayMs: 1})
 	// Parser scripts are read from disk per request (no cache), so a temporary
 	// copy of the testdata dir keeps tests independent of each other and lets a
 	// test edit a script to exercise hot reload.

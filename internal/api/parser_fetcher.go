@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -78,14 +79,19 @@ func throttleHost(rawURL string) string {
 	return rawURL
 }
 
-// wait blocks until the configured inter-fetch gap has elapsed since the last
-// fetch to the same host. The very first fetch to a host is never delayed: a
-// single-page TOC scrape should not pay the inter-chapter penalty.
+// wait blocks until the configured inter-fetch gap has elapsed since the
+// slot this URL's host last reserved. Concurrent callers for the same host
+// serialize: each reserves its slot (last fetch + minDelay, plus jitter)
+// under the lock before sleeping, so N simultaneous fetches wake spaced
+// minDelay..maxDelay apart instead of all waking at the same moment. The
+// very first fetch to a host is never delayed: a single-page TOC scrape
+// should not pay the inter-chapter penalty.
 //
-// The timestamp records when the fetch is actually issued (after the wait),
-// not when the wait started: stamping the start would let a fetch that just
-// waited out the full gap be followed immediately by another one, collapsing
-// the spacing the throttle exists to enforce.
+// The slot is reserved before sleeping rather than stamped after waking: a
+// waiter that reads a shared timestamp and sleeps independently would fire
+// its fetch at the same moment as every other waiter that read the same
+// value. A caller whose context is canceled mid-wait still burns its slot,
+// which can only make the next fetch wait longer, never shorter.
 func (t *parseThrottle) wait(ctx context.Context, rawURL string) error {
 	if t == nil {
 		return nil
@@ -94,39 +100,27 @@ func (t *parseThrottle) wait(ctx context.Context, rawURL string) error {
 	minDelay, maxDelay := t.minDelay, t.maxDelay
 	host := throttleHost(rawURL)
 	prev := t.lastFetchByHost[host]
-	t.mu.Unlock()
-	if prev.IsZero() {
-		t.mu.Lock()
-		// First fetch to this host: stamp and go without delay. A lost race
-		// between two simultaneous first fetches merely delays one of them.
-		if _, exists := t.lastFetchByHost[host]; !exists {
-			t.lastFetchByHost[host] = time.Now()
+	target := time.Now()
+	if !prev.IsZero() {
+		if earliest := prev.Add(minDelay); earliest.After(target) {
+			target = earliest
 		}
-		t.mu.Unlock()
+		if maxDelay > minDelay {
+			target = target.Add(time.Duration(rand.Int63n(int64(maxDelay - minDelay))))
+		}
+	}
+	t.lastFetchByHost[host] = target
+	t.mu.Unlock()
+	delay := time.Until(target)
+	if delay <= 0 {
 		return nil
 	}
-	wait := minDelay - time.Since(prev)
-	if wait < 0 {
-		wait = 0
-	}
-	if maxDelay > minDelay {
-		wait += time.Duration(rand.Int63n(int64(maxDelay - minDelay)))
-	}
-	if wait <= 0 {
-		t.mu.Lock()
-		t.lastFetchByHost[host] = time.Now()
-		t.mu.Unlock()
-		return nil
-	}
-	timer := time.NewTimer(wait)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		t.mu.Lock()
-		t.lastFetchByHost[host] = time.Now()
-		t.mu.Unlock()
 		return nil
 	}
 }
@@ -183,9 +177,25 @@ func (f *parserFetcher) sleepBetweenFetches(ctx context.Context, rawURL string) 
 	return f.throttle.wait(ctx, rawURL)
 }
 
+// siteFetchRefusedError marks a URL the SSRF guard refused on purpose. It is
+// distinguishable from a transport failure so callers never retry a refused
+// URL from anywhere else — least of all through the user's browser worker,
+// whose machine typically has more internal reach than the server.
+type siteFetchRefusedError struct{ err error }
+
+func (e *siteFetchRefusedError) Error() string { return e.err.Error() }
+func (e *siteFetchRefusedError) Unwrap() error { return e.err }
+
+func isSiteFetchRefused(err error) bool {
+	var refused *siteFetchRefusedError
+	return errors.As(err, &refused)
+}
+
 // Fetch implements parserhost.Fetcher. Errors returned here are network
 // failures and deliberately stay plain Go errors: the engine passes them
 // through untouched so a broken site is distinguishable from a broken script.
+// The one exception is a siteFetchRefusedError from the SSRF guard, which is
+// a deliberate refusal and is never retried via the browser worker.
 func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.FetchResult, error) {
 	if err := f.throttle.wait(ctx, rawURL); err != nil {
 		return nil, err
@@ -193,7 +203,13 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 	useWorker := f.requiresBrowser && f.hasWorker()
 	if !useWorker {
 		result, err := f.fetchDirect(ctx, rawURL)
+		if isSiteFetchRefused(err) {
+			return nil, err
+		}
 		if err == nil && !looksBlocked(result) {
+			if herr := applySiteHelpers(ctx, result.FinalURL, result, f); herr != nil {
+				return nil, herr
+			}
 			return result, nil
 		}
 		// Either the transport failed or we got a challenge page. A real
@@ -207,7 +223,14 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 		}
 		slog.Info("direct parser fetch failed, retrying via browser worker", "url", rawURL, "status", statusOf(result, err), "error", err)
 	}
-	return f.fetchViaWorker(ctx, rawURL)
+	result, err := f.fetchViaWorker(ctx, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if herr := applySiteHelpers(ctx, result.FinalURL, result, f); herr != nil {
+		return nil, herr
+	}
+	return result, nil
 }
 
 func (f *parserFetcher) hasWorker() bool {
@@ -219,7 +242,7 @@ func (f *parserFetcher) fetchDirect(ctx context.Context, rawURL string) (*parser
 	// socket is opened (SSRF guard). The worker path is exempt — those
 	// requests run in the user's own browser.
 	if err := f.server.validateSiteFetchURL(ctx, rawURL); err != nil {
-		return nil, err
+		return nil, &siteFetchRefusedError{err}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {

@@ -65,7 +65,6 @@ the source of truth.
 | Sky Novels | `skynovels.js` (JSON API; requires a `Referer` header) |
 | SkyDemonOrder | `skydemonorder.js` (Livewire/JSON catalog) |
 | Literotica | `literotica.js` |
-| WTR-Lab | `wtr-lab.js` |
 | NovelArrow | `novelarrow.js` |
 | Wattpad | `wattpad.js` |
 | Webnovel | `webnovel.js` |
@@ -91,6 +90,7 @@ the source of truth.
 |------|---------|
 | `parser_engine.go` | Script loading/selection, TOC snapshot, new/missing diff, `canUpdate`/`requiresBrowser` |
 | `parser_fetcher.go` | `parserhost.Fetcher` impl: throttling, direct HTTP, browser-worker routing |
+| `parser_cgfont.go` | Hybrid helpers: host-side response post-processing a script cannot do (chrysanthemumgarden obfuscation-font decoding) |
 | `parser_check.go` | `-check-parser` / `-check-url` mode — prints the snapshot as JSON, touches no store |
 | `parser_http_compat.go` | GBK charset decoding and host-keyed request headers |
 | `chapter_markdown.go` | HTML→Markdown conversion and title/whitespace cleanup |

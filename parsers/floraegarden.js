@@ -172,12 +172,21 @@ function paragraphsOf(ctx, sel) {
   return out;
 }
 
+// Strict host check: only this site's domain (and its subdomains) is
+// claimed, never a URL that merely mentions the domain in a query string.
+function isSiteHost(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)/i.exec(u || "");
+  if (!m) return false;
+  const h = m[1].toLowerCase().replace(/^www\./, "");
+  return h === "floraegarden.com" || h.endsWith(".floraegarden.com");
+}
+
 module.exports = {
   name: "floraegarden",
   apiVersion: 1,
   requiresBrowser: true,
 
-  probe: (url) => (url || "").indexOf("floraegarden.com") >= 0,
+  probe: isSiteHost,
 
   toc: (ctx, url) => {
     const doc = ctx.get(url);

@@ -112,10 +112,10 @@ properties, plus `attr(name)` and `remove()`. `href`/`src` are resolved against
 the document's URL. Properties are live, so removing ad blocks before reading
 `.html` works as expected.
 
-Note that `ctx.css(doc, sel)` groups results **by selector**, not by document
-position. A script that must preserve the interleaving of mixed tag types
-(`<p>`, `<h2>`, `<hr>` in one story body) needs a single selector that matches
-all of them and to order by `nodeName` itself.
+`ctx.css` returns matches in **document order** — including comma-separated
+selector lists, which do not group results by selector. To tell mixed tag
+types apart (`<p>`, `<h2>`, `<hr>` in one story body), match them all in one
+call and branch on `nodeName`. Only separate `ctx.css` calls group per call.
 
 ## Limits
 
@@ -123,9 +123,14 @@ Per invocation, defaults from `internal/parserhost`:
 
 | Limit | Default | On breach |
 | --- | --- | --- |
-| Wall-clock | 30s | `parser_timeout` |
+| Wall-clock (`chapter`) | 30s | `parser_timeout` |
+| Wall-clock (`toc`) | 120s | `parser_timeout` |
 | `ctx.get` calls | 200 | `parser_timeout` |
 | Response body | 5 MiB | `script_error` |
+
+The `toc` ceiling is longer because a paginating catalog pays the download
+throttle on every page. Both timeouts are enforced by the engine and cannot be
+caught from the script.
 
 Between consecutive fetches to the same site (URL host), Yara waits a random
 interval in `[DOWNLOAD_MIN_DELAY_MS, DOWNLOAD_MAX_DELAY_MS]` (defaults
@@ -151,6 +156,31 @@ site stays distinguishable from a broken script.
 `site_layout_changed` is the one to reach for whenever a selector comes back
 empty. It is the difference between "the site changed" and "this script is
 broken" in the job error message.
+
+## Hybrid parsers (host helpers)
+
+A few sites need part of the extraction done in Go because the JS engine
+cannot express it — binary font parsing, Brotli decompression, cipher work.
+For those, Yara runs a small **host-side helper**: a Go function in
+`internal/api/parser_cgfont.go` that post-processes a fetch response for one
+site's host before the script sees it. The split of responsibilities is
+fixed:
+
+- The **helper** handles what goja cannot: today, decoding the
+  chrysanthemumgarden obfuscation fonts (the `cg-scrape-protection` plugin)
+  so protected spans arrive as real letters.
+- The **script** keeps every DOM decision: selectors, ordering, noise
+  removal, error taxonomy. It neither knows nor invokes the helper.
+
+A helper failure fails the whole fetch (surfacing as `blocked`), never a
+partially decoded response — a site whose protection cannot be decoded must
+error out, not store scrambled chapter text. Helpers apply in the server and
+in `-check-parser` mode alike, so `--check-parser` shows what production
+would download.
+
+This is a deliberate exception to "all site-specific logic lives in the
+scripts": it is only worth it when the work is impossible in JS, and it means
+that parser's full behavior spans two files.
 
 ## Checking a script
 

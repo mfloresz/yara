@@ -196,5 +196,42 @@ func (f *checkFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.Fe
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	return &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}, nil
+	result := &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}
+	// Same hybrid helpers as the server path, so check mode sees what
+	// production would download (e.g. decoded chrysanthemumgarden fonts).
+	if herr := applySiteHelpers(ctx, finalURL, result, f); herr != nil {
+		return nil, herr
+	}
+	return result, nil
+}
+
+// fetchSiteAsset backs the hybrid response helpers in check mode. Deliberately
+// no SSRF guard and no throttling, like checkFetcher.Fetch: this is an
+// interactive debugging tool run by the operator against an explicit URL.
+func (f *checkFetcher) fetchSiteAsset(ctx context.Context, pageURL, assetURL string, maxBytes int64) ([]byte, error) {
+	abs, err := resolvePageAssetURL(pageURL, assetURL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, abs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating asset request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching asset %s: %w", abs, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d fetching asset %s", resp.StatusCode, abs)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading asset %s: %w", abs, err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("asset %s exceeds %d bytes", abs, maxBytes)
+	}
+	return body, nil
 }

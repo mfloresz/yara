@@ -12,6 +12,19 @@ const MIN_CHAPTERS = 20;
 // The site indents paragraphs with an em space.
 const EM_SPACE = String.fromCharCode(0x2003);
 
+// Strict host check: only this site's domains (and their subdomains) are
+// claimed, never a URL that merely mentions the domain in a query string.
+function hostOf(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(u || "");
+  if (!m) return "";
+  return m[1].toLowerCase().replace(/^www\./, "");
+}
+
+function isSiteHost(u) {
+  const h = hostOf(u);
+  return h === "69shuba.com" || h.endsWith(".69shuba.com");
+}
+
 function bookIDOf(u) {
   const bare = /69shuba\.com\/book\/(\d+)\/?$/.exec(u);
   if (bare) return bare[1];
@@ -117,7 +130,7 @@ module.exports = {
   apiVersion: 1,
   requiresBrowser: true,
 
-  probe: (url) => (url || "").indexOf("69shuba.com") >= 0,
+  probe: isSiteHost,
 
   // The Go parser had separate info-page and chapter-page entry points that
   // differed only in whether they read the description/cover metas; from a

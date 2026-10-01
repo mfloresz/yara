@@ -143,12 +143,21 @@ function paragraphs(content) {
   return blocks.join("\n");
 }
 
+// Strict host check: only this site's domain (and its subdomains) is
+// claimed, never a URL that merely mentions the domain in a query string.
+function isSiteHost(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)/i.exec(u || "");
+  if (!m) return false;
+  const h = m[1].toLowerCase().replace(/^www\./, "");
+  return h === "cherrymist.cafe" || h.endsWith(".cherrymist.cafe");
+}
+
 module.exports = {
   name: "cherrymist",
   apiVersion: 1,
   requiresBrowser: false,
 
-  probe: (url) => (url || "").indexOf("cherrymist.cafe") >= 0,
+  probe: isSiteHost,
 
   toc: (ctx, url) => {
     const key = seriesKey(ctx, url);

@@ -13,7 +13,6 @@ export const SUPPORTED_SITE_HOSTS = [
   'skynovels.net',
   'skydemonorder.com',
   'literotica.com',
-  'wtr-lab.com',
   'novelarrow.com',
   'wattpad.com',
   'inkitt.com',

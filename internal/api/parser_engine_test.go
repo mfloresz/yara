@@ -25,6 +25,7 @@ func TestDiffNovelSnapshotMatchesOnSourceKey(t *testing.T) {
 		map[string]bool{"https://site/a": true},
 		map[int]bool{1: true},
 		map[string]bool{"Chapter 3": true},
+			false,
 	)
 	if len(newChapters) != 2 {
 		t.Fatalf("expected 2 new chapters, got %d (%+v)", len(newChapters), newChapters)
@@ -52,6 +53,7 @@ func TestDiffNovelSnapshotFallsBackToTitleAndOrder(t *testing.T) {
 		map[string]bool{},              // no keys stored at all
 		map[int]bool{1: true, 2: true}, // orders 1-2 already downloaded
 		map[string]bool{},              // and no stored titles to match
+			false,
 	)
 	if len(newChapters) != 1 || newChapters[0].Title != "Chapter 3" {
 		t.Fatalf("expected only Chapter 3 to be new, got %+v", newChapters)
@@ -68,6 +70,7 @@ func TestDiffNovelSnapshotReportsMissingWithoutDeleting(t *testing.T) {
 		map[string]bool{"k-a": true, "k-gone": true},
 		map[int]bool{1: true, 2: true},
 		map[string]bool{},
+		false,
 	)
 	if len(newChapters) != 0 {
 		t.Errorf("expected no new chapters, got %+v", newChapters)
@@ -83,7 +86,7 @@ func TestDiffNovelSnapshotDeduplicatesRepeatedKey(t *testing.T) {
 		{Title: "Chapter 1", URL: "https://site/a", Key: "k-1", Order: 1},
 		{Title: "Chapter 1 (dup)", URL: "https://site/a-dup", Key: "k-1", Order: 2},
 	}}
-	newChapters, _ := diffNovelSnapshot(snapshot, map[string]bool{}, map[int]bool{}, map[string]bool{})
+	newChapters, _ := diffNovelSnapshot(snapshot, map[string]bool{}, map[int]bool{}, map[string]bool{}, false)
 	if len(newChapters) != 1 {
 		t.Fatalf("expected the duplicate key to collapse, got %+v", newChapters)
 	}
@@ -265,5 +268,33 @@ func TestRunParserCheckOutputIsIndentedJSON(t *testing.T) {
 	chapters, _ := decoded["chapters"].([]any)
 	if len(chapters) != 1 {
 		t.Errorf("expected 1 chapter in the snapshot, got %d", len(chapters))
+	}
+}
+
+// A mid-migration novel (some chapters keyed, some legacy) whose backfill
+// plan keeps failing must diff by the legacy heuristic. In keyed mode every
+// legacy row's snapshot entry looks new and is re-downloaded as a permanent
+// duplicate on every sync; stored keys stay authoritative either way.
+func TestDiffNovelSnapshotForceLegacyAvoidsDuplicateFlood(t *testing.T) {
+	snapshot := &sourceSnapshot{Chapters: []sourceChapter{
+		{Title: "Chapter 1", URL: "https://site/a", Key: "https://site/a", Order: 1},
+		{Title: "Chapter 2 (renamed)", URL: "https://site/b", Key: "https://site/b", Order: 2},
+	}}
+	existingKeys := map[string]bool{"https://site/a": true} // chapter 1 keyed, chapter 2 legacy
+
+	// Keyed mode (the dangerous default): the drifted legacy row is reported
+	// as new and would be re-downloaded as a duplicate.
+	newChapters, _ := diffNovelSnapshot(snapshot, existingKeys,
+		map[int]bool{1: true, 2: true}, map[string]bool{"Chapter 1": true}, false)
+	if len(newChapters) != 1 {
+		t.Fatalf("expected keyed mode to re-report the legacy row, got %+v", newChapters)
+	}
+
+	// With the legacy fallback the row matches by order/title and stays put,
+	// while the keyed row still short-circuits on its stored key.
+	newChapters, _ = diffNovelSnapshot(snapshot, existingKeys,
+		map[int]bool{1: true, 2: true}, map[string]bool{"Chapter 1": true}, true)
+	if len(newChapters) != 0 {
+		t.Fatalf("legacy fallback still reports rows as new: %+v", newChapters)
 	}
 }

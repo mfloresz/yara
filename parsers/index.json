@@ -4,25 +4,25 @@
     {
       "name": "69shuba",
       "file": "69shuba.js",
-      "sha256": "9888d9d9228159b14de6b23a3955518d9e7e1148258eb8f16cc248c9c195a79c",
+      "sha256": "91c03b556f391e7ce83e567a8a0d8efa0c6c2815208199dc29c75bbdb5abb42f",
       "requiresBrowser": true
     },
     {
       "name": "cherrymist",
       "file": "cherrymist.js",
-      "sha256": "3847eceb726977479d11b078bf88610ecf2d1a48bf3438d07a6f9955e313cb7d",
+      "sha256": "0c142f332abc2f238b809c994fb5678066b9e5ab80bc4a3a34746223ce210743",
       "requiresBrowser": false
     },
     {
       "name": "chrysanthemumgarden",
       "file": "chrysanthemumgarden.js",
-      "sha256": "cfbb6514cd626ef8cfb166477ee751ef0da97e35ea0a9f3f05f15eea45574254",
+      "sha256": "b463d727ca9f5542cb26d05988f61d6c1bbcada2e8e82eb8b9e3aeab9261a126",
       "requiresBrowser": false
     },
     {
       "name": "empirenovel",
       "file": "empirenovel.js",
-      "sha256": "d62a7d7a0e03e94ade171f82a37847f180a1a8e96d09c03960e7711123cf940a",
+      "sha256": "bf5632c8fdf186350dcb1f1291e7804c83153d3f3c0cbf6337ad8bdc33c28d36",
       "requiresBrowser": true
     },
     {
@@ -34,7 +34,7 @@
     {
       "name": "floraegarden",
       "file": "floraegarden.js",
-      "sha256": "86a528f92ce2eb2c885b9bb4e36b382e2c2689e981582eb7dd4fbeff9170d48d",
+      "sha256": "3a467bcb2c76ea0ddeae3ba63cbc6ff4562da11467736826802526c31bd18413",
       "requiresBrowser": true
     },
     {
@@ -96,13 +96,7 @@
       "file": "webnovel.js",
       "sha256": "c0c4afd06f47f93bce0b36cf99173cd3c7a0257506cb15649b100ab2da974ebf",
       "requiresBrowser": false
-    },
-    {
-      "name": "wtr-lab",
-      "file": "wtr-lab.js",
-      "sha256": "86ff420c2104c30276f7286f1a5f7678722d6323337867d278991bbbadf637e3",
-      "requiresBrowser": false
     }
   ],
-  "signature": "f03ab963b5f91c37a8bde3eeeadb8e4e977504955116a68d45cdb186652f43b60f611794ab8a4ad85463cd3283a5738030f70327110df3e5869968d11c21d703"
+  "signature": "c5c300d88116b01da0eccd587222fcfc866f6698052af8a2e1c9ad49c8ecf144b3bfb8d2f02f7717b0e4091e8861d1f964f0fbc8d22e1ba417afff24e2cec70a"
 }

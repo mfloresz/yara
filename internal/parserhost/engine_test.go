@@ -519,3 +519,28 @@ module.exports = {
 		t.Errorf("got %q, want %q", toc.Novel.Description, want)
 	}
 }
+
+// Runaway recursion must hit the VM's call-stack cap quickly instead of
+// growing the heap until the process dies: goja's default cap is MaxInt32
+// and the wall-clock interrupt fires far too late to prevent that.
+func TestRecursionHitsCallStackCap(t *testing.T) {
+	script, _ := loadScript(t, `
+module.exports = {
+  name: "recurse", apiVersion: 1,
+  probe: () => { const f = () => f(); f(); return true; },
+  toc: () => ({ novel: { title: "t" }, chapters: [] }),
+  chapter: () => ({ title: "t", contentHtml: "<p>x</p>" })
+};`, Options{Timeout: 10 * time.Second})
+	start := time.Now()
+	_, err := script.Probe("https://x.example/")
+	if err == nil {
+		t.Fatal("unbounded recursion completed without error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("recursion took %v to fail; the call-stack cap is not armed", elapsed)
+	}
+	// goja reports the overflow as a plain script error (its message is empty
+	// at the top level); what matters is that it fails fast and is not
+	// misreported as the wall-clock limit.
+	assertCode(t, err, CodeScriptError)
+}

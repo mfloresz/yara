@@ -89,12 +89,21 @@ function fetchAllChapterRefs(ctx, firstDoc, novelURL) {
   return all.map((c) => ({ title: c.title, url: c.url }));
 }
 
+// Strict host check: only this site's domain (and its subdomains) is
+// claimed, never a URL that merely mentions the domain in a query string.
+function isSiteHost(u) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)/i.exec(u || "");
+  if (!m) return false;
+  const h = m[1].toLowerCase().replace(/^www\./, "");
+  return h === "empirenovel.com" || h.endsWith(".empirenovel.com");
+}
+
 module.exports = {
   name: "empirenovel",
   apiVersion: 1,
   requiresBrowser: true,
 
-  probe: (url) => (url || "").indexOf("empirenovel.com") >= 0,
+  probe: isSiteHost,
 
   toc: (ctx, url) => {
     const doc = ctx.get(url);

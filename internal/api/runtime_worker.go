@@ -620,7 +620,21 @@ func (s *Server) processCheckJob(ctx context.Context, job *store.Job) error {
 		return fmt.Errorf("get existing chapter keys: %w", err)
 	}
 
-	newChapters, _ := diffNovelSnapshot(snapshot, existingKeys, existingOrders, existingTitles)
+	// Read-only, like check-preview: plan the key migration in memory so a
+	// mid-migration novel whose plan fails diffs by the legacy heuristic
+	// instead of reporting every legacy row as new.
+	_, forceLegacy, err := s.legacySourceKeyPlan(job.OwnerID, job.NovelID, snapshot.Chapters)
+	if err != nil {
+		if ue := s.Store.UpdateJob(job.ID, map[string]interface{}{
+			"status":       "failed",
+			"errorMessage": err.Error(),
+		}); ue != nil {
+			slog.Error("update job status on source key plan failure", "jobId", job.ID, "error", ue)
+		}
+		return fmt.Errorf("plan source keys: %w", err)
+	}
+
+	newChapters, _ := diffNovelSnapshot(snapshot, existingKeys, existingOrders, existingTitles, forceLegacy)
 	newAvailable := len(newChapters)
 
 	cacheKey := job.OwnerID + ":" + job.NovelID

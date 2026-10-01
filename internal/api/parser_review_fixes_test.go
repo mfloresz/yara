@@ -659,7 +659,7 @@ func TestDiffDropsDuplicateKeys(t *testing.T) {
 		{Title: "A", URL: "https://s/a", Key: "same", Order: 1},
 		{Title: "A (mirror)", URL: "https://s/a-mirror", Key: "same", Order: 2},
 	}}
-	got, _ := diffNovelSnapshot(snapshot, map[string]bool{}, map[int]bool{}, map[string]bool{})
+	got, _ := diffNovelSnapshot(snapshot, map[string]bool{}, map[int]bool{}, map[string]bool{}, false)
 	if len(got) != 1 {
 		t.Fatalf("new chapters = %d, want 1", len(got))
 	}
