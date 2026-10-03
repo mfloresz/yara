@@ -40,13 +40,13 @@ Rules:
 - Reply in the same language the user writes in. Be concise and concrete.
 - Every tool works ONLY on novels the user owns. Other users' novels, chapters, sessions, accounts and settings are not reachable by any tool, and no SQL query can read them. If asked about them, say the assistant can only see the user's own library.
 - Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids and chapter orders when reporting results.
-- list_novels returns hasDescription for the target (user-facing) description only, plus hasSourceDescription for the original-language one. Its optional field scopes the query to one kind of match: title, author, series or tags (e.g. field=tags answers "which novels carry tag X"). To filter on BOTH descriptions, or for any whole-library question, query_library is the right tool: it exposes has_target_description and has_source_description. Request a generous limit when the user asks for a full sweep.
+- list_novels returns hasDescription for the target (user-facing) description only, plus hasSourceDescription for the original-language one. Its optional field scopes the query to one kind of match: title, author, series or tags (e.g. field=tags answers "which novels carry tag X"). Page with offset when more novels match than fit on one page — do not report one page as the whole list. For a filter over BOTH descriptions at once, query_library is cheaper.
 - Catalog questions: list_tags lists the user's tags; list_authors lists distinct authors matching a PARTIAL name (use it before listing novels when the user half-remembers a name — "Cris" also finds "TM Cris"); list_series aggregates chapter progress per series (complete=complete answers "which series are fully translated"). Then point at the novels with list_novels and the matching field.
 - "Being translated" can mean two things: novels with active translate/refine jobs (get_active_jobs) or novels with unfinished chapters (query_library: chapters_pending > 0). Answer with the one the user means, or both when unclear.
 - Jobs run in the BACKGROUND: create_job (translate/refine/check) and update_novel_from_url enqueue work and return a jobId; report it and do not poll in loops — check get_active_jobs or get_novel_jobs once per user message. cancel_job and retry_job manage them. Downloads never go through create_job: update_novel_from_url diffs the source TOC (check_novel_updates is its read-only dry run) and enqueues the download.
-- Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
+- Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body. A negative startLine counts from the end (startLine -10, lineCount 10 returns the last 10 lines), and lineCount 1 is a cheap probe that reveals a chapter's exact length (totalLines) without pulling its text.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
-- query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those.
+- query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those. For whole-library sweeps, run a COUNT(*) first and then SELECT ... LIMIT 200 OFFSET k, raising k each call until nothing is left — never present a truncated page as the complete answer.
 - Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded, bulk_set_chapter_status, bulk_set_chapter_excluded, update_glossary, apply_chapter_cleanup, set_reading_progress) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. update_novel can also edit targetAuthor, targetSeries, tags and the novel status (ongoing, completed, hiatus, cancelled); source-side metadata stays untouched. While a novel has active download/translation jobs, chapter and glossary writes are refused — say so instead of retrying.
 - bulk_set_chapter_status and bulk_set_chapter_excluded take fromOrder AND toOrder (inclusive) and change whole ranges in one call; they skip excluded and processing chapters.
 - The glossary tools read (get_glossary), edit (update_glossary: upsert/remove by source term) and regenerate (generate_glossary enqueues a job) a novel's term pairs.
@@ -213,20 +213,22 @@ func marshalToolResult(v any) (string, error) {
 func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "list_novels",
-		Description: "List the user's OWN novels, newest first. Set query to search, and field to scope that search to one kind of match: title, author, series or tags (partial matching, e.g. field=author with \"Cris\" finds \"TM Cris\" too; field=tags answers which novels carry a tag). Returns light records: hasDescription tells you whether the target (user-facing) description is empty, and hasSourceDescription whether the original-language description is. For a filter over both descriptions at once, query_library is cheaper. The assistant only ever sees novels the user owns, never other users' public novels.",
+		Description: "List the user's OWN novels, newest first. Set query to search, and field to scope that search to one kind of match: title, author, series or tags (partial matching, e.g. field=author with \"Cris\" finds \"TM Cris\" too; field=tags answers which novels carry a tag). Returns light records: hasDescription tells you whether the target (user-facing) description is empty, and hasSourceDescription whether the original-language description is. Page with offset when more novels match than fit on one page; for a filter over BOTH descriptions at once, query_library is cheaper. The assistant only ever sees novels the user owns, never other users' public novels.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "query": {"type": "string", "description": "Optional search text."},
     "field": {"type": "string", "enum": ["all", "title", "author", "series", "tags"], "description": "Scope the query to one field (default all)."},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "How many novels to return (default 20). Use the max when asked for a full sweep."}
+    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Novels per page (default 20)."},
+    "offset": {"type": "integer", "minimum": 0, "description": "Novels to skip before the page starts (default 0). Combine with limit to page through long result sets."}
   }
 }`),
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a struct {
-				Query string `json:"query"`
-				Field string `json:"field"`
-				Limit int    `json:"limit"`
+				Query  string `json:"query"`
+				Field  string `json:"field"`
+				Limit  int    `json:"limit"`
+				Offset int    `json:"offset"`
 			}
 			_ = json.Unmarshal(args, &a)
 			limit := a.Limit
@@ -236,10 +238,14 @@ func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 			if limit > agentListNovelsMaxLimit {
 				limit = agentListNovelsMaxLimit
 			}
+			offset := a.Offset
+			if offset < 0 {
+				offset = 0
+			}
 			// Shared: "own" keeps the assistant inside the caller's library:
 			// with the default "all" scope, public novels belonging to other
 			// users would be listed and then readable through get_novel.
-			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, 0, "", "", store.ListNovelOptions{Shared: "own", SearchField: a.Field})
+			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, offset, "", "", store.ListNovelOptions{Shared: "own", SearchField: a.Field})
 			if err != nil {
 				return "", err
 			}
@@ -457,7 +463,9 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 		Name: "get_chapter",
 		Description: "Read one chapter of the user's OWN novel by novel id + chapter id. Without content it returns metadata only. " +
 			"Set content to original, translated or refined to include that text, and control how much comes back with startLine (0-based, default 0) and lineCount (default " + strconv.Itoa(agentChapterDefaultLineCount) + ", max " + strconv.Itoa(agentChapterMaxLineCount) + "). " +
-			"The response reports totalLines and nextStartLine, so you can page through a long chapter in slices instead of loading it whole. " +
+			"A NEGATIVE startLine counts from the end: startLine -10 with lineCount 10 returns the last 10 lines, so reading an ending is one call. " +
+			"The response reports totalLines and nextStartLine, so you can page through a long chapter in slices instead of loading it whole; " +
+			"requesting lineCount 1 is a cheap probe that reveals the chapter's exact length without pulling its text. " +
 			"Omitting both returns the opening slice of the chapter, never a silently cut text.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
@@ -465,8 +473,8 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
     "novelId": {"type": "string", "description": "Novel id."},
     "chapterId": {"type": "string", "description": "Chapter id (from get_novel_chapters)."},
     "content": {"type": "string", "enum": ["", "original", "translated", "refined"], "description": "Which body text to include, if any."},
-    "startLine": {"type": "integer", "minimum": 0, "description": "0-based line to start at (default 0)."},
-    "lineCount": {"type": "integer", "minimum": 1, "maximum": 400, "description": "How many lines to return (default 60)."}
+    "startLine": {"type": "integer", "description": "0-based line to start at (default 0). Negative values count from the end: -10 starts 10 lines before the last."},
+    "lineCount": {"type": "integer", "minimum": 1, "maximum": 400, "description": "How many lines to return (default 60). Use 1 as a cheap probe to learn totalLines."}
   },
   "required": ["novelId", "chapterId"]
 }`),
@@ -521,6 +529,7 @@ func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
 			"- v_agent_novel_progress, one row per novel: novel_id, title (target title falling back to source title), author (target author falling back to source), status (novel status), source_language, target_language, is_public, has_target_description (1 when the user-facing target description is non-empty), has_source_description (1 when the original-language description is non-empty), chapters_total (non-excluded chapters), chapters_translated (chapter status translated/refined/done), chapters_completed (chapter status refined/done), chapters_pending (chapters_total minus chapters_translated), original_chars, translated_chars, refined_chars (sums of the chapters' char counts, non-excluded), max_chapter_order (largest chapter_order, excluded included), updated\n" +
 			"- v_agent_chapter_overview, one row per chapter: novel_id, chapter_id, chapter_order, title, translated_title, status (pending/processing/translated/refined/done/failed), is_excluded (1 when the user excluded the chapter), original_chars, translated_chars, refined_chars (that chapter's char counts), error_message (last download/translation error, empty when none), updated\n" +
 			"Rules: exactly one SELECT (or WITH ... SELECT) reading at least one of these views; no ';' and no comments; any other table is absent here and errors; chapter bodies and description texts are not in the views (use get_chapter / get_novel).\n" +
+			"Sweeps: your own LIMIT ... OFFSET ... survives inside the query, so page through long results by raising OFFSET (the response reports truncated when more rows exist) — never present a truncated page as the complete answer. Answer how-many questions with COUNT(*) instead of listing rows.\n" +
 			"Examples:\n" +
 			"- Chapters whose translation is 40%+ shorter than the original: SELECT novel_id, chapter_id, chapter_order, title FROM v_agent_chapter_overview WHERE status = 'translated' AND translated_chars <= original_chars * 0.6\n" +
 			"- Novels missing BOTH descriptions: SELECT novel_id, title FROM v_agent_novel_progress WHERE has_target_description = 0 AND has_source_description = 0",
@@ -528,7 +537,7 @@ func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
   "type": "object",
   "properties": {
     "sql": {"type": "string", "description": "One SELECT over the two v_agent_* views, e.g. SELECT novel_id, title, chapters_pending FROM v_agent_novel_progress WHERE chapters_pending < 10 ORDER BY chapters_pending."},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max rows (default 50)."}
+    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max rows per call (default 50)."}
   },
   "required": ["sql"]
 }`),
@@ -817,10 +826,13 @@ const (
 	agentChapterMaxLineCount     = 400
 )
 
-// sliceAgentLines returns the [startLine, startLine+lineCount) window of body
-// plus a descriptor telling the model how to continue. Clamps out-of-range
-// requests instead of erroring: the model paging near the end of a chapter
-// should get an empty slice and a null nextStartLine, not a tool failure.
+// sliceAgentLines returns the requested window of body plus a descriptor
+// telling the model how to continue. A negative startLine counts from the end
+// (-1 is the last line), so "show me the ending" is one call; the resolved
+// startLine is reported back so the model knows where the window landed.
+// Out-of-range requests clamp instead of erroring: the model paging near the
+// end of a chapter should get an empty or partial slice and a null
+// nextStartLine, not a tool failure.
 func sliceAgentLines(body string, startLine, lineCount int) (string, map[string]any) {
 	lines := strings.Split(body, "\n")
 	total := len(lines)
@@ -831,7 +843,10 @@ func sliceAgentLines(body string, startLine, lineCount int) (string, map[string]
 		lineCount = agentChapterMaxLineCount
 	}
 	if startLine < 0 {
-		startLine = 0
+		startLine = total + startLine
+		if startLine < 0 {
+			startLine = 0
+		}
 	}
 	if startLine > total {
 		startLine = total

@@ -594,7 +594,7 @@ per user — one session each, enforced by a unique index on the owner.
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
 Tools the assistant may call: `list_novels` (search + optional `field` scoping
-to title/author/series/tags + `hasDescription`/`hasSourceDescription` flags),
+to title/author/series/tags + `offset`/`limit` paging + `hasDescription`/`hasSourceDescription` flags),
 `list_tags` and `list_authors` (distinct catalog values with partial,
 accent-insensitive matching — "Cris" also finds "TM Cris"), `list_series`
 (per-series chapter progress; `complete=complete` answers "which series are
@@ -602,7 +602,9 @@ fully translated"), `get_novel`, `get_novel_stats`, `get_novel_chapters`
 (summaries, paged by `offset`/`limit` **or** selected as a contiguous block
 with `fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a
 line window: `startLine` + `lineCount`, default 60 / max 400, returning
-`totalLines` and `nextStartLine` so long chapters are paged rather than cut),
+`totalLines` and `nextStartLine` so long chapters are paged rather than cut; a
+**negative `startLine` counts from the end**, and `lineCount: 1` probes the
+chapter's exact length without pulling its text),
 `search_chapters` (case-sensitive literal search over titles and bodies with
 snippets), `query_library` (one read-only analytics SELECT over the
 `v_agent_novel_progress` / `v_agent_chapter_overview` tables — aggregates like
@@ -630,7 +632,11 @@ the picked option's value arrives as the user's next message).
 Every tool result is persisted into the session trail and replayed to the
 model on later steps, so the tools return narrow projections with hard caps
 (list limits, chapter-id caps of 500 for jobs and 100 for cleanups, truncated
-error messages) instead of full records. Job listings read a dedicated
+error messages) instead of full records. Complete answers come from paging,
+not from bigger caps: `list_novels` pages with `offset`, and `query_library`
+lets the model's own `LIMIT ... OFFSET ...` survive inside the wrapped query
+(the response reports `truncated` when more rows exist), so a full sweep is a
+COUNT followed by raised-offset pages. Job listings read a dedicated
 projected query (`chapter_ids` / `options_json` are never loaded), bulk writes
 are single conditional UPDATEs, and cleanup preview processes one chapter at a
 time — tool peaks stay independent of library size.

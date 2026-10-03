@@ -12,11 +12,11 @@ import (
 // agentToolsTestSetup creates two users plus one novel for each, so both the
 // happy paths and the ownership refusals have something to point at.
 type agentToolsTestSetup struct {
-	env       *apiTestEnv
-	alice     authPayload
-	bob       authPayload
+	env        *apiTestEnv
+	alice      authPayload
+	bob        authPayload
 	aliceNovel novelPayload
-	bobNovel  novelPayload
+	bobNovel   novelPayload
 }
 
 func newAgentToolsTestSetup(t *testing.T, title string) *agentToolsTestSetup {
@@ -619,6 +619,126 @@ func TestAgentNewWriteToolsAreOwnerScoped(t *testing.T) {
 			if strings.Contains(result, foreign) {
 				t.Errorf("error must not leak the foreign novel id: %s → %s", call, result)
 			}
+		}
+	}
+}
+
+// TestSliceAgentLinesFromEnd pins the window math, including the negative
+// startLine (from-the-end) semantics and its clamping.
+func TestSliceAgentLinesFromEnd(t *testing.T) {
+	body := "l1\nl2\nl3\nl4\nl5"
+
+	slice, meta := sliceAgentLines(body, -2, 2)
+	if slice != "l4\nl5" {
+		t.Errorf("startLine -2 should return the last two lines, got %q", slice)
+	}
+	if meta["startLine"] != 3 || meta["totalLines"] != 5 || meta["hasMore"] != false {
+		t.Errorf("unexpected metadata for the from-end window: %v", meta)
+	}
+
+	// A window reaching past the start clamps to 0 and keeps reading forward.
+	slice, meta = sliceAgentLines(body, -50, 2)
+	if slice != "l1\nl2" || meta["startLine"] != 0 || meta["hasMore"] != true {
+		t.Errorf("from-end window beyond the start should clamp to 0: %q %v", slice, meta)
+	}
+
+	// startLine -1 anchors on the last line; there is nothing after it, so the
+	// window is just that line even with a larger lineCount.
+	slice, _ = sliceAgentLines(body, -1, 2)
+	if slice != "l5" {
+		t.Errorf("startLine -1 should start at the last line, got %q", slice)
+	}
+
+	// Plain forward paging is unchanged.
+	slice, meta = sliceAgentLines(body, 1, 2)
+	if slice != "l2\nl3" || meta["nextStartLine"] != 3 {
+		t.Errorf("forward paging changed: %q %v", slice, meta)
+	}
+}
+
+// TestAgentGetChapterFromEndAndProbe exercises the wiring through the tool:
+// reading an ending in one call and probing a chapter's exact length.
+func TestAgentGetChapterFromEndAndProbe(t *testing.T) {
+	setup := newAgentToolsTestSetup(t, "Ventanas")
+	env, alice := setup.env, setup.alice
+
+	content := "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10"
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+setup.aliceNovel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Con final",
+		"originalContent": content,
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	chapter := chapterIDPayload(t, resp)
+
+	args := `{"novelId":"` + setup.aliceNovel.ID + `","chapterId":"` + chapter.ID + `","content":"original"`
+
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"get_chapter","args":` + args + `,"startLine":-3,"lineCount":3}}`,
+	}, nil) {
+		// The result is JSON: newlines inside the slice are escaped, so match
+		// the exact escaped slice rather than bare fragments ("l1" would also
+		// match "l10").
+		for _, want := range []string{`"originalContent":"l8\nl9\nl10"`, `"startLine":7`, `"totalLines":10`, `"hasMore":false`} {
+			if !strings.Contains(result, want) {
+				t.Errorf("from-end read missing %s: %s", want, result)
+			}
+		}
+	}
+
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"get_chapter","args":` + args + `,"startLine":0,"lineCount":1}}`,
+	}, nil) {
+		for _, want := range []string{`"originalContent":"l1"`, `"totalLines":10`, `"hasMore":true`, `"nextStartLine":1`, `"lineCount":1`} {
+			if !strings.Contains(result, want) {
+				t.Errorf("probe read missing %s: %s", want, result)
+			}
+		}
+	}
+
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"get_chapter","args":` + args + `,"startLine":-100,"lineCount":2}}`,
+	}, nil) {
+		if !strings.Contains(result, `"originalContent":"l1\nl2"`) || !strings.Contains(result, `"startLine":0`) {
+			t.Errorf("from-end window beyond the start should clamp to the opening: %s", result)
+		}
+	}
+}
+
+// TestAgentListNovelsPagination pins the offset parameter: pages must cover
+// the full result set without repeats, no matter the tie order of created.
+func TestAgentListNovelsPagination(t *testing.T) {
+	setup := newAgentToolsTestSetup(t, "Paginacion")
+	env, alice := setup.env, setup.alice
+
+	created := []string{}
+	for _, title := range []string{"Paginada Alfa", "Paginada Beta", "Paginada Gamma"} {
+		novel := createNovel(t, env.handler, alice.Token, title, "es", "en")
+		created = append(created, novel.ID)
+	}
+
+	results := runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"list_novels","args":{"query":"Paginada","limit":2}}`,
+		`{"_tool":"list_novels","args":{"query":"Paginada","limit":2,"offset":2}}`,
+	}, nil)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 tool results, got %d", len(results))
+	}
+	seen := map[string]int{}
+	for _, id := range created {
+		for page, result := range results {
+			if strings.Contains(result, id) {
+				seen[id]++
+				_ = page
+			}
+		}
+	}
+	if len(seen) != 3 {
+		t.Errorf("paged listing must cover every matching novel, got %v: %v / %v", seen, results[0], results[1])
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Errorf("novel %s appeared %d times across pages", id, count)
 		}
 	}
 }

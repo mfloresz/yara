@@ -1162,8 +1162,13 @@ func TestSliceAgentLines(t *testing.T) {
 		if meta["lineCount"] != 7 {
 			t.Errorf("lineCount = %v, want 7", meta["lineCount"])
 		}
-		if _, meta := sliceAgentLines(body, -5, 1); meta["startLine"] != 0 {
-			t.Errorf("negative startLine should clamp to 0, got %v", meta["startLine"])
+		// A negative startLine counts from the end: -5 on 7 lines anchors on
+		// line index 2, and a window reaching past the start clamps to 0.
+		if _, meta := sliceAgentLines(body, -5, 1); meta["startLine"] != 2 {
+			t.Errorf("negative startLine should count from the end, got %v", meta["startLine"])
+		}
+		if _, meta := sliceAgentLines(body, -50, 1); meta["startLine"] != 0 {
+			t.Errorf("a from-end window reaching past the start should clamp to 0, got %v", meta["startLine"])
 		}
 		// An over-large request clamps to the max instead of returning a body
 		// the model could never use.
