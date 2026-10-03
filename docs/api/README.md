@@ -593,7 +593,7 @@ per user — one session each, enforced by a unique index on the owner.
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
-Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
+Tools the assistant may call: `list_novels` (search + `hasDescription`/`hasSourceDescription` flags),
 `get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries, paged by
 `offset`/`limit` **or** selected as a contiguous block with
 `fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a line
@@ -667,8 +667,11 @@ novels. Two layers back that up:
    covers what the scan could not.
 
 Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
-Only the table a query actually names is materialised, so a novel-level
-question never pays to build every chapter row.
+Both views are always materialised. An earlier version built only the ones the
+query named, but SQLite's legacy comma join (`FROM a, b`) is not a FROM/JOIN
+keyword, so a missed view was silently emptied and the query returned an empty
+result as if it were the truth — a wrong answer is worse than a slower one, and
+the covering index keeps the copy cheap either way.
 
 The sandbox is a per-query file under `<data-dir>/agent-sandbox/`, removed when
 the query returns. It deliberately does **not** use the system temp dir:

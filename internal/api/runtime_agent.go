@@ -40,7 +40,7 @@ Rules:
 - Reply in the same language the user writes in. Be concise and concrete.
 - Every tool works ONLY on novels the user owns. Other users' novels, chapters, sessions, accounts and settings are not reachable by any tool, and no SQL query can read them. If asked about them, say the assistant can only see the user's own library.
 - Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids and chapter orders when reporting results.
-- list_novels returns hasDescription so you can answer questions like "which novels are missing a description". Request a generous limit when the user asks for a full sweep.
+- list_novels returns hasDescription for the target (user-facing) description only, plus hasSourceDescription for the original-language one. To filter on BOTH descriptions, or for any whole-library question, query_library is the right tool: it exposes has_target_description and has_source_description. Request a generous limit when the user asks for a full sweep.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
 - query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those.
@@ -174,7 +174,7 @@ func marshalToolResult(v any) (string, error) {
 func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "list_novels",
-		Description: "List the user's OWN novels, newest first. Set query to search by title, author, series or tags. Returns light records: hasDescription tells you whether the target (user-facing) description is empty. The assistant only ever sees novels the user owns, never other users' public novels.",
+		Description: "List the user's OWN novels, newest first. Set query to search by title, author, series or tags. Returns light records: hasDescription tells you whether the target (user-facing) description is empty, and hasSourceDescription whether the original-language description is. For a filter over both descriptions at once, query_library is cheaper. The assistant only ever sees novels the user owns, never other users' public novels.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -205,14 +205,15 @@ func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 			out := make([]map[string]any, 0, len(novels))
 			for _, n := range novels {
 				out = append(out, map[string]any{
-					"id":             n.ID,
-					"sourceTitle":    n.SourceTitle,
-					"targetTitle":    n.TargetTitle,
-					"author":         firstNonEmpty(n.TargetAuthor, n.SourceAuthor),
-					"series":         firstNonEmpty(n.TargetSeries, n.SourceSeries),
-					"status":         n.Status,
-					"tags":           n.Tags,
-					"hasDescription": strings.TrimSpace(n.TargetDescription) != "",
+					"id":                   n.ID,
+					"sourceTitle":          n.SourceTitle,
+					"targetTitle":          n.TargetTitle,
+					"author":               firstNonEmpty(n.TargetAuthor, n.SourceAuthor),
+					"series":               firstNonEmpty(n.TargetSeries, n.SourceSeries),
+					"status":               n.Status,
+					"tags":                 n.Tags,
+					"hasDescription":       strings.TrimSpace(n.TargetDescription) != "",
+					"hasSourceDescription": strings.TrimSpace(n.SourceDescription) != "",
 				})
 			}
 			return marshalToolResult(out)
@@ -475,14 +476,17 @@ func (s *Server) agentToolGetChapter(userID string) ai.AgentTool {
 func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name: "query_library",
-		Description: "Run ONE read-only analytics SELECT over the library progress views (SQLite dialect). Cheapest way to answer aggregate questions like 'novels missing fewer than 10 chapters to be complete', counts, filters, rankings. Only these two views exist here (owner filtering is automatic, there is no owner column to filter by):\n" +
-			"- v_agent_novel_progress: novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated\n" +
-			"- v_agent_chapter_overview: novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated\n" +
-			"Rules: one SELECT (or WITH ... SELECT) that reads at least one of these views, no ';' and no comments, any other table is absent here and will error, chapter bodies are not in the views (use get_chapter).",
+		Description: "Run ONE read-only analytics SELECT over the library progress views (SQLite dialect). The cheapest way to answer whole-library questions in one call: counts, filters, rankings, ratios. Owner filtering is automatic (there is no owner column to filter by) and these two views are the only relations that exist here:\n" +
+			"- v_agent_novel_progress, one row per novel: novel_id, title (target title falling back to source title), author (target author falling back to source), status (novel status), source_language, target_language, is_public, has_target_description (1 when the user-facing target description is non-empty), has_source_description (1 when the original-language description is non-empty), chapters_total (non-excluded chapters), chapters_translated (chapter status translated/refined/done), chapters_completed (chapter status refined/done), chapters_pending (chapters_total minus chapters_translated), original_chars, translated_chars, refined_chars (sums of the chapters' char counts, non-excluded), max_chapter_order (largest chapter_order, excluded included), updated\n" +
+			"- v_agent_chapter_overview, one row per chapter: novel_id, chapter_id, chapter_order, title, translated_title, status (pending/processing/translated/refined/done/failed), is_excluded (1 when the user excluded the chapter), original_chars, translated_chars, refined_chars (that chapter's char counts), error_message (last download/translation error, empty when none), updated\n" +
+			"Rules: exactly one SELECT (or WITH ... SELECT) reading at least one of these views; no ';' and no comments; any other table is absent here and errors; chapter bodies and description texts are not in the views (use get_chapter / get_novel).\n" +
+			"Examples:\n" +
+			"- Chapters whose translation is 40%+ shorter than the original: SELECT novel_id, chapter_id, chapter_order, title FROM v_agent_chapter_overview WHERE status = 'translated' AND translated_chars <= original_chars * 0.6\n" +
+			"- Novels missing BOTH descriptions: SELECT novel_id, title FROM v_agent_novel_progress WHERE has_target_description = 0 AND has_source_description = 0",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "sql": {"type": "string", "description": "One SELECT over the two v_agent_* views, e.g. SELECT novel_id, title, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending."},
+    "sql": {"type": "string", "description": "One SELECT over the two v_agent_* views, e.g. SELECT novel_id, title, chapters_pending FROM v_agent_novel_progress WHERE chapters_pending < 10 ORDER BY chapters_pending."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max rows (default 50)."}
   },
   "required": ["sql"]

@@ -548,7 +548,7 @@ func TestAgentChatQueryLibraryTool(t *testing.T) {
 	// than 10 chapters to be complete.
 	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
 		return &scriptedAgentProvider{toolCalls: []string{
-			`{"_tool":"query_library","args":{"sql":"SELECT novel_id, title, total, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending"}}`,
+			`{"_tool":"query_library","args":{"sql":"SELECT novel_id, title, chapters_total, chapters_pending FROM v_agent_novel_progress WHERE chapters_pending < 10 ORDER BY chapters_pending"}}`,
 		}}, nil
 	}
 
@@ -566,8 +566,8 @@ func TestAgentChatQueryLibraryTool(t *testing.T) {
 	if !strings.Contains(result, novel.ID) || !strings.Contains(result, "Analytics") {
 		t.Fatalf("query_library should return alice's novel, got %q", result)
 	}
-	if !strings.Contains(result, `"pending":0`) && !strings.Contains(result, "0") {
-		t.Fatalf("unexpected pending value in %q", result)
+	if !strings.Contains(result, "chapters_pending") {
+		t.Fatalf("unexpected chapters_pending value in %q", result)
 	}
 
 	// A destructive query arrives back as a tool error, never as data loss.
@@ -609,8 +609,8 @@ func TestAgentChatQueryLibraryDocumentedColumnsRun(t *testing.T) {
 	assertStatus(t, chResp, http.StatusCreated)
 
 	queries := []string{
-		"SELECT novel_id, title, author, status, source_language, target_language, is_public, has_description, total, translated, completed, pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated FROM v_agent_novel_progress",
-		"SELECT novel_id, chapter_id, chapter_order, title, translated_title, status, excluded, original_chars, translated_chars, refined_chars, error_message, updated FROM v_agent_chapter_overview",
+		"SELECT novel_id, title, author, status, source_language, target_language, is_public, has_target_description, has_source_description, chapters_total, chapters_translated, chapters_completed, chapters_pending, original_chars, translated_chars, refined_chars, max_chapter_order, updated FROM v_agent_novel_progress",
+		"SELECT novel_id, chapter_id, chapter_order, title, translated_title, status, is_excluded, original_chars, translated_chars, refined_chars, error_message, updated FROM v_agent_chapter_overview",
 	}
 	for _, q := range queries {
 		env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {

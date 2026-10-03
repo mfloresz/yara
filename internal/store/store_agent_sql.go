@@ -95,7 +95,13 @@ const (
 	agentAnalyticsDefaultLimit  = 50
 	agentAnalyticsMaxCellChars  = 400
 	agentAnalyticsMaxResultBody = 64 << 10 // 64 KB of JSON payload
-	agentAnalyticsTimeout       = 5 * time.Second
+	// Generous on purpose: the deadline covers building the sandbox, not just
+	// the query, and that build reads the caller's whole chapter metadata.
+	// Measured on a ~1 GB / 61k-chapter library with a cold disk cache: ~13s,
+	// most of it I/O. The covering index (idx_chapters_novel_stats) shrinks
+	// that to a fraction, but slow disks deserve the headroom; the turn itself
+	// has an 8-minute budget, so 30s never starves it.
+	agentAnalyticsTimeout = 30 * time.Second
 
 	// agentAnalyticsMaxCellBytes bounds any single string or BLOB the engine
 	// will materialise (SQLITE_LIMIT_LENGTH). Without it the payload limits
@@ -453,12 +459,16 @@ func (s *Store) buildAgentSandbox(ctx context.Context, ownerID string) (string, 
 }
 
 // agentNovelProgressCTAS / agentChapterOverviewCTAS materialise the two
-// analytics surfaces. Columns and aggregate semantics mirror
-// RecalculateNovelStats and the assistant's other read tools: only
-// non-excluded chapters count, and pending is the complement of
+// analytics surfaces. Column names are self-describing on purpose: the model
+// writes SQL from the tool description alone, so the counters carry a
+// chapters_ prefix and the description flags spell out which side they cover,
+// leaving no room for the "has_description" style ambiguity. Aggregate
+// semantics mirror RecalculateNovelStats and the assistant's other read
+// tools: only non-excluded chapters count, and pending is the complement of
 // translated/refined/done. The WHERE clause is the ownership filter —
 // server-written, bound as a parameter, and not something the model can
-// influence.
+// influence. The idx_chapters_novel_stats covering index (store_schema.go)
+// keeps both statements index-only, so they never read the chapter bodies.
 const agentNovelProgressCTAS = `
 	SELECT n.id AS novel_id,
 		COALESCE(NULLIF(n.target_title, ''), n.source_title) AS title,
@@ -467,11 +477,12 @@ const agentNovelProgressCTAS = `
 		n.source_language AS source_language,
 		n.target_language AS target_language,
 		n.is_public AS is_public,
-		CASE WHEN TRIM(COALESCE(n.target_description, '')) <> '' THEN 1 ELSE 0 END AS has_description,
-		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN 1 ELSE 0 END), 0) AS total,
-		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS translated,
-		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('refined','done') THEN 1 ELSE 0 END), 0) AS completed,
-		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status NOT IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS pending,
+		CASE WHEN TRIM(COALESCE(n.target_description, '')) <> '' THEN 1 ELSE 0 END AS has_target_description,
+		CASE WHEN TRIM(COALESCE(n.source_description, '')) <> '' THEN 1 ELSE 0 END AS has_source_description,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN 1 ELSE 0 END), 0) AS chapters_total,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS chapters_translated,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status IN ('refined','done') THEN 1 ELSE 0 END), 0) AS chapters_completed,
+		COALESCE(SUM(CASE WHEN c.excluded = 0 AND c.status NOT IN ('translated','refined','done') THEN 1 ELSE 0 END), 0) AS chapters_pending,
 		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.original_char_count ELSE 0 END), 0) AS original_chars,
 		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.translated_char_count ELSE 0 END), 0) AS translated_chars,
 		COALESCE(SUM(CASE WHEN c.excluded = 0 THEN c.refined_char_count ELSE 0 END), 0) AS refined_chars,
@@ -489,7 +500,7 @@ const agentChapterOverviewCTAS = `
 		c.title AS title,
 		c.translated_title AS translated_title,
 		c.status AS status,
-		c.excluded AS excluded,
+		c.excluded AS is_excluded,
 		COALESCE(c.original_char_count, 0) AS original_chars,
 		COALESCE(c.translated_char_count, 0) AS translated_chars,
 		COALESCE(c.refined_char_count, 0) AS refined_chars,

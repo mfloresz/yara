@@ -53,7 +53,7 @@ func seedAnalyticsLibrary(t *testing.T, st *Store) (aliceID, aliceNovelID, bobID
 	if err := st.CreateNovel(alice.User.ID, aliceNovel); err != nil {
 		t.Fatalf("create alice novel: %v", err)
 	}
-	// 12 chapters, 5 translated → pending 7 (< 10).
+	// 12 chapters, 5 translated → chapters_pending 7 (< 10).
 	for i := 1; i <= 12; i++ {
 		status := "pending"
 		if i <= 5 {
@@ -94,7 +94,7 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 
 	// The motivating query: novels missing fewer than 10 chapters.
 	out, err := st.RunAgentAnalyticsQuery(ctx, aliceID,
-		"SELECT novel_id, title, pending FROM "+AgentAnalyticsNovelView+" WHERE pending < 10", 50)
+		"SELECT novel_id, title, chapters_pending FROM "+AgentAnalyticsNovelView+" WHERE chapters_pending < 10", 50)
 	if err != nil {
 		t.Fatalf("analytics query: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 		t.Fatalf("expected exactly alice's novel, got %s", out)
 	}
 	// JSON numbers unmarshal as float64.
-	if aliceRows[0]["novel_id"] != aliceNovelID || aliceRows[0]["pending"] != float64(7) {
+	if aliceRows[0]["novel_id"] != aliceNovelID || aliceRows[0]["chapters_pending"] != float64(7) {
 		t.Fatalf("expected alice's novel with pending 7, got %v", aliceRows[0])
 	}
 	if strings.Contains(out, bobNovelID) || strings.Contains(out, "Ajena") {
@@ -112,7 +112,7 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 
 	// Same query as bob returns only bob's rows.
 	out, err = st.RunAgentAnalyticsQuery(ctx, bobID,
-		"SELECT novel_id, title, pending FROM "+AgentAnalyticsNovelView+" WHERE pending < 10", 50)
+		"SELECT novel_id, title, chapters_pending FROM "+AgentAnalyticsNovelView+" WHERE chapters_pending < 10", 50)
 	if err != nil {
 		t.Fatalf("bob analytics query: %v", err)
 	}
@@ -148,12 +148,12 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 
 	// The views must be untouched after all the rejected attempts.
 	out, err = st.RunAgentAnalyticsQuery(ctx, aliceID,
-		"SELECT pending FROM "+AgentAnalyticsNovelView+" WHERE novel_id = '"+aliceNovelID+"'", 50)
+		"SELECT chapters_pending FROM "+AgentAnalyticsNovelView+" WHERE novel_id = '"+aliceNovelID+"'", 50)
 	if err != nil {
 		t.Fatalf("novel data must survive rejected attempts: %v", err)
 	}
 	rows := parseAgentAnalyticsRows(t, out)
-	if len(rows) != 1 || rows[0]["pending"] != float64(7) {
+	if len(rows) != 1 || rows[0]["chapters_pending"] != float64(7) {
 		t.Fatalf("novel data must survive rejected attempts, got %v", rows)
 	}
 }
@@ -165,7 +165,7 @@ func TestAgentAnalyticsQueryScopedAndReadOnly(t *testing.T) {
 // See TestAgentAnalyticsQueryRejectsForeignRelationsEndToEnd for that layer.
 func TestValidateAgentAnalyticsSQL(t *testing.T) {
 	allowed := []string{
-		"SELECT novel_id, title, pending FROM v_agent_novel_progress WHERE pending < 10 ORDER BY pending",
+		"SELECT novel_id, title, chapters_pending FROM v_agent_novel_progress WHERE chapters_pending < 10 ORDER BY chapters_pending",
 		"SELECT count(*) FROM v_agent_chapter_overview WHERE status = 'pending'",
 		"SELECT n.title, count(c.chapter_id) FROM v_agent_novel_progress n JOIN v_agent_chapter_overview c ON c.novel_id = n.novel_id GROUP BY n.title",
 		// A literal that spells a forbidden word must not trip the check.
@@ -175,7 +175,7 @@ func TestValidateAgentAnalyticsSQL(t *testing.T) {
 		"SELECT * FROM (SELECT * FROM v_agent_novel_progress) x",
 		// CTEs: the trailing SELECT reads the CTE name, which resolves to the
 		// views it was built from.
-		"WITH low AS (SELECT novel_id FROM v_agent_novel_progress WHERE pending < 10) SELECT * FROM low",
+		"WITH low AS (SELECT novel_id FROM v_agent_novel_progress WHERE chapters_pending < 10) SELECT * FROM low",
 		"WITH c AS (SELECT * FROM v_agent_chapter_overview) SELECT count(*) FROM c",
 		// A quoted or backticked view name still counts as reading a view.
 		`SELECT novel_id FROM "v_agent_novel_progress"`,
@@ -372,12 +372,12 @@ func TestAgentAnalyticsAcceptsTrailingSemicolon(t *testing.T) {
 	aliceID, _, _, _ := seedAnalyticsLibrary(t, st)
 
 	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
-		"SELECT novel_id, pending FROM "+AgentAnalyticsNovelView+";", 50)
+		"SELECT novel_id, chapters_pending FROM "+AgentAnalyticsNovelView+";", 50)
 	if err != nil {
 		t.Fatalf("a trailing semicolon must execute, not fail: %v", err)
 	}
 	rows := parseAgentAnalyticsRows(t, out)
-	if len(rows) != 1 || rows[0]["pending"] != float64(7) {
+	if len(rows) != 1 || rows[0]["chapters_pending"] != float64(7) {
 		t.Fatalf("expected alice's novel with pending 7, got %s", out)
 	}
 }
@@ -585,7 +585,7 @@ func TestAgentAnalyticsEngineLimitDoesNotBreakRealQueries(t *testing.T) {
 	aliceID, aliceNovelID, _, _ := seedAnalyticsLibrary(t, st)
 
 	for _, q := range []string{
-		"SELECT title, total, pending FROM " + AgentAnalyticsNovelView + " WHERE pending < 10",
+		"SELECT title, chapters_total, chapters_pending FROM " + AgentAnalyticsNovelView + " WHERE chapters_pending < 10",
 		"SELECT COUNT(*) FROM " + AgentAnalyticsChapterView,
 		"SELECT novel_id, status, COUNT(*) FROM " + AgentAnalyticsChapterView + " GROUP BY novel_id, status",
 		"SELECT novel_id, MAX(LENGTH(title)) FROM " + AgentAnalyticsChapterView + " GROUP BY novel_id",
@@ -681,7 +681,7 @@ func TestAgentSandboxDoesNotDependOnTmpDir(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
 
 	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
-		"SELECT novel_id, total FROM "+AgentAnalyticsNovelView, 50)
+		"SELECT novel_id, chapters_total FROM "+AgentAnalyticsNovelView, 50)
 	if err != nil {
 		t.Fatalf("analytics must not depend on TMPDIR: %v", err)
 	}
@@ -775,5 +775,37 @@ func TestAgentSandboxFailureIsModelActionable(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q should mention %q so the model can act on it", msg, want)
 		}
+	}
+}
+
+// TestAgentAnalyticsDescriptionFlags pins the semantics the model relies on
+// when filtering by description presence: has_target_description covers the
+// user-facing description, has_source_description the original-language one,
+// and each is evaluated independently. The old single has_description column
+// read as covering both sides, and the assistant answered the wrong question
+// ("novels with no description at all") from target-only data.
+func TestAgentAnalyticsDescriptionFlags(t *testing.T) {
+	st, cleanup := agentAnalyticsTestStore(t)
+	defer cleanup()
+	aliceID, aliceNovelID, _, _ := seedAnalyticsLibrary(t, st)
+
+	// SeedAnalyticsLibrary creates novels with no description on either side;
+	// give alice's novel a target-only description: expect 1/0.
+	if _, err := st.UpdateNovel(aliceID, aliceNovelID, map[string]any{"targetDescription": "Descripción de prueba"}); err != nil {
+		t.Fatalf("set target description: %v", err)
+	}
+
+	out, err := st.RunAgentAnalyticsQuery(context.Background(), aliceID,
+		"SELECT has_target_description, has_source_description FROM "+AgentAnalyticsNovelView+
+			" WHERE novel_id = '"+aliceNovelID+"'", 50)
+	if err != nil {
+		t.Fatalf("description flags query: %v", err)
+	}
+	rows := parseAgentAnalyticsRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly alice's novel, got %s", out)
+	}
+	if rows[0]["has_target_description"] != float64(1) || rows[0]["has_source_description"] != float64(0) {
+		t.Fatalf("target-only description must read 1/0, got %v", rows[0])
 	}
 }
