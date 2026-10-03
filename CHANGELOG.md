@@ -1,11 +1,40 @@
 # Changelog
 
-## [Unreleased]
+## [v0.39.0] - 2026-10-02
 
 ### ⚠️ Breaking changes
 
 - The AI layer was migrated to [eino](https://github.com/cloudwego/eino), which speaks Chat Completions only: the OpenAI **Responses API is no longer supported**. Providers configured against a Responses-API-only endpoint must switch to one that exposes `/chat/completions` (the old `useResponsesAPI` provider option is gone).
 - The `muse-spark-1.3-contributor` and `muse-spark-1.3-contributor-free` models were **removed from the OpenCode Go and OpenCode Zen catalogs**: they only support the Responses API and cannot work over Chat Completions. `muse-spark-1.2-contributor` remains available on the Meta provider. Any user config still pointing at the removed models must be switched to another model.
+- Site scrapers are no longer compiled into the binary. The built-in Go scrapers were replaced by editable JavaScript parsers (`parsers/*.js`) that live in your parsers directory and are fetched from a signed release manifest. Existing installations bootstrap the catalog on first use; from now on a parser can be fixed or added without waiting for a server update.
+- Chapters now carry a stable identity (`source_key`) used to tell new chapters from already-downloaded ones when syncing. The first sync after upgrading backfills identities from your existing library; if that backfill cannot be trusted the server falls back to the previous title/position heuristic instead of re-downloading the whole novel as duplicates.
+
+### What's new
+
+- **Agentic library chat.** A new `/chat` page lets you ask questions about your library in plain language and get answers streamed back. The assistant can list and inspect novels and chapters, search inside chapter text, read aggregate progress statistics, and edit novels and chapters (titles, translations, refined text, status, exclusion) through a scoped tool catalog. It can also answer analytical questions by running a single read-only SQL query over two curated views of your own data — "which novels are within ten chapters of being complete" is one question, not a crawl. When a question is ambiguous it can stop and ask you to pick from options.
+- The assistant only ever sees your own library: novels you do not own answer as if they did not exist, and the analytics sandbox runs each query against a private database containing only your rows.
+- **Inline images in imported novels.** EPUBs and import zips can carry images. Chapter text keeps them through translation and refinement, the reader and editor render them, and EPUB export embeds them back into the output file.
+- Cover URLs now change whenever a cover is re-uploaded, so clients can cache covers for a year instead of re-downloading them.
+- Parser scripts are documented in `docs/parsers.md`, including the site contract, the fetch/size limits and the hybrid helpers.
+
+### Fixes
+
+- AI calls have a per-call deadline again. A provider that stops responding no longer leaves a translate or refine job running indefinitely; chat streams instead time out only when they go silent, so a long answer is never cut off mid-flight.
+- Transient provider failures are retried again after the AI layer migration (rate limits, 5xx, dropped connections), including errors delivered inside an otherwise successful stream. Genuinely bad requests still fail immediately instead of being retried.
+- A stalled stream no longer leaks a goroutine and a held connection per chat turn, and the Gemini provider gained the retries it had lost.
+- Chat: fixed concurrent turns losing history, the novel picker never returning results, answers rendering twice, clarification cards losing their options after a reload, and tool chips spinning forever when a result never arrived.
+- Tool output and chapter bodies are truncated on character boundaries, so CJK and accented text is no longer corrupted, and the documented size caps are actually enforced. Long chapters are now read in blocks the assistant controls instead of being silently cut off.
+- Chat analytics: fixed empty results when a query touched both views, per-user isolation is now structural rather than prompt-dependent, oversized queries are rejected by the engine instead of after the fact, and the sandbox works on targets without a `/tmp` directory (Termux).
+- Chat sessions: fixed history trimming that rejected saves for CJK-heavy conversations, and the storage cap that made real conversations fail to save at all.
+- Parser fetching: HTTP error responses now fail the fetch instead of being stored as chapter text, so a deleted chapter is no longer reported as a broken parser; private and internal URLs are blocked on every path, including requests routed through the browser worker; response bodies are read through a size limit instead of being buffered without one; and every redirect hop is re-validated.
+- Parser syncing: fixed chapter identities being computed from a stale script after a parser auto-update (which could re-download an entire library as duplicates), and sync/check jobs misreporting partially migrated novels as fully new.
+- The `chrysanthemumgarden` parser now decodes its obfuscation font properly, and fails loudly instead of storing scrambled text when the protection cannot be decoded.
+
+### Housekeeping
+
+- Removed the built-in Go scrapers and the browser-worker fallback client (~14,000 lines) in favor of the JavaScript parser catalog.
+- Added test coverage for the parser engine and its guards, the chat tools, the analytics sandbox and image import/export.
+- Refreshed the API documentation for the new image and chat endpoints, parser fetch limits and ownership rules.
 
 ## [v0.38.0] - 2026-09-29
 
@@ -449,7 +478,7 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
-[Unreleased]: https://github.com/mfloresz/yara/compare/v0.37.0...HEAD
+[v0.39.0]: https://github.com/mfloresz/yara/compare/v0.38.0...v0.39.0
 [v0.38.0]: https://github.com/mfloresz/yara/compare/v0.37.0...v0.38.0
 [v0.37.0]: https://github.com/mfloresz/yara/compare/v0.36.1...v0.37.0
 [v0.36.1]: https://github.com/mfloresz/yara/compare/v0.36.0...v0.36.1
