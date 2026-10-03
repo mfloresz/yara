@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.39.1] - 2026-10-02
+
+### Fixes
+
+- Restored the Android (armv7) build: a JSON library pulled in through the eino AI framework refuses to compile on 32-bit platforms. It is now substituted with a behaviorally identical `encoding/json` shim, and Android binaries build and run again on armv7 devices.
+
 ## [v0.39.0] - 2026-10-02
 
 ### ⚠️ Breaking changes
@@ -479,6 +485,7 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
+[v0.39.1]: https://github.com/mfloresz/yara/compare/v0.39.0...v0.39.1
 [v0.39.0]: https://github.com/mfloresz/yara/compare/v0.38.0...v0.39.0
 [v0.38.0]: https://github.com/mfloresz/yara/compare/v0.37.0...v0.38.0
 [v0.37.0]: https://github.com/mfloresz/yara/compare/v0.36.1...v0.37.0
