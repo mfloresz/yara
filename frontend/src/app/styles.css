@@ -280,6 +280,14 @@ select {
     padding-left: 1.25rem;
 }
 
+.markdown-preview img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 1.25rem auto;
+    border-radius: 8px;
+}
+
 .reader-content .markdown-preview p,
 .reader-content .markdown-preview li,
 .reader-content .markdown-preview blockquote {

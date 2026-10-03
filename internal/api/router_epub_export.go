@@ -9,6 +9,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/epubexport"
+	"translator-server/internal/epubimport"
 	"translator-server/internal/store"
 )
 
@@ -72,7 +73,10 @@ func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
 			coverMime = DefaultCoverMime
 		}
 
-		epubChapters := buildEpubChapters(chapters, body.Source)
+		epubChapters, err := buildEpubChapters(chapters, body.Source, body.NovelID, s)
+		if err != nil {
+			return e.InternalServerError("failed to load novel images", err)
+		}
 		if len(epubChapters) == 0 {
 			return e.BadRequestError("no chapters with content for the selected source", nil)
 		}
@@ -154,7 +158,28 @@ func buildEpubMeta(novel *store.Novel, source string) epubexport.EpubMetadata {
 	}
 }
 
-func buildEpubChapters(chapters []store.Chapter, source string) []epubexport.ChapterData {
+// buildEpubChapters shapes the export chapters and attaches the novel's
+// stored inline images, matched by chapter ID and only when the selected
+// source variant's content actually contains [[IMG-n]] tokens (a variant
+// that lost its tokens must not grow orphan manifest entries). Image order
+// matches token order because both follow the stored num.
+func buildEpubChapters(chapters []store.Chapter, source, novelID string, s *Server) ([]epubexport.ChapterData, error) {
+	var imageBlobs []store.NovelImageBlob
+	for _, ch := range chapters {
+		if epubimport.ImageTokenRe.MatchString(selectChapterContent(ch, source)) {
+			if len(imageBlobs) == 0 {
+				var err error
+				if imageBlobs, err = s.Store.GetNovelImageBlobs(novelID); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	blobsByChapter := make(map[string][]store.NovelImageBlob)
+	for _, img := range imageBlobs {
+		blobsByChapter[img.ChapterID] = append(blobsByChapter[img.ChapterID], img)
+	}
+
 	var result []epubexport.ChapterData
 	for _, ch := range chapters {
 		var content string
@@ -197,12 +222,42 @@ func buildEpubChapters(chapters []store.Chapter, source string) []epubexport.Cha
 			title = fmt.Sprintf("Chapter %d", pos)
 		}
 
-		result = append(result, epubexport.ChapterData{
+		data := epubexport.ChapterData{
 			Title:   title,
 			Content: content,
-		})
+		}
+		for _, blob := range blobsByChapter[ch.ID] {
+			data.Images = append(data.Images, epubexport.ImageFile{
+				Alt:      blob.Alt,
+				MimeType: blob.MimeType,
+				Blob:     blob.Blob,
+			})
+		}
+		result = append(result, data)
 	}
-	return result
+	return result, nil
+}
+
+// selectChapterContent picks the content a source variant would export,
+// including the refined→translated→original fallbacks.
+func selectChapterContent(ch store.Chapter, source string) string {
+	switch source {
+	case "translated":
+		if ch.TranslatedContent != "" {
+			return ch.TranslatedContent
+		}
+		return ch.OriginalContent
+	case "refined":
+		if ch.RefinedContent != "" {
+			return ch.RefinedContent
+		}
+		if ch.TranslatedContent != "" {
+			return ch.TranslatedContent
+		}
+		return ch.OriginalContent
+	default:
+		return ch.OriginalContent
+	}
 }
 
 func sanitizeFileName(title string) string {

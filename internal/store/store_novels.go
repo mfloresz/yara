@@ -1063,7 +1063,7 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 			chapters[i].Position = i + 1
 		}
 	}
-	if err := s.insertChaptersBulk(clone.ID, chapters); err != nil {
+	if _, err := s.insertChaptersBulk(clone.ID, chapters); err != nil {
 		return nil, err
 	}
 	if err := s.RecalculateNovelStats(clone.ID); err != nil {
@@ -1115,7 +1115,11 @@ func (s *Store) ImportEpubNovel(input *ImportEpubNovelInput) (*ImportEpubNovelRe
 			Status:          "pending",
 		})
 	}
-	if err := s.insertChaptersBulk(resultNovel.ID, chapterInputs); err != nil {
+	chapterIDs, err := s.insertChaptersBulk(resultNovel.ID, chapterInputs)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.insertNovelImagesBulk(resultNovel.ID, importedEpubChapterImages(input.Chapters, chapterIDs)); err != nil {
 		return nil, err
 	}
 	if err := s.RecalculateNovelStats(resultNovel.ID); err != nil {
@@ -1256,7 +1260,11 @@ func (s *Store) ImportZipNovel(input *ImportZipNovelInput) (*ImportZipNovelResul
 			chapterInputs[i].ChapterOrder = i + 1
 		}
 	}
-	if err := s.insertChaptersBulk(resultNovel.ID, chapterInputs); err != nil {
+	chapterIDs, err := s.insertChaptersBulk(resultNovel.ID, chapterInputs)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.insertNovelImagesBulk(resultNovel.ID, importedZipChapterImages(input.Chapters, chapterIDs)); err != nil {
 		return nil, err
 	}
 	if err := s.RecalculateNovelStats(resultNovel.ID); err != nil {

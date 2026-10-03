@@ -143,7 +143,9 @@ const variantContent: Record<ContentVariant, (chapter: Chapter | null) => string
   original: (chapter) => chapter?.originalContent || "",
 };
 
-const previewHtml = computed(() => markdownToHtml(variantContent[activeVariant.value](fullChapter.value)));
+const previewHtml = computed(() =>
+  markdownToHtml(variantContent[activeVariant.value](fullChapter.value), fullChapter.value?.images),
+);
 
 const metaLine = computed(() => {
   const parts: string[] = [];

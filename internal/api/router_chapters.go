@@ -274,8 +274,12 @@ func (sharedChapterHandlers) list(s *Server) func(*core.RequestEvent) error {
 			if err != nil {
 				return notFoundOrForbidden(e, err)
 			}
+			images, err := s.Store.ListNovelImages(e.Request.PathValue("novelId"))
+			if err != nil {
+				return notFoundOrForbidden(e, err)
+			}
 			for _, ch := range full {
-				out = append(out, chapterRecord(ch))
+				out = append(out, withImages(chapterRecord(ch), e.Request.PathValue("novelId"), images))
 			}
 		} else {
 			for _, ch := range chapters {
@@ -338,10 +342,15 @@ func (sharedChapterHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		images, err := s.Store.ListChapterImages(chapter.ID)
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		record := withImages(chapterRecord(*chapter), novelID, images)
 		// Opt-in neighbors in reading order (position): two indexed LIMIT 1
 		// queries, so prev/next navigation no longer needs the full list.
 		if firstQuery(e.Request.URL.Query(), "neighbors") != "true" {
-			return v1Respond(e, http.StatusOK, chapterRecord(*chapter), nil, nil)
+			return v1Respond(e, http.StatusOK, record, nil, nil)
 		}
 		prev, next, err := s.Store.GetChapterNeighborsAccessible(e.Auth.Id, novelID, chapter.ID)
 		if err != nil {
@@ -354,7 +363,7 @@ func (sharedChapterHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if next != nil {
 			nextRecord = chapterSummaryRecord(*next)
 		}
-		return v1RespondWithNeighbors(e, http.StatusOK, chapterRecord(*chapter), &v1Neighbors{
+		return v1RespondWithNeighbors(e, http.StatusOK, record, &v1Neighbors{
 			Prev: prevRecord,
 			Next: nextRecord,
 		}, e.Request.URL.Path)

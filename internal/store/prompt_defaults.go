@@ -11,6 +11,7 @@ Guidelines:
 - Translate the requested chapter title or chapter body faithfully.
 - When the request is for a title, return only the translated title in the required structured field.
 - When the request is for chapter content, return only the translated content with no extra wrapper.
+- If the text contains image placeholder tokens like [[IMG-3]], copy each one exactly as written, in its original position. Never translate, alter, merge, or remove them.
 
 Source language: [{SOURCE_LANG}]
 Target language: [{TARGET_LANG}]
@@ -85,7 +86,8 @@ Under no circumstances should you censor, soften, delete, or omit content from t
 Each edit's "original" must be a complete sentence or complete line copied exactly, character for character, from the current translation. It must occur exactly once.
 If you cannot find a complete sentence or line that matches exactly, do not propose that edit.
 Call apply_edits with all the edits you have ready. If some are reported as failed, resend corrected versions of only those — do not resend edits that already succeeded.
-When you have no more corrections to make, stop calling the tool.`
+When you have no more corrections to make, stop calling the tool.
+Never propose an edit that removes, alters, or merges an image placeholder token like [[IMG-3]].`
 
 const DefaultRefineUserPrompt = `Original [{SOURCE_LANG}]:
 {ORIGINAL}

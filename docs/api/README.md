@@ -474,6 +474,34 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 }
 ```
 
+#### Inline images (EPUB and import-zip)
+
+Novels imported from an EPUB (or a project zip) can carry inline images.
+Chapter content never stores image data or URLs — it stores opaque tokens:
+
+- **EPUB import**: every `<img>` whose `src` resolves to a manifest image is
+  extracted and replaced in the chapter content by `[[IMG-1]]`, `[[IMG-2]]`…
+  (numbered per chapter by order of first appearance). Unresolvable sources
+  are left as dead references, as before. Blobs are capped at 20 MB per
+  image and 64 MB per book.
+- **import-zip**: add an `images/` folder to the project zip (jpg, jpeg, png,
+  gif, webp, svg) and reference files from the chapter text with
+  `[[IMG:file.jpg]]` markers. On import they are rewritten to `[[IMG-n]]`
+  tokens — `originals/` is canonical for the numbering; the same marker in
+  `translated/` maps to the same token, and markers unknown to the original
+  are dropped. A marker referencing a missing file fails the import (400).
+- **Rendering**: full chapter responses (`?includeContent=true`, single
+  chapter get, `?neighbors=true`) carry an `images` array (`{id, token, num,
+  alt, mime, url}`) when the novel has images; `url` points at the
+  authenticated `GET /api/v1/novels/{id}/images/{imageId}` endpoint.
+- **Translation**: the model receives the tokens as opaque text and is
+  instructed to preserve them verbatim; every translated segment is
+  validated (same token multiset as the source) and retried otherwise, and
+  refine results that lose or mutate tokens are discarded.
+- **EPUB export**: tokens in the exported variant's content are embedded
+  back as real images under `OEBPS/images/`; tokens without a stored image
+  are dropped.
+
 ### Backup
 
 | Method | Path | Description |

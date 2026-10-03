@@ -24,6 +24,7 @@ func registerV1Routes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	authed.Bind(rejectBlocked())
 
 	registerV1NovelRoutes(authed, s)
+	registerV1NovelImageRoutes(authed, s)
 	registerV1ChapterRoutes(authed, s)
 	registerV1JobRoutes(authed, s)
 	registerV1ImportRoutes(authed, s)

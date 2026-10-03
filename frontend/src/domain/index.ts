@@ -72,6 +72,19 @@ export type ChapterStatus =
   | "done"
   | "failed";
 
+/** One inline image of a chapter, behind the [[IMG-n]] tokens in its content. */
+export type ChapterImage = {
+  id: string;
+  chapterId: string;
+  /** Exact placeholder string as it appears in the chapter content. */
+  token: string;
+  num: number;
+  alt?: string;
+  mime?: string;
+  /** Authenticated URL serving the image bytes. */
+  url: string;
+};
+
 export type Chapter = {
   id: string;
   novelId: string;
@@ -85,6 +98,7 @@ export type Chapter = {
   refinedContent?: string;
   status: ChapterStatus;
   errorMessage?: string;
+  images?: ChapterImage[];
   createdAt: string;
   updatedAt: string;
 };

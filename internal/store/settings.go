@@ -1,5 +1,7 @@
 package store
 
+import "fmt"
+
 type TranslationDefaults struct {
 	AutoSegment               bool `json:"autoSegment"`
 	ThresholdChars            int  `json:"thresholdChars"`
@@ -235,9 +237,46 @@ type Epub struct {
 	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
+// ImportedNovelImage is one inline chapter image produced by an import
+// (EPUB extraction or the import-zip image convention). Images[i] always
+// corresponds to the [[IMG-(i+1)]] token of its chapter.
+type ImportedNovelImage struct {
+	Alt      string
+	MimeType string
+	FileName string
+	Blob     []byte
+}
+
+// ImportedChapterImages pairs a persisted chapter ID with the images
+// referenced by its content.
+type ImportedChapterImages struct {
+	ChapterID string
+	Images    []ImportedNovelImage
+}
+
+// NovelImage is a stored inline image of a novel. Num mirrors the n in the
+// [[IMG-n]] token inside the owning chapter's content.
+type NovelImage struct {
+	ID        string `json:"id,omitempty"`
+	NovelID   string `json:"novelId,omitempty"`
+	ChapterID string `json:"chapterId,omitempty"`
+	Num       int    `json:"num,omitempty"`
+	Alt       string `json:"alt,omitempty"`
+	MimeType  string `json:"mime,omitempty"`
+	FileName  string `json:"fileName,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+// ImageToken returns the exact placeholder string for this image as it
+// appears (or must appear) in its chapter's content.
+func (i NovelImage) ImageToken() string {
+	return fmt.Sprintf("[[IMG-%d]]", i.Num)
+}
+
 type ImportedEpubChapter struct {
 	Title   string
 	Content string
+	Images  []ImportedNovelImage
 }
 
 type ImportEpubNovelInput struct {
@@ -396,6 +435,7 @@ type ImportedZipChapter struct {
 	TranslatedTitle   string
 	OriginalContent   string
 	TranslatedContent string
+	Images            []ImportedNovelImage
 }
 
 type ImportZipNovelInput struct {
