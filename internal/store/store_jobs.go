@@ -8,6 +8,7 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 func (s *Store) CreateJob(userID string, job *Job) error {
@@ -198,38 +199,52 @@ func (s *Store) UpdateJobProgressFast(jobID string, patch map[string]any) error 
 }
 
 func (s *Store) UpdateJob(jobID string, patch map[string]any) error {
-	record, err := s.App.FindRecordById(JobsCollection, jobID)
-	if err != nil {
+	if _, err := s.App.FindRecordById(JobsCollection, jobID); err != nil {
 		return ErrNotFound
 	}
-	if record.GetString("status") == "cancelled" {
-		allowList := map[string]bool{"completedChapters": true, "failedChapters": true}
-		allAllowed := true
-		for key := range patch {
-			if key == "status" {
-				continue
-			}
-			if !allowList[key] {
-				allAllowed = false
-				break
-			}
-		}
-		if !allAllowed {
-			if nextStatus, ok := patch["status"].(string); !ok || nextStatus != "cancelled" {
-				return nil
-			}
-		}
-	}
+	// After a cancellation only final bookkeeping (completedChapters /
+	// failedChapters) or the cancellation itself may land; every other field
+	// must not overwrite it. The guard lives in the UPDATE's WHERE clause, not
+	// in a loaded record: a write that read the row before a concurrent
+	// cancellation (e.g. the worker failing the job the user just cancelled)
+	// would otherwise resurrect its status on save.
+	benignAfterCancel := true
+	set := newNarrowSet()
+	columns := 0
 	for key, value := range patch {
 		switch key {
 		case "status", "operation", "provider", "model", "errorMessage",
-			"autoSegmentEnabled", "autoSegmentActive", "autoSegmentChapterId", "autoSegmentChapterTitle":
-			record.Set(camelToSnake(key), value)
-		case "completedChapters", "failedChapters", "totalChapters", "autoSegmentCount", "autoSegmentCurrentIndex", "autoSegmentCompletedCount":
-			record.Set(camelToSnake(key), value)
+			"autoSegmentEnabled", "autoSegmentActive", "autoSegmentChapterId", "autoSegmentChapterTitle",
+			"completedChapters", "failedChapters", "totalChapters",
+			"autoSegmentCount", "autoSegmentCurrentIndex", "autoSegmentCompletedCount":
+			if key != "status" && key != "completedChapters" && key != "failedChapters" {
+				benignAfterCancel = false
+			}
+			set.add(camelToSnake(key), value)
+			columns++
 		}
 	}
-	return s.App.Save(record)
+	if columns == 0 {
+		return nil
+	}
+	if nextStatus, ok := patch["status"].(string); ok && nextStatus == "cancelled" {
+		benignAfterCancel = true
+	}
+	set.add("updated", types.NowDateTime().String())
+	set.bind("id", jobID)
+	where := "id = {:id}"
+	if !benignAfterCancel {
+		where += " AND status != 'cancelled'"
+	}
+	rows, err := set.exec(s, JobsCollection, where)
+	if err != nil {
+		return err
+	}
+	if rows == 0 && !benignAfterCancel {
+		// Cancelled while this write was in flight.
+		return nil
+	}
+	return nil
 }
 
 func (s *Store) UpdateJobForUser(userID, jobID string, patch map[string]any) error {

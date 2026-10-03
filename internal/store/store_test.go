@@ -840,3 +840,86 @@ func TestUpdateJobProgressFastCancelledGuard(t *testing.T) {
 		t.Fatalf("cancelled auto_segment_chapter_title = %q, want empty (write must be skipped)", got)
 	}
 }
+
+// Guards UpdateJob's cancelled-job semantics: after a cancellation only final
+// bookkeeping (completedChapters/failedChapters) or the cancellation itself may
+// land — a late failure write (status + errorMessage) must be a no-op. The
+// guard is enforced in the UPDATE's WHERE clause so a write racing the
+// cancellation cannot resurrect a failed status on save.
+func TestUpdateJobCancelledGuard(t *testing.T) {
+	st, app, owner, novel, _ := setupChaptersTestEnv(t, "jobguard-test@example.com", "Guard Novel")
+
+	jobs, err := app.FindCollectionByNameOrId(JobsCollection)
+	if err != nil {
+		t.Fatalf("find jobs collection: %v", err)
+	}
+	createJob := func(status string) *core.Record {
+		rec := core.NewRecord(jobs)
+		rec.Set("owner", owner.Id)
+		rec.Set("novel", novel.Id)
+		rec.Set("status", status)
+		rec.Set("operation", "translate")
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save job %s: %v", status, err)
+		}
+		return rec
+	}
+	cancelled := createJob("cancelled")
+	running := createJob("running")
+
+	// A late failure write on a cancelled job is silently skipped.
+	if err := st.UpdateJob(cancelled.Id, map[string]any{"status": "failed", "errorMessage": "late failure"}); err != nil {
+		t.Fatalf("update cancelled job: %v", err)
+	}
+	fresh, err := app.FindRecordById(JobsCollection, cancelled.Id)
+	if err != nil {
+		t.Fatalf("reload cancelled job: %v", err)
+	}
+	if got := fresh.GetString("status"); got != "cancelled" {
+		t.Fatalf("cancelled status = %q, want cancelled (late failure must not overwrite)", got)
+	}
+	if got := fresh.GetString("error_message"); got != "" {
+		t.Fatalf("cancelled error_message = %q, want empty", got)
+	}
+
+	// Final bookkeeping is allowed on a cancelled job.
+	if err := st.UpdateJob(cancelled.Id, map[string]any{"completedChapters": 2}); err != nil {
+		t.Fatalf("bookkeeping on cancelled job: %v", err)
+	}
+	fresh, err = app.FindRecordById(JobsCollection, cancelled.Id)
+	if err != nil {
+		t.Fatalf("reload cancelled job: %v", err)
+	}
+	if got := fresh.GetFloat("completed_chapters"); got != 2 {
+		t.Fatalf("cancelled completed_chapters = %v, want 2", got)
+	}
+
+	// Re-cancelling (with a note) is allowed too.
+	if err := st.UpdateJob(cancelled.Id, map[string]any{"status": "cancelled", "errorMessage": "user cancelled"}); err != nil {
+		t.Fatalf("re-cancel job: %v", err)
+	}
+	fresh, err = app.FindRecordById(JobsCollection, cancelled.Id)
+	if err != nil {
+		t.Fatalf("reload re-cancelled job: %v", err)
+	}
+	if got := fresh.GetString("error_message"); got != "user cancelled" {
+		t.Fatalf("re-cancelled error_message = %q, want %q", got, "user cancelled")
+	}
+
+	// A running (non-cancelled) job accepts the same writes unguarded.
+	if err := st.UpdateJob(running.Id, map[string]any{"status": "failed", "errorMessage": "boom"}); err != nil {
+		t.Fatalf("update running job: %v", err)
+	}
+	fresh, err = app.FindRecordById(JobsCollection, running.Id)
+	if err != nil {
+		t.Fatalf("reload running job: %v", err)
+	}
+	if got := fresh.GetString("status"); got != "failed" {
+		t.Fatalf("running status = %q, want failed", got)
+	}
+
+	// Unknown job ids keep the ErrNotFound contract.
+	if err := st.UpdateJob("missing", map[string]any{"status": "failed"}); err != ErrNotFound {
+		t.Fatalf("update missing job = %v, want ErrNotFound", err)
+	}
+}
