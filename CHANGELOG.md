@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.40.0] - 2026-10-03
+
+### What's new
+
+- **The library assistant can now act on your library.** Twenty new tools join the chat assistant's catalog (32 in total), all scoped to your own novels: create, cancel and retry translation/refine/check jobs; cancel or retry a job from a past answer; manage the glossary of a novel (view, edit, or generate a fresh draft); trigger source-site update checks and re-downloads; dry-run and apply chapter cleanup; bulk-set chapter status or exclusion across an order range; read reading progress; build EPUB exports; and translate a novel description to try it out before saving.
+- **Ask for catalog overviews.** The assistant can list the tags, authors and series in your library with partial, accent-insensitive matching, and search novels by any specific field (title, author, series, tags, status) directly in the query.
+- **Long answers without truncation.** Novel listings are now paged (previously nothing past the first 50 novels was reachable through the tool), chapter reads can count lines from the end (read a chapter's ending in one call), and a one-line probe reveals a chapter's exact length before reading it. The assistant is instructed to page through SQL analytics with `COUNT(*)` + `LIMIT`/`OFFSET` instead of presenting a single page as the complete answer.
+- **Smarter job creation from analysis.** The assistant can turn a `query_library` finding — e.g. "translations 40% shorter than the original" — directly into re-translation jobs for exactly those chapters, overwriting the previous translation.
+- Excluded chapters no longer pollute analyses: they are treated as logically deleted and only surface when you explicitly ask about them.
+
+### Fixes
+
+- A cancelled job can no longer be resurrected to failed/running by a status write that raced the cancellation: the guard now lives in the UPDATE's WHERE clause (mirroring the fast progress path), with benign bookkeeping writes still unconditional. The agent's retry/cancel flow exposed this as an intermittent failure.
+
+### Housekeeping
+
+- Materialized both agent analytics views and added a covering index for chapter stats, so analytical questions stop recomputing joins per query.
+- Expanded test coverage for the new assistant tools, projections, guarded job updates and the analytics views; refreshed `docs/api/README.md` for the new tool conventions.
+
 ## [v0.39.1] - 2026-10-02
 
 ### Fixes
@@ -485,6 +504,7 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
+[v0.40.0]: https://github.com/mfloresz/yara/compare/v0.39.1...v0.40.0
 [v0.39.1]: https://github.com/mfloresz/yara/compare/v0.39.0...v0.39.1
 [v0.39.0]: https://github.com/mfloresz/yara/compare/v0.38.0...v0.39.0
 [v0.38.0]: https://github.com/mfloresz/yara/compare/v0.37.0...v0.38.0
