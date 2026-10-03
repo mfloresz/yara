@@ -168,77 +168,9 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 			UseRegex:      body.UseRegex,
 		}
 
-		modified, skipped, notFound, failed := 0, 0, 0, 0
-		for _, chapterID := range body.ChapterIDs {
-			chapter, err := s.Store.GetChapterAccessible(e.Auth.Id, e.Request.PathValue("novelId"), chapterID)
-			if err != nil {
-				notFound++
-				continue
-			}
-
-			patch := &store.Chapter{
-				ID:                chapterID,
-				ChapterOrder:      chapter.ChapterOrder,
-				Title:             chapter.Title,
-				TranslatedTitle:   chapter.TranslatedTitle,
-				OriginalContent:   chapter.OriginalContent,
-				TranslatedContent: chapter.TranslatedContent,
-				RefinedContent:    chapter.RefinedContent,
-				Status:            chapter.Status,
-				ErrorMessage:      chapter.ErrorMessage,
-			}
-			changed := false
-			hasApplicableContent := false
-
-			if body.ApplyTo == "original" || body.ApplyTo == "all" {
-				if chapter.OriginalContent != "" {
-					hasApplicableContent = true
-					res := ApplyClean(chapter.OriginalContent, opts)
-					if res.Changed {
-						patch.OriginalContent = res.Cleaned
-						changed = true
-					}
-				}
-			}
-			if body.ApplyTo == "translated" || body.ApplyTo == "all" {
-				if chapter.TranslatedContent != "" {
-					hasApplicableContent = true
-					res := ApplyClean(chapter.TranslatedContent, opts)
-					if res.Changed {
-						patch.TranslatedContent = res.Cleaned
-						changed = true
-					}
-				}
-			}
-			if body.ApplyTo == "refined" || body.ApplyTo == "all" {
-				if chapter.RefinedContent != "" {
-					hasApplicableContent = true
-					res := ApplyClean(chapter.RefinedContent, opts)
-					if res.Changed {
-						patch.RefinedContent = res.Cleaned
-						changed = true
-					}
-				}
-			}
-
-			if !changed {
-				if !hasApplicableContent {
-					skipped++
-				}
-				continue
-			}
-
-			if _, err := s.Store.UpsertChapterWithoutStats(e.Auth.Id, e.Request.PathValue("novelId"), patch); err != nil {
-				failed++
-				continue
-			}
-			modified++
-		}
-
-		if modified > 0 {
-			if err := s.Store.RecalculateNovelStats(e.Request.PathValue("novelId")); err != nil {
-				return e.InternalServerError("failed to recalculate stats", err)
-			}
+		modified, skipped, notFound, failed, err := s.applyChapterCleanup(e.Auth.Id, e.Request.PathValue("novelId"), body.ChapterIDs, opts, body.ApplyTo)
+		if err != nil {
+			return e.InternalServerError("failed to clean chapters", err)
 		}
 
 		summary := map[string]any{
@@ -250,6 +182,89 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 		}
 		return v1Respond(e, http.StatusOK, summary, nil, nil)
 	}
+}
+
+// applyChapterCleanup runs the cleanup pipeline over the given chapters of a
+// novel: load each chapter, apply opts to the requested content fields, save
+// the changed ones, and refresh novel stats once at the end. Chapters are
+// processed one at a time and discarded, so peak memory is one chapter body
+// no matter how many are cleaned. Shared by POST /novels/{novelId}/chapters/
+// clean and the agent's apply_chapter_cleanup tool; the caller owns argument
+// validation and the active-jobs admission (the agent tool refuses while jobs
+// are active, mirroring UpdateChapterEdits).
+func (s *Server) applyChapterCleanup(userID, novelID string, chapterIDs []string, opts CleanOptions, applyTo string) (modified, skipped, notFound, failed int, err error) {
+	for _, chapterID := range chapterIDs {
+		chapter, err := s.Store.GetChapterAccessible(userID, novelID, chapterID)
+		if err != nil {
+			notFound++
+			continue
+		}
+
+		patch := &store.Chapter{
+			ID:                chapterID,
+			ChapterOrder:      chapter.ChapterOrder,
+			Title:             chapter.Title,
+			TranslatedTitle:   chapter.TranslatedTitle,
+			OriginalContent:   chapter.OriginalContent,
+			TranslatedContent: chapter.TranslatedContent,
+			RefinedContent:    chapter.RefinedContent,
+			Status:            chapter.Status,
+			ErrorMessage:      chapter.ErrorMessage,
+		}
+		changed := false
+		hasApplicableContent := false
+
+		if applyTo == "original" || applyTo == "all" {
+			if chapter.OriginalContent != "" {
+				hasApplicableContent = true
+				res := ApplyClean(chapter.OriginalContent, opts)
+				if res.Changed {
+					patch.OriginalContent = res.Cleaned
+					changed = true
+				}
+			}
+		}
+		if applyTo == "translated" || applyTo == "all" {
+			if chapter.TranslatedContent != "" {
+				hasApplicableContent = true
+				res := ApplyClean(chapter.TranslatedContent, opts)
+				if res.Changed {
+					patch.TranslatedContent = res.Cleaned
+					changed = true
+				}
+			}
+		}
+		if applyTo == "refined" || applyTo == "all" {
+			if chapter.RefinedContent != "" {
+				hasApplicableContent = true
+				res := ApplyClean(chapter.RefinedContent, opts)
+				if res.Changed {
+					patch.RefinedContent = res.Cleaned
+					changed = true
+				}
+			}
+		}
+
+		if !changed {
+			if !hasApplicableContent {
+				skipped++
+			}
+			continue
+		}
+
+		if _, err := s.Store.UpsertChapterWithoutStats(userID, novelID, patch); err != nil {
+			failed++
+			continue
+		}
+		modified++
+	}
+
+	if modified > 0 {
+		if err := s.Store.RecalculateNovelStats(novelID); err != nil {
+			return modified, skipped, notFound, failed, err
+		}
+	}
+	return modified, skipped, notFound, failed, nil
 }
 
 // listChapters: GET /novels/{novelId}/chapters — v1 honors

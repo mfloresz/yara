@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -393,6 +394,71 @@ const maxDescriptionChars = 6000
 // prompt + glossary. Nothing is persisted: the caller fills its draft and
 // saves through PATCH /novels/{id}, so a translation is only a preview until
 // the user hits save.
+// Error taxonomy shared by translateNovelDescriptionCore's two callers so the
+// HTTP handler keeps its exact status codes while the agent tool maps the same
+// cases to tool-error text.
+var (
+	errDescAIUnconfigured = errors.New("no usable AI provider configured")
+	errDescAIFailed       = errors.New("AI request failed")
+	errDescAIEmpty        = errors.New("AI returned an empty translation")
+)
+
+// translateNovelDescriptionCore translates a synopsis with the novel's
+// resolved AI settings and effective translation prompt and returns the text
+// without persisting anything — a translation is only a preview until the
+// caller saves it (PATCH /novels/{id} or the agent's update_novel). Shared by
+// POST /novels/{id}/translate-description and the agent's
+// translate_novel_description tool. Caller owns the sourceText validation
+// (non-empty, within maxDescriptionChars).
+func (s *Server) translateNovelDescriptionCore(ctx context.Context, userID string, novel *store.Novel, sourceText string) (string, error) {
+	cfg, err := s.resolveNovelConfig(userID, novel, "", "")
+	if err != nil {
+		slog.Error("resolve novel config for description translation", "novelId", novel.ID, "error", err)
+		return "", err
+	}
+	provider, err := s.newAIProvider(cfg.AI, ai.SessionForJob(novel.ID))
+	if err != nil {
+		slog.Warn("description translation without usable AI provider", "novelId", novel.ID, "error", err)
+		return "", errDescAIUnconfigured
+	}
+
+	systemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, map[string]string{
+		"{SOURCE_LANG}": novel.SourceLanguage,
+		"{TARGET_LANG}": novel.TargetLanguage,
+		"{GLOSSARY}":    formatGlossary(cfg.Glossary),
+		"{TEXT}":        "",
+	}))
+	// The translation prompt is written for chapter content; tell the model
+	// this request is a synopsis so it does not invent chapter structure.
+	systemPrompt += "\n\nThis request is the novel's description (synopsis), not chapter content: translate it faithfully and return only the translated description."
+
+	timeout := time.Duration(cfg.AI.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	translated, err := provider.TranslateText(ctx, ai.TranslateTextInput{
+		SystemPrompt:    systemPrompt,
+		TextToTranslate: sourceText,
+		SourceLanguage:  novel.SourceLanguage,
+		TargetLanguage:  novel.TargetLanguage,
+	})
+	if err != nil {
+		// Log the provider error server-side only: upstream errors can carry
+		// credentials (e.g. keys embedded in request URLs) that must never be
+		// echoed back, especially when the key belongs to a shared admin key.
+		slog.Error("description translation failed", "novelId", novel.ID, "error", err)
+		return "", errDescAIFailed
+	}
+	translated = strings.TrimSpace(translated)
+	if translated == "" {
+		return "", errDescAIEmpty
+	}
+	return translated, nil
+}
+
 func (sharedNovelHandlers) translateDescription(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, e.Request.PathValue("id"))
@@ -414,50 +480,15 @@ func (sharedNovelHandlers) translateDescription(s *Server) func(*core.RequestEve
 			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "sourceText exceeds the maximum length")
 		}
 
-		cfg, err := s.resolveNovelConfig(e.Auth.Id, novel, "", "")
+		translated, err := s.translateNovelDescriptionCore(e.Request.Context(), e.Auth.Id, novel, sourceText)
 		if err != nil {
-			slog.Error("resolve novel config for description translation", "novelId", novel.ID, "error", err)
+			switch {
+			case errors.Is(err, errDescAIUnconfigured):
+				return writeV1Error(e, http.StatusBadGateway, "ai_not_configured", "no AI provider is configured for this project")
+			case errors.Is(err, errDescAIFailed), errors.Is(err, errDescAIEmpty):
+				return writeV1Error(e, http.StatusBadGateway, "ai_request_failed", "the AI provider could not translate the description")
+			}
 			return writeV1Error(e, http.StatusInternalServerError, "config_error", "failed to resolve AI settings")
-		}
-		provider, err := s.newAIProvider(cfg.AI, ai.SessionForJob(novel.ID))
-		if err != nil {
-			slog.Warn("description translation without usable AI provider", "novelId", novel.ID, "error", err)
-			return writeV1Error(e, http.StatusBadGateway, "ai_not_configured", "no AI provider is configured for this project")
-		}
-
-		systemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, map[string]string{
-			"{SOURCE_LANG}": novel.SourceLanguage,
-			"{TARGET_LANG}": novel.TargetLanguage,
-			"{GLOSSARY}":    formatGlossary(cfg.Glossary),
-			"{TEXT}":        "",
-		}))
-		// The translation prompt is written for chapter content; tell the model
-		// this request is a synopsis so it does not invent chapter structure.
-		systemPrompt += "\n\nThis request is the novel's description (synopsis), not chapter content: translate it faithfully and return only the translated description."
-
-		timeout := time.Duration(cfg.AI.TimeoutMs) * time.Millisecond
-		if timeout <= 0 {
-			timeout = 90 * time.Second
-		}
-		ctx, cancel := context.WithTimeout(e.Request.Context(), timeout)
-		defer cancel()
-
-		translated, err := provider.TranslateText(ctx, ai.TranslateTextInput{
-			SystemPrompt:    systemPrompt,
-			TextToTranslate: sourceText,
-			SourceLanguage:  novel.SourceLanguage,
-			TargetLanguage:  novel.TargetLanguage,
-		})
-		if err != nil {
-			// Log the provider error server-side only: upstream errors can carry
-			// credentials (e.g. keys embedded in request URLs) that must never be
-			// echoed back, especially when the key belongs to a shared admin key.
-			slog.Error("description translation failed", "novelId", novel.ID, "error", err)
-			return writeV1Error(e, http.StatusBadGateway, "ai_request_failed", "the AI provider could not translate the description")
-		}
-		translated = strings.TrimSpace(translated)
-		if translated == "" {
-			return writeV1Error(e, http.StatusBadGateway, "ai_request_failed", "the AI provider returned an empty translation")
 		}
 		return v1Respond(e, http.StatusOK, map[string]any{"translatedText": translated}, nil, nil)
 	}

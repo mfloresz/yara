@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,90 @@ import (
 
 func registerV1EpubExportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Server) {
 	api.POST("/epubs/build", buildEpubHandler(s))
+}
+
+// errEpubNoContent marks a source variant with no exportable chapter content;
+// the HTTP handler renders it 400, the agent tool as tool error.
+var errEpubNoContent = errors.New("no chapters with content for the selected source")
+
+// buildEpubForNovel generates and stores the EPUB export of the novel for the
+// requested source variant (original|translated|refined — validated by the
+// caller). Shared by POST /epubs/build and the agent's build_epub tool.
+//
+// It materializes every chapter body plus the cover and the generated file
+// before the epub is stored, so callers bound the input first: the agent's
+// build_epub tool refuses novels whose estimated text exceeds its size
+// ceiling, while the HTTP handler keeps the unbounded UI behavior.
+func (s *Server) buildEpubForNovel(userID, novelID, source string) (*store.Epub, error) {
+	novel, err := s.Store.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+
+	chapters, err := s.Store.ListChaptersAccessible(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+
+	meta := buildEpubMeta(novel, source)
+
+	var coverBytes []byte
+	var coverMime string
+	if novel.CoverFile != "" {
+		if novelRecord, nErr := s.Store.App.FindRecordById(store.NovelsCollection, novel.ID); nErr == nil {
+			fsys, fErr := s.Store.App.NewFilesystem()
+			if fErr == nil {
+				defer fsys.Close()
+				fileKey := novelRecord.BaseFilesPath() + "/" + novel.CoverFile
+				if reader, rErr := fsys.GetReader(fileKey); rErr == nil {
+					defer reader.Close()
+					if data, bErr := epubexport.ReadCloserToBytes(reader); bErr == nil {
+						coverBytes = data
+						coverMime = epubexport.DetectImageMime(coverBytes)
+					} else {
+						slog.Warn("read novel cover for epub export", "novel", novel.ID, "error", bErr)
+					}
+				}
+			}
+		}
+	}
+	// Novels without a stored cover export with the bundled default so
+	// the EPUB always has a portada instead of none.
+	if len(coverBytes) == 0 {
+		coverBytes = DefaultCoverBytes
+		coverMime = DefaultCoverMime
+	}
+
+	epubChapters, err := buildEpubChapters(chapters, source, novelID, s)
+	if err != nil {
+		return nil, newImportStoreError("failed to load novel images", err)
+	}
+	if len(epubChapters) == 0 {
+		return nil, errEpubNoContent
+	}
+
+	epubBytes, err := epubexport.GenerateEpubFile(meta, epubChapters, coverBytes, coverMime)
+	if err != nil {
+		return nil, newImportStoreError("failed to generate epub", err)
+	}
+
+	fileName := sanitizeFileName(meta.Title) + ".epub"
+	fileKind := "translated"
+	if source == "original" {
+		fileKind = "original"
+	}
+	sourceVariant := source
+
+	item, err := s.Store.UpsertEpub(userID, &store.Epub{
+		NovelID:       novelID,
+		FileKind:      fileKind,
+		SourceVariant: sourceVariant,
+		Label:         fmt.Sprintf("source=%s", sourceVariant),
+	}, fileName, "application/epub+zip", epubBytes)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
@@ -34,72 +119,15 @@ func buildEpubHandler(s *Server) func(*core.RequestEvent) error {
 			return e.BadRequestError("source must be original, translated, or refined", nil)
 		}
 
-		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, body.NovelID)
+		item, err := s.buildEpubForNovel(e.Auth.Id, body.NovelID, body.Source)
 		if err != nil {
-			return notFoundOrForbidden(e, err)
-		}
-
-		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, body.NovelID)
-		if err != nil {
-			return notFoundOrForbidden(e, err)
-		}
-
-		meta := buildEpubMeta(novel, body.Source)
-
-		var coverBytes []byte
-		var coverMime string
-		if novel.CoverFile != "" {
-			if novelRecord, nErr := e.App.FindRecordById(store.NovelsCollection, novel.ID); nErr == nil {
-				fsys, fErr := e.App.NewFilesystem()
-				if fErr == nil {
-					defer fsys.Close()
-					fileKey := novelRecord.BaseFilesPath() + "/" + novel.CoverFile
-					if reader, rErr := fsys.GetReader(fileKey); rErr == nil {
-						defer reader.Close()
-						if data, bErr := epubexport.ReadCloserToBytes(reader); bErr == nil {
-							coverBytes = data
-							coverMime = epubexport.DetectImageMime(coverBytes)
-						} else {
-							slog.Warn("read novel cover for epub export", "novel", novel.ID, "error", bErr)
-						}
-					}
-				}
+			var storeErr *importStoreError
+			switch {
+			case errors.As(err, &storeErr):
+				return e.InternalServerError(storeErr.msg, storeErr.err)
+			case errors.Is(err, errEpubNoContent):
+				return e.BadRequestError(err.Error(), nil)
 			}
-		}
-		// Novels without a stored cover export with the bundled default so
-		// the EPUB always has a portada instead of none.
-		if len(coverBytes) == 0 {
-			coverBytes = DefaultCoverBytes
-			coverMime = DefaultCoverMime
-		}
-
-		epubChapters, err := buildEpubChapters(chapters, body.Source, body.NovelID, s)
-		if err != nil {
-			return e.InternalServerError("failed to load novel images", err)
-		}
-		if len(epubChapters) == 0 {
-			return e.BadRequestError("no chapters with content for the selected source", nil)
-		}
-
-		epubBytes, err := epubexport.GenerateEpubFile(meta, epubChapters, coverBytes, coverMime)
-		if err != nil {
-			return e.InternalServerError("failed to generate epub", err)
-		}
-
-		fileName := sanitizeFileName(meta.Title) + ".epub"
-		fileKind := "translated"
-		if body.Source == "original" {
-			fileKind = "original"
-		}
-		sourceVariant := body.Source
-
-		item, err := s.Store.UpsertEpub(e.Auth.Id, &store.Epub{
-			NovelID:       body.NovelID,
-			FileKind:      fileKind,
-			SourceVariant: sourceVariant,
-			Label:         fmt.Sprintf("source=%s", body.Source),
-		}, fileName, "application/epub+zip", epubBytes)
-		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
 

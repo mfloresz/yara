@@ -423,6 +423,9 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 				return nil, err
 			}
 		}
+		if err := s.ensureChaptersIndexes(c); err != nil {
+			return nil, err
+		}
 		return c, nil
 	}
 	c := core.NewBaseCollection(ChaptersCollection)
@@ -451,10 +454,32 @@ func (s *Store) ensureChaptersCollection(novels *core.Collection) (*core.Collect
 	addSystemDateFields(c)
 	c.AddIndex("idx_chapters_novel_order_unique", true, "novel,chapter_order", "")
 	c.AddIndex("idx_chapters_novel_position_unique", true, "novel,position", "")
+	c.AddIndex("idx_chapters_novel_stats", false, "novel,chapter_order,id,status,excluded,original_char_count,translated_char_count,refined_char_count,title,translated_title,error_message,updated", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// ensureChaptersIndexes backfills the covering index that lets per-novel
+// chapter aggregates run as index-only scans. Every metadata column the stats
+// recalculation (RecalculateNovelStats) and the agent analytics sandbox
+// (store_agent_sql.go) read sits in the chapter record AFTER the megabyte-scale
+// content columns — PocketBase stores fields alphabetically — so without this
+// index those aggregates traverse the bodies' overflow chains and cost
+// O(the library's total content bytes) instead of O(rows). Idempotent, same
+// pattern as ensureJobIndexes: existing installs gain it on the next boot;
+// the one-time CREATE INDEX on a large library is paid once at that boot.
+func (s *Store) ensureChaptersIndexes(c *core.Collection) error {
+	const name = "idx_chapters_novel_stats"
+	const columns = "novel,chapter_order,id,status,excluded,original_char_count,translated_char_count,refined_char_count,title,translated_title,error_message,updated"
+	for _, raw := range c.Indexes {
+		if strings.EqualFold(dbutils.ParseIndex(raw).IndexName, name) {
+			return nil
+		}
+	}
+	c.AddIndex(name, false, columns, "")
+	return s.App.Save(c)
 }
 
 // ensureJobIndexes backfills the query-supporting indexes on translation_jobs.

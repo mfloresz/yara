@@ -223,6 +223,38 @@ type Job struct {
 	NovelTitle                string `json:"novelTitle,omitempty"`
 }
 
+// JobOverview is the narrow projection the library assistant's job tools
+// consume: no chapter_ids/options_json (which can reach many KB per row) and
+// the novel title resolved by JOIN inside the query, not with N+1 lookups.
+type JobOverview struct {
+	ID                string `json:"id"`
+	NovelID           string `json:"novelId"`
+	NovelTitle        string `json:"novelTitle"`
+	Operation         string `json:"operation"`
+	Status            string `json:"status"`
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	TotalChapters     int    `json:"totalChapters"`
+	CompletedChapters int    `json:"completedChapters"`
+	FailedChapters    int    `json:"failedChapters"`
+	ErrorMessage      string `json:"errorMessage"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
+}
+
+// SeriesProgress is one series row of the assistant's catalog overview:
+// chapter counters aggregated over every non-excluded chapter of the series'
+// novels. Status semantics mirror v_agent_novel_progress (translated =
+// translated/refined/done).
+type SeriesProgress struct {
+	Series             string `json:"series"`
+	Novels             int    `json:"novels"`
+	ChaptersTotal      int    `json:"chaptersTotal"`
+	ChaptersTranslated int    `json:"chaptersTranslated"`
+	ChaptersPending    int    `json:"chaptersPending"`
+	FullyTranslated    bool   `json:"fullyTranslated"`
+}
+
 type Epub struct {
 	ID            string `json:"id,omitempty"`
 	NovelID       string `json:"novelId,omitempty"`

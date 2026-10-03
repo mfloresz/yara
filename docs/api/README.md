@@ -593,22 +593,60 @@ per user — one session each, enforced by a unique index on the owner.
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
-Tools the assistant may call: `list_novels` (search + `hasDescription` flag),
-`get_novel`, `get_novel_stats`, `get_novel_chapters` (summaries, paged by
-`offset`/`limit` **or** selected as a contiguous block with
-`fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a line
-window: `startLine` + `lineCount`, default 60 / max 400, returning `totalLines`
-and `nextStartLine` so long chapters are paged rather than cut),
+Tools the assistant may call: `list_novels` (search + optional `field` scoping
+to title/author/series/tags + `offset`/`limit` paging + `hasDescription`/`hasSourceDescription` flags),
+`list_tags` and `list_authors` (distinct catalog values with partial,
+accent-insensitive matching — "Cris" also finds "TM Cris"), `list_series`
+(per-series chapter progress; `complete=complete` answers "which series are
+fully translated"), `get_novel`, `get_novel_stats`, `get_novel_chapters`
+(summaries, paged by `offset`/`limit` **or** selected as a contiguous block
+with `fromOrder`/`toOrder` over `chapter_order`), `get_chapter` (body text as a
+line window: `startLine` + `lineCount`, default 60 / max 400, returning
+`totalLines` and `nextStartLine` so long chapters are paged rather than cut; a
+**negative `startLine` counts from the end**, and `lineCount: 1` probes the
+chapter's exact length without pulling its text),
 `search_chapters` (case-sensitive literal search over titles and bodies with
 snippets), `query_library` (one read-only analytics SELECT over the
 `v_agent_novel_progress` / `v_agent_chapter_overview` tables — aggregates like
-"novels missing fewer than 10 chapters" in a single call), `update_novel`
-(target title / description / notes), `update_chapter` (titles +
-translated/refined body replacement; refused while the novel has active jobs),
-`set_chapter_status` (`pending|translated|refined|done|failed`),
-`set_chapter_excluded` and `ask_user` (clarifying question with clickable
-options; ends the turn and the picked option's value arrives as the user's
-next message).
+"novels missing fewer than 10 chapters" in a single call), `get_active_jobs`
+and `get_novel_jobs` (narrow job overviews: progress counters, no chapter id
+lists), `create_job` (enqueue `translate`/`refine`/`check` over explicit ids
+or an order range; one active job per novel), `cancel_job` and `retry_job`,
+`get_glossary` / `update_glossary` / `generate_glossary` (read, upsert/remove
+by source term, and enqueue generation of a novel's term pairs),
+`check_novel_updates` (read-only TOC diff) and `update_novel_from_url`
+(enqueues the download of new chapters), `preview_chapter_cleanup` (dry run
+with change samples) and `apply_chapter_cleanup` (at most 100 chapters per
+call), `get_reading_progress` / `set_reading_progress`, `list_novel_epubs` and
+`build_epub` (large novels are refused; the export UI has no cap),
+`translate_novel_description` (returns the translated synopsis without saving
+it), `update_novel` (target title / author / series / tags / status /
+description / notes), `update_chapter` (titles + translated/refined body
+replacement; refused while the novel has active jobs), `set_chapter_status`
+(`pending|translated|refined|done|failed`), `set_chapter_excluded`,
+`bulk_set_chapter_status` and `bulk_set_chapter_excluded` (one call per
+`fromOrder`/`toOrder` range; excluded and processing chapters are skipped),
+and `ask_user` (clarifying question with clickable options; ends the turn and
+the picked option's value arrives as the user's next message).
+
+Every tool result is persisted into the session trail and replayed to the
+model on later steps, so the tools return narrow projections with hard caps
+(list limits, chapter-id caps of 500 for jobs and 100 for cleanups, truncated
+error messages) instead of full records. Complete answers come from paging,
+not from bigger caps: `list_novels` pages with `offset`, and `query_library`
+lets the model's own `LIMIT ... OFFSET ...` survive inside the wrapped query
+(the response reports `truncated` when more rows exist), so a full sweep is a
+COUNT followed by raised-offset pages. Excluded chapters are treated as
+logically deleted: the assistant omits them from every analysis and listing by
+default (`is_excluded = 0` in `query_library`; the novel-level view already
+excludes them from its counters) and surfaces them only when the user
+explicitly asks about them. `create_job` accepts `chapterIds` sourced from
+`query_library`, so analyses like "translations 40% shorter than the original"
+can be turned directly into re-translation jobs (the job overwrites the
+previous translation). Job listings read a dedicated projected query
+(`chapter_ids` / `options_json` are never loaded), bulk writes are single
+conditional UPDATEs, and cleanup preview processes one chapter at a time —
+tool peaks stay independent of library size.
 
 Chapter bodies are never silently truncated: the model controls how much it
 reads (`startLine`/`lineCount`) and is told whether more remains, so it can
@@ -667,8 +705,11 @@ novels. Two layers back that up:
    covers what the scan could not.
 
 Chapter bodies are never loaded into the sandbox; `get_chapter` serves those.
-Only the table a query actually names is materialised, so a novel-level
-question never pays to build every chapter row.
+Both views are always materialised. An earlier version built only the ones the
+query named, but SQLite's legacy comma join (`FROM a, b`) is not a FROM/JOIN
+keyword, so a missed view was silently emptied and the query returned an empty
+result as if it were the truth — a wrong answer is worse than a slower one, and
+the covering index keeps the copy cheap either way.
 
 The sandbox is a per-query file under `<data-dir>/agent-sandbox/`, removed when
 the query returns. It deliberately does **not** use the system temp dir:

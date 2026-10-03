@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -58,66 +59,26 @@ func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
 			return e.BadRequestError("maxTokensPerBatch exceeds the allowed maximum", nil)
 		}
 
-		chapters, err := s.Store.ListChaptersAccessible(userID, novelID)
-		if err != nil {
-			return e.InternalServerError("failed to load chapters", err)
-		}
-
-		chapterCount := 0
-		for _, ch := range chapters {
-			if chapterInRangeWithContent(ch, body.ChapterFrom, body.ChapterTo) {
-				chapterCount++
-			}
-		}
-		if chapterCount == 0 {
-			return e.BadRequestError("no chapters found in the specified range with content", nil)
-		}
-
-		includeExisting := body.IncludeExisting
-		if includeExisting == nil {
-			v := true
-			includeExisting = &v
-		}
-
-		options := glossaryJobOptions{
+		job, err := s.submitGlossaryJob(userID, novelID, glossaryJobOptions{
 			ChapterFrom:       body.ChapterFrom,
 			ChapterTo:         body.ChapterTo,
 			Mode:              body.Mode,
 			MaxTokensPerBatch: body.MaxTokensPerBatch,
 			Provider:          body.Provider,
 			Model:             body.Model,
-			IncludeExisting:   includeExisting,
-		}
-		optionsJSON, err := json.Marshal(options)
+			IncludeExisting:   body.IncludeExisting,
+		})
 		if err != nil {
-			return e.InternalServerError("failed to marshal options", err)
-		}
-
-		job := &store.Job{
-			NovelID:     novelID,
-			Status:      "pending",
-			Operation:   "generate-glossary",
-			Provider:    body.Provider,
-			Model:       body.Model,
-			OptionsJSON: string(optionsJSON),
-		}
-
-		// One active job per novel: the glossary write must not race another
-		// job on the same novel.
-		unlock, slotErr := s.admitNovelJob(e, novelID)
-		if slotErr != nil {
-			return slotErr
-		}
-		if err := s.Store.CreateJob(userID, job); err != nil {
-			unlock()
+			switch {
+			case errors.Is(err, errGlossaryNoChapters):
+				return e.BadRequestError(err.Error(), nil)
+			case errors.Is(err, errNovelBusy):
+				return e.Error(http.StatusConflict, novelBusyMessage, nil)
+			case errors.Is(err, errImportQueueFull):
+				return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+			}
 			return e.InternalServerError("failed to create job", err)
 		}
-
-		if !s.enqueueJob(job.ID) {
-			unlock()
-			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
-		}
-		unlock()
 
 		body2 := map[string]any{
 			"jobId":     job.ID,
@@ -127,6 +88,60 @@ func generateGlossaryHandler(s *Server) func(*core.RequestEvent) error {
 		e.Response.Header().Set("Location", "/api/v1/jobs/"+job.ID)
 		return v1Respond(e, http.StatusAccepted, body2, nil, nil)
 	}
+}
+
+// errGlossaryNoChapters marks a range without chapters that have original
+// content; the HTTP handler renders it 400, the agent tool as tool error.
+var errGlossaryNoChapters = errors.New("no chapters found in the specified range with content")
+
+// submitGlossaryJob counts the chapters with original content inside the
+// requested range, then enqueues a generate-glossary job with the admission
+// lock held (one active job per novel: the glossary write must not race
+// another job on the same novel). Caller owns argument validation and the
+// GetOwnedNovel check. Shared by POST /novels/{novelId}/glossary/generate and
+// the agent's generate_glossary tool.
+func (s *Server) submitGlossaryJob(userID, novelID string, options glossaryJobOptions) (*store.Job, error) {
+	chapters, err := s.Store.ListChaptersAccessible(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	chapterCount := 0
+	for _, ch := range chapters {
+		if chapterInRangeWithContent(ch, options.ChapterFrom, options.ChapterTo) {
+			chapterCount++
+		}
+	}
+	if chapterCount == 0 {
+		return nil, errGlossaryNoChapters
+	}
+	if options.IncludeExisting == nil {
+		v := true
+		options.IncludeExisting = &v
+	}
+	optionsJSON, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+	job := &store.Job{
+		NovelID:     novelID,
+		Status:      "pending",
+		Operation:   "generate-glossary",
+		Provider:    options.Provider,
+		Model:       options.Model,
+		OptionsJSON: string(optionsJSON),
+	}
+	unlock, err := s.acquireNovelJobSlot(novelID)
+	if err != nil {
+		return nil, err // errNovelBusy — callers map it
+	}
+	defer unlock()
+	if err := s.Store.CreateJob(userID, job); err != nil {
+		return nil, err
+	}
+	if !s.enqueueJob(job.ID) {
+		return nil, errImportQueueFull
+	}
+	return job, nil
 }
 
 // GET /novels/{novelId}/glossary/estimate-tokens?from=N&to=M
