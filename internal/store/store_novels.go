@@ -226,38 +226,38 @@ var novelListColumns = []string{
 // booleans are scanned as float64 because SQLite NUMERIC values come back with
 // INTEGER or REAL storage class depending on the value.
 type novelListRow struct {
-	ID                  string  `db:"id"`
-	Owner               string  `db:"owner"`
-	IsPublic            float64 `db:"is_public"`
-	SourceLanguage      string  `db:"source_language"`
-	TargetLanguage      string  `db:"target_language"`
-	SourceTitle         string  `db:"source_title"`
-	SourceAuthor        string  `db:"source_author"`
-	SourceSeries        string  `db:"source_series"`
-	SourceNumber        string  `db:"source_number"`
-	TargetTitle         string  `db:"target_title"`
-	TargetAuthor        string  `db:"target_author"`
-	TargetSeries        string  `db:"target_series"`
-	TargetNumber        string  `db:"target_number"`
-	SourceDescription   string  `db:"source_description"`
-	TargetDescription   string  `db:"target_description"`
-	Status              string  `db:"status"`
-	Tags                string  `db:"tags"`
-	URL                 string  `db:"url"`
-	Cover               string  `db:"cover"`
-	Thumbnail           string  `db:"thumbnail"`
-	ChapterCount        float64 `db:"chapter_count"`
-	TranslatedCount     float64 `db:"translated_count"`
-	CompletedCount      float64 `db:"completed_count"`
-	OriginalCharCount   float64 `db:"original_char_count"`
-	TranslatedCharCount float64 `db:"translated_char_count"`
-	RefinedCharCount    float64 `db:"refined_char_count"`
-	TotalCharCount      float64 `db:"total_char_count"`
-	MaxChapterOrder     float64 `db:"max_chapter_order"`
-	LastCheckedAt       string  `db:"last_checked_at"`
+	ID                   string  `db:"id"`
+	Owner                string  `db:"owner"`
+	IsPublic             float64 `db:"is_public"`
+	SourceLanguage       string  `db:"source_language"`
+	TargetLanguage       string  `db:"target_language"`
+	SourceTitle          string  `db:"source_title"`
+	SourceAuthor         string  `db:"source_author"`
+	SourceSeries         string  `db:"source_series"`
+	SourceNumber         string  `db:"source_number"`
+	TargetTitle          string  `db:"target_title"`
+	TargetAuthor         string  `db:"target_author"`
+	TargetSeries         string  `db:"target_series"`
+	TargetNumber         string  `db:"target_number"`
+	SourceDescription    string  `db:"source_description"`
+	TargetDescription    string  `db:"target_description"`
+	Status               string  `db:"status"`
+	Tags                 string  `db:"tags"`
+	URL                  string  `db:"url"`
+	Cover                string  `db:"cover"`
+	Thumbnail            string  `db:"thumbnail"`
+	ChapterCount         float64 `db:"chapter_count"`
+	TranslatedCount      float64 `db:"translated_count"`
+	CompletedCount       float64 `db:"completed_count"`
+	OriginalCharCount    float64 `db:"original_char_count"`
+	TranslatedCharCount  float64 `db:"translated_char_count"`
+	RefinedCharCount     float64 `db:"refined_char_count"`
+	TotalCharCount       float64 `db:"total_char_count"`
+	MaxChapterOrder      float64 `db:"max_chapter_order"`
+	LastCheckedAt        string  `db:"last_checked_at"`
 	LastCheckNewChapters float64 `db:"last_check_new_chapters"`
-	Created             string  `db:"created"`
-	Updated             string  `db:"updated"`
+	Created              string  `db:"created"`
+	Updated              string  `db:"updated"`
 }
 
 // firstFileName extracts the first file name from a PocketBase file-field
@@ -278,44 +278,44 @@ func novelFromListRow(row novelListRow) Novel {
 	coverFile := firstFileName(row.Cover)
 	thumbFile := firstFileName(row.Thumbnail)
 	return Novel{
-		ID:                      row.ID,
-		OwnerID:                 row.Owner,
-		SourceLanguage:          row.SourceLanguage,
-		TargetLanguage:          row.TargetLanguage,
-		SourceTitle:             row.SourceTitle,
-		SourceAuthor:            row.SourceAuthor,
-		SourceDescription:       row.SourceDescription,
-		SourceSeries:            row.SourceSeries,
-		SourceNumber:            row.SourceNumber,
-		TargetTitle:             row.TargetTitle,
-		TargetAuthor:            row.TargetAuthor,
-		TargetDescription:       row.TargetDescription,
-		TargetSeries:            row.TargetSeries,
-		TargetNumber:            row.TargetNumber,
-		Glossary:                "[]",
-		AIOptions:               "{}",
-		TranslationOptions:      "{}",
-		CleanupRules:            "[]",
-		URL:                     row.URL,
-		Status:                  normalizeNovelStatus(row.Status),
-		Tags:                    jsonString(parseNovelTagsJSON(row.Tags), "[]"),
-		CoverFile:               coverFile,
-		CoverPath:               novelCoverURL(row.ID, coverFile),
-		ThumbnailFile:           thumbFile,
-		ThumbnailPath:           novelCoverURL(row.ID, thumbFile),
-		IsPublic:                row.IsPublic != 0,
-		ChapterCount:            asInt(row.ChapterCount, 0),
-		TranslatedCount:         asInt(row.TranslatedCount, 0),
-		CompletedCount:          asInt(row.CompletedCount, 0),
-		OriginalCharCount:       asInt(row.OriginalCharCount, 0),
-		TranslatedCharCount:     asInt(row.TranslatedCharCount, 0),
-		RefinedCharCount:        asInt(row.RefinedCharCount, 0),
-		TotalCharCount:          asInt(row.TotalCharCount, 0),
-		MaxChapterOrder:         asInt(row.MaxChapterOrder, 0),
-		LastCheckedAt:           row.LastCheckedAt,
-		LastCheckNewChapters:    asInt(row.LastCheckNewChapters, 0),
-		CreatedAt:               row.Created,
-		UpdatedAt:               row.Updated,
+		ID:                   row.ID,
+		OwnerID:              row.Owner,
+		SourceLanguage:       row.SourceLanguage,
+		TargetLanguage:       row.TargetLanguage,
+		SourceTitle:          row.SourceTitle,
+		SourceAuthor:         row.SourceAuthor,
+		SourceDescription:    row.SourceDescription,
+		SourceSeries:         row.SourceSeries,
+		SourceNumber:         row.SourceNumber,
+		TargetTitle:          row.TargetTitle,
+		TargetAuthor:         row.TargetAuthor,
+		TargetDescription:    row.TargetDescription,
+		TargetSeries:         row.TargetSeries,
+		TargetNumber:         row.TargetNumber,
+		Glossary:             "[]",
+		AIOptions:            "{}",
+		TranslationOptions:   "{}",
+		CleanupRules:         "[]",
+		URL:                  row.URL,
+		Status:               normalizeNovelStatus(row.Status),
+		Tags:                 jsonString(parseNovelTagsJSON(row.Tags), "[]"),
+		CoverFile:            coverFile,
+		CoverPath:            novelCoverURL(row.ID, coverFile),
+		ThumbnailFile:        thumbFile,
+		ThumbnailPath:        novelCoverURL(row.ID, thumbFile),
+		IsPublic:             row.IsPublic != 0,
+		ChapterCount:         asInt(row.ChapterCount, 0),
+		TranslatedCount:      asInt(row.TranslatedCount, 0),
+		CompletedCount:       asInt(row.CompletedCount, 0),
+		OriginalCharCount:    asInt(row.OriginalCharCount, 0),
+		TranslatedCharCount:  asInt(row.TranslatedCharCount, 0),
+		RefinedCharCount:     asInt(row.RefinedCharCount, 0),
+		TotalCharCount:       asInt(row.TotalCharCount, 0),
+		MaxChapterOrder:      asInt(row.MaxChapterOrder, 0),
+		LastCheckedAt:        row.LastCheckedAt,
+		LastCheckNewChapters: asInt(row.LastCheckNewChapters, 0),
+		CreatedAt:            row.Created,
+		UpdatedAt:            row.Updated,
 	}
 }
 
@@ -980,6 +980,82 @@ func (s *Store) ListNovelAuthorSuggestions(userID, query string, limit int) ([]s
 	})
 	if len(out) > limit {
 		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListOwnedSeriesProgress aggregates chapter translation progress per series
+// (target series falling back to source) in one GROUP BY, so the assistant's
+// series questions ("which series are fully translated?") are a single query
+// instead of a per-novel stats walk. Status semantics mirror
+// v_agent_novel_progress: translated = translated/refined/done, excluded
+// chapters never count. complete filters the result: "complete" keeps series
+// with at least one chapter and none pending, "incomplete" the rest. query is
+// a case-insensitive substring match on the series name. Filtering and the
+// limit apply in Go so the SQL stays a plain aggregate and the LIMIT lands
+// after the filters.
+func (s *Store) ListOwnedSeriesProgress(userID, query, complete string, limit int) ([]SeriesProgress, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	rows := []struct {
+		Series             string `db:"series"`
+		Novels             int    `db:"novels"`
+		ChaptersTotal      int    `db:"chapters_total"`
+		ChaptersTranslated int    `db:"chapters_translated"`
+	}{}
+	err := s.App.DB().NewQuery(
+		// The owner filter sits in both the outer query and the chapter
+		// aggregate, so the chapters scan never touches another user's rows.
+		"SELECT COALESCE(NULLIF(n.target_series, ''), n.source_series) AS series," +
+			" COUNT(*) AS novels," +
+			" COALESCE(SUM(c.chapters_total), 0) AS chapters_total," +
+			" COALESCE(SUM(c.chapters_translated), 0) AS chapters_translated" +
+			" FROM " + NovelsCollection + " n LEFT JOIN (" +
+			"SELECT ch.novel AS novel_id," +
+			" COUNT(*) AS chapters_total," +
+			" SUM(CASE WHEN ch.status IN ('translated','refined','done') THEN 1 ELSE 0 END) AS chapters_translated" +
+			" FROM " + ChaptersCollection + " ch JOIN " + NovelsCollection + " n2 ON n2.id = ch.novel" +
+			" WHERE n2.owner = {:owner} AND ch.excluded = 0" +
+			" GROUP BY ch.novel) c ON c.novel_id = n.id" +
+			" WHERE n.owner = {:owner} AND COALESCE(NULLIF(n.target_series, ''), n.source_series) != ''" +
+			" GROUP BY series ORDER BY series",
+	).Bind(dbx.Params{"owner": userID}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	out := make([]SeriesProgress, 0, len(rows))
+	for _, row := range rows {
+		pending := row.ChaptersTotal - row.ChaptersTranslated
+		fully := row.ChaptersTotal > 0 && pending == 0
+		switch complete {
+		case "complete":
+			if !fully {
+				continue
+			}
+		case "incomplete":
+			if fully {
+				continue
+			}
+		}
+		if q != "" && !strings.Contains(strings.ToLower(row.Series), q) {
+			continue
+		}
+		out = append(out, SeriesProgress{
+			Series:             row.Series,
+			Novels:             row.Novels,
+			ChaptersTotal:      row.ChaptersTotal,
+			ChaptersTranslated: row.ChaptersTranslated,
+			ChaptersPending:    pending,
+			FullyTranslated:    fully,
+		})
+		if len(out) >= limit {
+			break
+		}
 	}
 	return out, nil
 }

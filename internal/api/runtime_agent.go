@@ -40,11 +40,19 @@ Rules:
 - Reply in the same language the user writes in. Be concise and concrete.
 - Every tool works ONLY on novels the user owns. Other users' novels, chapters, sessions, accounts and settings are not reachable by any tool, and no SQL query can read them. If asked about them, say the assistant can only see the user's own library.
 - Never invent library data. Use the tools to look up novels, chapters and stats; cite novel ids and chapter orders when reporting results.
-- list_novels returns hasDescription for the target (user-facing) description only, plus hasSourceDescription for the original-language one. To filter on BOTH descriptions, or for any whole-library question, query_library is the right tool: it exposes has_target_description and has_source_description. Request a generous limit when the user asks for a full sweep.
+- list_novels returns hasDescription for the target (user-facing) description only, plus hasSourceDescription for the original-language one. Its optional field scopes the query to one kind of match: title, author, series or tags (e.g. field=tags answers "which novels carry tag X"). To filter on BOTH descriptions, or for any whole-library question, query_library is the right tool: it exposes has_target_description and has_source_description. Request a generous limit when the user asks for a full sweep.
+- Catalog questions: list_tags lists the user's tags; list_authors lists distinct authors matching a PARTIAL name (use it before listing novels when the user half-remembers a name — "Cris" also finds "TM Cris"); list_series aggregates chapter progress per series (complete=complete answers "which series are fully translated"). Then point at the novels with list_novels and the matching field.
+- "Being translated" can mean two things: novels with active translate/refine jobs (get_active_jobs) or novels with unfinished chapters (query_library: chapters_pending > 0). Answer with the one the user means, or both when unclear.
+- Jobs run in the BACKGROUND: create_job (translate/refine/check) and update_novel_from_url enqueue work and return a jobId; report it and do not poll in loops — check get_active_jobs or get_novel_jobs once per user message. cancel_job and retry_job manage them. Downloads never go through create_job: update_novel_from_url diffs the source TOC (check_novel_updates is its read-only dry run) and enqueues the download.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
 - query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those.
-- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. While a novel has active download/translation jobs, chapter writes are refused — say so instead of retrying.
+- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded, bulk_set_chapter_status, bulk_set_chapter_excluded, update_glossary, apply_chapter_cleanup, set_reading_progress) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. update_novel can also edit targetAuthor, targetSeries, tags and the novel status (ongoing, completed, hiatus, cancelled); source-side metadata stays untouched. While a novel has active download/translation jobs, chapter and glossary writes are refused — say so instead of retrying.
+- bulk_set_chapter_status and bulk_set_chapter_excluded take fromOrder AND toOrder (inclusive) and change whole ranges in one call; they skip excluded and processing chapters.
+- The glossary tools read (get_glossary), edit (update_glossary: upsert/remove by source term) and regenerate (generate_glossary enqueues a job) a novel's term pairs.
+- For cleanups ALWAYS run preview_chapter_cleanup first, show the user the sample changes, and only call apply_chapter_cleanup after they agreed; both process at most 25/100 chapters per call.
+- get_reading_progress and set_reading_progress report and update where the user is in a novel. list_novel_epubs and build_epub manage the stored EPUB exports; build_epub refuses very large novels — suggest the export UI instead.
+- translate_novel_description returns a translated synopsis WITHOUT saving it; apply it with update_novel (targetDescription) when the user wants it stored.
 - Valid chapter statuses: pending, translated, refined, done, failed.
 - When the user's request is ambiguous because several novels or chapters match (e.g. two novels share a title), call ask_user with the candidates as clickable options instead of asking in prose: label is the human-readable choice (e.g. "The Guardian (de Evil_Warlord)"), value is the exact text their click will send (the id). ask_user must be the only tool call in that step; the picked value arrives as the user's next message.
 - The user's selected novel (when present in this prompt) is the default subject of their questions; still use its id with the tools.
@@ -108,17 +116,48 @@ func (s *Server) resolveAgentRunner(userID string) (ai.AgentProvider, error) {
 // see or touch another user's library.
 func (s *Server) agentTools(userID string) []ai.AgentTool {
 	return []ai.AgentTool{
+		// Catalog questions
 		s.agentToolListNovels(userID),
+		s.agentToolListTags(userID),
+		s.agentToolListAuthors(userID),
+		s.agentToolListSeries(userID),
 		s.agentToolGetNovel(userID),
 		s.agentToolGetNovelStats(userID),
 		s.agentToolGetNovelChapters(userID),
 		s.agentToolGetChapter(userID),
 		s.agentToolSearchChapters(userID),
 		s.agentToolQueryLibrary(userID),
+		// Jobs
+		s.agentToolGetActiveJobs(userID),
+		s.agentToolGetNovelJobs(userID),
+		s.agentToolCreateJob(userID),
+		s.agentToolCancelJob(userID),
+		s.agentToolRetryJob(userID),
+		// Glossary
+		s.agentToolGetGlossary(userID),
+		s.agentToolUpdateGlossary(userID),
+		s.agentToolGenerateGlossary(userID),
+		// Source updates
+		s.agentToolCheckNovelUpdates(userID),
+		s.agentToolUpdateNovelFromURL(userID),
+		// Cleanup
+		s.agentToolPreviewChapterCleanup(userID),
+		s.agentToolApplyChapterCleanup(userID),
+		// Reading progress
+		s.agentToolGetReadingProgress(userID),
+		s.agentToolSetReadingProgress(userID),
+		// EPUB exports
+		s.agentToolListNovelEpubs(userID),
+		s.agentToolBuildEpub(userID),
+		// Description translation
+		s.agentToolTranslateNovelDescription(userID),
+		// Writes
 		s.agentToolUpdateNovel(userID),
 		s.agentToolUpdateChapter(userID),
 		s.agentToolSetChapterStatus(userID),
 		s.agentToolSetChapterExcluded(userID),
+		s.agentToolBulkSetChapterStatus(userID),
+		s.agentToolBulkSetChapterExcluded(userID),
 		agentToolAskUser(),
 	}
 }
@@ -174,17 +213,19 @@ func marshalToolResult(v any) (string, error) {
 func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "list_novels",
-		Description: "List the user's OWN novels, newest first. Set query to search by title, author, series or tags. Returns light records: hasDescription tells you whether the target (user-facing) description is empty, and hasSourceDescription whether the original-language description is. For a filter over both descriptions at once, query_library is cheaper. The assistant only ever sees novels the user owns, never other users' public novels.",
+		Description: "List the user's OWN novels, newest first. Set query to search, and field to scope that search to one kind of match: title, author, series or tags (partial matching, e.g. field=author with \"Cris\" finds \"TM Cris\" too; field=tags answers which novels carry a tag). Returns light records: hasDescription tells you whether the target (user-facing) description is empty, and hasSourceDescription whether the original-language description is. For a filter over both descriptions at once, query_library is cheaper. The assistant only ever sees novels the user owns, never other users' public novels.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "query": {"type": "string", "description": "Optional search text across title, author, series and tags."},
+    "query": {"type": "string", "description": "Optional search text."},
+    "field": {"type": "string", "enum": ["all", "title", "author", "series", "tags"], "description": "Scope the query to one field (default all)."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "How many novels to return (default 20). Use the max when asked for a full sweep."}
   }
 }`),
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a struct {
 				Query string `json:"query"`
+				Field string `json:"field"`
 				Limit int    `json:"limit"`
 			}
 			_ = json.Unmarshal(args, &a)
@@ -198,7 +239,7 @@ func (s *Server) agentToolListNovels(userID string) ai.AgentTool {
 			// Shared: "own" keeps the assistant inside the caller's library:
 			// with the default "all" scope, public novels belonging to other
 			// users would be listed and then readable through get_novel.
-			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, 0, "", "", store.ListNovelOptions{Shared: "own"})
+			novels, _, err := s.Store.SearchNovels(userID, strings.TrimSpace(a.Query), limit, 0, "", "", store.ListNovelOptions{Shared: "own", SearchField: a.Field})
 			if err != nil {
 				return "", err
 			}
@@ -507,12 +548,16 @@ func (s *Server) agentToolQueryLibrary(userID string) ai.AgentTool {
 func (s *Server) agentToolUpdateNovel(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name:        "update_novel",
-		Description: "Apply edits to one of the user's OWN novels: target (user-facing) title, target description and/or the user's notes. Writes immediately; empty strings clear a field. Only use on explicit user request.",
+		Description: "Apply edits to one of the user's OWN novels: target (user-facing) title, author, series, tags, novel status, description and/or the user's notes. Source-side metadata (original title/author/series, URL) is never editable here. Writes immediately; empty strings clear a text field. Only use on explicit user request.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "id": {"type": "string", "description": "Novel id."},
     "targetTitle": {"type": "string", "description": "New user-facing title. Omit to leave unchanged; empty string clears it."},
+    "targetAuthor": {"type": "string", "description": "New user-facing author. Omit to leave unchanged; empty string clears it."},
+    "targetSeries": {"type": "string", "description": "New user-facing series. Omit to leave unchanged; empty string clears it."},
+    "tags": {"type": "array", "items": {"type": "string"}, "description": "Replaces the whole tag list; empty array clears it."},
+    "status": {"type": "string", "enum": ["ongoing", "completed", "hiatus", "cancelled"], "description": "Novel reading/translation status."},
     "targetDescription": {"type": "string", "description": "New user-facing description. Omit to leave unchanged; empty string clears it."},
     "notes": {"type": "string", "description": "New private notes. Omit to leave unchanged; empty string clears them."}
   },
@@ -520,10 +565,14 @@ func (s *Server) agentToolUpdateNovel(userID string) ai.AgentTool {
 }`),
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a struct {
-				ID                string  `json:"id"`
-				TargetTitle       *string `json:"targetTitle"`
-				TargetDescription *string `json:"targetDescription"`
-				Notes             *string `json:"notes"`
+				ID                string   `json:"id"`
+				TargetTitle       *string  `json:"targetTitle"`
+				TargetAuthor      *string  `json:"targetAuthor"`
+				TargetSeries      *string  `json:"targetSeries"`
+				Tags              []string `json:"tags"`
+				Status            string   `json:"status"`
+				TargetDescription *string  `json:"targetDescription"`
+				Notes             *string  `json:"notes"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.ID) == "" {
 				return "", fmt.Errorf("invalid id")
@@ -532,6 +581,23 @@ func (s *Server) agentToolUpdateNovel(userID string) ai.AgentTool {
 			if a.TargetTitle != nil {
 				patch["targetTitle"] = *a.TargetTitle
 			}
+			if a.TargetAuthor != nil {
+				patch["targetAuthor"] = *a.TargetAuthor
+			}
+			if a.TargetSeries != nil {
+				patch["targetSeries"] = *a.TargetSeries
+			}
+			if a.Tags != nil {
+				patch["tags"] = a.Tags
+			}
+			if a.Status != "" {
+				switch a.Status {
+				case "ongoing", "completed", "hiatus", "cancelled":
+				default:
+					return "", fmt.Errorf("invalid status %q: use ongoing, completed, hiatus or cancelled", a.Status)
+				}
+				patch["status"] = a.Status
+			}
 			if a.TargetDescription != nil {
 				patch["targetDescription"] = *a.TargetDescription
 			}
@@ -539,7 +605,7 @@ func (s *Server) agentToolUpdateNovel(userID string) ai.AgentTool {
 				patch["notes"] = *a.Notes
 			}
 			if len(patch) == 0 {
-				return "", fmt.Errorf("nothing to update: provide targetTitle, targetDescription or notes")
+				return "", fmt.Errorf("nothing to update: provide targetTitle, targetAuthor, targetSeries, tags, status, targetDescription or notes")
 			}
 			novel, err := s.Store.UpdateNovel(userID, strings.TrimSpace(a.ID), patch)
 			if err != nil {
@@ -557,6 +623,10 @@ func agentNovelAfterUpdate(novel *store.Novel) map[string]any {
 	return map[string]any{
 		"id":                novel.ID,
 		"targetTitle":       novel.TargetTitle,
+		"targetAuthor":      novel.TargetAuthor,
+		"targetSeries":      novel.TargetSeries,
+		"tags":              novel.Tags,
+		"status":            novel.Status,
 		"targetDescription": novel.TargetDescription,
 		"notes":             novel.Notes,
 	}

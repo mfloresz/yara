@@ -894,6 +894,193 @@ func (s *Store) BulkExcludeChapters(userID, novelID string, ids []string) (int, 
 	return int(excluded), nil
 }
 
+// allowedChapterStatuses mirrors the chapters collection SelectField values
+// minus "processing" (a transient state the translation worker owns). The
+// bulk helpers below write with raw UPDATEs, which bypass PocketBase field
+// validation, so the closed set is gated here.
+var allowedChapterStatuses = map[string]bool{
+	"pending":    true,
+	"translated": true,
+	"refined":    true,
+	"done":       true,
+	"failed":     true,
+}
+
+// ListOwnedChapterIDsInOrderRange returns just the chapter ids of the novel —
+// excluded chapters never enter, matching LoadJobChapters — optionally bounded
+// by an inclusive chapter_order range. Only the id column is read: the agent's
+// create_job resolves chapters to build the job and mark them processing, and
+// neither step needs the bodies.
+func (s *Store) ListOwnedChapterIDsInOrderRange(userID, novelID string, from, to *int) ([]string, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	where := "novel = {:novel} AND excluded = 0"
+	params := dbx.Params{"novel": novelID}
+	if from != nil && *from >= 0 {
+		where += " AND chapter_order >= {:fromOrder}"
+		params["fromOrder"] = *from
+	}
+	if to != nil && *to >= 0 {
+		where += " AND chapter_order <= {:toOrder}"
+		params["toOrder"] = *to
+	}
+	rows := []struct {
+		ID string `db:"id"`
+	}{}
+	if err := s.App.DB().Select("id").From(ChaptersCollection).
+		Where(dbx.NewExp(where, params)).
+		OrderBy("chapter_order ASC").
+		All(&rows); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.ID)
+	}
+	return out, nil
+}
+
+// BulkSetChapterStatus applies one status change to every non-excluded,
+// non-processing chapter whose chapter_order falls in the inclusive range,
+// with a single conditional UPDATE — no rows are loaded. Refused while the
+// novel has active jobs: a bulk flip racing a translate/refine job corrupts
+// the worker's progress accounting.
+func (s *Store) BulkSetChapterStatus(userID, novelID string, fromOrder, toOrder int, status, errorMessage string) (int, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return 0, err
+	}
+	if !allowedChapterStatuses[status] {
+		return 0, fmt.Errorf("%w: invalid status %q", ErrInvalidInput, status)
+	}
+	if fromOrder > toOrder {
+		fromOrder, toOrder = toOrder, fromOrder
+	}
+	active, err := s.HasActiveJobsForNovel(novelID)
+	if err != nil {
+		return 0, err
+	}
+	if active {
+		return 0, ErrActiveJobs
+	}
+	set := newNarrowSet()
+	set.add("status", status)
+	set.add("error_message", errorMessage)
+	set.add("updated", types.NowDateTime().String())
+	set.bind("novel", novelID)
+	set.bind("fromOrder", fromOrder)
+	set.bind("toOrder", toOrder)
+	rows, err := set.exec(s, ChaptersCollection,
+		"novel = {:novel} AND excluded = 0 AND status != 'processing' AND chapter_order BETWEEN {:fromOrder} AND {:toOrder}")
+	if err != nil {
+		return 0, err
+	}
+	if rows > 0 {
+		if err := s.RecalculateNovelStats(novelID); err != nil {
+			return int(rows), err
+		}
+	}
+	return int(rows), nil
+}
+
+// BulkExcludeChaptersInOrderRange flips the visibility flag of every chapter
+// whose chapter_order falls in the inclusive range, in one conditional UPDATE
+// (rows already at the target state are filtered out so RowsAffected is the
+// number of state transitions). Same active-jobs guard as BulkExcludeChapters.
+func (s *Store) BulkExcludeChaptersInOrderRange(userID, novelID string, fromOrder, toOrder int, excluded bool) (int, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return 0, err
+	}
+	if fromOrder > toOrder {
+		fromOrder, toOrder = toOrder, fromOrder
+	}
+	active, err := s.HasActiveJobsForNovel(novelID)
+	if err != nil {
+		return 0, err
+	}
+	if active {
+		return 0, ErrActiveJobs
+	}
+	set := newNarrowSet()
+	set.add("excluded", excluded)
+	set.add("updated", types.NowDateTime().String())
+	set.bind("novel", novelID)
+	set.bind("fromOrder", fromOrder)
+	set.bind("toOrder", toOrder)
+	set.bind("wasExcluded", !excluded)
+	rows, err := set.exec(s, ChaptersCollection,
+		"novel = {:novel} AND excluded = {:wasExcluded} AND chapter_order BETWEEN {:fromOrder} AND {:toOrder}")
+	if err != nil {
+		return 0, err
+	}
+	if rows > 0 {
+		if err := s.RecalculateNovelStats(novelID); err != nil {
+			return int(rows), err
+		}
+	}
+	return int(rows), nil
+}
+
+// ChapterBrief is the metadata sliver the reading-progress tools need: enough
+// to say where the reader is without ever loading the chapter body.
+type ChapterBrief struct {
+	ID              string `json:"id"`
+	ChapterOrder    int    `json:"chapterOrder"`
+	Title           string `json:"title"`
+	TranslatedTitle string `json:"translatedTitle"`
+}
+
+// GetOwnedChapterBrief reads four metadata columns of one chapter. The novel
+// ownership guard comes first, so a foreign chapter id is indistinguishable
+// from a missing one.
+func (s *Store) GetOwnedChapterBrief(userID, novelID, chapterID string) (*ChapterBrief, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	return s.ownedChapterBrief("novel = {:novel} AND id = {:chapterId}", dbx.Params{
+		"novel": novelID, "chapterId": chapterID,
+	})
+}
+
+// FindOwnedChapterBriefByOrder resolves the first non-excluded chapter at a
+// given chapter_order — how the assistant turns "I'm on chapter 30" into a
+// progress record.
+func (s *Store) FindOwnedChapterBriefByOrder(userID, novelID string, order int) (*ChapterBrief, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return nil, err
+	}
+	return s.ownedChapterBrief("novel = {:novel} AND excluded = 0 AND chapter_order = {:order}", dbx.Params{
+		"novel": novelID, "order": order,
+	})
+}
+
+func (s *Store) ownedChapterBrief(where string, params dbx.Params) (*ChapterBrief, error) {
+	rows := []struct {
+		ID              string `db:"id"`
+		ChapterOrder    int    `db:"chapter_order"`
+		Title           string `db:"title"`
+		TranslatedTitle string `db:"translated_title"`
+	}{}
+	if err := s.App.DB().Select("id", "chapter_order", "title", "translated_title").
+		From(ChaptersCollection).
+		Where(dbx.NewExp(where, params)).
+		OrderBy("chapter_order ASC").
+		Limit(1).
+		All(&rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	row := rows[0]
+	return &ChapterBrief{
+		ID:              row.ID,
+		ChapterOrder:    row.ChapterOrder,
+		Title:           row.Title,
+		TranslatedTitle: row.TranslatedTitle,
+	}, nil
+}
+
 func (s *Store) UpdateChapterStatus(chapterID, status, errorMessage string) error {
 	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
 	if err != nil {

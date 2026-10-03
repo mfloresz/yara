@@ -3,7 +3,9 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -499,6 +501,138 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 	}
 }
 
+// novelCheckSummary is the projection the assistant's check tool consumes; the
+// HTTP handler adds the snapshot fields (description, coverURL) on top.
+type novelCheckSummary struct {
+	Title           string `json:"title"`
+	Author          string `json:"author"`
+	CurrentChapters int    `json:"currentChapters"`
+	TotalChapters   int    `json:"totalChapters"`
+	NewChapters     int    `json:"newChapters"`
+	FirstNewChapter int    `json:"firstNewChapter"`
+	LastNewChapter  int    `json:"lastNewChapter"`
+}
+
+// importStoreError marks a store failure inside the shared import cores and
+// carries the exact message the HTTP handler must render, so the handler keeps
+// its per-read error strings while the agent tools map the same failures to
+// tool-error text without re-deriving the taxonomy.
+type importStoreError struct {
+	msg string
+	err error
+}
+
+func (e *importStoreError) Error() string { return e.msg + ": " + e.err.Error() }
+func (e *importStoreError) Unwrap() error { return e.err }
+
+func newImportStoreError(msg string, err error) error {
+	return &importStoreError{msg: msg, err: err}
+}
+
+// errImportQueueFull marks a full job queue inside the shared import cores;
+// the HTTP surface renders it as 503 + jobQueueFullMessage, as before.
+var errImportQueueFull = errors.New("job queue full")
+
+// mapImportCoreError renders the shared import cores' error taxonomy for the
+// HTTP surface, preserving each path's original status code and message.
+func mapImportCoreError(e *core.RequestEvent, err error) error {
+	var storeErr *importStoreError
+	if errors.As(err, &storeErr) {
+		switch storeErr.msg {
+		case "failed to get existing chapter keys", "failed to plan source keys", "failed to backfill source keys":
+			return writeV1Error(e, http.StatusInternalServerError, "internal_error", storeErr.msg, v1ErrorDetail{Message: storeErr.err.Error()})
+		default:
+			return e.InternalServerError(storeErr.msg, storeErr.err)
+		}
+	}
+	if errors.Is(err, errImportQueueFull) {
+		return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+	}
+	if errors.Is(err, errNovelBusy) {
+		return e.Error(http.StatusConflict, novelBusyMessage, nil)
+	}
+	return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
+}
+
+// runNovelUpdateCheck fetches the novel's source TOC (priming the preview
+// cache so a follow-up update reuses it), diffs it against the stored chapters
+// and records the check result on the novel. Shared by
+// POST /novels/{id}/check-preview and the agent's check_novel_updates tool.
+// Caller must have verified ownership and a non-empty novel.URL.
+func (s *Server) runNovelUpdateCheck(ctx context.Context, userID string, novel *store.Novel) (*novelCheckSummary, *sourceSnapshot, error) {
+	snapshot, err := s.fetchSourceSnapshot(ctx, userID, novel.URL)
+	if err != nil {
+		return nil, nil, err
+	}
+	cacheKey := userID + ":" + novel.ID
+	s.previewCacheMu.Lock()
+	s.previewCache[cacheKey] = previewCacheEntry{
+		chapters:  snapshot.Chapters,
+		createdAt: time.Now(),
+	}
+	s.previewCacheMu.Unlock()
+	time.AfterFunc(previewCacheTTL, func() {
+		s.previewCacheMu.Lock()
+		defer s.previewCacheMu.Unlock()
+		if entry, exists := s.previewCache[cacheKey]; exists {
+			if time.Since(entry.createdAt) >= previewCacheTTL {
+				delete(s.previewCache, cacheKey)
+			}
+		}
+	})
+	existingOrders, err := s.Store.GetExistingChapterOrders(userID, novel.ID)
+	if err != nil {
+		return nil, nil, newImportStoreError("failed to get existing chapter orders", err)
+	}
+	existingTitles, err := s.Store.GetExistingChapterURLs(userID, novel.ID)
+	if err != nil {
+		return nil, nil, newImportStoreError("failed to check existing chapters", err)
+	}
+	existingKeys, err := s.Store.GetExistingChapterKeys(userID, novel.ID)
+	if err != nil {
+		return nil, nil, newImportStoreError("failed to get existing chapter keys", err)
+	}
+	// Read-only: the backfill plan is computed in memory and never
+	// persisted here. Persisting happens in update-from-url, the flow
+	// that actually enqueues downloads.
+	keyPlan, forceLegacy, err := s.legacySourceKeyPlan(userID, novel.ID, snapshot.Chapters)
+	if err != nil {
+		return nil, nil, newImportStoreError("failed to plan source keys", err)
+	}
+	newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
+	newAvailable := len(newChapters)
+	// The order preview mirrors what updateFromURL will claim, so multi-part
+	// chapters sharing one site number (e.g. "... 23-1", "... 23-2") are
+	// reported with distinct orders.
+	seen := make(map[int]bool, len(existingOrders))
+	for o := range existingOrders {
+		seen[o] = true
+	}
+	firstNew := 0
+	lastNew := 0
+	for i, ch := range newChapters {
+		pos := claimChapterOrder(seen, chapterOrderOf(ch), i+1)
+		if firstNew == 0 || pos < firstNew {
+			firstNew = pos
+		}
+		if pos > lastNew {
+			lastNew = pos
+		}
+	}
+	if err := s.Store.UpdateNovelCheckResult(novel.ID, time.Now().Format(time.RFC3339), newAvailable); err != nil {
+		slog.Warn("update novel check result", "novel", novel.ID, "error", err)
+	}
+	return &novelCheckSummary{
+		Title:           snapshot.Title,
+		Author:          snapshot.Author,
+		CurrentChapters: len(existingTitles),
+		TotalChapters:   len(snapshot.Chapters),
+		NewChapters:     newAvailable,
+		FirstNewChapter: firstNew,
+		LastNewChapter:  lastNew,
+	}, snapshot, nil
+}
+
 // checkPreview: GET /novels/{id}/update-preview (legacy) becomes
 // POST /novels/{id}:checkPreview on v1 because the original writes
 // lastCheckedAt and must not be a safe verb.
@@ -512,82 +646,155 @@ func (sharedImportHandlers) checkPreview(s *Server) func(*core.RequestEvent) err
 		if strings.TrimSpace(novel.URL) == "" {
 			return e.BadRequestError("novel has no source URL", nil)
 		}
-		snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
+		summary, snapshot, err := s.runNovelUpdateCheck(e.Request.Context(), e.Auth.Id, novel)
 		if err != nil {
-			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
-		}
-		cacheKey := e.Auth.Id + ":" + novelID
-		s.previewCacheMu.Lock()
-		s.previewCache[cacheKey] = previewCacheEntry{
-			chapters:  snapshot.Chapters,
-			createdAt: time.Now(),
-		}
-		s.previewCacheMu.Unlock()
-		time.AfterFunc(previewCacheTTL, func() {
-			s.previewCacheMu.Lock()
-			defer s.previewCacheMu.Unlock()
-			if entry, exists := s.previewCache[cacheKey]; exists {
-				if time.Since(entry.createdAt) >= previewCacheTTL {
-					delete(s.previewCache, cacheKey)
-				}
-			}
-		})
-		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
-		if err != nil {
-			return e.InternalServerError("failed to get existing chapter orders", err)
-		}
-		existingTitles, err := s.Store.GetExistingChapterURLs(e.Auth.Id, novelID)
-		if err != nil {
-			return e.InternalServerError("failed to check existing chapters", err)
-		}
-		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
-		if err != nil {
-			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
-		}
-		// Read-only: the backfill plan is computed in memory and never
-		// persisted here. Persisting happens in update-from-url, the flow
-		// that actually enqueues downloads.
-		keyPlan, forceLegacy, err := s.legacySourceKeyPlan(e.Auth.Id, novelID, snapshot.Chapters)
-		if err != nil {
-			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to plan source keys", v1ErrorDetail{Message: err.Error()})
-		}
-		newChapters, _ := diffNovelSnapshot(snapshot, mergeSourceKeys(existingKeys, keyPlan), existingOrders, existingTitles, forceLegacy)
-		newAvailable := len(newChapters)
-		// The order preview mirrors what updateFromURL will claim, so multi-part
-		// chapters sharing one site number (e.g. "... 23-1", "... 23-2") are
-		// reported with distinct orders.
-		seen := make(map[int]bool, len(existingOrders))
-		for o := range existingOrders {
-			seen[o] = true
-		}
-		firstNew := 0
-		lastNew := 0
-		for i, ch := range newChapters {
-			pos := claimChapterOrder(seen, chapterOrderOf(ch), i+1)
-			if firstNew == 0 || pos < firstNew {
-				firstNew = pos
-			}
-			if pos > lastNew {
-				lastNew = pos
-			}
-		}
-		if err := s.Store.UpdateNovelCheckResult(novelID, time.Now().Format(time.RFC3339), newAvailable); err != nil {
-			slog.Warn("update novel check result", "novel", novelID, "error", err)
+			return mapImportCoreError(e, err)
 		}
 		body := map[string]any{
-			"title":           snapshot.Title,
-			"author":          snapshot.Author,
+			"title":           summary.Title,
+			"author":          summary.Author,
 			"description":     snapshot.Description,
 			"coverURL":        snapshot.CoverURL,
 			"sourceURL":       novel.URL,
-			"currentChapters": len(existingTitles),
-			"totalChapters":   len(snapshot.Chapters),
-			"newChapters":     newAvailable,
-			"firstNewChapter": firstNew,
-			"lastNewChapter":  lastNew,
+			"currentChapters": summary.CurrentChapters,
+			"totalChapters":   summary.TotalChapters,
+			"newChapters":     summary.NewChapters,
+			"firstNewChapter": summary.FirstNewChapter,
+			"lastNewChapter":  summary.LastNewChapter,
 		}
 		return v1Respond(e, http.StatusOK, body, nil, nil)
 	}
+}
+
+// novelUpdateResult carries what both updateNovelFromSource callers need: the
+// enqueued download job (if any) and the chapter counts. ChaptersQueued == 0
+// means the novel is already up to date (no job was created).
+type novelUpdateResult struct {
+	JobID           string
+	TotalChapters   int
+	ChaptersQueued  int
+	FirstNewChapter int
+	LastNewChapter  int
+}
+
+// updateNovelFromSource diffs the novel's source TOC against the stored
+// chapters and enqueues a download job for the new ones inside the requested
+// order range (0 = unbounded). Shared by POST /novels/{id}/update-from-url and
+// the agent's update_novel_from_url tool. Caller must have verified ownership
+// and a non-empty novel.URL; range validation stays with the callers so each
+// keeps its own status mapping.
+func (s *Server) updateNovelFromSource(ctx context.Context, userID string, novel *store.Novel, startChapter, endChapter int) (*novelUpdateResult, error) {
+	novelID := novel.ID
+	cacheKey := userID + ":" + novelID
+	s.previewCacheMu.RLock()
+	cached, found := s.previewCache[cacheKey]
+	s.previewCacheMu.RUnlock()
+
+	var chapters []sourceChapter
+	if found {
+		chapters = cached.chapters
+		s.previewCacheMu.Lock()
+		delete(s.previewCache, cacheKey)
+		s.previewCacheMu.Unlock()
+	} else {
+		snapshot, err := s.fetchSourceSnapshot(ctx, userID, novel.URL)
+		if err != nil {
+			return nil, err
+		}
+		chapters = snapshot.Chapters
+	}
+	existingOrders, err := s.Store.GetExistingChapterOrders(userID, novelID)
+	if err != nil {
+		return nil, newImportStoreError("failed to get existing chapter orders", err)
+	}
+	existingTitles, err := s.Store.GetExistingChapterURLs(userID, novelID)
+	if err != nil {
+		return nil, newImportStoreError("failed to check existing chapters", err)
+	}
+	existingKeys, err := s.Store.GetExistingChapterKeys(userID, novelID)
+	if err != nil {
+		return nil, newImportStoreError("failed to get existing chapter keys", err)
+	}
+	forceLegacy, err := s.backfillLegacySourceKeys(userID, novelID, chapters, existingKeys)
+	if err != nil {
+		return nil, newImportStoreError("failed to backfill source keys", err)
+	}
+	// The new/missing diff is shared with checkPreview; this flow only
+	// applies the requested order range on top of it.
+	newChapters, _ := diffNovelSnapshot(&sourceSnapshot{Chapters: chapters}, existingKeys, existingOrders, existingTitles, forceLegacy)
+	sourceToDownload := make([]int, 0)
+	for i, ch := range newChapters {
+		pos := chapterOrderOf(ch)
+		if pos <= 0 {
+			pos = i + 1
+		}
+		if startChapter > 0 && pos < startChapter {
+			continue
+		}
+		if endChapter > 0 && pos > endChapter {
+			continue
+		}
+		sourceToDownload = append(sourceToDownload, i)
+	}
+	result := &novelUpdateResult{TotalChapters: len(chapters)}
+	if len(sourceToDownload) == 0 {
+		return result, nil
+	}
+	downloadChapters := make([]store.DownloadChapterInfo, 0, len(sourceToDownload))
+	// seen starts from what is stored so multi-part chapters sharing one
+	// site number get distinct orders via claimChapterOrder.
+	seen := make(map[int]bool, len(existingOrders)+len(sourceToDownload))
+	for o := range existingOrders {
+		seen[o] = true
+	}
+	for _, srcIdx := range sourceToDownload {
+		ch := newChapters[srcIdx]
+		chOrder := claimChapterOrder(seen, chapterOrderOf(ch), srcIdx+1)
+		chTitle := ch.Title
+		if chTitle == "" {
+			chTitle = fmt.Sprintf("Capítulo %d", chOrder)
+		}
+		downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
+			URL:       ch.URL,
+			Title:     chTitle,
+			Order:     chOrder,
+			SourceKey: ch.Key,
+		})
+	}
+	result.FirstNewChapter = downloadChapters[0].Order
+	result.LastNewChapter = downloadChapters[len(downloadChapters)-1].Order
+	optionsJSON, _ := json.Marshal(map[string]any{
+		"url":            novel.URL,
+		"chapters":       downloadChapters,
+		"startOrder":     result.FirstNewChapter,
+		"sourceLanguage": novel.SourceLanguage,
+		"targetLanguage": novel.TargetLanguage,
+	})
+	// Two simultaneous updates of the same novel are rejected (one job per
+	// novel policy); the lock is held until the job is created and
+	// enqueued so a racing request cannot slip past the active-jobs check.
+	unlock, err := s.acquireNovelJobSlot(novelID)
+	if err != nil {
+		return nil, err // errNovelBusy — both callers map it
+	}
+	defer unlock()
+	job := &store.Job{
+		NovelID:       novelID,
+		Status:        "pending",
+		Operation:     "download",
+		ChapterIDs:    "[]",
+		OptionsJSON:   string(optionsJSON),
+		TotalChapters: len(downloadChapters),
+	}
+	if err := s.Store.CreateJob(userID, job); err != nil {
+		return nil, newImportStoreError("failed to create download job", err)
+	}
+	if !s.enqueueJob(job.ID) {
+		return nil, errImportQueueFull
+	}
+	result.JobID = job.ID
+	result.ChaptersQueued = len(downloadChapters)
+	return result, nil
 }
 
 func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) error {
@@ -610,121 +817,21 @@ func (sharedImportHandlers) updateFromURL(s *Server) func(*core.RequestEvent) er
 		if strings.TrimSpace(novel.URL) == "" {
 			return e.BadRequestError("novel has no source URL", nil)
 		}
-		cacheKey := e.Auth.Id + ":" + novelID
-		s.previewCacheMu.RLock()
-		cached, found := s.previewCache[cacheKey]
-		s.previewCacheMu.RUnlock()
-
-		var chapters []sourceChapter
-		if found {
-			chapters = cached.chapters
-			s.previewCacheMu.Lock()
-			delete(s.previewCache, cacheKey)
-			s.previewCacheMu.Unlock()
-		} else {
-			snapshot, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, novel.URL)
-			if err != nil {
-				return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
-			}
-			chapters = snapshot.Chapters
-		}
-		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
+		result, err := s.updateNovelFromSource(e.Request.Context(), e.Auth.Id, novel, body.StartChapter, body.EndChapter)
 		if err != nil {
-			return e.InternalServerError("failed to get existing chapter orders", err)
+			return mapImportCoreError(e, err)
 		}
-		existingTitles, err := s.Store.GetExistingChapterURLs(e.Auth.Id, novelID)
-		if err != nil {
-			return e.InternalServerError("failed to check existing chapters", err)
-		}
-		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
-		if err != nil {
-			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to get existing chapter keys", v1ErrorDetail{Message: err.Error()})
-		}
-		forceLegacy, err := s.backfillLegacySourceKeys(e.Auth.Id, novelID, chapters, existingKeys)
-		if err != nil {
-			return writeV1Error(e, http.StatusInternalServerError, "internal_error", "failed to backfill source keys", v1ErrorDetail{Message: err.Error()})
-		}
-		// The new/missing diff is shared with checkPreview; this flow only
-		// applies the requested order range on top of it.
-		newChapters, _ := diffNovelSnapshot(&sourceSnapshot{Chapters: chapters}, existingKeys, existingOrders, existingTitles, forceLegacy)
-		sourceToDownload := make([]int, 0)
-		for i, ch := range newChapters {
-			pos := chapterOrderOf(ch)
-			if pos <= 0 {
-				pos = i + 1
-			}
-			if body.StartChapter > 0 && pos < body.StartChapter {
-				continue
-			}
-			if body.EndChapter > 0 && pos > body.EndChapter {
-				continue
-			}
-			sourceToDownload = append(sourceToDownload, i)
-		}
-		if len(sourceToDownload) == 0 {
-			resp := map[string]any{"chaptersAdded": 0, "chapters": []map[string]any{}, "totalChapters": len(chapters), "message": "No hay capítulos nuevos. La novela ya está al día."}
+		if result.ChaptersQueued == 0 {
+			resp := map[string]any{"chaptersAdded": 0, "chapters": []map[string]any{}, "totalChapters": result.TotalChapters, "message": "No hay capítulos nuevos. La novela ya está al día."}
 			return v1Respond(e, http.StatusOK, resp, nil, nil)
 		}
-		downloadChapters := make([]store.DownloadChapterInfo, 0, len(sourceToDownload))
-		// seen starts from what is stored so multi-part chapters sharing one
-		// site number get distinct orders via claimChapterOrder.
-		seen := make(map[int]bool, len(existingOrders)+len(sourceToDownload))
-		for o := range existingOrders {
-			seen[o] = true
-		}
-		for _, srcIdx := range sourceToDownload {
-			ch := newChapters[srcIdx]
-			chOrder := claimChapterOrder(seen, chapterOrderOf(ch), srcIdx+1)
-			chTitle := ch.Title
-			if chTitle == "" {
-				chTitle = fmt.Sprintf("Capítulo %d", chOrder)
-			}
-			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
-				URL:       ch.URL,
-				Title:     chTitle,
-				Order:     chOrder,
-				SourceKey: ch.Key,
-			})
-		}
-		firstNewOrder := downloadChapters[0].Order
-		optionsJSON, _ := json.Marshal(map[string]any{
-			"url":            novel.URL,
-			"chapters":       downloadChapters,
-			"startOrder":     firstNewOrder,
-			"sourceLanguage": novel.SourceLanguage,
-			"targetLanguage": novel.TargetLanguage,
-		})
-		// Two simultaneous updates of the same novel are rejected (one job per
-		// novel policy); the lock is held until the job is created and
-		// enqueued so a racing request cannot slip past the active-jobs check.
-		unlock, slotErr := s.admitNovelJob(e, novelID)
-		if slotErr != nil {
-			return slotErr
-		}
-		job := &store.Job{
-			NovelID:       novelID,
-			Status:        "pending",
-			Operation:     "download",
-			ChapterIDs:    "[]",
-			OptionsJSON:   string(optionsJSON),
-			TotalChapters: len(downloadChapters),
-		}
-		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
-			unlock()
-			return e.InternalServerError("failed to create download job", err)
-		}
-		if !s.enqueueJob(job.ID) {
-			unlock()
-			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
-		}
-		unlock()
 		resp := map[string]any{
 			"chaptersAdded":   0,
 			"chapters":        []map[string]any{},
-			"totalChapters":   len(chapters),
-			"pendingChapters": len(downloadChapters),
-			"downloadJobId":   job.ID,
-			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se están descargando en segundo plano.", len(downloadChapters)),
+			"totalChapters":   result.TotalChapters,
+			"pendingChapters": result.ChaptersQueued,
+			"downloadJobId":   result.JobID,
+			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se están descargando en segundo plano.", result.ChaptersQueued),
 		}
 		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
 	}

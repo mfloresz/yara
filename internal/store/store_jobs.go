@@ -302,3 +302,73 @@ func (s *Store) HasActiveJobsForNovel(novelID string) (bool, error) {
 	}
 	return len(records) > 0, nil
 }
+
+// ListOwnedJobOverviews is the projected job listing the library assistant's
+// tools consume: one JOIN resolves the novel title (no N+1) and the heavy
+// columns (chapter_ids, options_json) are never read — a translate job's
+// chapter list alone can reach many KB and the overview is persisted into the
+// agent session trail. activeOnly keeps pending/running jobs; failedOnly adds
+// the "status failed or has failed chapters" filter of the HTTP list.
+func (s *Store) ListOwnedJobOverviews(userID, novelID string, activeOnly, failedOnly bool, limit int) ([]JobOverview, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 20 {
+		limit = 20
+	}
+	where := "j.owner = {:owner}"
+	params := dbx.Params{"owner": userID}
+	if novelID != "" {
+		where += " AND j.novel = {:novel}"
+		params["novel"] = novelID
+	}
+	if activeOnly {
+		where += " AND j.status IN ('pending', 'running')"
+	}
+	if failedOnly {
+		where += " AND (j.status = 'failed' OR j.failed_chapters > 0)"
+	}
+	rows := []struct {
+		ID                string `db:"id"`
+		Novel             string `db:"novel"`
+		Operation         string `db:"operation"`
+		Status            string `db:"status"`
+		Provider          string `db:"provider"`
+		Model             string `db:"model"`
+		TotalChapters     int    `db:"total_chapters"`
+		CompletedChapters int    `db:"completed_chapters"`
+		FailedChapters    int    `db:"failed_chapters"`
+		ErrorMessage      string `db:"error_message"`
+		Created           string `db:"created"`
+		Updated           string `db:"updated"`
+		NovelTitle        string `db:"novel_title"`
+	}{}
+	err := s.App.DB().NewQuery(
+		"SELECT j.id, j.novel, j.operation, j.status, j.provider, j.model, j.total_chapters, j.completed_chapters, j.failed_chapters, j.error_message, j.created, j.updated," +
+			" COALESCE(NULLIF(n.target_title, ''), n.source_title) AS novel_title" +
+			" FROM " + JobsCollection + " j LEFT JOIN " + NovelsCollection + " n ON n.id = j.novel" +
+			" WHERE " + where + " ORDER BY j.created DESC LIMIT {:limit}",
+	).Bind(params).Bind(dbx.Params{"limit": limit}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]JobOverview, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, JobOverview{
+			ID:                row.ID,
+			NovelID:           row.Novel,
+			NovelTitle:        row.NovelTitle,
+			Operation:         row.Operation,
+			Status:            row.Status,
+			Provider:          row.Provider,
+			Model:             row.Model,
+			TotalChapters:     row.TotalChapters,
+			CompletedChapters: row.CompletedChapters,
+			FailedChapters:    row.FailedChapters,
+			ErrorMessage:      row.ErrorMessage,
+			CreatedAt:         asDateTimeString(row.Created),
+			UpdatedAt:         asDateTimeString(row.Updated),
+		})
+	}
+	return out, nil
+}
