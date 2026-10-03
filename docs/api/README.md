@@ -636,10 +636,17 @@ error messages) instead of full records. Complete answers come from paging,
 not from bigger caps: `list_novels` pages with `offset`, and `query_library`
 lets the model's own `LIMIT ... OFFSET ...` survive inside the wrapped query
 (the response reports `truncated` when more rows exist), so a full sweep is a
-COUNT followed by raised-offset pages. Job listings read a dedicated
-projected query (`chapter_ids` / `options_json` are never loaded), bulk writes
-are single conditional UPDATEs, and cleanup preview processes one chapter at a
-time — tool peaks stay independent of library size.
+COUNT followed by raised-offset pages. Excluded chapters are treated as
+logically deleted: the assistant omits them from every analysis and listing by
+default (`is_excluded = 0` in `query_library`; the novel-level view already
+excludes them from its counters) and surfaces them only when the user
+explicitly asks about them. `create_job` accepts `chapterIds` sourced from
+`query_library`, so analyses like "translations 40% shorter than the original"
+can be turned directly into re-translation jobs (the job overwrites the
+previous translation). Job listings read a dedicated projected query
+(`chapter_ids` / `options_json` are never loaded), bulk writes are single
+conditional UPDATEs, and cleanup preview processes one chapter at a time —
+tool peaks stay independent of library size.
 
 Chapter bodies are never silently truncated: the model controls how much it
 reads (`startLine`/`lineCount`) and is told whether more remains, so it can

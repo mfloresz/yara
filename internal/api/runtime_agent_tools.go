@@ -254,6 +254,7 @@ func (s *Server) agentToolCreateJob(userID string) ai.AgentTool {
 		Name: "create_job",
 		Description: "Enqueue a background job on one of the user's OWN novels: operation translate, refine or check. " +
 			"Select chapters with chapterIds, or a contiguous fromOrder/toOrder range (both bounds required), or neither for the whole novel. " +
+			"chapterIds may come from get_novel_chapters, search_chapters or a query_library analysis (e.g. re-translate the chapters whose translation came out too short) — the job overwrites the previous translation, and excluded chapters are rejected. " +
 			"Jobs run in the background after this turn; report the jobId and do not poll in a loop. Downloads never go through here: use update_novel_from_url. " +
 			"Refused while the novel already has an active job.",
 		InputSchema: json.RawMessage(`{
@@ -261,7 +262,7 @@ func (s *Server) agentToolCreateJob(userID string) ai.AgentTool {
   "properties": {
     "novelId": {"type": "string", "description": "Novel id."},
     "operation": {"type": "string", "enum": ["translate", "refine", "check"]},
-    "chapterIds": {"type": "array", "items": {"type": "string"}, "description": "Explicit chapter ids (from get_novel_chapters or search_chapters)."},
+    "chapterIds": {"type": "array", "items": {"type": "string"}, "description": "Explicit chapter ids (from get_novel_chapters, search_chapters or query_library; excluded chapters are rejected)."},
     "fromOrder": {"type": "integer", "minimum": 1, "description": "First chapter order of the range (inclusive; requires toOrder)."},
     "toOrder": {"type": "integer", "minimum": 1, "description": "Last chapter order of the range (inclusive; requires fromOrder)."},
     "provider": {"type": "string", "description": "Optional provider override."},
