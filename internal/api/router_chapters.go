@@ -75,6 +75,11 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			CaseSensitive bool     `json:"caseSensitive"`
 			UseRegex      bool     `json:"useRegex"`
 			ApplyTo       string   `json:"applyTo"`
+			// IncludeText defaults to true. The chat's proposal panel sets it to
+			// false: a whole-novel proposal can cover thousands of chapters, and
+			// the per-chapter full texts would make the response tens of MB for
+			// a UI that renders only the diff hunks.
+			IncludeText *bool `json:"includeText"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -101,6 +106,7 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			CaseSensitive: body.CaseSensitive,
 			UseRegex:      body.UseRegex,
 		}
+		includeText := body.IncludeText == nil || *body.IncludeText
 
 		items := make([]CleanPreviewBulkItem, 0, len(body.ChapterIDs))
 		for _, chapterID := range body.ChapterIDs {
@@ -113,11 +119,16 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			if !result.Changed {
 				continue
 			}
+			changes := diffLines(result.Original, result.Cleaned)
+			if !includeText {
+				result.Original = ""
+				result.Cleaned = ""
+			}
 			items = append(items, CleanPreviewBulkItem{
 				ChapterID:    chapter.ID,
 				ChapterOrder: chapter.ChapterOrder,
 				ChapterTitle: chapter.Title,
-				Changes:      diffLines(result.Original, result.Cleaned),
+				Changes:      changes,
 				CleanResult:  result,
 			})
 		}

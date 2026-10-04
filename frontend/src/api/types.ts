@@ -372,8 +372,11 @@ export type CleanPreviewItem = {
   chapterOrder: number;
   chapterTitle: string;
   changes: CleanDiffHunk[];
-  original: string;
-  cleaned: string;
+  // Full chapter texts: only present when the preview request does not pass
+  // includeText: false (the chat's proposal panel omits them to keep the
+  // payload small on whole-novel proposals).
+  original?: string;
+  cleaned?: string;
   changed: boolean;
   removedLines: number;
 };

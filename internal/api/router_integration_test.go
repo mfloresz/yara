@@ -1848,6 +1848,64 @@ func TestCleanRefusedWhileNovelHasActiveJobs(t *testing.T) {
 	}
 }
 
+// TestCleanPreviewBulkOmitsTextWhenLight pins the includeText flag: the chat's
+// proposal panel fetches whole-novel previews and must not carry every
+// chapter's full text (tens of MB on large novels), while the default keeps
+// the texts for the CleanTab contract.
+func TestCleanPreviewBulkOmitsTextWhenLight(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-light@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Preview Ligero", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo Uno",
+		"originalContent": "línea uno\n1\nlínea tres",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	var chapter chapterPayload
+	decodeResponse(t, chResp, &chapter)
+
+	payload := func(includeText *bool) map[string]any {
+		body := map[string]any{
+			"chapterIds": []string{chapter.ID},
+			"mode":       "remove_line",
+			"searchText": "1",
+			"applyTo":    "original",
+		}
+		if includeText != nil {
+			body["includeText"] = *includeText
+		}
+		return body
+	}
+	decodeItems := func(resp *httptest.ResponseRecorder) []CleanPreviewBulkItem {
+		t.Helper()
+		assertStatus(t, resp, http.StatusOK)
+		var body struct {
+			Items []CleanPreviewBulkItem `json:"items"`
+		}
+		decodeResponse(t, resp, &body)
+		if len(body.Items) != 1 {
+			t.Fatalf("expected 1 changed chapter, got %d", len(body.Items))
+		}
+		return body.Items
+	}
+
+	light := false
+	items := decodeItems(doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, payload(&light)))
+	if items[0].Original != "" || items[0].Cleaned != "" {
+		t.Fatalf("includeText=false must omit the chapter texts, got %q/%q", items[0].Original, items[0].Cleaned)
+	}
+	if len(items[0].Changes) == 0 {
+		t.Fatal("includeText=false must still carry the diff hunks")
+	}
+
+	items = decodeItems(doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, payload(nil)))
+	if items[0].Original == "" || items[0].Cleaned == "" {
+		t.Fatalf("default preview must keep the chapter texts, got %q/%q", items[0].Original, items[0].Cleaned)
+	}
+}
+
 func TestCleanPreviewBulkReturnsOnlyChangedChapters(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-preview@example.com", "secret123", "Alice")

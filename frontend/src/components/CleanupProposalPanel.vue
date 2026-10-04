@@ -152,6 +152,10 @@ async function load(): Promise<void> {
       caseSensitive: p.caseSensitive,
       useRegex: p.useRegex,
       applyTo: p.applyTo,
+      // A whole-novel proposal can cover thousands of chapters; the panel
+      // renders only the diff hunks, so the per-chapter full texts would be
+      // dead weight (tens of MB on large novels).
+      includeText: false,
     });
     items.value = res.items;
     total.value = res.total;

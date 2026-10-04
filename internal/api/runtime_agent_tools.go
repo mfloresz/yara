@@ -29,12 +29,8 @@ const (
 	agentGlossaryMaxLimit        = 200
 	agentGlossaryContextMaxChars = 200
 	agentGlossaryBatchMax        = 100
-	agentCleanupPreviewMax       = 25
-	// agentCleanupProposeMax caps one cleanup proposal. The apply itself goes
-	// through the HTTP clean endpoint, which has no per-call cap, so this is
-	// only a sanity bound on what the model may propose in one card.
-	agentCleanupProposeMax   = 500
-	agentCleanupSampleHunks  = 5
+	agentCleanupPreviewMax  = 25
+	agentCleanupSampleHunks = 5
 	agentCleanupSampleLineMax    = 200
 	agentEpubListMax             = 20
 	// agentEpubMaxSourceChars caps the text the assistant may feed to the EPUB
@@ -876,8 +872,11 @@ type agentCleanupArgs struct {
 	ApplyTo       string   `json:"applyTo"`
 }
 
-// resolveAgentCleanupChapters turns the selection arguments into a bounded,
-// validated chapter id list — the same id-only reads as create_job.
+// resolveAgentCleanupChapters turns the selection arguments into a validated
+// chapter id list — the same id-only reads as create_job. A positive max caps
+// the result (preview sampling); max <= 0 is uncapped, which is what
+// propose_cleanup uses: the proposal is a read-only dry run and its apply
+// path (the clean endpoint) has no per-call cap either.
 func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs, max int) ([]string, error) {
 	if len(a.ChapterIDs) > 0 {
 		if a.FromOrder != nil || a.ToOrder != nil {
@@ -905,7 +904,7 @@ func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs,
 		if len(ids) == 0 {
 			return nil, fmt.Errorf("chapterIds is required")
 		}
-		if len(ids) > max {
+		if max > 0 && len(ids) > max {
 			return nil, fmt.Errorf("too many chapters (%d): process at most %d per call", len(ids), max)
 		}
 		return ids, nil
@@ -920,7 +919,7 @@ func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs,
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("no eligible chapters in that range")
 	}
-	if len(ids) > max {
+	if max > 0 && len(ids) > max {
 		return nil, fmt.Errorf("too many chapters (%d) in that range: process at most %d per call", len(ids), max)
 	}
 	return ids, nil
@@ -1077,7 +1076,7 @@ func (s *Server) buildCleanupProposal(userID string, a *agentCleanupArgs) (*agen
 	if err != nil {
 		return nil, err
 	}
-	ids, err := s.resolveAgentCleanupChapters(userID, a, agentCleanupProposeMax)
+	ids, err := s.resolveAgentCleanupChapters(userID, a, 0)
 	if err != nil {
 		return nil, err
 	}

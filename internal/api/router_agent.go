@@ -212,9 +212,9 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 
 		// pendingProposalArgs holds the propose_cleanup arguments between the
 		// tool_call and tool_result events: the card is only emitted once the
-		// execution succeeded, so a rejected proposal (bad mode, foreign novel,
-		// over-large scope) stays silent like any other failed tool while the
-		// model self-corrects.
+		// execution succeeded. A rejected proposal (bad mode, foreign novel)
+		// emits nothing; the model reads the error and may call the tool again
+		// within the same turn, because a failed terminal tool does not end it.
 		var pendingProposalArgs string
 		output, session, err := s.runAgentTurn(ctx, runner, userID, session, selectedNovel, message, func(ev ai.AgentEvent) {
 			switch ev.Type {

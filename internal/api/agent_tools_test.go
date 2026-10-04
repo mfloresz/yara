@@ -587,6 +587,30 @@ func TestAgentCleanupTools(t *testing.T) {
 	}
 }
 
+// TestResolveAgentCleanupChaptersUncapped pins the max<=0 semantics of the
+// scope resolver: propose_cleanup passes 0 so it can propose whole novels
+// (its apply path — the clean endpoint — has no per-call cap), while
+// preview_chapter_cleanup keeps a positive cap for its sampling.
+func TestResolveAgentCleanupChaptersUncapped(t *testing.T) {
+	setup := newAgentToolsTestSetup(t, "Sin tope")
+	setup.aliceChapters(t, 1, 2, 3)
+
+	from, to := 1, 3
+	args := &agentCleanupArgs{NovelID: setup.aliceNovel.ID, FromOrder: &from, ToOrder: &to}
+
+	uncapped, err := setup.env.server.resolveAgentCleanupChapters(setup.alice.User.ID, args, 0)
+	if err != nil {
+		t.Fatalf("max=0 must be uncapped: %v", err)
+	}
+	if len(uncapped) != 3 {
+		t.Fatalf("max=0 must resolve the whole range, got %d ids", len(uncapped))
+	}
+
+	if _, err := setup.env.server.resolveAgentCleanupChapters(setup.alice.User.ID, args, 2); err == nil {
+		t.Fatal("a positive cap must still be enforced")
+	}
+}
+
 func TestAgentUpdateNovelExtendedFields(t *testing.T) {
 	setup := newAgentToolsTestSetup(t, "Campos ampliados")
 	env, alice := setup.env, setup.alice

@@ -633,7 +633,7 @@ the picked option's value arrives as the user's next message).
 
 Every tool result is persisted into the session trail and replayed to the
 model on later steps, so the tools return narrow projections with hard caps
-(list limits, chapter-id caps of 500 for jobs and cleanup proposals, truncated
+(list limits, a chapter-id cap of 500 for jobs, truncated
 error messages) instead of full records. Complete answers come from paging,
 not from bigger caps: `list_novels` pages with `offset`, and `query_library`
 lets the model's own `LIMIT ... OFFSET ...` survive inside the wrapped query
