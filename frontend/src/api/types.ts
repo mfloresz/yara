@@ -372,8 +372,11 @@ export type CleanPreviewItem = {
   chapterOrder: number;
   chapterTitle: string;
   changes: CleanDiffHunk[];
-  original: string;
-  cleaned: string;
+  // Full chapter texts: only present when the preview request does not pass
+  // includeText: false (the chat's proposal panel omits them to keep the
+  // payload small on whole-novel proposals).
+  original?: string;
+  cleaned?: string;
   changed: boolean;
   removedLines: number;
 };
@@ -503,6 +506,26 @@ export type AgentChatOption = {
   value: string;
 };
 
+// A cleanup the assistant proposes: the interpreted rule, the requested scope
+// and the dry-run counts. The chat renders it as an interactive approval card;
+// the cleanup only runs if the user approves the card there.
+export type AgentCleanupProposal = {
+  novelId: string;
+  novelTitle: string;
+  mode: string;
+  searchText?: string;
+  replaceText?: string;
+  caseSensitive: boolean;
+  useRegex: boolean;
+  applyTo: string;
+  chapterIds?: string[];
+  fromOrder?: number;
+  toOrder?: number;
+  considered: number;
+  affected: number;
+  removedLines: number;
+};
+
 export type AgentChatEvent = {
   type:
     | "session"
@@ -510,6 +533,7 @@ export type AgentChatEvent = {
     | "tool_call"
     | "tool_result"
     | "question"
+    | "proposal"
     | "done"
     | "error";
   sessionId?: string;
@@ -520,6 +544,7 @@ export type AgentChatEvent = {
   result?: string;
   question?: string;
   options?: AgentChatOption[];
+  proposal?: AgentCleanupProposal;
   message?: { role: string; content: string };
   steps?: number;
   code?: string;

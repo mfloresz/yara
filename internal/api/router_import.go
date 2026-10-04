@@ -129,7 +129,10 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 		// Image entries (jpg/png/gif/webp/svg anywhere in the archive) feed the
 		// inline-image convention and run under their own budget, mirroring
 		// epubimport's separate image limit; everything else keeps the 25MB
-		// zip-bomb text guard.
+		// zip-bomb text guard. cover.* is the novel cover, not an inline
+		// image, so it stays on the text path for the cover case below
+		// (matched by basename because the root-folder prefix is only known
+		// after this loop).
 		type zipImage struct {
 			name    string
 			content []byte
@@ -146,7 +149,7 @@ func (sharedImportHandlers) importZip(s *Server) func(*core.RequestEvent) error 
 				return e.InternalServerError("failed to read zip entry", openErr)
 			}
 			entryName := strings.TrimLeft(filepath.ToSlash(f.Name), "./")
-			if imgMime := zipImageMime(entryName); imgMime != "" {
+			if imgMime := zipImageMime(entryName); imgMime != "" && !strings.HasPrefix(strings.ToLower(path.Base(entryName)), "cover.") {
 				data, readErr := io.ReadAll(io.LimitReader(rc, epubimport.MaxImageBytes+1))
 				rc.Close()
 				if readErr != nil {

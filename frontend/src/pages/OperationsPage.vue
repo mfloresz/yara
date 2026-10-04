@@ -24,19 +24,50 @@
       <!-- Filtros visibles con conteos + ayudas de selección -->
       <div class="ops-filters" role="group" aria-label="Filtrar novelas">
         <div class="ops-chips">
-          <n-button
-            v-for="opt in filterOptionsWithCounts"
-            :key="opt.value"
-            size="small"
-            round
-            :type="filter === opt.value ? 'primary' : 'default'"
-            :secondary="filter !== opt.value"
-            :aria-pressed="filter === opt.value"
-            class="ops-chip"
-            @click="filter = opt.value"
-          >
-            {{ opt.label }} ({{ opt.count }})
-          </n-button>
+          <template v-for="opt in filterOptionsWithCounts" :key="opt.value">
+            <span
+              v-if="opt.value === 'actualizable'"
+              class="ops-chip ops-split"
+              role="group"
+              aria-label="Filtrar actualizables por sitio"
+            >
+              <n-button
+                size="small"
+                class="ops-chip ops-split-main"
+                :type="filter === 'actualizable' ? 'primary' : 'default'"
+                :secondary="filter !== 'actualizable'"
+                :aria-pressed="filter === 'actualizable'"
+                @click="selectActualizables"
+              >
+                {{ actualizableChip.label }} ({{ actualizableChip.count }})
+              </n-button>
+              <n-dropdown trigger="click" placement="bottom-end" :options="hostMenuOptions" @select="handleHostMenuSelect">
+                <n-button
+                  size="small"
+                  class="ops-chip ops-split-arrow"
+                  :type="filter === 'actualizable' ? 'primary' : 'default'"
+                  :secondary="filter !== 'actualizable'"
+                  :disabled="hostMenuOptions.length <= 1"
+                  aria-label="Elegir sitio de las actualizables"
+                  aria-haspopup="menu"
+                >
+                  <template #icon><n-icon :size="14"><ChevronDownOutline /></n-icon></template>
+                </n-button>
+              </n-dropdown>
+            </span>
+            <n-button
+              v-else
+              size="small"
+              round
+              :type="filter === opt.value ? 'primary' : 'default'"
+              :secondary="filter !== opt.value"
+              :aria-pressed="filter === opt.value"
+              class="ops-chip"
+              @click="filter = opt.value"
+            >
+              {{ opt.label }} ({{ opt.count }})
+            </n-button>
+          </template>
         </div>
         <div class="ops-filter-helpers">
           <n-button size="tiny" quaternary @click="selectActualizable">Seleccionar actualizables</n-button>
@@ -141,6 +172,7 @@ import {
   NButton,
   NCard,
   NDataTable,
+  NDropdown,
   NFlex,
   NIcon,
   NInput,
@@ -154,8 +186,9 @@ import {
   useDialog,
   useMessage,
   type DataTableColumns,
+  type DropdownOption,
 } from "naive-ui";
-import { GlobeOutline, SearchOutline } from "@vicons/ionicons5";
+import { CheckmarkOutline, ChevronDownOutline, GlobeOutline, SearchOutline } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
 import OperationsActionBar from "@/components/operations/OperationsActionBar.vue";
 import OperationsCard from "@/components/operations/OperationsCard.vue";
@@ -180,6 +213,8 @@ import type { Novel, TranslationJob } from "@/domain";
 
 const PAGE_SIZE = 200;
 
+const ALL_SITES_KEY = "__all__";
+
 type FilterValue = "all" | "actualizable" | "updates" | "pending" | "completed" | "active";
 
 const message = useMessage();
@@ -191,6 +226,8 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const novels = ref<Novel[]>([]);
 const filter = ref<FilterValue>("all");
+/** Sitio (host de la URL de origen) al que se acota el filtro «Actualizables». null = todos. */
+const hostFilter = ref<string | null>(null);
 const searchQuery = ref("");
 const selectedRowKeys = ref<string[]>([]);
 
@@ -244,6 +281,67 @@ const filterOptionsWithCounts = computed(() => [
   { label: "Completadas", value: "completed" as FilterValue, count: filterCounts.value.completed },
 ]);
 
+function hostOf(url: string): string {
+  if (!url) return "";
+  try {
+    // Canonicaliza quitando «www.»: agrupa y filtra juntas las variantes con y sin él.
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+/** Nombre corto para mostrar: sin «www.» ni dominio (novelfire.net → Novelfire). El host completo sigue siendo la clave del filtro. */
+function hostLabel(host: string): string {
+  const bare = host.replace(/^www\./, "");
+  const name = bare.includes(".") ? bare.slice(0, bare.lastIndexOf(".")) : bare;
+  return name ? name[0].toUpperCase() + name.slice(1) : host;
+}
+
+/** Sitios de las novelas actualizables con su número, mayor primero. */
+const actualizableHosts = computed(() => {
+  const counts = new Map<string, number>();
+  for (const n of novels.value) {
+    if (!isActualizable(n) || n.status === "completed") continue;
+    const host = hostOf(n.url);
+    if (!host) continue;
+    counts.set(host, (counts.get(host) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+});
+
+const actualizableChip = computed(() => {
+  if (hostFilter.value) {
+    const count = actualizableHosts.value.find(([host]) => host === hostFilter.value)?.[1] ?? 0;
+    return { label: `Actualizables · ${hostLabel(hostFilter.value)}`, count };
+  }
+  return { label: "Actualizables", count: filterCounts.value.actualizable };
+});
+
+const hostMenuOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    { label: "Todos los sitios", key: ALL_SITES_KEY, icon: () => hostMenuIcon(hostFilter.value === null) },
+  ];
+  for (const [host, count] of actualizableHosts.value) {
+    options.push({ label: `${hostLabel(host)} (${count})`, key: host, icon: () => hostMenuIcon(hostFilter.value === host) });
+  }
+  return options;
+});
+
+function hostMenuIcon(active: boolean) {
+  return h(NIcon, { style: active ? undefined : "visibility:hidden" }, { default: () => h(CheckmarkOutline) });
+}
+
+function selectActualizables() {
+  filter.value = "actualizable";
+  hostFilter.value = null;
+}
+
+function handleHostMenuSelect(key: string | number) {
+  hostFilter.value = key === ALL_SITES_KEY ? null : String(key);
+  filter.value = "actualizable";
+}
+
 const subtitle = computed(() => {
   const parts = [`${filteredNovels.value.length} en vista`];
   if (filterCounts.value.updates > 0) parts.push(`${filterCounts.value.updates} con novedades`);
@@ -268,7 +366,9 @@ const emptyState = computed(() => {
     case "actualizable":
       return {
         title: "Nada que verificar",
-        body: "No hay novelas con URL actualizable pendientes. Todas están al día o completadas.",
+        body: hostFilter.value
+          ? `Ninguna novela actualizable de ${hostLabel(hostFilter.value)}. Prueba con otro sitio o vuelve a «Todos los sitios».`
+          : "No hay novelas con URL actualizable pendientes. Todas están al día o completadas.",
       };
     case "pending":
       return {
@@ -296,6 +396,7 @@ const emptyState = computed(() => {
 function clearFilters() {
   searchQuery.value = "";
   filter.value = "all";
+  hostFilter.value = null;
 }
 
 const filteredNovels = computed(() => {
@@ -305,8 +406,10 @@ const filteredNovels = computed(() => {
     list = list.filter((n) => n.sourceTitle.toLowerCase().includes(q) || n.sourceAuthor.toLowerCase().includes(q));
   }
   switch (filter.value) {
-    case "actualizable":
-      return list.filter((n) => isActualizable(n) && n.status !== "completed");
+    case "actualizable": {
+      const host = hostFilter.value;
+      return list.filter((n) => isActualizable(n) && n.status !== "completed" && (!host || hostOf(n.url) === host));
+    }
     case "updates":
       return list.filter((n) => hasNewChapters(n));
     case "pending":
@@ -342,7 +445,7 @@ function setChecked(id: string, checked: boolean) {
   else if (!checked) selectedRowKeys.value = selectedRowKeys.value.filter((k) => k !== id);
 }
 
-watch([filter, searchQuery], () => {
+watch([filter, searchQuery, hostFilter], () => {
   pagination.page = 1;
 });
 
@@ -782,6 +885,19 @@ onMounted(loadNovels);
 
 .ops-chip {
   min-height: 36px;
+}
+
+/* Botón dividido «Actualizables | ▾»: pill en los extremos, plano en la unión */
+.ops-split {
+  display: inline-flex;
+}
+
+.ops-split-main {
+  border-radius: 999px 0 0 999px;
+}
+
+.ops-split-arrow {
+  border-radius: 0 999px 999px 0;
 }
 
 .ops-filter-helpers {

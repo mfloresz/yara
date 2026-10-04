@@ -301,6 +301,56 @@ func TestImportEpubPersistsCoverFile(t *testing.T) {
 	}
 }
 
+func TestImportZipPersistsCoverFile(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-zip-cover@example.com", "secret123", "Alice")
+
+	// cover.jpg must be attached as the novel cover even though its extension
+	// also matches the inline-image convention.
+	coverBytes := "\xFF\xD8\xFFfake-cover-jpeg-bytes"
+
+	var zipBuf bytes.Buffer
+	zipWriter := zip.NewWriter(&zipBuf)
+	addZipEntry := func(name, content string) {
+		w, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+	addZipEntry("metadata.json", `{"sourceTitle":"Zipped Cover","sourceLanguage":"en","targetLanguage":"es"}`)
+	addZipEntry("cover.jpg", coverBytes)
+	addZipEntry("originals/0001.txt", "Chapter 1\nBody text.")
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+
+	rec := postMultipart(t, env.handler, "/api/v1/novels/import-zip", alice.Token, "file", "novel.zip", zipBuf.Bytes())
+	assertStatus(t, rec, http.StatusCreated)
+
+	var importResp struct {
+		Novel map[string]any `json:"novel"`
+	}
+	decodeData(t, rec, &importResp)
+	coverPath, _ := importResp.Novel["coverPath"].(string)
+	if coverPath == "" {
+		t.Fatalf("expected coverPath in novel response, got %v", importResp.Novel)
+	}
+
+	coverReq := httptest.NewRequest(http.MethodGet, coverPath, nil)
+	coverReq.Header.Set("Authorization", "Bearer "+alice.Token)
+	coverRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(coverRec, coverReq)
+	if coverRec.Code != http.StatusOK {
+		t.Fatalf("expected cover response 200, got %d: %s", coverRec.Code, coverRec.Body.String())
+	}
+	if coverRec.Body.String() != coverBytes {
+		t.Fatalf("cover body mismatch, got %q", coverRec.Body.String())
+	}
+}
+
 func TestImportZipIgnoresEmptyTranslatedFiles(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-zip-empty@example.com", "secret123", "Alice")
@@ -1748,6 +1798,111 @@ func TestCleanOnlyOriginalsPreservesOtherFields(t *testing.T) {
 	}
 	if updated.TranslatedTitle != "Translated Title" {
 		t.Fatalf("translated title was overwritten, got %q", updated.TranslatedTitle)
+	}
+}
+
+// TestCleanRefusedWhileNovelHasActiveJobs pins the admission the old agent
+// apply tool enforced and the clean handler now enforces for every caller:
+// a cleanup rewrites the same fields a running job writes, so it must 409.
+func TestCleanRefusedWhileNovelHasActiveJobs(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-clean-busy@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Limpieza Ocupada", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo Uno",
+		"originalContent": "línea uno\n1\nlínea tres",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	var chapter chapterPayload
+	decodeResponse(t, chResp, &chapter)
+
+	// A pending job counts as active, so a stuck job also blocks cleaning.
+	if err := env.server.Store.CreateJob(alice.User.ID, &store.Job{
+		NovelID:     novel.ID,
+		Status:      "pending",
+		Operation:   "translate",
+		ChapterIDs:  "[]",
+		OptionsJSON: "{}",
+	}); err != nil {
+		t.Fatalf("create pending job: %v", err)
+	}
+
+	busyResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean", alice.Token, map[string]any{
+		"chapterIds": []string{chapter.ID},
+		"mode":       "remove_line",
+		"searchText": "1",
+		"applyTo":    "original",
+	})
+	assertStatus(t, busyResp, http.StatusConflict)
+	if !strings.Contains(busyResp.Body.String(), "novel_busy") {
+		t.Fatalf("expected novel_busy error code, got %s", busyResp.Body.String())
+	}
+
+	// Nothing was written while refused.
+	fetchResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID+"/chapters/"+chapter.ID+"?includeContent=true", alice.Token, nil)
+	assertStatus(t, fetchResp, http.StatusOK)
+	if !strings.Contains(fetchResp.Body.String(), "línea uno\\n1\\nlínea tres") {
+		t.Fatalf("refused clean must not modify the chapter, got %s", fetchResp.Body.String())
+	}
+}
+
+// TestCleanPreviewBulkOmitsTextWhenLight pins the includeText flag: the chat's
+// proposal panel fetches whole-novel previews and must not carry every
+// chapter's full text (tens of MB on large novels), while the default keeps
+// the texts for the CleanTab contract.
+func TestCleanPreviewBulkOmitsTextWhenLight(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-light@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Preview Ligero", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo Uno",
+		"originalContent": "línea uno\n1\nlínea tres",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+	var chapter chapterPayload
+	decodeResponse(t, chResp, &chapter)
+
+	payload := func(includeText *bool) map[string]any {
+		body := map[string]any{
+			"chapterIds": []string{chapter.ID},
+			"mode":       "remove_line",
+			"searchText": "1",
+			"applyTo":    "original",
+		}
+		if includeText != nil {
+			body["includeText"] = *includeText
+		}
+		return body
+	}
+	decodeItems := func(resp *httptest.ResponseRecorder) []CleanPreviewBulkItem {
+		t.Helper()
+		assertStatus(t, resp, http.StatusOK)
+		var body struct {
+			Items []CleanPreviewBulkItem `json:"items"`
+		}
+		decodeResponse(t, resp, &body)
+		if len(body.Items) != 1 {
+			t.Fatalf("expected 1 changed chapter, got %d", len(body.Items))
+		}
+		return body.Items
+	}
+
+	light := false
+	items := decodeItems(doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, payload(&light)))
+	if items[0].Original != "" || items[0].Cleaned != "" {
+		t.Fatalf("includeText=false must omit the chapter texts, got %q/%q", items[0].Original, items[0].Cleaned)
+	}
+	if len(items[0].Changes) == 0 {
+		t.Fatal("includeText=false must still carry the diff hunks")
+	}
+
+	items = decodeItems(doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters/clean-preview-bulk", alice.Token, payload(nil)))
+	if items[0].Original == "" || items[0].Cleaned == "" {
+		t.Fatalf("default preview must keep the chapter texts, got %q/%q", items[0].Original, items[0].Cleaned)
 	}
 }
 

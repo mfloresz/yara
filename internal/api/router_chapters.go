@@ -75,6 +75,11 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			CaseSensitive bool     `json:"caseSensitive"`
 			UseRegex      bool     `json:"useRegex"`
 			ApplyTo       string   `json:"applyTo"`
+			// IncludeText defaults to true. The chat's proposal panel sets it to
+			// false: a whole-novel proposal can cover thousands of chapters, and
+			// the per-chapter full texts would make the response tens of MB for
+			// a UI that renders only the diff hunks.
+			IncludeText *bool `json:"includeText"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -101,6 +106,7 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			CaseSensitive: body.CaseSensitive,
 			UseRegex:      body.UseRegex,
 		}
+		includeText := body.IncludeText == nil || *body.IncludeText
 
 		items := make([]CleanPreviewBulkItem, 0, len(body.ChapterIDs))
 		for _, chapterID := range body.ChapterIDs {
@@ -113,11 +119,16 @@ func (sharedChapterHandlers) cleanPreviewBulk(s *Server) func(*core.RequestEvent
 			if !result.Changed {
 				continue
 			}
+			changes := diffLines(result.Original, result.Cleaned)
+			if !includeText {
+				result.Original = ""
+				result.Cleaned = ""
+			}
 			items = append(items, CleanPreviewBulkItem{
 				ChapterID:    chapter.ID,
 				ChapterOrder: chapter.ChapterOrder,
 				ChapterTitle: chapter.Title,
-				Changes:      diffLines(result.Original, result.Cleaned),
+				Changes:      changes,
 				CleanResult:  result,
 			})
 		}
@@ -160,6 +171,15 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 			return notFoundOrForbidden(e, err)
 		}
 
+		// Cleaning rewrites content fields, so like every other chapter write
+		// it is refused while the novel has active jobs — a running translate
+		// job would race the cleanup over the same fields.
+		if active, err := s.Store.HasActiveJobsForNovel(e.Request.PathValue("novelId")); err != nil {
+			return e.InternalServerError("failed to check active jobs", err)
+		} else if active {
+			return writeV1Error(e, http.StatusConflict, "novel_busy", "the novel has active jobs; cancel or wait for them before cleaning")
+		}
+
 		opts := CleanOptions{
 			Mode:          CleanMode(body.Mode),
 			SearchText:    body.SearchText,
@@ -189,9 +209,9 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 // the changed ones, and refresh novel stats once at the end. Chapters are
 // processed one at a time and discarded, so peak memory is one chapter body
 // no matter how many are cleaned. Shared by POST /novels/{novelId}/chapters/
-// clean and the agent's apply_chapter_cleanup tool; the caller owns argument
-// validation and the active-jobs admission (the agent tool refuses while jobs
-// are active, mirroring UpdateChapterEdits).
+// clean (the CleanTab and the chat's cleanup-approval card) — the caller owns
+// argument validation and the active-jobs admission, which the clean handler
+// enforces directly.
 func (s *Server) applyChapterCleanup(userID, novelID string, chapterIDs []string, opts CleanOptions, applyTo string) (modified, skipped, notFound, failed int, err error) {
 	for _, chapterID := range chapterIDs {
 		chapter, err := s.Store.GetChapterAccessible(userID, novelID, chapterID)

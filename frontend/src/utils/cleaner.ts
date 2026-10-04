@@ -38,3 +38,34 @@ export const CLEAN_MODE_DESCRIPTIONS: Record<CleanMode, string> = {
   search_replace:
     "Reemplaza un texto por otro en todo el contenido (acepta regex).",
 };
+
+export const CLEAN_APPLY_TO_LABELS: Record<string, string> = {
+  original: "Original",
+  translated: "Traducción",
+  refined: "Refinado",
+  all: "Todos",
+};
+
+// Human-readable one-liner for a cleanup rule, shared by the chat's proposal
+// chip and its artifact panel.
+export function describeCleanupRule(rule: {
+  mode: string;
+  searchText?: string;
+  replaceText?: string;
+  useRegex?: boolean;
+}): string {
+  const needle = rule.searchText
+    ? rule.useRegex
+      ? `/${rule.searchText}/`
+      : `«${rule.searchText}»`
+    : "";
+  const label = CLEAN_MODE_LABELS[rule.mode as CleanMode] ?? rule.mode;
+  switch (rule.mode) {
+    case "search_replace":
+      return `${label}: ${needle} → «${rule.replaceText ?? ""}»`;
+    case "remove_multiple_blanks":
+      return label;
+    default:
+      return needle ? `${label}: ${needle}` : label;
+  }
+}

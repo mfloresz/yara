@@ -29,9 +29,8 @@ const (
 	agentGlossaryMaxLimit        = 200
 	agentGlossaryContextMaxChars = 200
 	agentGlossaryBatchMax        = 100
-	agentCleanupPreviewMax       = 25
-	agentCleanupApplyMax         = 100
-	agentCleanupSampleHunks      = 5
+	agentCleanupPreviewMax  = 25
+	agentCleanupSampleHunks = 5
 	agentCleanupSampleLineMax    = 200
 	agentEpubListMax             = 20
 	// agentEpubMaxSourceChars caps the text the assistant may feed to the EPUB
@@ -873,8 +872,11 @@ type agentCleanupArgs struct {
 	ApplyTo       string   `json:"applyTo"`
 }
 
-// resolveAgentCleanupChapters turns the selection arguments into a bounded,
-// validated chapter id list — the same id-only reads as create_job.
+// resolveAgentCleanupChapters turns the selection arguments into a validated
+// chapter id list — the same id-only reads as create_job. A positive max caps
+// the result (preview sampling); max <= 0 is uncapped, which is what
+// propose_cleanup uses: the proposal is a read-only dry run and its apply
+// path (the clean endpoint) has no per-call cap either.
 func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs, max int) ([]string, error) {
 	if len(a.ChapterIDs) > 0 {
 		if a.FromOrder != nil || a.ToOrder != nil {
@@ -902,7 +904,7 @@ func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs,
 		if len(ids) == 0 {
 			return nil, fmt.Errorf("chapterIds is required")
 		}
-		if len(ids) > max {
+		if max > 0 && len(ids) > max {
 			return nil, fmt.Errorf("too many chapters (%d): process at most %d per call", len(ids), max)
 		}
 		return ids, nil
@@ -917,7 +919,7 @@ func (s *Server) resolveAgentCleanupChapters(userID string, a *agentCleanupArgs,
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("no eligible chapters in that range")
 	}
-	if len(ids) > max {
+	if max > 0 && len(ids) > max {
 		return nil, fmt.Errorf("too many chapters (%d) in that range: process at most %d per call", len(ids), max)
 	}
 	return ids, nil
@@ -943,7 +945,7 @@ func (s *Server) agentToolPreviewChapterCleanup(userID string) ai.AgentTool {
 	return ai.AgentTool{
 		Name: "preview_chapter_cleanup",
 		Description: "Dry-run a cleanup over up to " + strconv.Itoa(agentCleanupPreviewMax) + " chapters of one of the user's OWN novels and return, per changed chapter, how many edits it would receive plus a small sample. " +
-			"ALWAYS run this before apply_chapter_cleanup and let the user confirm the sample first. " +
+			"Use it to sanity-check a rule before propose_cleanup, which surfaces the interactive approval card the user acts on. " +
 			"Modes and applyTo follow the app's cleanup rules; searchText/replaceText apply to the replace mode.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
@@ -1031,61 +1033,122 @@ func (s *Server) agentToolPreviewChapterCleanup(userID string) ai.AgentTool {
 	}
 }
 
-func (s *Server) agentToolApplyChapterCleanup(userID string) ai.AgentTool {
+// agentProposeCleanupToolName is the terminal tool that surfaces a cleanup as
+// an interactive approval card. The router maps its tool_call/tool_result pair
+// to a "proposal" event carrying the resolved payload; nothing is written
+// until the user approves the card, and the apply itself goes through the
+// HTTP clean endpoint, never through a tool.
+const agentProposeCleanupToolName = "propose_cleanup"
+
+// agentCleanupProposal is the payload the frontend renders as an approval
+// card: the interpreted rule, the requested scope and the counts the same
+// ApplyClean pass the preview/apply endpoints will run produced. It carries no
+// diff hunks — the card fetches those live with clean-preview-bulk.
+type agentCleanupProposal struct {
+	NovelID       string   `json:"novelId"`
+	NovelTitle    string   `json:"novelTitle"`
+	Mode          string   `json:"mode"`
+	SearchText    string   `json:"searchText,omitempty"`
+	ReplaceText   string   `json:"replaceText,omitempty"`
+	CaseSensitive bool     `json:"caseSensitive"`
+	UseRegex      bool     `json:"useRegex"`
+	ApplyTo       string   `json:"applyTo"`
+	ChapterIDs    []string `json:"chapterIds,omitempty"`
+	FromOrder     *int     `json:"fromOrder,omitempty"`
+	ToOrder       *int     `json:"toOrder,omitempty"`
+	Considered    int      `json:"considered"`
+	Affected      int      `json:"affected"`
+	RemovedLines  int      `json:"removedLines"`
+}
+
+// buildCleanupProposal validates a cleanup rule, resolves its scope to a
+// bounded chapter id list and dry-runs it to produce the counts shown on the
+// approval card. Read-only: shared by the propose_cleanup tool (compact
+// summary for the model) and the chat router (full payload for the proposal
+// event).
+func (s *Server) buildCleanupProposal(userID string, a *agentCleanupArgs) (*agentCleanupProposal, error) {
+	opts, err := s.agentCleanupOptions(a)
+	if err != nil {
+		return nil, err
+	}
+	novelID := strings.TrimSpace(a.NovelID)
+	novel, err := s.Store.GetOwnedNovel(userID, novelID)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.resolveAgentCleanupChapters(userID, a, 0)
+	if err != nil {
+		return nil, err
+	}
+	proposal := &agentCleanupProposal{
+		NovelID:       novelID,
+		NovelTitle:    firstNonEmpty(novel.TargetTitle, novel.SourceTitle),
+		Mode:          a.Mode,
+		SearchText:    a.SearchText,
+		ReplaceText:   a.ReplaceText,
+		CaseSensitive: a.CaseSensitive,
+		UseRegex:      a.UseRegex,
+		ApplyTo:       a.ApplyTo,
+		ChapterIDs:    ids,
+		FromOrder:     a.FromOrder,
+		ToOrder:       a.ToOrder,
+		Considered:    len(ids),
+	}
+	for _, id := range ids {
+		chapter, err := s.Store.GetOwnedChapter(userID, novelID, id)
+		if err != nil {
+			continue
+		}
+		res := ApplyClean(cleaningSource(chapter, a.ApplyTo), opts)
+		if !res.Changed {
+			continue
+		}
+		proposal.Affected++
+		proposal.RemovedLines += res.RemovedLines
+	}
+	return proposal, nil
+}
+
+func (s *Server) agentToolProposeCleanup(userID string) ai.AgentTool {
 	return ai.AgentTool{
-		Name: "apply_chapter_cleanup",
-		Description: "Apply a cleanup over up to " + strconv.Itoa(agentCleanupApplyMax) + " chapters of one of the user's OWN novels, replacing the affected content fields. " +
-			"Call preview_chapter_cleanup first and only apply after the user agreed to the sample. Refused while the novel has active jobs.",
+		Name: agentProposeCleanupToolName,
+		Description: "Propose a text cleanup for one of the user's OWN novels and END THE TURN: the app renders an interactive approval card with the full per-chapter diff, and the cleanup only runs if the user approves it there. " +
+			"The user's decision arrives as their next message. " +
+			"Scope it with chapterIds or a fromOrder/toOrder range; omitting both is an error. " +
+			"Use preview_chapter_cleanup first when you want to sanity-check how many chapters a rule touches. " +
+			"There is no tool to apply a cleanup: never claim one was applied unless the user's message confirms it.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "novelId": {"type": "string", "description": "Novel id."},
-    "chapterIds": {"type": "array", "items": {"type": "string"}, "description": "Explicit chapter ids."},
+    "chapterIds": {"type": "array", "items": {"type": "string"}, "description": "Explicit chapter ids (e.g. from a query_library analysis)."},
     "fromOrder": {"type": "integer", "minimum": 1, "description": "First chapter order (inclusive; requires toOrder)."},
     "toOrder": {"type": "integer", "minimum": 1, "description": "Last chapter order (inclusive; requires fromOrder)."},
     "mode": {"type": "string", "description": "Cleanup mode, as in the app's cleanup editor."},
-    "searchText": {"type": "string"},
-    "replaceText": {"type": "string"},
+    "searchText": {"type": "string", "description": "Search text or regex (with useRegex). For line modes, anchor with ^...$ to match whole lines."},
+    "replaceText": {"type": "string", "description": "Replacement text for the search_replace mode."},
     "caseSensitive": {"type": "boolean"},
     "useRegex": {"type": "boolean"},
     "applyTo": {"type": "string", "enum": ["original", "translated", "refined", "all"]}
   },
   "required": ["novelId", "mode", "applyTo"]
 }`),
+		Terminal: true,
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a agentCleanupArgs
 			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" {
 				return "", fmt.Errorf("invalid novelId")
 			}
-			opts, err := s.agentCleanupOptions(&a)
-			if err != nil {
-				return "", err
-			}
-			novelID := strings.TrimSpace(a.NovelID)
-			if _, err := s.Store.GetOwnedNovel(userID, novelID); err != nil {
-				return "", err
-			}
-			active, err := s.Store.HasActiveJobsForNovel(novelID)
-			if err != nil {
-				return "", err
-			}
-			if active {
-				return "", fmt.Errorf("refused while the novel has active jobs: cancel or wait for them first")
-			}
-			ids, err := s.resolveAgentCleanupChapters(userID, &a, agentCleanupApplyMax)
-			if err != nil {
-				return "", err
-			}
-			modified, skipped, notFound, failed, err := s.applyChapterCleanup(userID, novelID, ids, opts, a.ApplyTo)
+			proposal, err := s.buildCleanupProposal(userID, &a)
 			if err != nil {
 				return "", err
 			}
 			return marshalToolResult(map[string]any{
-				"ok":       true,
-				"modified": modified,
-				"skipped":  skipped,
-				"notFound": notFound,
-				"failed":   failed,
+				"proposed":     true,
+				"considered":   proposal.Considered,
+				"affected":     proposal.Affected,
+				"removedLines": proposal.RemovedLines,
+				"note":         "an approval card with the full diff was shown to the user; the cleanup only runs if they approve it there",
 			})
 		},
 	}

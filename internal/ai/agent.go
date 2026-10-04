@@ -19,8 +19,11 @@ type AgentTool struct {
 	Name        string
 	Description string
 	InputSchema json.RawMessage
-	// Terminal tools end the turn when called: the result is appended to the
-	// trail but the model is not invoked again. The caller surfaces the call
+	// Terminal tools end the turn when they SUCCEED: the result is appended to
+	// the trail but the model is not invoked again. A failed terminal tool
+	// feeds "error: …" back to the model like any other tool so it can
+	// self-correct — ending on failure would leave the user with no text, no
+	// card and no retry until the next message. The caller surfaces the call
 	// itself (e.g. ask_user renders its arguments as clickable options).
 	Terminal bool
 	Execute  func(ctx context.Context, args json.RawMessage) (string, error)
@@ -161,11 +164,12 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 		terminal := false
 		for _, call := range calls {
 			emit(AgentEvent{Type: "tool_call", Step: step + 1, ToolName: call.Name, ToolArgs: call.Args})
+			result := runAgentTool(ctx, in.Tools, schema.ToolCall{ID: call.ID, Function: schema.FunctionCall{Name: call.Name, Arguments: call.Args}})
 			toolMsg := &schema.Message{
 				Role:       schema.Tool,
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
-				Content:    truncateToolResult(runAgentTool(ctx, in.Tools, schema.ToolCall{ID: call.ID, Function: schema.FunctionCall{Name: call.Name, Arguments: call.Args}})),
+				Content:    truncateToolResult(result),
 			}
 			msgs = append(msgs, toolMsg)
 			trail = append(trail, AgentMessage{
@@ -175,7 +179,11 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 				ToolName:   call.Name,
 			})
 			emit(AgentEvent{Type: "tool_result", Step: step + 1, ToolName: call.Name, ToolResult: toolResultPreview(toolMsg.Content)})
-			if t := agentToolByName(in.Tools, call.Name); t != nil && t.Terminal {
+			// A FAILED terminal tool must not end the turn: the error is fed
+			// back to the model, which self-corrects exactly like with any
+			// other tool. Ending on failure would leave the user with no text,
+			// no card and no retry until the next message.
+			if t := agentToolByName(in.Tools, call.Name); t != nil && t.Terminal && !strings.HasPrefix(result, "error:") {
 				terminal = true
 			}
 		}

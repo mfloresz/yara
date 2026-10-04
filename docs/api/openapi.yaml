@@ -1049,6 +1049,8 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/CleanSummary' }
+        '409':
+          description: The novel has active jobs; cleaning would race them (problem+json, code `novel_busy`).
 
   /novels/{novelId}/chapters/clean-preview:
     parameters:
@@ -2614,7 +2616,11 @@ paths:
         that novel is public. Responses stream as
         newline-delimited JSON events:
         `session`, `text_delta`, `tool_call`, `tool_result`, `question`,
-        `done`, `error`.
+        `proposal`, `done`, `error`.
+        A `proposal` event carries a cleanup the assistant proposes (rule +
+        scope + dry-run counts); the client renders it as an interactive
+        approval card and the cleanup only runs if the user approves it there
+        (via the chapters clean endpoints), never through a tool.
         When no sessionId is sent, the user's latest session is reused, or a
         new one is created. Turns are serialized per user, so concurrent chats
         cannot interleave history writes. Rate limited per client IP.
@@ -2762,7 +2768,7 @@ components:
     AgentChatEvent:
       type: object
       properties:
-        type: { type: string, enum: [session, text_delta, tool_call, tool_result, question, done, error] }
+        type: { type: string, enum: [session, text_delta, tool_call, tool_result, question, proposal, done, error] }
         sessionId: { type: string }
         step: { type: integer }
         text: { type: string, description: text_delta payload }
@@ -2780,6 +2786,24 @@ components:
             properties:
               label: { type: string, description: Human-readable choice text. }
               value: { type: string, description: Exact message sent when the option is clicked. }
+        proposal:
+          type: object
+          description: proposal payload — a cleanup the assistant proposes; rendered as an approval card, applied by the client via the chapters clean endpoints only after the user approves.
+          properties:
+            novelId: { type: string }
+            novelTitle: { type: string }
+            mode: { type: string, description: "remove_after | remove_duplicates | remove_line | remove_multiple_blanks | search_replace" }
+            searchText: { type: string }
+            replaceText: { type: string }
+            caseSensitive: { type: boolean }
+            useRegex: { type: boolean }
+            applyTo: { type: string, enum: [original, translated, refined, all] }
+            chapterIds: { type: array, items: { type: string }, description: resolved scope when explicit ids were proposed }
+            fromOrder: { type: integer, description: resolved scope lower bound (range proposals) }
+            toOrder: { type: integer, description: resolved scope upper bound (range proposals) }
+            considered: { type: integer, description: chapters the dry run looked at }
+            affected: { type: integer, description: chapters the rule would change }
+            removedLines: { type: integer, description: total lines the rule would remove }
         message: { type: object, description: done payload (role + content) }
         steps: { type: integer, description: done payload, model steps taken }
         code: { type: string, description: error code }

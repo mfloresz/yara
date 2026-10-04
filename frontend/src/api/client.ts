@@ -789,6 +789,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
           caseSensitive: boolean;
           useRegex: boolean;
           applyTo: string;
+          includeText?: boolean;
         },
       ) {
         return http.post<CleanPreviewBulkResponse>(

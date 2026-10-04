@@ -80,7 +80,7 @@ func TestAgentToolCatalogIncludesNewTools(t *testing.T) {
 		"get_active_jobs", "get_novel_jobs", "create_job", "cancel_job", "retry_job",
 		"get_glossary", "update_glossary", "generate_glossary",
 		"check_novel_updates", "update_novel_from_url",
-		"preview_chapter_cleanup", "apply_chapter_cleanup",
+		"preview_chapter_cleanup", "propose_cleanup",
 		"get_reading_progress", "set_reading_progress",
 		"list_novel_epubs", "build_epub", "translate_novel_description",
 		"bulk_set_chapter_status", "bulk_set_chapter_excluded",
@@ -88,6 +88,17 @@ func TestAgentToolCatalogIncludesNewTools(t *testing.T) {
 	} {
 		if !names[want] {
 			t.Errorf("agent tool catalog is missing %q", want)
+		}
+	}
+	// apply_chapter_cleanup was removed on purpose: the cleanup only runs
+	// through the approval card, so the model must never have a direct apply
+	// tool again.
+	if names["apply_chapter_cleanup"] {
+		t.Error("agent tool catalog must not expose apply_chapter_cleanup")
+	}
+	for _, tool := range env.server.agentTools(alice.User.ID) {
+		if tool.Name == "propose_cleanup" && !tool.Terminal {
+			t.Error("propose_cleanup must be terminal so its proposal card ends the turn")
 		}
 	}
 }
@@ -535,32 +546,68 @@ func TestAgentCleanupTools(t *testing.T) {
 		t.Errorf("preview_chapter_cleanup sample should describe the changes: %s", previewResult)
 	}
 
-	for _, result := range runAgentTools(t, env, alice.Token, []string{
-		`{"_tool":"apply_chapter_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"toOrder":2,"mode":"remove_multiple_blanks","applyTo":"original"}}`,
-	}, nil) {
-		if !strings.Contains(result, `"modified":2`) || !strings.Contains(result, `"skipped":0`) {
-			t.Errorf("apply_chapter_cleanup should modify both chapters: %s", result)
+	// propose_cleanup is a read-only dry run: it must report the affected
+	// counts without touching any chapter.
+	for _, call := range []string{
+		`{"_tool":"propose_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","chapterIds":["` + ch1.ID + `","` + ch2.ID + `"],"mode":"remove_multiple_blanks","applyTo":"original"}}`,
+		`{"_tool":"propose_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"toOrder":2,"mode":"remove_multiple_blanks","applyTo":"original"}}`,
+	} {
+		for _, result := range runAgentTools(t, env, alice.Token, []string{call}, nil) {
+			if !strings.Contains(result, `"proposed":true`) || !strings.Contains(result, `"affected":2`) || !strings.Contains(result, `"considered":2`) {
+				t.Errorf("propose_cleanup should report both chapters as affected: %s", result)
+			}
 		}
 	}
 
-	// After applying, the preview reports nothing left to change.
+	// The proposal must not have applied anything: the original content is
+	// untouched and a follow-up preview still reports both chapters changed.
+	resp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+setup.aliceNovel.ID+"/chapters/"+ch1.ID+"?includeContent=true", alice.Token, nil)
+	assertStatus(t, resp, http.StatusOK)
+	if !strings.Contains(resp.Body.String(), "Párrafo uno.") || strings.Count(resp.Body.String(), "Párrafo") != 3 {
+		t.Errorf("propose_cleanup must not modify chapters, got %s", resp.Body.String())
+	}
 	for _, result := range runAgentTools(t, env, alice.Token, []string{
 		`{"_tool":"preview_chapter_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"toOrder":2,"mode":"remove_multiple_blanks","applyTo":"original"}}`,
 	}, nil) {
-		if !strings.Contains(result, `"changed":0`) {
-			t.Errorf("second preview should find nothing to change: %s", result)
+		if !strings.Contains(result, `"changed":2`) {
+			t.Errorf("preview after a proposal should still find both chapters changed: %s", result)
 		}
 	}
 
 	for _, call := range []string{
 		`{"_tool":"preview_chapter_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"mode":"remove_multiple_blanks","applyTo":"original"}}`,
-		`{"_tool":"apply_chapter_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"toOrder":2,"mode":"nope","applyTo":"original"}}`,
+		`{"_tool":"propose_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","fromOrder":1,"toOrder":2,"mode":"nope","applyTo":"original"}}`,
+		`{"_tool":"propose_cleanup","args":{"novelId":"` + setup.aliceNovel.ID + `","mode":"remove_multiple_blanks","applyTo":"original"}}`,
 	} {
 		for _, result := range runAgentTools(t, env, alice.Token, []string{call}, nil) {
 			if !strings.Contains(result, "error:") {
 				t.Errorf("cleanup tool should reject %s: %s", call, result)
 			}
 		}
+	}
+}
+
+// TestResolveAgentCleanupChaptersUncapped pins the max<=0 semantics of the
+// scope resolver: propose_cleanup passes 0 so it can propose whole novels
+// (its apply path — the clean endpoint — has no per-call cap), while
+// preview_chapter_cleanup keeps a positive cap for its sampling.
+func TestResolveAgentCleanupChaptersUncapped(t *testing.T) {
+	setup := newAgentToolsTestSetup(t, "Sin tope")
+	setup.aliceChapters(t, 1, 2, 3)
+
+	from, to := 1, 3
+	args := &agentCleanupArgs{NovelID: setup.aliceNovel.ID, FromOrder: &from, ToOrder: &to}
+
+	uncapped, err := setup.env.server.resolveAgentCleanupChapters(setup.alice.User.ID, args, 0)
+	if err != nil {
+		t.Fatalf("max=0 must be uncapped: %v", err)
+	}
+	if len(uncapped) != 3 {
+		t.Fatalf("max=0 must resolve the whole range, got %d ids", len(uncapped))
+	}
+
+	if _, err := setup.env.server.resolveAgentCleanupChapters(setup.alice.User.ID, args, 2); err == nil {
+		t.Fatal("a positive cap must still be enforced")
 	}
 }
 

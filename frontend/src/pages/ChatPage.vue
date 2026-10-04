@@ -22,7 +22,11 @@
         </div>
       </header>
 
-      <!-- role="log" announces appended messages instead of re-reading the
+      <!-- Split layout: transcript on the left, the active artifact (cleanup
+           proposal preview) as a side panel on the right, like classic AI
+           artifacts. On narrow screens the panel becomes a full overlay. -->
+      <div class="chat-body">
+        <!-- role="log" announces appended messages instead of re-reading the
                  whole transcript; the pending/streaming indicator below carries its
                  own status so token-by-token deltas stay silent. -->
             <div
@@ -83,20 +87,11 @@
           </div>
 
           <div v-else-if="item.kind === 'tool'" class="chat-row chat-row--tool">
-            <div class="chat-tool" :class="{ 'chat-tool--running': item.running }">
+            <!-- Ephemeral: the tool_result handler splices the chip out, so a
+                 finished turn shows nothing but the assistant's message. -->
+            <div class="chat-tool" role="status">
               <n-icon :size="14" class="chat-tool-icon"><BuildOutline /></n-icon>
-              <span class="chat-tool-name">{{ toolLabel(item.name) }}</span>
-              <n-spin v-if="item.running" :size="12" />
-              <button
-                v-else-if="item.result"
-                type="button"
-                class="chat-tool-toggle"
-                :aria-expanded="item.open"
-                @click="item.open = !item.open"
-              >
-                {{ item.open ? "Ocultar resultado" : "Ver resultado" }}
-              </button>
-              <pre v-if="item.open && item.result" class="chat-tool-result">{{ item.result }}</pre>
+              <span class="chat-tool-name">{{ toolLabel(item.name) }}…</span>
             </div>
           </div>
 
@@ -120,6 +115,15 @@
             </div>
           </div>
 
+          <div v-else-if="item.kind === 'proposal'" class="chat-row chat-row--assistant">
+            <CleanupProposalCard
+              :proposal="item.proposal"
+              :resolved="item.resolved"
+              :outcome="item.outcome"
+              @open="activeProposal = item"
+            />
+          </div>
+
           <div v-else class="chat-row chat-row--error">
             <div class="chat-error">{{ item.content }}</div>
           </div>
@@ -135,6 +139,19 @@
             <span class="muted small">Pensando…</span>
           </div>
         </div>
+        </div>
+
+        <aside v-if="activeProposal" class="chat-artifact" aria-label="Vista previa de limpieza">
+          <CleanupProposalPanel
+            :proposal="activeProposal.proposal"
+            :resolved="activeProposal.resolved"
+            :outcome="activeProposal.outcome"
+            :busy="streaming"
+            @applied="(result) => onProposalApplied(activeProposal, result)"
+            @discarded="onProposalDiscarded(activeProposal)"
+            @close="activeProposal = null"
+          />
+        </aside>
       </div>
 
       <div class="chat-composer">
@@ -243,17 +260,35 @@ import {
   StopOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import CleanupProposalCard from "@/components/CleanupProposalCard.vue";
+import CleanupProposalPanel from "@/components/CleanupProposalPanel.vue";
 import { useAppServices } from "@/app/services";
 import { MarkdownRender } from "markstream-vue";
 import "markstream-vue/index.css";
-import type { AgentChatEvent, AgentChatOption, AgentSessionMessage } from "@/api/types";
+import type { AgentChatEvent, AgentChatOption, AgentCleanupProposal, AgentSessionMessage } from "@/api/types";
 import type { Novel } from "@/domain";
+
+type ProposalChatItem = {
+  kind: "proposal";
+  proposal: AgentCleanupProposal;
+  resolved: boolean;
+  outcome?: "applied" | "discarded";
+};
 
 type ChatItem =
   | { kind: "message"; role: "user" | "assistant"; content: string }
-  | { kind: "tool"; name: string; args?: string; result?: string; running: boolean; open: boolean }
+  | { kind: "tool"; name: string }
   | { kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
+  | ProposalChatItem
   | { kind: "error"; content: string };
+
+type CleanApplyResult = {
+  modified: number;
+  total: number;
+  skipped: number;
+  notFound: number;
+  failed: number;
+};
 
 type PickerNovel = Pick<
   Novel,
@@ -268,6 +303,10 @@ const streaming = ref(false);
 const sessionId = ref("");
 const selectedNovel = ref<{ id: string; title: string } | null>(null);
 const scrollContainer = ref<HTMLElement | null>(null);
+// The proposal currently shown in the artifact side panel. It references the
+// same reactive item as the transcript, so a decision made in the panel
+// updates the chip (and vice versa) with no extra wiring.
+const activeProposal = ref<ProposalChatItem | null>(null);
 
 const pickerOpen = ref(false);
 const pickerQuery = ref("");
@@ -391,13 +430,11 @@ function stopStreaming(): void {
   settleRunningTools();
 }
 
-// settleRunningTools clears the spinner on any tool chip left mid-flight. A
-// turn can end without a tool_result (a mid-stream error, an abort, a
-// malformed ask_user) and an eternally spinning chip reads as a hang.
+// settleRunningTools drops any tool chip left mid-flight. A turn can end
+// without a tool_result (a mid-stream error, an abort, a malformed ask_user)
+// and an orphaned shimmer reads as a hang.
 function settleRunningTools(): void {
-  for (const item of items.value) {
-    if (item.kind === "tool" && item.running) item.running = false;
-  }
+  items.value = items.value.filter((item) => item.kind !== "tool");
 }
 
 function fillSuggestion(text: string): void {
@@ -430,30 +467,65 @@ function parseAskUserQuestion(args?: string): { question: string; options: Agent
   }
 }
 
+// parseAgentProposal rebuilds a persisted propose_cleanup call into an
+// approval card. Only the rule and scope travel in the tool args; the card
+// re-runs the live preview itself, so the dry-run counts are not needed here.
+function parseAgentProposal(args?: string): AgentCleanupProposal | null {
+  if (!args) return null;
+  try {
+    const p = JSON.parse(args) as Partial<AgentCleanupProposal>;
+    if (!p.novelId?.trim() || !p.mode?.trim() || !p.applyTo?.trim()) return null;
+    return {
+      novelId: p.novelId,
+      novelTitle: p.novelTitle ?? "",
+      mode: p.mode,
+      searchText: p.searchText,
+      replaceText: p.replaceText,
+      caseSensitive: !!p.caseSensitive,
+      useRegex: !!p.useRegex,
+      applyTo: p.applyTo,
+      chapterIds: p.chapterIds,
+      fromOrder: p.fromOrder,
+      toOrder: p.toOrder,
+      considered: p.considered ?? 0,
+      affected: p.affected ?? 0,
+      removedLines: p.removedLines ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function mapHistory(messages: AgentSessionMessage[]): void {
   const mapped: ChatItem[] = [];
-  const pendingResults = new Map<string, { index: number }>();
   // Index of the last ask_user card, so the user's next message can mark it
   // answered instead of leaving a stale clickable card in the transcript.
   let lastQuestionIndex = -1;
+  // Same idea for cleanup proposal cards: any subsequent user message means
+  // the proposal was acted on or abandoned, so it renders closed after a
+  // reload instead of offering buttons that no longer apply.
+  let lastProposalIndex = -1;
   for (const message of messages) {
     if (message.role === "user") {
       if (lastQuestionIndex >= 0 && mapped[lastQuestionIndex]?.kind === "question") {
         (mapped[lastQuestionIndex] as Extract<ChatItem, { kind: "question" }>).answered = true;
         lastQuestionIndex = -1;
       }
+      if (lastProposalIndex >= 0 && mapped[lastProposalIndex]?.kind === "proposal") {
+        (mapped[lastProposalIndex] as ProposalChatItem).resolved = true;
+        lastProposalIndex = -1;
+      }
       mapped.push({ kind: "message", role: "user", content: message.content ?? "" });
       continue;
     }
     if (message.role === "assistant") {
-      // Narration first, then the chips. Live streaming shows the text before
-      // the tool call, so this is the order the user saw. Building the chips
-      // first and splicing the narration in front of them afterwards also
-      // invalidated every index recorded for the tool results, so after a
-      // reload every chip came back with no result at all.
+      // Live turns render tool calls as an ephemeral shimmer spliced out on
+      // tool_result, so a reloaded transcript shows narration, ask_user
+      // cards, proposal cards — the same thing the user saw while streaming.
       if (message.content) {
         mapped.push({ kind: "message", role: "assistant", content: message.content });
         lastQuestionIndex = -1;
+        lastProposalIndex = -1;
       }
       for (const call of message.toolCalls ?? []) {
         if (call.name === "ask_user") {
@@ -467,22 +539,28 @@ function mapHistory(messages: AgentSessionMessage[]): void {
               answered: false,
             });
           }
-          continue;
         }
-        pendingResults.set(call.id, { index: mapped.length });
-        mapped.push({ kind: "tool", name: call.name, args: call.args, running: false, open: false });
+        if (call.name === "propose_cleanup") {
+          const parsed = parseAgentProposal(call.args);
+          if (parsed) {
+            lastProposalIndex = mapped.length;
+            mapped.push({ kind: "proposal", proposal: parsed, resolved: false });
+          }
+        }
       }
       continue;
     }
-    if (message.role === "tool" && message.toolCallId) {
-      const slot = pendingResults.get(message.toolCallId);
-      if (slot && mapped[slot.index]?.kind === "tool") {
-        const tool = mapped[slot.index] as Extract<ChatItem, { kind: "tool" }>;
-        tool.result = message.content ?? "";
-      }
-    }
   }
   items.value = mapped;
+  // A reload in the middle of a review restores the split view: the newest
+  // proposal still awaiting a decision reopens in the artifact panel.
+  for (let i = mapped.length - 1; i >= 0; i -= 1) {
+    const item = mapped[i];
+    if (item.kind === "proposal" && !item.resolved) {
+      activeProposal.value = item;
+      break;
+    }
+  }
 }
 
 onMounted(async () => {
@@ -529,6 +607,7 @@ async function resetChat(): Promise<void> {
   }
   sessionId.value = "";
   selectedNovel.value = null;
+  activeProposal.value = null;
   items.value = [];
 }
 
@@ -545,10 +624,45 @@ async function chooseOption(
   await sendMessage(option.value);
 }
 
+// The approve/cancel decision is applied by the frontend itself (preview and
+// clean endpoints, same ones the CleanTab uses); the message that follows
+// informs the model and makes the transcript self-describing on reload. The
+// panel emits these with the active item, which may have changed between
+// render and click — hence the null/guard rather than a captured reference.
+async function onProposalApplied(
+  item: ProposalChatItem | null,
+  result: CleanApplyResult,
+): Promise<void> {
+  if (!item || item.resolved || streaming.value) return;
+  item.resolved = true;
+  item.outcome = "applied";
+  if (activeProposal.value === item) activeProposal.value = null;
+  const issues: string[] = [];
+  if (result.skipped) issues.push(`${result.skipped} sin contenido aplicable`);
+  if (result.notFound) issues.push(`${result.notFound} no encontrados`);
+  if (result.failed) issues.push(`${result.failed} fallaron al guardar`);
+  const detail = issues.length > 0 ? ` (${issues.join(", ")})` : "";
+  await sendMessage(`Limpieza aplicada: ${result.modified} capítulos modificados.${detail}`);
+}
+
+function onProposalDiscarded(item: ProposalChatItem | null): void {
+  if (!item || item.resolved || streaming.value) return;
+  item.resolved = true;
+  item.outcome = "discarded";
+  if (activeProposal.value === item) activeProposal.value = null;
+  void sendMessage("Limpieza descartada sin aplicar cambios.");
+}
+
 async function sendMessage(message: string): Promise<void> {
   if (!message || streaming.value) return;
 
   draft.value = "";
+  // A new user message closes any pending proposal card: the decision either
+  // happened through the card or the proposal was abandoned (mirrors how a
+  // reload replays the transcript).
+  for (const item of items.value) {
+    if (item.kind === "proposal") item.resolved = true;
+  }
   items.value.push({ kind: "message", role: "user", content: message });
   scrollToBottom();
 
@@ -614,22 +728,18 @@ async function sendMessage(message: string): Promise<void> {
         flushStreamNow(commitAssistant);
         assistantText = "";
         committedText = "";
-        items.value.push({
-          kind: "tool",
-          name: event.tool ?? "tool",
-          args: event.args,
-          running: true,
-          open: false,
-        });
+        items.value.push({ kind: "tool", name: event.tool ?? "tool" });
         scrollToBottom();
         break;
       }
       case "tool_result": {
+        // Results and errors go back to the model (which self-corrects across
+        // steps), not to the UI: the shimmer is removed so only the
+        // assistant's message stays in the transcript.
         for (let i = items.value.length - 1; i >= 0; i -= 1) {
           const item = items.value[i];
-          if (item.kind === "tool" && item.name === event.tool && item.running) {
-            item.result = event.result ?? "";
-            item.running = false;
+          if (item.kind === "tool" && item.name === event.tool) {
+            items.value.splice(i, 1);
             break;
           }
         }
@@ -646,6 +756,25 @@ async function sendMessage(message: string): Promise<void> {
           options: event.options ?? [],
           answered: false,
         });
+        scrollToBottom();
+        break;
+      }
+      case "proposal": {
+        // A cleanup proposal ends the turn: a compact chip lands in the
+        // transcript and the artifact panel opens with the live diff preview.
+        // Nothing is applied until the user approves it in the panel.
+        flushStreamNow(commitAssistant);
+        assistantText = "";
+        committedText = "";
+        if (event.proposal) {
+          const item: ProposalChatItem = {
+            kind: "proposal",
+            proposal: event.proposal,
+            resolved: false,
+          };
+          items.value.push(item);
+          activeProposal.value = item;
+        }
         scrollToBottom();
         break;
       }
@@ -815,8 +944,18 @@ function chooseNovel(novel: PickerNovel): void {
   line-height: 1.4;
 }
 
+/* Split layout: the transcript and the artifact side panel share the middle
+   of the page; the composer spans the full width below. */
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0.75rem;
+}
+
 .chat-scroll {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -824,6 +963,19 @@ function chooseNovel(novel: PickerNovel): void {
   gap: 0.75rem;
   padding: 0.25rem 0.125rem 0.5rem;
   overscroll-behavior: contain;
+}
+
+/* The artifact panel: fixed share of the row, its own internal scroll (the
+   CleanupProposalPanel body owns the scrollbar). */
+.chat-artifact {
+  flex-shrink: 0;
+  width: clamp(340px, 42%, 640px);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--divide);
+  background: var(--surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: 0.875rem 1rem;
 }
 
 .chat-empty {
@@ -992,52 +1144,34 @@ function chooseNovel(novel: PickerNovel): void {
   font-size: 0.8125rem;
 }
 
-.chat-tool--running {
-  opacity: 0.85;
-}
-
 .chat-tool-icon {
   color: var(--text-tertiary);
 }
 
 .chat-tool-name {
   font-size: 0.75rem;
-  color: var(--text-secondary);
+  /* Shimmer sweep in the neutral ramp: the chip is ephemeral (spliced out on
+     tool_result), so there is no result toggle to discover afterwards. */
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-secondary) 50%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: chat-shimmer 1.6s linear infinite;
 }
 
-/* A real <button> so the 44px touch target and keyboard focus come for free;
-   n-button's tiny variant collapsed to well under both. */
-.chat-tool-toggle {
-  margin-left: auto;
-  min-height: 44px;
-  padding: 0 0.5rem;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  font: inherit;
-  font-size: 0.75rem;
-  color: var(--accent-link);
-  cursor: pointer;
-  transition: background-color 0.15s ease-out;
-}
-
-.chat-tool-toggle:hover {
-  background: var(--mock-row);
-  color: var(--accent-link-hover);
-}
-
-.chat-tool-result {
-  flex-basis: 100%;
-  margin: 0.25rem 0 0;
-  max-height: 12rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  background: var(--page-bg);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem;
+@keyframes chat-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 .chat-error {
@@ -1145,6 +1279,19 @@ function chooseNovel(novel: PickerNovel): void {
     height: calc(100dvh - 52px - 2rem);
   }
 
+  /* The artifact panel has no room beside the transcript on a phone: it
+     becomes a full-screen overlay with its own close button. */
+  .chat-artifact {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    width: auto;
+    border: none;
+    border-radius: 0;
+    background: var(--background);
+    padding: 1rem;
+  }
+
   .page-title {
     font-size: 1.5rem;
   }
@@ -1165,7 +1312,6 @@ function chooseNovel(novel: PickerNovel): void {
 
 @media (prefers-reduced-motion: reduce) {
   .chat-suggestion,
-  .chat-tool-toggle,
   .chat-picker-item {
     transition: none;
   }
@@ -1173,6 +1319,14 @@ function chooseNovel(novel: PickerNovel): void {
   .chat-pending-dot {
     animation: none;
     opacity: 0.7;
+  }
+
+  /* Static label in place of the sweep. */
+  .chat-tool-name {
+    animation: none;
+    background: none;
+    color: var(--text-secondary);
+    -webkit-text-fill-color: currentColor;
   }
 }
 </style>

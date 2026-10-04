@@ -183,6 +183,67 @@ func TestAgentChatNonTerminalToolContinuesLoop(t *testing.T) {
 	}
 }
 
+// TestAgentChatFailedTerminalToolContinuesLoop pins the failure semantics of
+// Terminal tools: a propose-style call that ERRORS must not end the turn —
+// the error is fed back to the model, which may retry; only a successful
+// terminal call hands control back to the caller. (A failed terminal tool
+// used to end the turn in silence: no text, no card, no retry.)
+func TestAgentChatFailedTerminalToolContinuesLoop(t *testing.T) {
+	requests := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseWrite(t, w, sseChunk(map[string]any{"role": "assistant", "content": ""}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{
+			"tool_calls": []map[string]any{toolCallDelta(0, fmt.Sprintf("call-%d", requests), "propose_cleanup", `{"novelId":"n1"}`)},
+		}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{}, "tool_calls"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	provider := &OpenAIProvider{APIKey: "test-key", BaseURL: ts.URL, Model: "test-model"}
+	calls := 0
+	propose := AgentTool{
+		Name:        "propose_cleanup",
+		Description: "propose",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"novelId":{"type":"string"}}}`),
+		Terminal:    true,
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", fmt.Errorf("too many chapters (1851) in that range")
+			}
+			return `{"proposed":true,"affected":12}`, nil
+		},
+	}
+
+	out, err := provider.AgentChat(context.Background(), AgentChatInput{
+		System:   "sys",
+		Messages: []AgentMessage{{Role: "user", Content: "limpia la novela"}},
+		Tools:    []AgentTool{propose},
+	})
+	if err != nil {
+		t.Fatalf("AgentChat returned error: %v", err)
+	}
+
+	if requests != 2 {
+		t.Fatalf("failed terminal tool must continue the loop (2 model calls), got %d", requests)
+	}
+	if out.Text != "" || out.Steps != 2 {
+		t.Fatalf("the successful terminal call must end the turn with no text, got %q/%d", out.Text, out.Steps)
+	}
+	if len(out.Messages) != 5 {
+		t.Fatalf("trail must be user + assistant + error tool + assistant + ok tool, got %d: %#v", len(out.Messages), out.Messages)
+	}
+	if out.Messages[2].Role != "tool" || !strings.Contains(out.Messages[2].Content, "too many chapters") {
+		t.Fatalf("the execution error must be fed back to the model, got %#v", out.Messages[2])
+	}
+	if out.Messages[4].Role != "tool" || !strings.Contains(out.Messages[4].Content, `"proposed":true`) {
+		t.Fatalf("the retried call must succeed and end the turn, got %#v", out.Messages[4])
+	}
+}
+
 // TestTruncateToolResultRespectsRuneLimit pins the unit the cap is expressed
 // in. Gating on bytes while cutting on runes returned a result LARGER than the
 // input for multi-byte text (6000 CJK runes: 18000 bytes in, 18015 bytes out
