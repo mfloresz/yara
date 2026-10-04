@@ -83,20 +83,11 @@
           </div>
 
           <div v-else-if="item.kind === 'tool'" class="chat-row chat-row--tool">
-            <div class="chat-tool" :class="{ 'chat-tool--running': item.running }">
+            <!-- Ephemeral: the tool_result handler splices the chip out, so a
+                 finished turn shows nothing but the assistant's message. -->
+            <div class="chat-tool" role="status">
               <n-icon :size="14" class="chat-tool-icon"><BuildOutline /></n-icon>
-              <span class="chat-tool-name">{{ toolLabel(item.name) }}</span>
-              <n-spin v-if="item.running" :size="12" />
-              <button
-                v-else-if="item.result"
-                type="button"
-                class="chat-tool-toggle"
-                :aria-expanded="item.open"
-                @click="item.open = !item.open"
-              >
-                {{ item.open ? "Ocultar resultado" : "Ver resultado" }}
-              </button>
-              <pre v-if="item.open && item.result" class="chat-tool-result">{{ item.result }}</pre>
+              <span class="chat-tool-name">{{ toolLabel(item.name) }}…</span>
             </div>
           </div>
 
@@ -251,7 +242,7 @@ import type { Novel } from "@/domain";
 
 type ChatItem =
   | { kind: "message"; role: "user" | "assistant"; content: string }
-  | { kind: "tool"; name: string; args?: string; result?: string; running: boolean; open: boolean }
+  | { kind: "tool"; name: string }
   | { kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
   | { kind: "error"; content: string };
 
@@ -391,13 +382,11 @@ function stopStreaming(): void {
   settleRunningTools();
 }
 
-// settleRunningTools clears the spinner on any tool chip left mid-flight. A
-// turn can end without a tool_result (a mid-stream error, an abort, a
-// malformed ask_user) and an eternally spinning chip reads as a hang.
+// settleRunningTools drops any tool chip left mid-flight. A turn can end
+// without a tool_result (a mid-stream error, an abort, a malformed ask_user)
+// and an orphaned shimmer reads as a hang.
 function settleRunningTools(): void {
-  for (const item of items.value) {
-    if (item.kind === "tool" && item.running) item.running = false;
-  }
+  items.value = items.value.filter((item) => item.kind !== "tool");
 }
 
 function fillSuggestion(text: string): void {
@@ -432,7 +421,6 @@ function parseAskUserQuestion(args?: string): { question: string; options: Agent
 
 function mapHistory(messages: AgentSessionMessage[]): void {
   const mapped: ChatItem[] = [];
-  const pendingResults = new Map<string, { index: number }>();
   // Index of the last ask_user card, so the user's next message can mark it
   // answered instead of leaving a stale clickable card in the transcript.
   let lastQuestionIndex = -1;
@@ -446,11 +434,9 @@ function mapHistory(messages: AgentSessionMessage[]): void {
       continue;
     }
     if (message.role === "assistant") {
-      // Narration first, then the chips. Live streaming shows the text before
-      // the tool call, so this is the order the user saw. Building the chips
-      // first and splicing the narration in front of them afterwards also
-      // invalidated every index recorded for the tool results, so after a
-      // reload every chip came back with no result at all.
+      // Live turns render tool calls as an ephemeral shimmer spliced out on
+      // tool_result, so a reloaded transcript shows narration and ask_user
+      // cards only — the same thing the user saw while streaming.
       if (message.content) {
         mapped.push({ kind: "message", role: "assistant", content: message.content });
         lastQuestionIndex = -1;
@@ -467,19 +453,9 @@ function mapHistory(messages: AgentSessionMessage[]): void {
               answered: false,
             });
           }
-          continue;
         }
-        pendingResults.set(call.id, { index: mapped.length });
-        mapped.push({ kind: "tool", name: call.name, args: call.args, running: false, open: false });
       }
       continue;
-    }
-    if (message.role === "tool" && message.toolCallId) {
-      const slot = pendingResults.get(message.toolCallId);
-      if (slot && mapped[slot.index]?.kind === "tool") {
-        const tool = mapped[slot.index] as Extract<ChatItem, { kind: "tool" }>;
-        tool.result = message.content ?? "";
-      }
     }
   }
   items.value = mapped;
@@ -614,22 +590,18 @@ async function sendMessage(message: string): Promise<void> {
         flushStreamNow(commitAssistant);
         assistantText = "";
         committedText = "";
-        items.value.push({
-          kind: "tool",
-          name: event.tool ?? "tool",
-          args: event.args,
-          running: true,
-          open: false,
-        });
+        items.value.push({ kind: "tool", name: event.tool ?? "tool" });
         scrollToBottom();
         break;
       }
       case "tool_result": {
+        // Results and errors go back to the model (which self-corrects across
+        // steps), not to the UI: the shimmer is removed so only the
+        // assistant's message stays in the transcript.
         for (let i = items.value.length - 1; i >= 0; i -= 1) {
           const item = items.value[i];
-          if (item.kind === "tool" && item.name === event.tool && item.running) {
-            item.result = event.result ?? "";
-            item.running = false;
+          if (item.kind === "tool" && item.name === event.tool) {
+            items.value.splice(i, 1);
             break;
           }
         }
@@ -992,52 +964,34 @@ function chooseNovel(novel: PickerNovel): void {
   font-size: 0.8125rem;
 }
 
-.chat-tool--running {
-  opacity: 0.85;
-}
-
 .chat-tool-icon {
   color: var(--text-tertiary);
 }
 
 .chat-tool-name {
   font-size: 0.75rem;
-  color: var(--text-secondary);
+  /* Shimmer sweep in the neutral ramp: the chip is ephemeral (spliced out on
+     tool_result), so there is no result toggle to discover afterwards. */
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-secondary) 50%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: chat-shimmer 1.6s linear infinite;
 }
 
-/* A real <button> so the 44px touch target and keyboard focus come for free;
-   n-button's tiny variant collapsed to well under both. */
-.chat-tool-toggle {
-  margin-left: auto;
-  min-height: 44px;
-  padding: 0 0.5rem;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  font: inherit;
-  font-size: 0.75rem;
-  color: var(--accent-link);
-  cursor: pointer;
-  transition: background-color 0.15s ease-out;
-}
-
-.chat-tool-toggle:hover {
-  background: var(--mock-row);
-  color: var(--accent-link-hover);
-}
-
-.chat-tool-result {
-  flex-basis: 100%;
-  margin: 0.25rem 0 0;
-  max-height: 12rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  background: var(--page-bg);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem;
+@keyframes chat-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 .chat-error {
@@ -1165,7 +1119,6 @@ function chooseNovel(novel: PickerNovel): void {
 
 @media (prefers-reduced-motion: reduce) {
   .chat-suggestion,
-  .chat-tool-toggle,
   .chat-picker-item {
     transition: none;
   }
@@ -1173,6 +1126,14 @@ function chooseNovel(novel: PickerNovel): void {
   .chat-pending-dot {
     animation: none;
     opacity: 0.7;
+  }
+
+  /* Static label in place of the sweep. */
+  .chat-tool-name {
+    animation: none;
+    background: none;
+    color: var(--text-secondary);
+    -webkit-text-fill-color: currentColor;
   }
 }
 </style>
