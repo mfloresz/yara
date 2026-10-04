@@ -1,5 +1,30 @@
 # Changelog
 
+## [v0.41.0] - 2026-10-04
+
+### ⚠️ Breaking changes
+
+- Cleaning a novel's chapters now answers `409` (`novel_busy`) while that novel has an active download/translate/refine job, instead of racing the job over the same content fields. If you drive the API yourself, wait for the jobs to settle before cleaning.
+
+### What's new
+
+- **The assistant proposes cleanups instead of applying them.** Ask it to clean a rule over a novel or an order range and it ends the turn with an interactive approval card: the interpreted rule, its scope, and the full per-chapter diff. The cleanup only runs if you approve it there — there is deliberately no tool that applies a cleanup on its own. This replaces the previous `apply_chapter_cleanup` tool.
+- Cleanup proposals can span a whole novel: the approval card fetches the diff hunks without the full chapter texts, so proposing a rule over thousands of chapters no longer transfers tens of megabytes.
+- **Operations: filter the update checks by site.** The *Actualizables* chip is now a split button with a per-site dropdown ("Novelfire · 42"), so the pending source checks for one site no longer hide inside the full list — and one click goes back to all sites.
+- Chat: a running tool is now a brief shimmer instead of a chip that stays in the transcript with a "ver resultado" toggle; once it finishes, only the assistant's message remains.
+
+### Fixes
+
+- A failed tool no longer ends the assistant's turn: the error is fed back to the model, which corrects itself and can retry within the same turn. Previously a failing terminal tool (asking you a question, proposing a cleanup) left you with no answer, no card and no retry until you typed again.
+- The assistant stopped answering with LaTeX math (`$\rightarrow$`, `$\times$`) in a renderer that cannot draw it; it uses Unicode symbols (→, ×) now.
+- Import ZIP: a `cover.*` entry is now only the novel cover. It used to be loaded a second time as an inline chapter image, counting against the inline-image budget.
+
+### Housekeeping
+
+- Extracted the cleanup diff renderer shared by the novel's *Limpiar* tab and the chat's approval card into one component, and moved the cleanup rule labels into `frontend/src/utils/cleaner.ts`.
+- Refreshed `docs/api/README.md` (the new `proposal` stream event, `propose_cleanup`, the `409` on clean) and `template/import/README.md` (cover vs. inline images, fuller import walkthrough).
+- Added tests for the proposal payload, terminal-tool failure semantics, the uncapped cleanup scope, the light `clean-preview-bulk` response and the ZIP cover.
+
 ## [v0.40.0] - 2026-10-03
 
 ### What's new
@@ -504,6 +529,7 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
+[v0.41.0]: https://github.com/mfloresz/yara/compare/v0.40.0...v0.41.0
 [v0.40.0]: https://github.com/mfloresz/yara/compare/v0.39.1...v0.40.0
 [v0.39.1]: https://github.com/mfloresz/yara/compare/v0.39.0...v0.39.1
 [v0.39.0]: https://github.com/mfloresz/yara/compare/v0.38.0...v0.39.0
