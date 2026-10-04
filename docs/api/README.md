@@ -589,7 +589,7 @@ per user — one session each, enforced by a unique index on the owner.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `done`, `error`. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `proposal`, `done`, `error`. A `proposal` event carries a cleanup the assistant proposes; the client renders it as an approval card and the cleanup only runs if the user approves it there. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 
@@ -616,8 +616,10 @@ or an order range; one active job per novel), `cancel_job` and `retry_job`,
 by source term, and enqueue generation of a novel's term pairs),
 `check_novel_updates` (read-only TOC diff) and `update_novel_from_url`
 (enqueues the download of new chapters), `preview_chapter_cleanup` (dry run
-with change samples) and `apply_chapter_cleanup` (at most 100 chapters per
-call), `get_reading_progress` / `set_reading_progress`, `list_novel_epubs` and
+with change samples) and `propose_cleanup` (ends the turn; the app renders an
+interactive approval card with the full diff and the cleanup only runs if the
+user approves it there — there is deliberately no apply tool),
+`get_reading_progress` / `set_reading_progress`, `list_novel_epubs` and
 `build_epub` (large novels are refused; the export UI has no cap),
 `translate_novel_description` (returns the translated synopsis without saving
 it), `update_novel` (target title / author / series / tags / status /
@@ -631,7 +633,7 @@ the picked option's value arrives as the user's next message).
 
 Every tool result is persisted into the session trail and replayed to the
 model on later steps, so the tools return narrow projections with hard caps
-(list limits, chapter-id caps of 500 for jobs and 100 for cleanups, truncated
+(list limits, chapter-id caps of 500 for jobs and cleanup proposals, truncated
 error messages) instead of full records. Complete answers come from paging,
 not from bigger caps: `list_novels` pages with `offset`, and `query_library`
 lets the model's own `LIMIT ... OFFSET ...` survive inside the wrapped query

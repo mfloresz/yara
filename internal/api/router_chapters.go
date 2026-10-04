@@ -160,6 +160,15 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 			return notFoundOrForbidden(e, err)
 		}
 
+		// Cleaning rewrites content fields, so like every other chapter write
+		// it is refused while the novel has active jobs — a running translate
+		// job would race the cleanup over the same fields.
+		if active, err := s.Store.HasActiveJobsForNovel(e.Request.PathValue("novelId")); err != nil {
+			return e.InternalServerError("failed to check active jobs", err)
+		} else if active {
+			return writeV1Error(e, http.StatusConflict, "novel_busy", "the novel has active jobs; cancel or wait for them before cleaning")
+		}
+
 		opts := CleanOptions{
 			Mode:          CleanMode(body.Mode),
 			SearchText:    body.SearchText,
@@ -189,9 +198,9 @@ func (sharedChapterHandlers) clean(s *Server) func(*core.RequestEvent) error {
 // the changed ones, and refresh novel stats once at the end. Chapters are
 // processed one at a time and discarded, so peak memory is one chapter body
 // no matter how many are cleaned. Shared by POST /novels/{novelId}/chapters/
-// clean and the agent's apply_chapter_cleanup tool; the caller owns argument
-// validation and the active-jobs admission (the agent tool refuses while jobs
-// are active, mirroring UpdateChapterEdits).
+// clean (the CleanTab and the chat's cleanup-approval card) — the caller owns
+// argument validation and the active-jobs admission, which the clean handler
+// enforces directly.
 func (s *Server) applyChapterCleanup(userID, novelID string, chapterIDs []string, opts CleanOptions, applyTo string) (modified, skipped, notFound, failed int, err error) {
 	for _, chapterID := range chapterIDs {
 		chapter, err := s.Store.GetChapterAccessible(userID, novelID, chapterID)

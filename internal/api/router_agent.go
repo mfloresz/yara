@@ -99,19 +99,20 @@ type agentChatOption struct {
 
 // agentChatEvent is one NDJSON line of the streaming response.
 type agentChatEvent struct {
-	Type        string            `json:"type"`
-	SessionID   string            `json:"sessionId,omitempty"`
-	Text        string            `json:"text,omitempty"`
-	Step        int               `json:"step,omitempty"`
-	Tool        string            `json:"tool,omitempty"`
-	Args        string            `json:"args,omitempty"`
-	Result      string            `json:"result,omitempty"`
-	Message     map[string]any    `json:"message,omitempty"`
-	Steps       int               `json:"steps,omitempty"`
-	Code        string            `json:"code,omitempty"`
-	ErrorDetail string            `json:"error,omitempty"`
-	Question    string            `json:"question,omitempty"`
-	Options     []agentChatOption `json:"options,omitempty"`
+	Type        string                `json:"type"`
+	SessionID   string                `json:"sessionId,omitempty"`
+	Text        string                `json:"text,omitempty"`
+	Step        int                   `json:"step,omitempty"`
+	Tool        string                `json:"tool,omitempty"`
+	Args        string                `json:"args,omitempty"`
+	Result      string                `json:"result,omitempty"`
+	Message     map[string]any        `json:"message,omitempty"`
+	Steps       int                   `json:"steps,omitempty"`
+	Code        string                `json:"code,omitempty"`
+	ErrorDetail string                `json:"error,omitempty"`
+	Question    string                `json:"question,omitempty"`
+	Options     []agentChatOption     `json:"options,omitempty"`
+	Proposal    *agentCleanupProposal `json:"proposal,omitempty"`
 }
 
 // handleAgentChat streams one assistant turn as NDJSON. Pre-flight failures
@@ -209,6 +210,12 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		ctx, cancel := context.WithTimeout(e.Request.Context(), agentChatTurnTimeout)
 		defer cancel()
 
+		// pendingProposalArgs holds the propose_cleanup arguments between the
+		// tool_call and tool_result events: the card is only emitted once the
+		// execution succeeded, so a rejected proposal (bad mode, foreign novel,
+		// over-large scope) stays silent like any other failed tool while the
+		// model self-corrects.
+		var pendingProposalArgs string
 		output, session, err := s.runAgentTurn(ctx, runner, userID, session, selectedNovel, message, func(ev ai.AgentEvent) {
 			switch ev.Type {
 			case "text_delta":
@@ -223,10 +230,28 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 						break
 					}
 				}
+				// propose_cleanup never renders as a tool chip either; its
+				// approval card is emitted from the tool_result event below.
+				if ev.ToolName == agentProposeCleanupToolName {
+					pendingProposalArgs = ev.ToolArgs
+					break
+				}
 				writeEvent(agentChatEvent{Type: "tool_call", Step: ev.Step, Tool: ev.ToolName, Args: ev.ToolArgs})
 			case "tool_result":
 				if ev.ToolName == agentAskUserToolName {
 					break // the question event already carries the display
+				}
+				if ev.ToolName == agentProposeCleanupToolName {
+					if args := strings.TrimSpace(pendingProposalArgs); args != "" && !strings.HasPrefix(ev.ToolResult, "error:") {
+						var parsed agentCleanupArgs
+						if err := json.Unmarshal([]byte(args), &parsed); err == nil {
+							if payload, err := s.buildCleanupProposal(userID, &parsed); err == nil {
+								writeEvent(agentChatEvent{Type: "proposal", Step: ev.Step, Proposal: payload})
+							}
+						}
+					}
+					pendingProposalArgs = ""
+					break
 				}
 				writeEvent(agentChatEvent{Type: "tool_result", Step: ev.Step, Tool: ev.ToolName, Result: ev.ToolResult})
 			}

@@ -296,6 +296,138 @@ func (q *questionAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatIn
 	return ai.AgentChatOutput{Messages: trail, Steps: 1}, nil
 }
 
+// TestAgentChatProposeCleanupEmitsProposalEvent drives the propose_cleanup
+// flow end to end: the terminal tool call must surface as a "proposal" NDJSON
+// event carrying the resolved rule (never as a tool chip), a failed execution
+// must emit nothing, and the trail must stay replayable.
+func TestAgentChatProposeCleanupEmitsProposalEvent(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-propose@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Novela Sucia", "es", "en")
+	chResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/chapters", alice.Token, map[string]any{
+		"chapterOrder":    1,
+		"title":           "Capítulo uno",
+		"originalContent": "Línea buena.\n1\n1\nOtra línea buena.",
+	})
+	assertStatus(t, chResp, http.StatusCreated)
+
+	proposeArgs := `{"novelId":"` + novel.ID + `","fromOrder":1,"toOrder":1,"mode":"remove_line","searchText":"1","useRegex":true,"caseSensitive":true,"applyTo":"original"}`
+
+	// proposalAgentProvider mimics the real loop's propose_cleanup turn: one
+	// terminal tool call plus its compact success result, no final text.
+	provider := &proposalAgentProvider{args: proposeArgs, result: `{"proposed":true,"affected":1,"considered":1}`}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "Elimina las líneas que sean solo un 1",
+		"novelId": novel.ID,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	events := parseNDJSON(t, []byte(resp.Body.String()))
+
+	var proposal, done map[string]any
+	for _, ev := range events {
+		switch ev["type"] {
+		case "proposal":
+			proposal = ev
+		case "tool_call", "tool_result":
+			if ev["tool"] == agentProposeCleanupToolName {
+				t.Fatalf("propose_cleanup must not leak as a tool event, got %v", ev)
+			}
+		case "done":
+			done = ev
+		}
+	}
+	if proposal == nil {
+		t.Fatalf("stream must contain a proposal event, got %#v", events)
+	}
+	payload, ok := proposal["proposal"].(map[string]any)
+	if !ok {
+		t.Fatalf("proposal event must carry the payload object, got %v", proposal["proposal"])
+	}
+	if payload["novelId"] != novel.ID || payload["novelTitle"] != "Novela Sucia" {
+		t.Fatalf("unexpected proposal novel fields: %v", payload)
+	}
+	if payload["mode"] != "remove_line" || payload["useRegex"] != true || payload["applyTo"] != "original" {
+		t.Fatalf("proposal payload must echo the rule, got %v", payload)
+	}
+	if payload["affected"] != float64(1) || payload["considered"] != float64(1) || payload["removedLines"] != float64(2) {
+		t.Fatalf("proposal payload must carry the dry-run counts, got %v", payload)
+	}
+	ids, ok := payload["chapterIds"].([]any)
+	if !ok || len(ids) != 1 {
+		t.Fatalf("proposal payload must resolve the range to chapter ids, got %v", payload["chapterIds"])
+	}
+	if done == nil {
+		t.Fatal("stream must still end with a done event")
+	}
+	if msg, ok := done["message"].(map[string]any); !ok || msg["content"] != "" {
+		t.Fatalf("proposal turn must end without assistant text, got %v", done["message"])
+	}
+
+	// A failed propose_cleanup (the model gets "error: …" and self-corrects)
+	// must not surface a card.
+	provider.result = "error: invalid mode"
+	provider.args = `{"novelId":"` + novel.ID + `","mode":"nope","applyTo":"original"}`
+	resp2 := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "otra limpieza",
+	})
+	assertStatus(t, resp2, http.StatusOK)
+	for _, ev := range parseNDJSON(t, []byte(resp2.Body.String())) {
+		if ev["type"] == "proposal" {
+			t.Fatalf("a failed proposal must not emit a proposal event, got %v", ev)
+		}
+	}
+
+	// The trail must persist the propose_cleanup call and its result so the
+	// next turn replays a valid conversation.
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	var session struct {
+		Messages []struct {
+			Role      string `json:"role"`
+			ToolCalls []struct {
+				Name string `json:"name"`
+			} `json:"toolCalls"`
+		} `json:"messages"`
+	}
+	decodeData(t, getResp, &session)
+	found := false
+	for _, m := range session.Messages {
+		for _, call := range m.ToolCalls {
+			if call.Name == agentProposeCleanupToolName {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("session must persist the propose_cleanup call, got %#v", session.Messages)
+	}
+}
+
+// proposalAgentProvider mimics the real loop's propose_cleanup turn: one
+// terminal tool call with the given args, one tool result, no final text.
+type proposalAgentProvider struct {
+	*ai.OpenAIProvider
+	args   string
+	result string
+}
+
+func (p *proposalAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput) (ai.AgentChatOutput, error) {
+	trail := append([]ai.AgentMessage{}, in.Messages...)
+	trail = append(trail,
+		ai.AgentMessage{Role: "assistant", ToolCalls: []ai.AgentToolCall{{ID: "call-1", Name: agentProposeCleanupToolName, Args: p.args}}},
+		ai.AgentMessage{Role: "tool", Content: p.result, ToolCallID: "call-1", ToolName: agentProposeCleanupToolName},
+	)
+	if in.OnEvent != nil {
+		in.OnEvent(ai.AgentEvent{Type: "tool_call", Step: 1, ToolName: agentProposeCleanupToolName, ToolArgs: p.args})
+		in.OnEvent(ai.AgentEvent{Type: "tool_result", Step: 1, ToolName: agentProposeCleanupToolName, ToolResult: p.result})
+	}
+	return ai.AgentChatOutput{Messages: trail, Steps: 1}, nil
+}
+
 func TestAgentChatRejectsUnsupportedProviderAndBadInput(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-agent-2@example.com", "secret123", "Alice")
