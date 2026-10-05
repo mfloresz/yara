@@ -17,15 +17,17 @@ import (
 	"translator-server/internal/parserhost"
 )
 
-// parseThrottle spaces consecutive parser fetches per site (URL host). It
+// parseThrottle spaces consecutive chapter downloads per site (URL host). It
 // lives on the Server, not on a fetcher: every script reload builds a fresh
 // fetcher, so per-fetcher state would reset on each chapter and no wait would
-// ever be applied.
+// ever be applied. It is deliberately NOT applied inside parserFetcher.Fetch —
+// see the comment there — so the callers that do pace themselves (the download
+// job's chapter loop, batch-check's per-novel loop) are the only ones waiting.
 //
 // The wait is per host, not global: two concurrent downloads from different
 // sites never block each other, while chapters from the same site stay spaced
 // out. Delays are set once at Server construction (see New) and never mutated
-// afterwards, so concurrent fetchers can share the throttle race-free.
+// afterwards, so concurrent callers can share the throttle race-free.
 type parseThrottle struct {
 	mu              sync.Mutex
 	lastFetchByHost map[string]time.Time
@@ -79,8 +81,8 @@ func throttleHost(rawURL string) string {
 	return rawURL
 }
 
-// wait blocks until the configured inter-fetch gap has elapsed since the
-// slot this URL's host last reserved. Concurrent callers for the same host
+// wait blocks until the configured inter-fetch gap has elapsed since the slot
+// this URL's host last reserved. Concurrent callers for the same host
 // serialize: each reserves its slot (last fetch + minDelay, plus jitter)
 // under the lock before sleeping, so N simultaneous fetches wake spaced
 // minDelay..maxDelay apart instead of all waking at the same moment. The
@@ -123,6 +125,26 @@ func (t *parseThrottle) wait(ctx context.Context, rawURL string) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// markFetched records that a request to this host actually went out. Reserving
+// a slot is not the same as issuing a request: without this stamp a caller that
+// fetches without waiting (every parser fetch, since the throttle no longer
+// lives inside Fetch) leaves the host looking idle, and the next waiter's gap
+// is computed from a stale or zero timestamp. The stamp never moves the
+// recorded time backwards, so it cannot shorten a gap a concurrent waiter
+// already reserved.
+func (t *parseThrottle) markFetched(rawURL string) {
+	if t == nil {
+		return
+	}
+	host := throttleHost(rawURL)
+	now := time.Now()
+	t.mu.Lock()
+	if t.lastFetchByHost[host].Before(now) {
+		t.lastFetchByHost[host] = now
+	}
+	t.mu.Unlock()
 }
 
 // parserFetcher adapts Yara's HTTP and browser-worker paths to the interface
@@ -193,13 +215,23 @@ func isSiteFetchRefused(err error) bool {
 
 // Fetch implements parserhost.Fetcher. Errors returned here are network
 // failures and deliberately stay plain Go errors: the engine passes them
-// through untouched so a broken site is distinguishable from a broken script.
-// The one exception is a siteFetchRefusedError from the SSRF guard, which is
-// a deliberate refusal and is never retried via the browser worker.
+// Fetch performs one script-requested HTTP fetch.
+//
+// Errors returned here are network failures and deliberately stay plain Go
+// errors: the engine passes them through untouched so a broken site is
+// distinguishable from a broken script. The one exception is a
+// siteFetchRefusedError from the SSRF guard, which is a deliberate refusal and
+// is never retried via the browser worker.
+//
+// It deliberately does NOT wait between fetches. A script's toc() is two or
+// three catalog pages plus their metadata; spacing those by the download
+// throttle turned every check into a 15-20s wall and made the engine's
+// toc timeout unreachably low for novels whose catalog paginates (the walk
+// needs one fetch per page). The throttle belongs where the aggressive
+// request pattern actually is — between chapter downloads — so it is applied
+// by the download job, not here. Every fetch still stamps the host's last-fetch
+// time so a later wait computes its gap from a real request, not a zero value.
 func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.FetchResult, error) {
-	if err := f.throttle.wait(ctx, rawURL); err != nil {
-		return nil, err
-	}
 	// Every script-requested URL is checked before anything is fetched. The
 	// direct path additionally resolves the host; the worker path gets the
 	// literal checks only, because the server's DNS says nothing about what the
@@ -212,6 +244,10 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 	}
 	if !useWorker {
 		result, err := f.fetchDirect(ctx, rawURL)
+		// The request is on the wire either way (it failed after being sent),
+		// so stamp it before deciding whether a worker retry follows: that
+		// second attempt is another request to the same host.
+		f.throttle.markFetched(rawURL)
 		if err == nil && !looksBlocked(result) {
 			if herr := applySiteHelpers(ctx, result.FinalURL, result, f); herr != nil {
 				return nil, herr
@@ -232,6 +268,7 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 		slog.Info("direct parser fetch failed, retrying via browser worker", "url", rawURL, "status", statusOf(result, err), "error", err)
 	}
 	result, err := f.fetchViaWorker(ctx, rawURL)
+	f.throttle.markFetched(rawURL)
 	if err != nil {
 		return nil, err
 	}

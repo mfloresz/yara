@@ -20,17 +20,20 @@ const APIVersion = 1
 
 const (
 	DefaultTimeout      = 30 * time.Second
-	DefaultTOCTimeout   = 120 * time.Second
+	DefaultTOCTimeout   = 300 * time.Second
 	DefaultMaxFetches   = 200
 	DefaultMaxBodyBytes = 5 << 20
 )
 
-// DefaultTOCTimeout covers the slowest legitimate TOC: one Livewire-aware
-// browser-worker fetch (tab + retries ≈ 60–90s) or, when that is missing, the
-// sequential walk fallback. ponytail: the walk also pays the per-host download
-// throttle, so at the default 5–10s gap it only reaches ~12–25 chapters before
-// this ceiling turns it into a parser_timeout; the real fix is keeping each
-// site's catalog payload fetch healthy so the walk stays a last resort.
+// DefaultTOCTimeout covers the slowest legitimate TOC. Two things can make one
+// long: a Livewire-aware browser-worker fetch (a background tab plus Cloudflare
+// retries ≈ 60–90s, and the worker queue's own safety-net ceiling is 5 minutes),
+// and a catalog that paginates, where toc() walks one page per fetch. The old
+// 120s ceiling was sized against a toc() that paid the per-host download
+// throttle on every page, which capped it at ~12–25 chapters; fetches inside a
+// single invocation are no longer throttled (see parserFetcher.Fetch), so the
+// ceiling is now the worker round-trip rather than the walk, and 120s left a
+// long novel with no headroom. MaxFetches still bounds the walk at 200 pages.
 
 // Options bounds a single script invocation. Zero-valued fields fall back to
 // the defaults, so only the limits a test cares about need to be set.

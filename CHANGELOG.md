@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+
+- **Update checks are fast again.** Verifying a novel against its source took 15–20s more than it used to, and on very long novels it failed outright. The 5–10s anti-scraping gap was being applied to every single request a parser makes, so the two or three catalog pages behind one check were spaced out like chapters — and a novel whose catalog paginates ran past the check's time limit and reported a vague parser error instead of listing its chapters. The gap now applies only between chapter downloads, exactly as before. A check of one novel is back to about two seconds.
+- A failed check no longer costs twice as long as it used to. Hitting the parser's time limit is not evidence of an outdated parser script, so it no longer triggers the "download the published script and run the whole check again" retry that ended at the same error.
+- The parser's time limit for reading a chapter catalog is raised from 2 to 5 minutes, so a slow site or a browser-worker round-trip on a very long novel no longer lands on the error.
+
 ## [v0.41.0] - 2026-10-04
 
 ### ⚠️ Breaking changes

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -119,6 +122,133 @@ func TestParseThrottleFirstFetchNotDelayed(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Fatalf("first fetch to a host was delayed by %v", elapsed)
+	}
+}
+
+// Fetches do not wait, but they must still stamp the host's last-fetch time.
+// A fetch that went out without stamping leaves the host looking idle, and the
+// next waiter's gap would be computed from a zero timestamp — which is how a
+// same-site job queue lost its cooldown.
+func TestFetchStampsHostWithoutWaiting(t *testing.T) {
+	env := newAPITestEnv(t)
+	useRewritingClient(env, map[string]string{"novelfire.net": "http://127.0.0.1:1"})
+	setParserThrottle(env, 5000, 5000)
+
+	f := newParserFetcher(env.server, "user-1", false, nil)
+
+	// Two fetches in a row: neither may sleep, which is what makes a check
+	// fast now that the throttle no longer lives inside Fetch.
+	start := time.Now()
+	for i := 0; i < 2; i++ {
+		if _, err := f.Fetch(context.Background(), "https://novelfire.net/book/x"); err == nil {
+			t.Fatal("expected the unreachable mock to fail the fetch")
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("consecutive fetches to one host waited %v; Fetch must not throttle", elapsed)
+	}
+
+	// Both requests are on the record, so a later wait measures its gap from
+	// the second fetch instead of seeing an untouched host.
+	tr := env.server.parserThrottle
+	tr.mu.Lock()
+	stamp := tr.lastFetchByHost["novelfire.net"]
+	tr.mu.Unlock()
+	if stamp.IsZero() {
+		t.Fatal("fetch did not stamp the host's last-fetch time")
+	}
+
+	start = time.Now()
+	if err := tr.wait(context.Background(), "https://novelfire.net/book/y"); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 4*time.Second {
+		t.Fatalf("wait after a real fetch returned in %v, want at least the 5s gap", elapsed)
+	}
+}
+
+// A fetch stamp must never move a host's recorded time backwards, or a
+// concurrent waiter's reserved slot could be shortened by a late finish.
+func TestMarkFetchedNeverMovesTimeBackwards(t *testing.T) {
+	tr := newParseThrottle(1000, 1000)
+	future := time.Now().Add(time.Hour)
+
+	tr.mu.Lock()
+	tr.lastFetchByHost["later.example"] = future
+	tr.mu.Unlock()
+
+	tr.markFetched("https://later.example/x")
+
+	tr.mu.Lock()
+	got := tr.lastFetchByHost["later.example"]
+	tr.mu.Unlock()
+	if !got.Equal(future) {
+		t.Fatalf("markFetched moved a reserved slot backwards: got %v, want %v", got, future)
+	}
+}
+
+// The invocation ceiling is not evidence of a stale parser, so a timeout must
+// not trigger the auto-update retry: that would spend a manifest refetch, a
+// script download and a second full TOC run to reach the same error.
+func TestParserTimeoutSkipsAutoUpdateRetry(t *testing.T) {
+	env := newAPITestEnv(t)
+	env.server.Cfg.ParsersAutoUpdate = true
+	env.server.Cfg.ParsersManifestURL = "https://slowtoc-manifest.example/index.json"
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html><body><h1>Slow</h1></body></html>"))
+	}))
+	t.Cleanup(mock.Close)
+	useRewritingClient(env, map[string]string{"slowtoc.example": mock.URL})
+
+	writeParserScript(t, env, "slowtoc.js", `module.exports = {
+  name: 'slowtoc', apiVersion: 1, requiresBrowser: false,
+  probe: function (u) { return String(u).indexOf('slowtoc.example') >= 0; },
+  toc: function (ctx, url) {
+    var doc = ctx.get(url);
+    // Exceed the fetch budget: the binding aborts through the VM interrupt
+    // with CodeParserTimeout, the same code the wall clock produces.
+    for (var i = 0; i < 400; i++) { ctx.get(url); }
+    return { novel: { title: 'X' }, chapters: [] };
+  },
+  chapter: function () { return { title: 'c', contentHtml: '<p>x</p>' }; },
+};`)
+
+	// The manifest advertises a different digest for this very script, so the
+	// update path would swap it in if it ran. fetchedAt is stamped so the entry
+	// counts as live (a zero fetchedAt reads as long expired).
+	env.server.parserUpdates.mu.Lock()
+	env.server.parserUpdates.manifest = &parserManifest{
+		APIVersion: 1,
+		Parsers: []parserManifestEntry{
+			{Name: "slowtoc", File: "slowtoc.js", SHA256: strings.Repeat("ab", 32)},
+		},
+	}
+	env.server.parserUpdates.fetchedAt = time.Now()
+	env.server.parserUpdates.mu.Unlock()
+
+	_, err := env.server.fetchSourceSnapshot(context.Background(), "user-1", "https://slowtoc.example/book/x")
+	if err == nil {
+		t.Fatal("expected the fetch-budget overrun to fail the TOC")
+	}
+	var scriptErr *parserhost.ScriptError
+	if !errors.As(err, &scriptErr) || scriptErr.Code != parserhost.CodeParserTimeout {
+		t.Fatalf("expected parser_timeout, got %v", err)
+	}
+	env.server.parserUpdates.mu.Lock()
+	cached := env.server.parserUpdates.manifest
+	env.server.parserUpdates.mu.Unlock()
+	if cached == nil || len(cached.Parsers) != 1 {
+		t.Fatal("manifest cache was invalidated by a parser_timeout")
+	}
+	// The script file is untouched: a retry would have replaced it.
+	onDisk, readErr := os.ReadFile(filepath.Join(env.server.Cfg.ParsersDir, "slowtoc.js"))
+	if readErr != nil {
+		t.Fatalf("read installed script: %v", readErr)
+	}
+	if !strings.Contains(string(onDisk), "for (var i = 0; i < 400") {
+		t.Fatal("parser_timeout triggered a parser update")
 	}
 }
 

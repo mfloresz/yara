@@ -281,7 +281,7 @@ func (s *Server) fetchSourceSnapshot(ctx context.Context, userID, rawURL string)
 	toc, err := script.TOC(ctx, rawURL)
 	if err != nil {
 		var scriptErr *parserhost.ScriptError
-		if errors.As(err, &scriptErr) {
+		if errors.As(err, &scriptErr) && !isParserTimeout(scriptErr) {
 			// A repeatable script failure is the signature of a stale
 			// parser: drop the manifest cache so the update check below
 			// re-fetches immediately (even after an outage), then try the
@@ -357,7 +357,7 @@ func (s *Server) fetchChapterThroughScript(ctx context.Context, userID, novelURL
 	chapter, err := script.Chapter(ctx, chapterURL)
 	if err != nil {
 		var scriptErr *parserhost.ScriptError
-		if errors.As(err, &scriptErr) {
+		if errors.As(err, &scriptErr) && !isParserTimeout(scriptErr) {
 			s.invalidateParserUpdates()
 			if fresh, retried := s.updatedScriptForRetry(ctx, userID, entry, novelURL); retried {
 				if retryChapter, retryErr := fresh.Chapter(ctx, chapterURL); retryErr == nil {
@@ -557,6 +557,19 @@ func (s *Server) storeProbeOnNotMySite(rawURL string, err error, supported bool,
 // parserErrorMessage turns a parser or network failure into a user-actionable
 // string suitable for a job's errorMessage. Taxonomy codes are the contract;
 // network failures arrive as plain errors and are reported as such.
+// isParserTimeout reports whether a script failure is the invocation ceiling
+// (wall clock, fetch budget or body limit) rather than a parser mismatch.
+//
+// It matters because the auto-update retry keys off "the script failed, so it
+// is probably stale". A timeout says nothing about script version: the same
+// script times out identically when re-downloaded, so retrying would spend a
+// manifest refetch, a script download and a second full TOC run to reach the
+// exact same error. Long novels whose catalog paginates are the case this
+// protects — the walk needs one fetch per page and can outrun the ceiling.
+func isParserTimeout(scriptErr *parserhost.ScriptError) bool {
+	return scriptErr != nil && scriptErr.Code == parserhost.CodeParserTimeout
+}
+
 func parserErrorMessage(err error) string {
 	if err == nil {
 		return ""

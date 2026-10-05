@@ -347,6 +347,17 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		if err := ctx.Err(); err != nil {
 			break
 		}
+		// Space consecutive chapters from the same site. This is where the
+		// download throttle belongs: a chapter crawl is the aggressive request
+		// pattern the 5-10s gap exists for, while a TOC's handful of catalog
+		// fetches are not paced at all (see parserFetcher.Fetch).
+		// The first chapter is never delayed, matching the throttle's rule
+		// that a host's first request goes out immediately.
+		if idx > 0 {
+			if err := cooldown(ctx); err != nil {
+				break
+			}
+		}
 		// Report the in-flight chapter so the jobs drawer can show
 		// "Descargando capítulo: <título>" while the fetch runs.
 		if ue := s.Store.UpdateJobProgressFast(job.ID, map[string]interface{}{

@@ -162,14 +162,15 @@ func decodeChrysanthemumGardenResponse(ctx context.Context, assets siteAssetFetc
 }
 
 // fetchSiteAsset fetches a binary asset referenced by a page (font files for
-// the hybrid helpers): same throttle, SSRF guard, redirect policy and client
-// as the page fetch, without the charset decoding (binary bodies).
+// the hybrid helpers): same SSRF guard, redirect policy and client as the page
+// fetch, without the charset decoding (binary bodies).
+//
+// It does not wait: it runs inside a chapter fetch, and the download job
+// already paces chapters (see parserFetcher.Fetch and processDownloadJob). A
+// second wait here would space the asset behind the page it belongs to.
 func (f *parserFetcher) fetchSiteAsset(ctx context.Context, pageURL, assetURL string, maxBytes int64) ([]byte, error) {
 	abs, err := resolvePageAssetURL(pageURL, assetURL)
 	if err != nil {
-		return nil, err
-	}
-	if err := f.throttle.wait(ctx, abs); err != nil {
 		return nil, err
 	}
 	if err := f.server.validateSiteFetchURL(ctx, abs); err != nil {
@@ -181,6 +182,7 @@ func (f *parserFetcher) fetchSiteAsset(ctx context.Context, pageURL, assetURL st
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	resp, err := f.client.Do(req)
+	f.throttle.markFetched(abs)
 	if err != nil {
 		return nil, fmt.Errorf("fetching asset %s: %w", abs, err)
 	}

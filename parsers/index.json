@@ -74,6 +74,12 @@
       "requiresBrowser": false
     },
     {
+      "name": "novelping",
+      "file": "novelping.js",
+      "sha256": "aa8768e9cb6299f51c8157f36fdb07c170362f0a446b11d51aab7b0c767da524",
+      "requiresBrowser": false
+    },
+    {
       "name": "skydemonorder",
       "file": "skydemonorder.js",
       "sha256": "783fb06e32468b2fb2fe929d0c5bebe9ce06e471c5f250b588d36e31257c0f55",
@@ -98,5 +104,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "c5c300d88116b01da0eccd587222fcfc866f6698052af8a2e1c9ad49c8ecf144b3bfb8d2f02f7717b0e4091e8861d1f964f0fbc8d22e1ba417afff24e2cec70a"
+  "signature": "1b9861ec7dee02276285a2033fc3216527a8492f3927046434c28586192b323db50749a2bb500dbd97daaf98948c1a2f7a5dd98c1e5961cc84fe9e2f9c983904"
 }

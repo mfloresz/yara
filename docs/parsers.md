@@ -124,16 +124,18 @@ Per invocation, defaults from `internal/parserhost`:
 | Limit | Default | On breach |
 | --- | --- | --- |
 | Wall-clock (`chapter`) | 30s | `parser_timeout` |
-| Wall-clock (`toc`) | 120s | `parser_timeout` |
+| Wall-clock (`toc`) | 300s | `parser_timeout` |
 | `ctx.get` calls | 200 | `parser_timeout` |
 | Response body | 5 MiB | `script_error` |
 
-The `toc` ceiling is longer because a paginating catalog pays the download
-throttle on every page. Every one of these limits is enforced by the host and
-none of them can be caught from the script — including the fetch budget and the
-body size, which abort the invocation rather than throwing an ordinary `Error`.
-Do not wrap `ctx.get` in `try/catch` expecting to swallow them: a `catch` there
-covers a network failure on that one page, and nothing else.
+The `toc` ceiling is longer because two things can make it slow: a Livewire-aware
+browser-worker fetch (a background tab plus Cloudflare retries, and the worker
+queue's own safety-net ceiling is 5 minutes) and a catalog that paginates, where
+`toc` walks one page per fetch. Every one of these limits is enforced by the host
+and none of them can be caught from the script — including the fetch budget and
+the body size, which abort the invocation rather than throwing an ordinary
+`Error`. Do not wrap `ctx.get` in `try/catch` expecting to swallow them: a
+`catch` there covers a network failure on that one page, and nothing else.
 
 An HTTP error status is not content either. A direct fetch answering 404, 410
 or 500 fails the fetch and is reported as a network failure, not as a broken
@@ -141,17 +143,18 @@ script, so the error page never reaches your selectors. 403, 406, 429 and 503
 are retried through the browser worker when one is connected, since those are
 answers a real browser can change.
 
-Between consecutive fetches to the same site (URL host), Yara waits a random
-interval in `[DOWNLOAD_MIN_DELAY_MS, DOWNLOAD_MAX_DELAY_MS]` (defaults
-5000/10000 ms). The first fetch to each host is not delayed, and sites never
-block each other: two concurrent downloads from different hosts run in
+Between consecutive **chapter downloads** from the same site (URL host), Yara
+waits a random interval in `[DOWNLOAD_MIN_DELAY_MS, DOWNLOAD_MAX_DELAY_MS]`
+(defaults 5000/10000 ms). The first chapter of a job is not delayed, and sites
+never block each other: two concurrent downloads from different hosts run in
 parallel. Throttling is the server's job — do not add sleeps inside scripts.
 
-That throttle applies to *every* fetch, including the pages a paginating
-`toc` walks. A catalog that needs more than roughly 12–25 sequential page
-fetches cannot finish inside the `toc` budget at the default delays; prefer
-the site's own catalog payload over walking chapter by chapter, and treat a
-walk as the last-resort fallback.
+The gap is **not** applied between fetches inside a single script invocation.
+A `toc` fetches its catalog pages back to back and a `chapter` fetches its page
+(and any referenced font), because pacing those is what turned every update
+check into a 15–20s wait and left a paginating catalog unable to finish inside
+the `toc` budget. Every fetch still records its host's last-request time, so
+the next chapter download measures its gap from the real last request.
 
 ## Error taxonomy
 
