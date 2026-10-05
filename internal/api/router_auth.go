@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -74,9 +77,10 @@ func loadAuthFromCookie() *hook.Handler[*core.RequestEvent] {
 func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-			Name     string `json:"name"`
+			Email      string `json:"email"`
+			Password   string `json:"password"`
+			Name       string `json:"name"`
+			SetupToken string `json:"setupToken"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
@@ -88,9 +92,12 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "password must be at least 8 characters")
 		}
 
-		// First user on a fresh install becomes the admin. Everything after
-		// that requires an invitation (handleInvitationAccept creates the
-		// invited users itself and never goes through this handler).
+		// First user on a fresh install becomes the admin, but only after
+		// presenting the setup token: without it, an internet-exposed
+		// uninitialized instance could be claimed by the first visitor to
+		// find it. Everything after that requires an invitation
+		// (handleInvitationAccept creates the invited users itself and never
+		// goes through this handler).
 		s.bootstrapMu.Lock()
 		userCount, err := s.Store.CountUsers()
 		if err != nil {
@@ -100,6 +107,10 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 		if userCount > 0 {
 			s.bootstrapMu.Unlock()
 			return writeV1Error(e, http.StatusForbidden, "forbidden", "registration requires an invitation")
+		}
+		if !s.bootstrapSecretMatches(body.SetupToken) {
+			s.bootstrapMu.Unlock()
+			return writeV1Error(e, http.StatusForbidden, "forbidden", "a valid setup token is required for the first registration")
 		}
 		result, err := s.Store.CreateUser(body.Email, body.Password, body.Name)
 		if err != nil {
@@ -116,11 +127,43 @@ func handleAuthRegister(s *Server) func(*core.RequestEvent) error {
 		result.User = promoted
 		setAuthCookie(e, result.Token)
 		slog.Info("first user registered as admin", "userId", result.User.ID)
+		// Bootstrap completed: the setup token has no further use, and the
+		// generated copy must not linger on disk. Best effort — a leftover
+		// file is inert once users exist (the token branch above is
+		// unreachable).
+		if path := s.setupKeyPath(); path != "" {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Warn("failed to remove setup key file", "path", path, "error", err)
+			}
+		}
 		// The session token is only delivered via the HttpOnly cookie; it is
 		// never echoed in the response body where JS-readable XSS payloads
 		// could exfiltrate it.
 		return v1Respond(e, http.StatusCreated, map[string]any{"user": result.User}, nil, nil)
 	}
+}
+
+// bootstrapSecretMatches reports whether the submitted setup token matches
+// the configured one, in constant time. An empty configured secret fails
+// closed: it can never match an (empty) submission.
+func (s *Server) bootstrapSecretMatches(token string) bool {
+	secret := ""
+	if s.Cfg != nil {
+		secret = s.Cfg.BootstrapSecret
+	}
+	if secret == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
+}
+
+// setupKeyPath is where main.go persists a generated setup token; empty when
+// no data dir is configured (bare test servers).
+func (s *Server) setupKeyPath() string {
+	if s.Cfg == nil || s.Cfg.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(s.Cfg.DataDir, "setup.key")
 }
 
 // handleAuthSetupStatus tells a fresh install's UI that the first (admin)
@@ -145,13 +188,26 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
+		// Per-account failure ceiling: the IP limiters cannot see a
+		// brute-force that rotates source addresses, so failed logins are
+		// also counted against the normalized email itself. Checked before
+		// the credential verification so a locked account stops paying the
+		// bcrypt cost.
+		accountKey := strings.ToLower(strings.TrimSpace(body.Email))
+		if s.loginFailures.blocked(accountKey) {
+			slog.Warn("login failure limit exceeded", "path", e.Request.URL.Path)
+			e.Response.Header().Set("Retry-After", "900")
+			return writeV1Error(e, http.StatusTooManyRequests, "rate_limited", "too many failed login attempts, try again later")
+		}
 		result, err := s.Store.AuthenticateUser(body.Email, body.Password)
 		if err != nil {
 			if err == store.ErrForbidden {
 				return writeV1Error(e, http.StatusForbidden, "account_blocked", "account is blocked")
 			}
+			s.loginFailures.record(accountKey)
 			return e.BadRequestError("invalid credentials", nil)
 		}
+		s.loginFailures.reset(accountKey)
 		setAuthCookie(e, result.Token)
 		return v1Respond(e, http.StatusOK, map[string]any{"user": result.User}, nil, nil)
 	}

@@ -30,7 +30,9 @@
             </p>
             <p class="small muted how-text">
               Esta instalación aún no tiene usuarios. La primera cuenta creada se
-              convertirá en administrador.
+              convertirá en administrador. Necesitas el token de configuración que el
+              servidor generó al primer arranque: está en el log de inicio o en el
+              archivo <code>setup.key</code> del directorio de datos.
             </p>
           </div>
           <form class="login-form" @submit.prevent="submitSetup">
@@ -50,6 +52,16 @@
                 type="password"
                 show-password-on="click"
                 placeholder="Mínimo 8 caracteres"
+              />
+            </div>
+            <div>
+              <label class="small muted" for="setup-token">Token de configuración</label>
+              <n-input
+                id="setup-token"
+                v-model:value="setupToken"
+                type="password"
+                show-password-on="click"
+                placeholder="Token del log del servidor"
               />
             </div>
             <n-alert v-if="error" type="error" :title="error" />
@@ -193,6 +205,7 @@ const manualToken = ref("");
 const name = ref("");
 const email = ref("");
 const password = ref("");
+const setupToken = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
 
@@ -269,7 +282,12 @@ async function submitSetup() {
   error.value = null;
   try {
     // El backend convierte al primer usuario en administrador.
-    await api.auth.register({ email: email.value, password: password.value, name: name.value });
+    await api.auth.register({
+      email: email.value,
+      password: password.value,
+      name: name.value,
+      setupToken: setupToken.value,
+    });
     await login({ email: email.value, password: password.value });
     await router.push("/");
   } catch (err) {

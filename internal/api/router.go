@@ -114,14 +114,18 @@ type Server struct {
 	// Rate limiters for the internet-exposed auth surface.
 	loginLimiter      *rateLimiter
 	invitationLimiter *rateLimiter
+	// loginFailures counts failed logins per normalized email, so a
+	// distributed brute-force (many source IPs, one account) still hits a
+	// ceiling the per-IP limiters cannot see.
+	loginFailures *loginFailureLimiter
 	// wsLimiter caps WebSocket upgrade attempts per client IP so one peer
 	// cannot reconnect in a loop and starve the maxUnauthenticatedWorkers
 	// slots that legitimate browser workers need.
 	wsLimiter *rateLimiter
 	// globalLimiter is the backstop under the endpoint-specific limiters: it
 	// caps total requests per client IP across every route, covering the
-	// authenticated surface and PocketBase's native record CRUD, which have
-	// no per-endpoint limit of their own.
+	// authenticated surface and static assets, which have no per-endpoint
+	// limit of their own.
 	globalLimiter *rateLimiter
 	// agentLimiter caps agent chat turns per client IP: each turn spends
 	// multiple model calls plus tool executions.
@@ -156,6 +160,7 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		loginLimiter:       newRateLimiter(5, 5),   // 5 attempts per minute per IP
 		invitationLimiter:  newRateLimiter(10, 10), // 10 redemptions per minute per IP
 		wsLimiter:          newRateLimiter(16, 16), // 16 WS upgrades per minute per IP
+		loginFailures:      newLoginFailureLimiter(),
 		parserThrottle:     newParseThrottle(minDelayMs, maxDelayMs),
 		globalLimiter:      newRateLimiter(600, 600), // global backstop: 600 requests per minute per IP
 		agentLimiter:       newRateLimiter(10, 20),   // agent chat: burst 10, 20 turns per minute per IP
@@ -262,6 +267,21 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 		},
 	})
 
+	// Block PocketBase's native record CRUD and file routes entirely. The app
+	// serves everything through /api/v1 — neither the SPA nor the browser
+	// workers ever call these paths — so leaving them open would make the
+	// per-collection API rules the only line of defense on an internet-exposed
+	// deploy, under a global rate limit instead of the per-endpoint ones.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "blockNativeRecordAPI",
+		Func: func(e *core.RequestEvent) error {
+			if hasPrefix(e.Request.URL.Path, "/api/collections") || hasPrefix(e.Request.URL.Path, "/api/files") {
+				return e.NotFoundError("", nil)
+			}
+			return e.Next()
+		},
+	})
+
 	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
 	// Must run before any handler.
 	router.Bind(&hook.Handler[*core.RequestEvent]{
@@ -278,8 +298,8 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	})
 
 	// Global per-IP rate limit: the backstop under the endpoint-specific
-	// auth limiters, covering every other route (authenticated API, native
-	// record CRUD, static assets). Keys follow the same trust rules as the
+	// auth limiters, covering every other route (authenticated API, static
+	// assets). Keys follow the same trust rules as the
 	// auth limiter (clientKeyForRateLimit): behind cloudflared every real
 	// client gets its own bucket; on a direct connection only the socket
 	// address is trusted, so the key cannot be spoofed.

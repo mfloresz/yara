@@ -1704,7 +1704,7 @@ func newAPITestEnv(t *testing.T) *apiTestEnv {
 	// tests override it explicitly via setParserThrottle when they need real
 	// spacing, so the ambient default stays at 1ms or the job-finish deadline
 	// (15s) races the crawl on every multi-chapter fixture.
-	server := New(st, &config.Config{DataDir: dataDir, ParsersDir: testParsersDir(t), DownloadMinDelayMs: 1, DownloadMaxDelayMs: 1})
+	server := New(st, &config.Config{DataDir: dataDir, ParsersDir: testParsersDir(t), DownloadMinDelayMs: 1, DownloadMaxDelayMs: 1, BootstrapSecret: "test-setup-token"})
 	// Parser scripts are read from disk per request (no cache), so a temporary
 	// copy of the testdata dir keeps tests independent of each other and lets a
 	// test edit a script to exercise hot reload.
@@ -2741,5 +2741,82 @@ func TestTranslateDescription(t *testing.T) {
 	decodeRaw(t, resp, &errEnvelope)
 	if errEnvelope.Error.Code != "ai_request_failed" {
 		t.Fatalf("unexpected error code %q", errEnvelope.Error.Code)
+	}
+}
+
+func TestLoginPerAccountFailureLockout(t *testing.T) {
+	env := newAPITestEnv(t)
+	// Raise the per-IP limiter in place (the route closure captured the
+	// limiter pointer at registration) so the test exercises the per-account
+	// counter: the IP limiter allows only 5 logins per minute.
+	env.server.loginLimiter.capacity = 1000
+	env.server.loginLimiter.perMinute = 1000
+
+	registerUser(t, env, "lockout-alice@example.com", "secret123", "Alice")
+
+	// Ten wrong-password attempts are individually answered with the generic
+	// invalid-credentials failure...
+	for i := 0; i < 10; i++ {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+			"email":    "lockout-alice@example.com",
+			"password": "wrong-password",
+		})
+		assertStatus(t, resp, http.StatusBadRequest)
+	}
+
+	// ...but after ten failures even the correct password is refused for the
+	// window: the counter is per account, not per IP.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+		"email":    "lockout-alice@example.com",
+		"password": "secret123",
+	})
+	assertStatus(t, resp, http.StatusTooManyRequests)
+}
+
+func TestLoginFailureCounterResetsOnSuccess(t *testing.T) {
+	env := newAPITestEnv(t)
+	env.server.loginLimiter.capacity = 1000
+	env.server.loginLimiter.perMinute = 1000
+
+	registerUser(t, env, "lockout-bob@example.com", "secret123", "Bob")
+
+	login := func(password string) *httptest.ResponseRecorder {
+		return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+			"email":    "lockout-bob@example.com",
+			"password": password,
+		})
+	}
+
+	// Five failures, then a successful login resets the per-account counter.
+	for i := 0; i < 5; i++ {
+		assertStatus(t, login("wrong-password"), http.StatusBadRequest)
+	}
+	assertStatus(t, login("secret123"), http.StatusOK)
+
+	// Five more failures stay under the limit of ten, so the account can
+	// still log in.
+	for i := 0; i < 5; i++ {
+		assertStatus(t, login("wrong-password"), http.StatusBadRequest)
+	}
+	assertStatus(t, login("secret123"), http.StatusOK)
+}
+
+func TestNativePocketBaseRecordAPIBlocked(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "native-blocked@example.com", "secret123", "Alice")
+
+	// The native record CRUD and file routes answer 404 even for a fully
+	// authenticated user: /api/v1 is the only API surface. This includes the
+	// auth family that blockNativePocketBaseAuth has always closed.
+	for _, path := range []string{
+		"/api/collections/users/records",
+		"/api/collections/novels/records",
+		"/api/collections/users/records/" + alice.User.ID,
+		"/api/collections/users/auth-with-password",
+		"/api/collections/users/auth-refresh",
+		"/api/files/novels/abc123/cover.jpg",
+	} {
+		resp := doJSONRequest(t, env.handler, http.MethodGet, path, alice.Token, nil)
+		assertStatus(t, resp, http.StatusNotFound)
 	}
 }

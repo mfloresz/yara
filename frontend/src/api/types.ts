@@ -481,6 +481,7 @@ export type WorkerToken = {
   extensionId: string;
   label: string;
   lastUsedAt?: string;
+  expiresAt?: string;
   createdAt?: string;
   revoked: boolean;
 };

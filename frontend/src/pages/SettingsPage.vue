@@ -259,7 +259,7 @@
                 <div v-for="token in workerTokens" :key="token.id" class="token-row">
                   <div class="token-main">
                     <div class="token-label">{{ token.label }}</div>
-                    <div class="small muted mono">{{ token.extensionId.substring(0, 12) }}… · creado {{ formatDateTime(token.createdAt) }} · {{ token.lastUsedAt ? `usado ${formatDateTime(token.lastUsedAt)}` : 'nunca usado' }}</div>
+                    <div class="small muted mono">{{ token.extensionId.substring(0, 12) }}… · creado {{ formatDateTime(token.createdAt) }} · {{ token.lastUsedAt ? `usado ${formatDateTime(token.lastUsedAt)}` : 'nunca usado' }} · caduca {{ formatDateTime(token.expiresAt) }}</div>
                   </div>
                   <n-tag :type="token.revoked ? 'error' : 'success'" size="small" round>
                     {{ token.revoked ? 'Revocado' : 'Activo' }}

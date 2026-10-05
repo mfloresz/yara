@@ -128,3 +128,81 @@ func withIPRateLimit(limiter *rateLimiter, next func(*core.RequestEvent) error) 
 		return next(e)
 	}
 }
+
+// loginFailureLimiter counts failed login attempts per account (normalized
+// email) so brute-force spread across many source IPs still hits a ceiling:
+// the per-IP limiters cannot see an attack that rotates addresses. Failures
+// expire with the window and a successful login resets the count. The
+// tradeoff is inherent to per-account lockout: someone who knows the email
+// can refuse that account's logins for one window by burning failures, but
+// the account data is never modified and the block expires on its own.
+type loginFailureLimiter struct {
+	mu       sync.Mutex
+	failures map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+const (
+	loginFailureLimit  = 10
+	loginFailureWindow = 15 * time.Minute
+)
+
+func newLoginFailureLimiter() *loginFailureLimiter {
+	return &loginFailureLimiter{
+		failures: map[string][]time.Time{},
+		limit:    loginFailureLimit,
+		window:   loginFailureWindow,
+	}
+}
+
+// blocked reports whether the account reached the failure limit within the
+// window. Called before the credential check, so a locked account also stops
+// paying the bcrypt cost.
+func (l *loginFailureLimiter) blocked(key string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sweepLocked(now)
+	l.failures[key] = pruneFailures(l.failures[key], now, l.window)
+	return len(l.failures[key]) >= l.limit
+}
+
+// sweepLocked drops keys with no failures left inside the window once the map
+// grows past the sweep threshold, bounding memory on an internet-facing
+// deployment (same pattern as rateLimiter).
+func (l *loginFailureLimiter) sweepLocked(now time.Time) {
+	if len(l.failures) <= rateLimiterSweepSize {
+		return
+	}
+	for key, times := range l.failures {
+		if kept := pruneFailures(times, now, l.window); len(kept) == 0 {
+			delete(l.failures, key)
+		} else {
+			l.failures[key] = kept
+		}
+	}
+}
+
+func (l *loginFailureLimiter) record(key string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.failures[key] = append(pruneFailures(l.failures[key], now, l.window), now)
+}
+
+func (l *loginFailureLimiter) reset(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.failures, key)
+}
+
+func pruneFailures(times []time.Time, now time.Time, window time.Duration) []time.Time {
+	kept := times[:0]
+	for _, ts := range times {
+		if now.Sub(ts) < window {
+			kept = append(kept, ts)
+		}
+	}
+	return kept
+}

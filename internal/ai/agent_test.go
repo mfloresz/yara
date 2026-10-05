@@ -738,3 +738,16 @@ func TestSettingsTimeoutAppliesToRefine(t *testing.T) {
 		t.Errorf("refine took %s; the Settings timeout is not being applied to the refine loop", elapsed)
 	}
 }
+
+func TestWrapToolResultDelimitsUntrustedContent(t *testing.T) {
+	wrapped := wrapToolResult("get_chapter", "Once upon a time…")
+	if !strings.Contains(wrapped, `<tool_output tool="get_chapter" trust="untrusted">`) {
+		t.Fatalf("missing untrusted marker: %q", wrapped)
+	}
+	if !strings.HasPrefix(wrapped, "<tool_output ") || !strings.HasSuffix(wrapped, "</tool_output>") {
+		t.Fatalf("result not delimited: %q", wrapped)
+	}
+	if !strings.Contains(wrapped, "Once upon a time…") {
+		t.Fatalf("payload lost: %q", wrapped)
+	}
+}

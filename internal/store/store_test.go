@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -921,5 +923,108 @@ func TestUpdateJobCancelledGuard(t *testing.T) {
 	// Unknown job ids keep the ErrNotFound contract.
 	if err := st.UpdateJob("missing", map[string]any{"status": "failed"}); err != ErrNotFound {
 		t.Fatalf("update missing job = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAuthenticateUserUnknownEmailPaysBcryptCost(t *testing.T) {
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	if _, err := st.CreateUser("known-user@example.com", "secret123", "Known"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	start := time.Now()
+	if _, err := st.AuthenticateUser("no-such-user@example.com", "whatever-value"); err == nil {
+		t.Fatal("expected invalid credentials error for unknown email")
+	}
+	unknownElapsed := time.Since(start)
+
+	start = time.Now()
+	if _, err := st.AuthenticateUser("known-user@example.com", "wrong-password"); err == nil {
+		t.Fatal("expected invalid credentials error for wrong password")
+	}
+	knownElapsed := time.Since(start)
+
+	// The unknown-email path must pay the same bcrypt cost as the
+	// wrong-password path, or response times become an account enumeration
+	// oracle. bcrypt.DefaultCost is well above 20ms on any hardware, while the
+	// short-circuit path it replaces answered in ~1-3ms.
+	if unknownElapsed < 20*time.Millisecond {
+		t.Fatalf("unknown-email login answered in %v; expected >= 20ms (timing equalization missing)", unknownElapsed)
+	}
+	if knownElapsed < 20*time.Millisecond {
+		t.Fatalf("wrong-password login answered in %v; expected >= 20ms (bcrypt cost dropped?)", knownElapsed)
+	}
+}
+
+func TestWorkerTokenExpires(t *testing.T) {
+	dataDir := t.TempDir()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap pocketbase: %v", err)
+	}
+
+	encryptor, err := secure.NewEncryptorFromConfig("", filepath.Join(dataDir, "app.key"))
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+
+	st := New(app, encryptor)
+	if err := st.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	created, err := st.CreateUser("token-owner@example.com", "secret123", "Owner")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	token, plaintext, err := st.CreateWorkerToken(created.User.ID, "ext-1", "test")
+	if err != nil {
+		t.Fatalf("create worker token: %v", err)
+	}
+	if token.ExpiresAt == "" {
+		t.Fatal("expected expiresAt to be set on a freshly created worker token")
+	}
+
+	// A fresh token validates.
+	if _, err := st.ValidateWorkerToken(plaintext); err != nil {
+		t.Fatalf("fresh token should validate: %v", err)
+	}
+
+	// An expired token is rejected with the generic failure.
+	record, err := app.FindFirstRecordByFilter(WorkerTokensCollection, "token_hash = {:hash}", dbx.Params{"hash": token.TokenHash})
+	if err != nil {
+		t.Fatalf("find token record: %v", err)
+	}
+	record.Set("expires_at", types.NowDateTime().Add(-time.Hour))
+	if err := app.Save(record); err != nil {
+		t.Fatalf("expire token: %v", err)
+	}
+	if _, err := st.ValidateWorkerToken(plaintext); err == nil {
+		t.Fatal("expired token should not validate")
+	}
+
+	// Tokens predating the TTL (empty expires_at) fail closed.
+	record.Set("expires_at", "")
+	if err := app.Save(record); err != nil {
+		t.Fatalf("clear expiry: %v", err)
+	}
+	if _, err := st.ValidateWorkerToken(plaintext); err == nil {
+		t.Fatal("legacy token without expiry should not validate")
 	}
 }

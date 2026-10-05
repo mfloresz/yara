@@ -212,12 +212,13 @@ func multipartBody(t *testing.T, buf *bytes.Buffer, field, filename string, blob
 	return mw
 }
 
-// PocketBase's native record-auth endpoints are disabled: PocketBase's
-// built-in rate limits ship disabled, so leaving them alive would give an
+// PocketBase's native API is disabled wholesale: the auth family (PocketBase's
+// built-in rate limits ship disabled, so leaving it alive would give an
 // attacker an unthrottled password brute-force path that bypasses the
-// /api/v1/auth/login limiter. Even with valid credentials they must not
-// exist — including the superuser collection, whose token would unlock the
-// superuser-only management routes (/api/settings, /api/backups, ...).
+// /api/v1/auth/login limiter) and — since the native-record hardening — the
+// record CRUD and file routes too, even with valid credentials. /api/v1 is
+// the only API surface; the per-collection rules are not a defense layer the
+// app relies on.
 func TestNativePocketBaseAuthDisabled(t *testing.T) {
 	env := newAPITestEnv(t)
 	user := registerUser(t, env, "native-auth@example.com", "secret123", "Native")
@@ -238,17 +239,15 @@ func TestNativePocketBaseAuthDisabled(t *testing.T) {
 		assertStatus(t, resp, http.StatusNotFound)
 	}
 
-	// The block is scoped to the auth family: the rules-protected native
-	// record CRUD must keep working (locks in that /api/collections/* itself
-	// is not blanket-blocked).
+	// The block covers the whole native record/file surface, including the
+	// user's own record: nothing in the SPA or the browser workers calls
+	// these paths, and blanket-404 keeps the per-collection rules from
+	// becoming the only line of defense on an internet-exposed deploy.
 	self := doJSONRequest(t, env.handler, http.MethodGet, "/api/collections/users/records/"+user.User.ID, user.Token, nil)
-	assertStatus(t, self, http.StatusOK)
+	assertStatus(t, self, http.StatusNotFound)
 
-	// Superuser records stay hidden behind PocketBase's own collection rules.
 	su := doJSONRequest(t, env.handler, http.MethodGet, "/api/collections/_superusers/records", user.Token, nil)
-	if su.Code == http.StatusOK && !strings.Contains(su.Body.String(), `"totalItems":0`) {
-		t.Fatalf("superuser records leaked to a regular user: %s", su.Body.String())
-	}
+	assertStatus(t, su, http.StatusNotFound)
 }
 
 // The global limiter is the backstop for every route: after the per-IP burst

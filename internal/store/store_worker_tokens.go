@@ -9,7 +9,15 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
+
+// workerTokenTTL bounds how long a browser worker token stays valid. Unlike
+// every other credential in the system (sessions, invitations, password
+// resets) a worker token used to live until manually revoked, so a leaked one
+// was usable forever. Renewal = revoke + create a new one via the regular
+// approve flow.
+const workerTokenTTL = 90 * 24 * time.Hour
 
 type WorkerToken struct {
 	ID          string `json:"id"`
@@ -18,6 +26,7 @@ type WorkerToken struct {
 	TokenHash   string `json:"-"`
 	Label       string `json:"label"`
 	LastUsedAt  string `json:"lastUsedAt,omitempty"`
+	ExpiresAt   string `json:"expiresAt,omitempty"`
 	CreatedAt   string `json:"createdAt,omitempty"`
 	Revoked     bool   `json:"revoked"`
 }
@@ -55,6 +64,7 @@ func (s *Store) CreateWorkerToken(userID, extensionID, label string) (*WorkerTok
 	record.Set("token_hash", hash)
 	record.Set("label", label)
 	record.Set("revoked", false)
+	record.Set("expires_at", types.NowDateTime().Add(workerTokenTTL))
 
 	if err := s.App.Save(record); err != nil {
 		return nil, "", fmt.Errorf("save worker token: %w", err)
@@ -66,6 +76,7 @@ func (s *Store) CreateWorkerToken(userID, extensionID, label string) (*WorkerTok
 		ExtensionID: extensionID,
 		TokenHash:   hash,
 		Label:       label,
+		ExpiresAt:   record.GetDateTime("expires_at").String(),
 		CreatedAt:   record.GetString("created"),
 		Revoked:     false,
 	}
@@ -90,6 +101,13 @@ func (s *Store) ValidateWorkerToken(token string) (*WorkerToken, error) {
 	record := records[0]
 	ownerID := record.GetString("owner")
 
+	// Fail closed on tokens that predate the TTL (no expires_at): the user can
+	// re-authenticate the extension through the regular approve flow.
+	expiresAt := record.GetDateTime("expires_at")
+	if expiresAt.IsZero() || expiresAt.Before(types.NowDateTime()) {
+		return nil, fmt.Errorf("invalid or revoked token")
+	}
+
 	if owner, err := s.App.FindRecordById(UsersCollection, ownerID); err != nil || owner.GetBool("blocked") {
 		return nil, fmt.Errorf("invalid or revoked token")
 	}
@@ -106,6 +124,7 @@ func (s *Store) ValidateWorkerToken(token string) (*WorkerToken, error) {
 		TokenHash:   hash,
 		Label:       record.GetString("label"),
 		LastUsedAt:  time.Now().Format(time.RFC3339),
+		ExpiresAt:   expiresAt.String(),
 		CreatedAt:   record.GetString("created"),
 		Revoked:     false,
 	}, nil
@@ -131,6 +150,7 @@ func (s *Store) ListWorkerTokens(userID string) ([]WorkerToken, error) {
 			ExtensionID: record.GetString("extension_id"),
 			Label:       record.GetString("label"),
 			LastUsedAt:  record.GetString("last_used_at"),
+			ExpiresAt:   record.GetDateTime("expires_at").String(),
 			CreatedAt:   record.GetString("created"),
 			Revoked:     record.GetBool("revoked"),
 		})

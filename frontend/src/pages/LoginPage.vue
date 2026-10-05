@@ -108,7 +108,9 @@
               </p>
               <p class="small muted how-text">
                 Esta instalación aún no tiene usuarios. La primera cuenta creada se
-                convertirá en administrador.
+                convertirá en administrador. Necesitas el token de configuración que el
+                servidor generó al primer arranque: está en el log de inicio o en el
+                archivo <code>setup.key</code> del directorio de datos.
               </p>
             </div>
             <form class="login-form" @submit.prevent="submitSetup">
@@ -128,6 +130,16 @@
                   type="password"
                   show-password-on="click"
                   placeholder="Mínimo 8 caracteres"
+                />
+              </div>
+              <div>
+                <label class="small muted" for="setup-token">Token de configuración</label>
+                <n-input
+                  id="setup-token"
+                  v-model:value="setupToken"
+                  type="password"
+                  show-password-on="click"
+                  placeholder="Token del log del servidor"
                 />
               </div>
               <n-alert v-if="inviteError" type="error" :title="inviteError" />
@@ -221,6 +233,7 @@ const inviteError = ref<string | null>(null);
 const setupName = ref("");
 const setupEmail = ref("");
 const setupPassword = ref("");
+const setupToken = ref("");
 
 onMounted(async () => {
   try {
@@ -284,6 +297,7 @@ async function submitSetup() {
       email: setupEmail.value,
       password: setupPassword.value,
       name: setupName.value,
+      setupToken: setupToken.value,
     });
     await login({ email: setupEmail.value, password: setupPassword.value });
     await router.push("/");

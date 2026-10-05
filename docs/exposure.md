@@ -11,19 +11,31 @@ These protections are built in — no reverse-proxy configuration needed:
 - `/_/` (PocketBase superuser dashboard) answers **404**; superuser API access
   is IP-restricted to loopback at startup.
 - Registration requires an invitation once the first (admin) user exists.
+- The first (admin) registration on a fresh install must present the setup
+  token generated at first boot: `-bootstrap-secret` / `BOOTSTRAP_SECRET` to
+  supply your own, otherwise a generated value that is logged once at startup
+  and saved to `<data-dir>/setup.key` (the file is removed once the first
+  account exists). This closes the "first visitor becomes admin" window on an
+  exposed, uninitialized install.
+- Login failures are also capped **per account** (10 failed attempts per 15
+  minutes per normalized email, 429 + `Retry-After: 900`), so a brute-force
+  spread across many source IPs still hits a ceiling the per-IP limiters
+  cannot see.
 - Rate limiting: register/login 5/min per IP, invitation validate/accept
   10/min per IP (429 + `Retry-After: 60`), plus a **global backstop of
   600 requests/min per IP on every route** (429 + `Retry-After: 60`).
-- PocketBase's native record-auth API (`/api/collections/*/auth-*`,
-  `/api/oauth2-redirect`) answers **404**: login, refresh and password
-  reset only exist under the rate-limited `/api/v1/auth/*`. PocketBase's
-  built-in rate limits ship disabled, so those routes would otherwise be
-  an unthrottled password brute-force path. This also makes a superuser
-  token unobtainable over HTTP, which is what really keeps PocketBase's
-  superuser-only management routes (`/api/settings`, `/api/backups`,
-  `/api/logs`, `/api/crons`, collection management) closed — the loopback
-  `SuperuserIPs` whitelist is satisfied by every request that arrives via
-  cloudflared, so it cannot be the only guard behind the tunnel.
+- PocketBase's native API answers **404** wholesale: the record-auth family
+  (`/api/collections/*/auth-*`, `/api/oauth2-redirect`) plus the record CRUD
+  and `/api/files/*` routes. Login, refresh and password reset only exist
+  under the rate-limited `/api/v1/auth/*`; PocketBase's built-in rate limits
+  ship disabled, so the native auth routes would otherwise be an unthrottled
+  password brute-force path, and blocking the record surface too keeps the
+  per-collection rules from becoming the only line of defense. This also
+  makes a superuser token unobtainable over HTTP, which is what really keeps
+  PocketBase's superuser-only management routes (`/api/settings`,
+  `/api/backups`, `/api/logs`, `/api/crons`, collection management) closed —
+  the loopback `SuperuserIPs` whitelist is satisfied by every request that
+  arrives via cloudflared, so it cannot be the only guard behind the tunnel.
 - Auth endpoints cap request bodies at 16 KB.
 - Security headers on every response: CSP (`script-src 'self'`),
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
@@ -42,7 +54,9 @@ These protections are built in — no reverse-proxy configuration needed:
   large uploads, long scrapes and the backup stream are not cut off.
 - Browser-worker WebSocket: connections must register with a valid token
   within 30 seconds or are closed; unauthenticated connections are capped and
-  can never deliver job results.
+  can never deliver job results. Worker tokens expire after **90 days** — the
+  extension stops working until the user re-approves it (revoke + new
+  approval), and `expiresAt` is visible in the settings panel.
 - Import/cover size caps: decompressed EPUB/ZIP import content is capped at
   25MB, and cover downloads are capped at 25MB (zip-bomb / OOM protection).
 
@@ -57,9 +71,12 @@ These protections are built in — no reverse-proxy configuration needed:
    export APP_ENCRYPTION_KEY="<generated key>"
    ```
 
-2. **Create the admin account.** On a fresh install, open the app once and
-   register through the setup screen — the first account becomes the admin.
-   On a pre-existing install promote an existing user instead:
+2. **Create the admin account.** On a fresh install, take the setup token the
+   server generated at first boot — from the startup log or
+   `<data-dir>/setup.key` — and register through the setup screen; the first
+   account becomes the admin. You can pin your own token with
+   `-bootstrap-secret` or `BOOTSTRAP_SECRET` before the first start. On a
+   pre-existing install promote an existing user instead:
 
    ```bash
    ./translator-server -promote-admin you@example.com

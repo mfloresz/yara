@@ -5,9 +5,24 @@ import (
 	"fmt"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+// dummyBcryptHash equalizes the unknown-email login path with the
+// wrong-password path: without it the short-circuit below skips bcrypt for
+// emails that do not exist and the response time becomes an account
+// enumeration oracle. Generated once at startup with the same cost as real
+// records.
+var dummyBcryptHash = func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("yara-timing-equalizer"), bcrypt.DefaultCost)
+	if err != nil {
+		return nil
+	}
+	return hash
+}()
 
 type AuthResult struct {
 	Token string `json:"token"`
@@ -47,7 +62,13 @@ func (s *Store) CreateUser(email, password, name string) (*AuthResult, error) {
 
 func (s *Store) AuthenticateUser(email, password string) (*AuthResult, error) {
 	record, err := s.App.FindAuthRecordByEmail(UsersCollection, strings.TrimSpace(email))
-	if err != nil || record == nil || !record.ValidatePassword(password) {
+	if err != nil || record == nil {
+		// Unknown email: burn the same bcrypt cost a real record would pay so
+		// both failure paths answer in comparable time.
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if !record.ValidatePassword(password) {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	if record.GetBool("blocked") {

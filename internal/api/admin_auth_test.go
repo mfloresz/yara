@@ -14,9 +14,10 @@ func TestFirstUserBecomesAdmin(t *testing.T) {
 	env := newAPITestEnv(t)
 
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
-		"email":    "founder@example.com",
-		"password": "secret123",
-		"name":     "Founder",
+		"email":      "founder@example.com",
+		"password":   "secret123",
+		"name":       "Founder",
+		"setupToken": "test-setup-token",
 	})
 	assertStatus(t, resp, http.StatusCreated)
 	var out authPayload
@@ -53,10 +54,10 @@ func findAuthCookie(t *testing.T, resp *httptest.ResponseRecorder) string {
 	return ""
 }
 
-// TestUserCannotSelfPromoteViaPocketBaseAPI locks in the fix for the role
-// escalation: users.UpdateRule allows self-updates, so the role field must be
-// hidden — PocketBase strips hidden fields from non-superuser writes, and the
-// native REST surface must not be able to grant admin.
+// TestUserCannotSelfPromoteViaPocketBaseAPI locks in the role escalation
+// defenses: the native record API is blanket-404'd, so there is no route to
+// self-PATCH at all; the hidden role field stays as defense in depth for the
+// schema itself (PocketBase strips hidden fields from non-superuser writes).
 func TestUserCannotSelfPromoteViaPocketBaseAPI(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-escalate@example.com", "secret123", "Alice")
@@ -64,10 +65,7 @@ func TestUserCannotSelfPromoteViaPocketBaseAPI(t *testing.T) {
 	resp := doJSONRequest(t, env.handler, http.MethodPatch,
 		"/api/collections/users/records/"+alice.User.ID, alice.Token,
 		map[string]any{"role": store.RoleAdmin})
-	assertStatus(t, resp, http.StatusOK)
-	if strings.Contains(resp.Body.String(), `"role"`) {
-		t.Fatalf("expected hidden role field to be absent from the response, got %s", resp.Body.String())
-	}
+	assertStatus(t, resp, http.StatusNotFound)
 
 	record, err := env.store.App.FindRecordById("users", alice.User.ID)
 	if err != nil {
@@ -201,9 +199,10 @@ func TestSuperuserUIBlocked(t *testing.T) {
 func bootstrapAdmin(t *testing.T, env *apiTestEnv, email string) authPayload {
 	t.Helper()
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
-		"email":    email,
-		"password": "secret123",
-		"name":     "Admin",
+		"email":      email,
+		"password":   "secret123",
+		"name":       "Admin",
+		"setupToken": "test-setup-token",
 	})
 	assertStatus(t, resp, http.StatusCreated)
 	var out authPayload
@@ -211,6 +210,48 @@ func bootstrapAdmin(t *testing.T, env *apiTestEnv, email string) authPayload {
 	// The session token is only delivered in the HttpOnly cookie now.
 	out.Token = findAuthCookie(t, resp)
 	return out
+}
+
+// TestRegisterRequiresSetupToken locks in the fresh-install protection: the
+// first (admin) registration on a zero-user install must present the setup
+// token, so an internet-exposed uninitialized instance cannot be claimed by
+// the first visitor. A wrong or missing token is refused; the correct token
+// creates the admin.
+func TestRegisterRequiresSetupToken(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	register := func(setupToken string) *httptest.ResponseRecorder {
+		body := map[string]any{
+			"email":    "founder@example.com",
+			"password": "secret123",
+			"name":     "Founder",
+		}
+		if setupToken != "" {
+			body["setupToken"] = setupToken
+		}
+		return doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/register", "", body)
+	}
+
+	assertStatus(t, register(""), http.StatusForbidden)
+	assertStatus(t, register("wrong-token"), http.StatusForbidden)
+
+	resp := register("test-setup-token")
+	assertStatus(t, resp, http.StatusCreated)
+	var out authPayload
+	decodeResponse(t, resp, &out)
+	if out.User.Role != store.RoleAdmin {
+		t.Fatalf("expected first user role %q, got %q", store.RoleAdmin, out.User.Role)
+	}
+
+	// Once the admin exists, registration is invitation-only again — the
+	// setup token plays no further role.
+	second := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/register", "", map[string]any{
+		"email":      "second@example.com",
+		"password":   "secret123",
+		"name":       "Second",
+		"setupToken": "test-setup-token",
+	})
+	assertStatus(t, second, http.StatusForbidden)
 }
 
 func createInvitation(t *testing.T, env *apiTestEnv, admin authPayload, email, role string) (invitationPayload, string) {

@@ -29,11 +29,10 @@ func TestLogoutClearsSecureCookieOnHTTPS(t *testing.T) {
 	}
 }
 
-// The admin-managed collections are guarded by PocketBase rules referencing
-// the hidden users.role field. PocketBase list rules act as filters, so the
-// property to lock is fail-closed: a regular user must see zero rows and no
-// key material through the native REST surface (the Go layer under
-// /api/v1/admin is the only functional path).
+// The admin-managed collections are only reachable through the Go layer under
+// /api/v1/admin. The native REST surface they used to ride on is
+// blanket-404'd (blockNativeRecordAPI), so a regular user gets nothing at all
+// from it — no rows, no key material.
 func TestNativeAdminCollectionsForbiddenForUsers(t *testing.T) {
 	env := newAPITestEnv(t)
 	admin := bootstrapAdmin(t, env, "root-native@example.com")
@@ -44,20 +43,15 @@ func TestNativeAdminCollectionsForbiddenForUsers(t *testing.T) {
 		"/api/collections/invitations/records",
 		"/api/collections/shared_provider_keys/records",
 		"/api/collections/prompt_overrides/records",
+		"/api/collections/invitations/records/" + invitation.ID,
 	} {
 		resp := doJSONRequest(t, env.handler, http.MethodGet, path, user.Token, nil)
 		body := resp.Body.String()
 		if strings.Contains(body, "token_hash") || strings.Contains(body, "api_key_encrypted") {
 			t.Fatalf("GET %s: key material leaked to non-admin: %s", path, body)
 		}
-		if !strings.Contains(body, `"totalItems":0`) {
-			t.Fatalf("GET %s: expected zero rows for non-admin, got: %s", path, body)
-		}
+		assertStatus(t, resp, http.StatusNotFound)
 	}
-
-	// Single-record views must 404 (rule-filtered), never expose the row.
-	view := doJSONRequest(t, env.handler, http.MethodGet, "/api/collections/invitations/records/"+invitation.ID, user.Token, nil)
-	assertStatus(t, view, http.StatusNotFound)
 }
 
 // Marking the invitation used happens before user creation, so a second

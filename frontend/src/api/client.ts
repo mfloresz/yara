@@ -168,7 +168,7 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
 
   return {
     auth: {
-      register(input: { email: string; password: string; name?: string }) {
+      register(input: { email: string; password: string; name?: string; setupToken?: string }) {
         return http.post<AuthResponse>("/api/v1/auth/register", input);
       },
       async setupStatus(): Promise<SetupStatus> {

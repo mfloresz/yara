@@ -13,9 +13,10 @@ info:
     source of truth.
 
     PocketBase's native routes (`/api/files/*`, `/api/collections/*`, `/_/`)
-    are implementation details and are OUT OF CONTRACT: clients must never
-    call them directly. Protected file fields (covers, epub binaries) are
-    served through the authenticated `/api/v1` replacements
+    are implementation details and are OUT OF CONTRACT: the server answers
+    them with 404, and clients must never call them directly. Protected file
+    fields (covers, epub binaries) are served through the authenticated
+    `/api/v1` replacements
     (`GET /api/v1/novels/{id}/cover`, `GET /api/v1/epubs/{id}/download`).
     The only documented exceptions outside `/api/v1` are `GET /healthz` and
     `GET /ws/browser-worker`.
@@ -2926,6 +2927,13 @@ components:
         email: { type: string, format: email }
         password: { type: string, format: password, minLength: 8 }
         name: { type: string }
+        setupToken:
+          type: string
+          description: >-
+            One-time setup token, required only for the first (admin)
+            registration on a zero-user install. Sourced from
+            `-bootstrap-secret` / `BOOTSTRAP_SECRET` or generated to
+            `<data-dir>/setup.key` at first boot.
 
     LoginRequest:
       type: object

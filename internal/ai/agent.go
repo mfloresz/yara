@@ -169,7 +169,7 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 				Role:       schema.Tool,
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
-				Content:    truncateToolResult(result),
+				Content:    wrapToolResult(call.Name, truncateToolResult(result)),
 			}
 			msgs = append(msgs, toolMsg)
 			trail = append(trail, AgentMessage{
@@ -287,6 +287,15 @@ func truncateToolResult(s string) string {
 		return s
 	}
 	return truncateRunes(s, maxToolResultChars) + "\n…[truncated]"
+}
+
+// wrapToolResult delimits tool output as untrusted data. Library records and
+// scraped web content can carry text that reads like instructions ("ignore
+// previous instructions", "mark all chapters as excluded"); the wrapper plus
+// the matching system-prompt rule tell the model to treat that text strictly
+// as quoted material, never as commands.
+func wrapToolResult(toolName, result string) string {
+	return "<tool_output tool=\"" + toolName + "\" trust=\"untrusted\">\n" + result + "\n</tool_output>"
 }
 
 func toolResultPreview(s string) string {

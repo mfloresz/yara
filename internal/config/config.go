@@ -37,6 +37,12 @@ type Config struct {
 	// admins, such as invitation links. Empty means derive from the request
 	// Host (dev only — Host is client-controlled on direct connections).
 	PublicBaseURL string
+	// BootstrapSecret is the one-time token a fresh install (zero users)
+	// requires for its first, admin registration. Resolution happens in
+	// main.go: -bootstrap-secret / BOOTSTRAP_SECRET, else
+	// <data-dir>/setup.key, else a generated value persisted to that file.
+	// Instances that already have users never consult it.
+	BootstrapSecret string
 	// ParsersDir is the directory scanned for site parser scripts (*.js).
 	// Defaults to <data-dir>/parsers and is created on boot. There is no
 	// cache: it is re-read per job, so editing a script takes effect on the
@@ -79,6 +85,7 @@ func Load() (*Config, error) {
 	flag.BoolVar(&cfg.MigrateChapterPositions, "migrate-chapter-positions", false, "initialize chapter positions in source order and exit (required once before using chapter reorder/exclusion)")
 	flag.StringVar(&cfg.PromoteAdmin, "promote-admin", "", "grant the admin role to the user with this email and exit")
 	flag.StringVar(&cfg.PublicBaseURL, "public-url", "", "public origin for absolute URLs (e.g. https://novels.example.com)")
+	flag.StringVar(&cfg.BootstrapSecret, "bootstrap-secret", "", "setup token required for the first registration on a fresh install (falls back to BOOTSTRAP_SECRET or <data-dir>/setup.key)")
 	flag.StringVar(&cfg.CheckParser, "check-parser", "", "run a single parser script against -check-url, print the snapshot as JSON and exit")
 	flag.StringVar(&cfg.CheckURL, "check-url", "", "novel URL used by -check-parser")
 	flag.Parse()
@@ -145,6 +152,7 @@ func Load() (*Config, error) {
 	}
 
 	cfg.AppEncryptionKey = strings.TrimSpace(os.Getenv("APP_ENCRYPTION_KEY"))
+	cfg.BootstrapSecret = firstNonEmpty(cfg.BootstrapSecret, strings.TrimSpace(os.Getenv("BOOTSTRAP_SECRET")))
 	cfg.PublicBaseURL = firstNonEmpty(cfg.PublicBaseURL, strings.TrimSpace(os.Getenv("PUBLIC_URL")))
 	cfg.PublicBaseURL = strings.TrimSuffix(cfg.PublicBaseURL, "/")
 	cfg.DownloadMinDelayMs, cfg.DownloadMaxDelayMs = delayFromEnv()

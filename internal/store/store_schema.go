@@ -733,6 +733,9 @@ func (s *Store) ensureReadingProgressCollection(users, novels *core.Collection) 
 
 func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(WorkerTokensCollection); err == nil {
+		if err := s.ensureField(existing, &core.DateField{Name: "expires_at"}); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(WorkerTokensCollection)
@@ -747,6 +750,7 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
 	c.Fields.Add(&core.TextField{Name: "label", Max: 250})
 	c.Fields.Add(&core.DateField{Name: "last_used_at"})
+	c.Fields.Add(&core.DateField{Name: "expires_at"})
 	c.Fields.Add(&core.BoolField{Name: "revoked"})
 	addSystemDateFields(c)
 	c.AddIndex("idx_worker_tokens_hash", true, "token_hash", "")
