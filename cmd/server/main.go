@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
@@ -114,6 +118,40 @@ func main() {
 	if err := os.MkdirAll(cfg.ParsersDir, 0o755); err != nil {
 		slog.Error("failed to create parsers dir", "path", cfg.ParsersDir, "error", err)
 		os.Exit(1)
+	}
+
+	// A fresh install's first (admin) registration must present a setup token,
+	// so an internet-exposed, not-yet-initialized instance cannot be claimed
+	// by the first visitor to find it. Resolution: -bootstrap-secret /
+	// BOOTSTRAP_SECRET > <data-dir>/setup.key > generate and persist. The
+	// handler removes the file once the bootstrap registration completes.
+	userCount, err := st.CountUsers()
+	if err != nil {
+		slog.Error("failed to count users", "error", err)
+		os.Exit(1)
+	}
+	if userCount == 0 {
+		setupKeyPath := filepath.Join(cfg.DataDir, "setup.key")
+		if cfg.BootstrapSecret == "" {
+			if data, readErr := os.ReadFile(setupKeyPath); readErr == nil {
+				cfg.BootstrapSecret = strings.TrimSpace(string(data))
+			}
+		}
+		if cfg.BootstrapSecret == "" {
+			secret := make([]byte, 32)
+			if _, readErr := rand.Read(secret); readErr != nil {
+				slog.Error("failed to generate setup token", "error", readErr)
+				os.Exit(1)
+			}
+			cfg.BootstrapSecret = hex.EncodeToString(secret)
+			if writeErr := os.WriteFile(setupKeyPath, []byte(cfg.BootstrapSecret), 0o600); writeErr != nil {
+				slog.Error("failed to persist setup token", "path", setupKeyPath, "error", writeErr)
+				os.Exit(1)
+			}
+			slog.Info("generated setup token for the first registration; it is also persisted to the setup key file", "token", cfg.BootstrapSecret, "path", setupKeyPath)
+		} else {
+			slog.Info("fresh install: the first registration must present the setup token")
+		}
 	}
 
 	server := api.New(st, cfg)
