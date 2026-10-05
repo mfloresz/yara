@@ -8,6 +8,12 @@
       "requiresBrowser": true
     },
     {
+      "name": "brightnovels",
+      "file": "brightnovels.js",
+      "sha256": "b212e11e037ff852a1112e4e39ebf6bd3c9724e5a67927fe13b9304c1f2eee42",
+      "requiresBrowser": false
+    },
+    {
       "name": "cherrymist",
       "file": "cherrymist.js",
       "sha256": "a0368ac9f407125f9ef0fccaacff141bae7fc7a5eb4ef4da118c9dd119d14b5d",
@@ -35,6 +41,18 @@
       "name": "floraegarden",
       "file": "floraegarden.js",
       "sha256": "3a467bcb2c76ea0ddeae3ba63cbc6ff4562da11467736826802526c31bd18413",
+      "requiresBrowser": true
+    },
+    {
+      "name": "flyonthewalls",
+      "file": "flyonthewalls.js",
+      "sha256": "f2211e65c7da07304f7a7f1a9bd66706746b76d072cb04cc23507c388c7101c1",
+      "requiresBrowser": true
+    },
+    {
+      "name": "foxaholic",
+      "file": "foxaholic.js",
+      "sha256": "a1d2b2f9cd22721af732c4cc9c978b42e6e17248a03ada2e931bd3ba47c6a2a2",
       "requiresBrowser": true
     },
     {
@@ -116,5 +134,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "b17ae560b88a52e52b18f06c25d90b487120c6f9b4edb212b394c0748a065a57f65dee140486bdeab733efc0da35c2e5b78f6dd505a0c4eeff76a6d882955008"
+  "signature": "94aebd3ef71d86424b7548fa20e3f74b9a0b4cc2b16b4ee7bddb721d5825758f5f186f080338329c8ce065490a10b5ff849f2b6f09007a437f03b27db4cd2906"
 }
