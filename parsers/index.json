@@ -98,6 +98,12 @@
       "requiresBrowser": false
     },
     {
+      "name": "vritrascans",
+      "file": "vritrascans.js",
+      "sha256": "5b09eb17ac7ab7267ea9d96ff3ba4cf6c58cd9211a90abad7d6f4d24de1dea0a",
+      "requiresBrowser": false
+    },
+    {
       "name": "wattpad",
       "file": "wattpad.js",
       "sha256": "7e0bec285f4a1376bd7a7a501c95c789c397fe6523ed2806d14d783541e8f3d0",
@@ -110,5 +116,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "a126a8595b9dc98733903aa0d7280c4feca24b47c198cad52e82eb5e1fc39f76a2330c6e2a7514cbedebbec9718b86d5bf6e99929d4a25c6236692f52ceec10b"
+  "signature": "b17ae560b88a52e52b18f06c25d90b487120c6f9b4edb212b394c0748a065a57f65dee140486bdeab733efc0da35c2e5b78f6dd505a0c4eeff76a6d882955008"
 }
