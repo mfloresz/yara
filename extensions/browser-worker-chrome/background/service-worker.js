@@ -692,8 +692,8 @@ async function fetchLivewirePage(url, params = {}) {
                 const selected = [
                   document.querySelector('h1.font-title'),
                   document.querySelector('h1:not(.font-title)'),
-                  document.querySelector('div.w-full.max-w-72'),
-                  document.querySelector('div[class*="line-clamp-3"]'),
+                  document.querySelector("meta[property='og:image']"),
+                  document.querySelector("div[x-ref='description']"),
                 ].filter(Boolean).map(element => element.outerHTML);
                 // Return the compact Livewire component response, never the
                 // fully expanded chapter DOM. The server's WebSocket has a

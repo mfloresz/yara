@@ -612,8 +612,8 @@ async function fetchLivewirePage(url, params = {}) {
                 const selected = [
                   document.querySelector('h1.font-title'),
                   document.querySelector('h1:not(.font-title)'),
-                  document.querySelector('div.w-full.max-w-72'),
-                  document.querySelector('div[class*="line-clamp-3"]'),
+                  document.querySelector("meta[property='og:image']"),
+                  document.querySelector("div[x-ref='description']"),
                 ].filter(Boolean).map(element => element.outerHTML);
                 // Append the metadata elements: the catalog HTML alone lacks
                 // the title/cover/description the Go parser also needs.
@@ -877,6 +877,9 @@ async function fetchViaChallengeTab(url, maxWait) {
         const isChallenge = await checkForChallenge(tab.id);
         if (isChallenge) {
           log('Cloudflare challenge detected, waiting for user to solve it...');
+          // Turnstile cannot complete in a hidden tab and the user must click
+          // it, so bring the tab to the front (same as the Livewire path).
+          try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
           chrome.runtime.sendMessage({ type: 'CHALLENGE_DETECTED', url, tabId: tab.id }).catch(() => {});
           await sleep(3000);
           continue;

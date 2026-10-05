@@ -37,10 +37,13 @@ function coverOf(ctx, doc) {
 }
 
 function descriptionOf(ctx, doc) {
-  // The synopsis lives in a div whose class includes "line-clamp-3"; the
-  // clamped view is just CSS over the real <p> paragraphs.
-  const el = ctx.css1(doc, "div[class*='line-clamp-3']");
+  // The synopsis lives in a div with x-ref="description"; the clamped view is
+  // just CSS (max-h + overflow-hidden) over the real <p> paragraphs. The meta
+  // description is truncated mid-sentence, so only use it as a last resort.
+  const el = ctx.css1(doc, "div[x-ref='description']");
   if (el && el.text) return el.text;
+  const legacy = ctx.css1(doc, "div[class*='line-clamp-3']");
+  if (legacy && legacy.text) return legacy.text;
   return metaContent(ctx, doc, "meta[name='description']");
 }
 

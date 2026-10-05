@@ -10,7 +10,7 @@
     {
       "name": "cherrymist",
       "file": "cherrymist.js",
-      "sha256": "0c142f332abc2f238b809c994fb5678066b9e5ab80bc4a3a34746223ce210743",
+      "sha256": "a0368ac9f407125f9ef0fccaacff141bae7fc7a5eb4ef4da118c9dd119d14b5d",
       "requiresBrowser": false
     },
     {
@@ -62,6 +62,12 @@
       "requiresBrowser": false
     },
     {
+      "name": "mistminthaven",
+      "file": "mistminthaven.js",
+      "sha256": "32ffabe93eb66086f22667731168857c5e3bd9f6d3891c555e3607355367a4a4",
+      "requiresBrowser": false
+    },
+    {
       "name": "novelarrow",
       "file": "novelarrow.js",
       "sha256": "ccbf198cc0bd22883a03c31fab5f107ea760dc518e504a71223f21b4c1cc1bc8",
@@ -82,7 +88,7 @@
     {
       "name": "skydemonorder",
       "file": "skydemonorder.js",
-      "sha256": "783fb06e32468b2fb2fe929d0c5bebe9ce06e471c5f250b588d36e31257c0f55",
+      "sha256": "e18bc6cd9c9295cacf937fd9894d3a6f2b67c44620e3e12e5fe2d8cdd8b8722f",
       "requiresBrowser": true
     },
     {
@@ -104,5 +110,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "1b9861ec7dee02276285a2033fc3216527a8492f3927046434c28586192b323db50749a2bb500dbd97daaf98948c1a2f7a5dd98c1e5961cc84fe9e2f9c983904"
+  "signature": "a126a8595b9dc98733903aa0d7280c4feca24b47c198cad52e82eb5e1fc39f76a2330c6e2a7514cbedebbec9718b86d5bf6e99929d4a25c6236692f52ceec10b"
 }

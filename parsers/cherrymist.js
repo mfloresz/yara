@@ -95,6 +95,7 @@ function chapterRefs(ctx, seriesID) {
   const refs = [];
   for (const c of items) {
     if (!c.slug) continue;
+    if (c.chapter_number === null || c.chapter_number === undefined) continue;
     refs.push({ title: clean(c.title), url: BASE + "/chapter/" + c.slug });
   }
   if (refs.length === 0) {
@@ -168,7 +169,7 @@ module.exports = {
       novel: {
         title: clean(series.title),
         author: clean(authorOf(series)),
-        description: series.short_synopsis ? series.short_synopsis : series.synopsis || "",
+        description: series.synopsis ? series.synopsis : series.short_synopsis || "",
         coverUrl: series.cover_image_url || "",
         language: "",
         tags: []
