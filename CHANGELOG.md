@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [v0.42.0] - 2026-10-04
+
+### What's new
+
+- **New source: novelping.** Paste a novelping.com URL and Yara reads its title, author, synopsis, cover, genre and full chapter list. The visible page only ships the first 30 chapters, so the parser pulls the complete catalog from the same request the site's own chapter-archive tab uses.
 
 ### Fixes
 
@@ -537,6 +541,7 @@
 - Fixed fallback client to detect SkyDemonOrder 200-but-not-rendered responses and retry through the browser before falling back to chapter-walking.
 - Fixed browser worker reconnect logic and URL construction to handle `ws://`, `wss://`, `http://`, and `https://` server addresses correctly.
 
+[v0.42.0]: https://github.com/mfloresz/yara/compare/v0.41.0...v0.42.0
 [v0.41.0]: https://github.com/mfloresz/yara/compare/v0.40.0...v0.41.0
 [v0.40.0]: https://github.com/mfloresz/yara/compare/v0.39.1...v0.40.0
 [v0.39.1]: https://github.com/mfloresz/yara/compare/v0.39.0...v0.39.1
