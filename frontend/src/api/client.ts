@@ -150,6 +150,12 @@ function normalizeNovel(
 const NOVEL_LIST_FIELDS =
   "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags";
 
+// Sparse fieldset for the operations page. It only reads counters, languages,
+// the origin-URL check fields and status; the library/detail fields above
+// would be downloaded and discarded there.
+export const NOVEL_OPS_FIELDS =
+  "id,sourceTitle,sourceAuthor,coverPath,status,chapterCount,translatedCount,sourceLanguage,targetLanguage,url,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters";
+
 function buildQuery(
   params: Record<string, string | number | undefined | null>,
 ): string {

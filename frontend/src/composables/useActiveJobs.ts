@@ -23,7 +23,11 @@ export function useActiveJobs(
   watch(
     poller.data,
     (latest) => {
-      jobs.value = latest ?? [];
+      const next = latest ?? [];
+      // Los jobs activos se sondean cada 2s; si nada cambió, conservar la
+      // identidad del array evita re-renderizar a todos los consumidores.
+      if (JSON.stringify(jobs.value) === JSON.stringify(next)) return;
+      jobs.value = next;
     },
     { immediate: true },
   );

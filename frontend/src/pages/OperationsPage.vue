@@ -98,8 +98,10 @@
       </n-card>
 
       <template v-else>
-        <!-- Desktop: tabla compacta (selección + novela + estado + iconos) -->
-        <div class="ops-table-wrap">
+        <!-- Desktop: tabla compacta (selección + novela + estado + iconos).
+             Solo se monta en su viewport: renderizar también las cards ocultas
+             duplicaba el árbol y las descargas de portadas. -->
+        <div v-if="!isMobile" class="ops-table-wrap">
           <n-data-table
             :columns="columns"
             :data="filteredNovels"
@@ -116,7 +118,7 @@
         </div>
 
         <!-- Móvil: cards apiladas a 44px, misma data y acciones -->
-        <div class="ops-cards" role="list" aria-label="Novelas para operar">
+        <div v-if="isMobile" class="ops-cards" role="list" aria-label="Novelas para operar">
           <OperationsCard
             v-for="novel in pagedNovels"
             :key="novel.id"
@@ -129,7 +131,7 @@
             @translate="handleTranslateNovel(novel)"
           />
         </div>
-        <div class="ops-cards-pagination">
+        <div v-if="isMobile" class="ops-cards-pagination">
           <n-pagination
             :page="pagination.page"
             :page-size="pagination.pageSize"
@@ -196,17 +198,17 @@ import OperationsOriginTag from "@/components/operations/OperationsOriginTag.vue
 import OperationsRowActions from "@/components/operations/OperationsRowActions.vue";
 import OperationsTranslation from "@/components/operations/OperationsTranslation.vue";
 import { useAppServices } from "@/app/services";
-import { authState } from "@/app/auth";
+import { NOVEL_OPS_FIELDS } from "@/api/client";
 import { useActiveJobs } from "@/composables/useActiveJobs";
+import { useMediaQuery } from "@/composables/useMediaQuery";
 import {
   buildNovelOperationStatus,
-  hasAnyActive as hasAnyActiveNovel,
   hasNewChapters,
   hasPendingTranslation,
   isActualizable,
   isSameLanguage,
   pendingTranslationCount,
-  type NovelJobContext,
+  type NovelOperationStatus,
 } from "@/composables/useOperationDisplay";
 import { emitJobChanged } from "@/utils/job-events";
 import type { Novel, TranslationJob } from "@/domain";
@@ -221,6 +223,8 @@ const message = useMessage();
 const dialog = useDialog();
 const { api } = useAppServices();
 const { jobs: activeJobs } = useActiveJobs();
+
+const isMobile = useMediaQuery("(max-width: 768px)");
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -255,12 +259,24 @@ const pagination = reactive({
   },
 });
 
-function activeJobForNovel(novelId: string, operation: string): TranslationJob | undefined {
-  return activeJobs.value.find((j) => j.novelId === novelId && j.operation === operation);
-}
+// Trabajos activos indexados por novela. Espeja el filtrado de
+// useOperationDisplay.hasAnyActive: solo check/download/translate/refine
+// cuentan como actividad de una novela.
+const jobsByNovelId = computed(() => {
+  const map = new Map<string, { checkJob?: TranslationJob; downloadJob?: TranslationJob; translateJob?: TranslationJob }>();
+  for (const job of activeJobs.value) {
+    if (job.operation !== "check" && job.operation !== "download" && job.operation !== "translate" && job.operation !== "refine") continue;
+    const ctx = map.get(job.novelId) ?? {};
+    if (job.operation === "check") ctx.checkJob = job;
+    else if (job.operation === "download") ctx.downloadJob = job;
+    else ctx.translateJob = job;
+    map.set(job.novelId, ctx);
+  }
+  return map;
+});
 
 function hasAnyActive(novelId: string): boolean {
-  return hasAnyActiveNovel(novelId, activeJobs.value);
+  return jobsByNovelId.value.has(novelId);
 }
 
 const filterCounts = computed(() => ({
@@ -429,7 +445,9 @@ const pagedNovels = computed(() => {
   return filteredNovels.value.slice(start, start + pagination.pageSize);
 });
 
-const selectedNovels = computed(() => selectedRowKeys.value.map((id) => novels.value.find((n) => n.id === id)).filter(Boolean) as Novel[]);
+const novelById = computed(() => new Map(novels.value.map((n) => [n.id, n] as const)));
+
+const selectedNovels = computed(() => selectedRowKeys.value.map((id) => novelById.value.get(id)).filter(Boolean) as Novel[]);
 
 const selectedActualizableIds = computed(() => selectedNovels.value.filter((n) => isActualizable(n) && n.status !== "completed" && !hasAnyActive(n.id)).map((n) => n.id));
 const selectedWithUpdatesIds = computed(() => selectedNovels.value.filter((n) => hasNewChapters(n) && !hasAnyActive(n.id)).map((n) => n.id));
@@ -451,17 +469,28 @@ watch([filter, searchQuery, hostFilter], () => {
 
 const rowProps = () => ({ style: "height: 52px;" });
 
-function jobContextFor(novelId: string): NovelJobContext {
-  return {
-    checkJob: activeJobForNovel(novelId, "check"),
-    downloadJob: activeJobForNovel(novelId, "download"),
-    translateJob: activeJobForNovel(novelId, "translate") || activeJobForNovel(novelId, "refine"),
-    updateResult: updateResults.value.get(novelId),
-  };
-}
+// Estado de operación por novela, construido una vez por cambio de datos
+// (novelas, jobs activos, resultados de verificación) en lugar de tres veces
+// por fila renderizada; la referencia estable por novela permite a las filas
+// intactas saltarse el re-render.
+const statusById = computed(() => {
+  const jobs = jobsByNovelId.value;
+  const map = new Map<string, NovelOperationStatus>();
+  for (const novel of novels.value) {
+    map.set(novel.id, buildNovelOperationStatus(novel, { ...jobs.get(novel.id), updateResult: updateResults.value.get(novel.id) }));
+  }
+  return map;
+});
 
-function statusFor(novel: Novel) {
-  return buildNovelOperationStatus(novel, jobContextFor(novel.id));
+function statusFor(novel: Novel): NovelOperationStatus {
+  const cached = statusById.value.get(novel.id);
+  if (cached) return cached;
+  // Inalcanzable con datos coherentes (toda fila visible viene de novels);
+  // si ocurriera, construir al vuelo en lugar de renderizar un hueco.
+  return buildNovelOperationStatus(novel, {
+    ...jobsByNovelId.value.get(novel.id),
+    updateResult: updateResults.value.get(novel.id),
+  });
 }
 
 const columns: DataTableColumns<Novel> = [
@@ -600,25 +629,36 @@ watch(activeJobs, (current, prev) => {
   }
 });
 
+let loadGeneration = 0;
+
 async function loadNovels() {
+  const generation = ++loadGeneration;
   loading.value = true;
   error.value = null;
   try {
-    const ownerId = authState.user.value?.id ?? "";
     const all: Novel[] = [];
     let offset = 0;
     for (;;) {
-      const resp = await api.novels.list({ limit: PAGE_SIZE, offset });
-      for (const item of resp.items) {
-        if (item.ownerId === ownerId) all.push(item);
-      }
+      const resp = await api.novels.list({
+        limit: PAGE_SIZE,
+        offset,
+        shared: "own",
+        fields: NOVEL_OPS_FIELDS,
+      });
+      // Una recarga posterior (p. ej. tras eliminar) toma el relevo: esta se
+      // retira sin tocar estado compartido.
+      if (generation !== loadGeneration) return;
+      all.push(...resp.items);
+      novels.value = [...all];
+      // Con la primera página ya hay datos que pintar; el resto llega en
+      // segundo plano y los conteos de los chips crecen con él.
+      loading.value = false;
       if (!resp.hasMore || resp.items.length === 0) break;
       offset += resp.items.length;
     }
-    novels.value = all;
   } catch (err) {
+    if (generation !== loadGeneration) return;
     error.value = err instanceof Error ? err.message : String(err);
-  } finally {
     loading.value = false;
   }
 }
@@ -906,12 +946,18 @@ onMounted(loadNovels);
   flex-wrap: wrap;
 }
 
+/* Solo una de las dos listas está montada (v-if por viewport); estos son los
+   estilos de la lista de cards. */
 .ops-cards {
-  display: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .ops-cards-pagination {
-  display: none;
+  display: flex;
+  justify-content: center;
+  padding-top: 0.25rem;
 }
 
 .empty-state {
@@ -984,25 +1030,6 @@ onMounted(loadNovels);
 
   .page-title {
     font-size: 1.5rem;
-  }
-}
-
-/* Móvil: cards en lugar de tabla */
-@media (max-width: 768px) {
-  .ops-table-wrap {
-    display: none;
-  }
-
-  .ops-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .ops-cards-pagination {
-    display: flex;
-    justify-content: center;
-    padding-top: 0.25rem;
   }
 }
 
