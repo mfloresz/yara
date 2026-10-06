@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.43.0] - 2026-10-05
+
+### What's new
+
+- **Five new site parsers:** brightnovels, flyonthewalls, foxaholic, vritrascans, and mistminthaven. The parser catalog now covers more sites, and the browser-worker extensions' supported-sites lists are updated accordingly.
+- **Setup token for first registration.** On a fresh install, the first account must present a setup token (`-bootstrap-secret` / `BOOTSTRAP_SECRET` / auto-generated file at `<data-dir>/setup.key`) to gain admin access. The token file is removed after bootstrap completes.
+- **Per-account login rate limiting.** Failed login attempts are now tracked per normalized email (10 per 15 min → 429 + `Retry-After: 900`), closing the multi-IP brute-force gap that IP-keyed limiters alone could not see.
+- **Worker token expiry.** Browser-worker authentication tokens now expire, reducing the window of exposure for long-lived tokens.
+- **Operations page responsive.** The OperationsPage now renders as mobile-friendly cards and supports sparse fieldsets for lighter list payloads.
+
+### Fixes
+
+- **Brightnovels parser improvements.** Chapters are now filtered by `unlocked_at` date, and premium-locked chapters are skipped at the TOC and gated on access flags during chapter fetch.
+
+### Housekeeping
+
+- Go dependencies updated.
+
 ## [v0.42.0] - 2026-10-04
 
 ### What's new
@@ -589,4 +607,5 @@
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.10.0
+[v0.43.0]: https://github.com/mfloresz/yara/compare/v0.42.0...v0.43.0
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.42.0
