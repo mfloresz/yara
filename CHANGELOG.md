@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.43.1] - 2026-10-06
+
+### Fixes
+
+- **SPA fallback now returns 404 for `/api/*` paths and dotfile/dot-dir requests** instead of serving `index.html`. Unknown API paths (e.g. `/api/openapi.yaml`, `/api/_`) and hidden files (`.git/HEAD`, `.env`, `.well-known/…`) are correctly rejected with 404 rather than being hidden behind the SPA shell.
+- Paths with file extensions that don't match a bundled asset (`/openapi.json`, `/favicon-xyz.png`, …) now 404 instead of falling back to `index.html`.
+
 ## [v0.43.0] - 2026-10-05
 
 ### What's new
@@ -607,5 +614,5 @@
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
-[v0.43.0]: https://github.com/mfloresz/yara/compare/v0.42.0...v0.43.0
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.42.0
+[v0.43.1]: https://github.com/mfloresz/yara/compare/v0.43.0...v0.43.1
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.43.0
