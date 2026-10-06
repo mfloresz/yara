@@ -88,9 +88,16 @@ module.exports = {
     // top-level unlockedChapterIds keep anything a logged-in reader already
     // paid for — their browser worker can still fetch it.
     const unlockedIds = new Set(payload.unlockedChapterIds || []);
-    const free = list.filter(
-      (c) => !(c.is_premium && !c.unlocked_at && !unlockedIds.has(c.id))
-    );
+    const now = new Date();
+    const free = list.filter((c) => {
+      if (!c.is_premium) return true;
+      if (unlockedIds.has(c.id)) return true;
+      if (!c.unlocked_at) return false;
+      // unlocked_at may be a future release date; only count as unlocked
+      // if the date has already passed.
+      const unlockedDate = new Date(c.unlocked_at);
+      return unlockedDate <= now;
+    });
     if (free.length === 0) {
       ctx.fail("site_layout_changed", "all " + list.length + " listed chapters are premium at " + chaptersUrl);
     }
