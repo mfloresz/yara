@@ -71,18 +71,32 @@ module.exports = {
 
     const chaptersUrl = ctx.resolveUrl(url, "/series/" + series.slug + "/chapters");
     const resp = ctx.get(chaptersUrl);
-    let list;
+    let payload;
     try {
-      list = JSON.parse(resp.body).chapters || [];
+      payload = JSON.parse(resp.body);
     } catch (e) {
       ctx.fail("site_layout_changed", "chapters endpoint did not return JSON at " + chaptersUrl);
     }
+    const list = payload.chapters || [];
     if (list.length === 0) {
       ctx.fail("site_layout_changed", "no chapters found at " + chaptersUrl);
     }
 
+    // Premium chapters are paywalled: the endpoint still lists them, but their
+    // content is only a first-paragraph preview, so they are skipped at TOC
+    // time (same policy as foxaholic/flyonthewalls). unlocked_at and the
+    // top-level unlockedChapterIds keep anything a logged-in reader already
+    // paid for — their browser worker can still fetch it.
+    const unlockedIds = new Set(payload.unlockedChapterIds || []);
+    const free = list.filter(
+      (c) => !(c.is_premium && !c.unlocked_at && !unlockedIds.has(c.id))
+    );
+    if (free.length === 0) {
+      ctx.fail("site_layout_changed", "all " + list.length + " listed chapters are premium at " + chaptersUrl);
+    }
+
     // Newest-first (descending index); the array order is the reading order.
-    const chapters = list
+    const chapters = free
       .slice()
       .reverse()
       .map((c) => ({
@@ -96,9 +110,14 @@ module.exports = {
   chapter: (ctx, url) => {
     const props = inertiaProps(ctx, url);
     const ch = props.chapter || {};
+    // A locked premium chapter still ships a first-paragraph preview as its
+    // content, so gate on the access flags, not on emptiness.
+    if (ch.is_premium && !ch.isUnlocked) {
+      ctx.fail("blocked", "chapter is premium-locked at " + url + " (a logged-in browser worker can fetch it)");
+    }
     const content = (ch.content || "").trim();
     if (!content) {
-      ctx.fail("site_layout_changed", "no chapter content at " + url + " (locked or premium chapter?)");
+      ctx.fail("site_layout_changed", "no chapter content at " + url);
     }
     return {
       title: ch.title || ch.name || "Chapter " + ch.number,

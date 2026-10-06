@@ -10,7 +10,7 @@
     {
       "name": "brightnovels",
       "file": "brightnovels.js",
-      "sha256": "b212e11e037ff852a1112e4e39ebf6bd3c9724e5a67927fe13b9304c1f2eee42",
+      "sha256": "753361695e616e02e43a8004829bcebd99b15034cd691acc812c95ee342f88c7",
       "requiresBrowser": false
     },
     {
@@ -134,5 +134,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "94aebd3ef71d86424b7548fa20e3f74b9a0b4cc2b16b4ee7bddb721d5825758f5f186f080338329c8ce065490a10b5ff849f2b6f09007a437f03b27db4cd2906"
+  "signature": "e4f07a940af9f5185015560e6b71f76b18775bfa290d7bfe4c3e8049af31601ccf4237a99749f0954155e5368efe8fc8d15441f827a44a96ae20df68fba84b00"
 }
