@@ -265,6 +265,15 @@ function switchView(next: PanelView) {
   });
 }
 
+function resolvePostLoginTarget() {
+  const redirect = String(route.query.redirect || "/");
+  // Los destinos fuera del SPA (p. ej. /api/v1/worker-auth/authorize de la
+  // extensión) no son rutas del router: ir con router.push caería en el
+  // catch-all y nunca saldría del dashboard. Solo se permite mismo origen.
+  if (redirect.startsWith("/api/")) return redirect;
+  return redirect.startsWith("/") ? redirect : "/";
+}
+
 async function submitLogin() {
   loginLoading.value = true;
   loginError.value = null;
@@ -280,7 +289,12 @@ async function submitLogin() {
     } catch {
       // No bloquear el acceso si el almacenamiento falla.
     }
-    await router.push(String(route.query.redirect || "/"));
+    const target = resolvePostLoginTarget();
+    if (target.startsWith("/api/")) {
+      window.location.href = target;
+      return;
+    }
+    await router.push(target);
   } catch (err) {
     loginError.value = err instanceof Error ? err.message : String(err);
   } finally {

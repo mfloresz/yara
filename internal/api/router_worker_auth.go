@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -52,10 +53,10 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 
 		cookie, err := e.Request.Cookie(authCookieName)
 		if err != nil || cookie.Value == "" {
-			return e.HTML(http.StatusOK, loginRequiredHTML())
+			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID)))
 		}
 		if _, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth); err != nil {
-			return e.HTML(http.StatusOK, loginRequiredHTML())
+			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID)))
 		}
 
 		state := generateState()
@@ -419,8 +420,13 @@ func approvalSuccessHTML(label, callbackURL string) string {
 	return buf.String()
 }
 
-func loginRequiredHTML() string {
-	return `<!DOCTYPE html>
+// authorizeURL rebuilds the authorize entry point so the login page can send
+// the user back to the consent screen instead of dropping the extension_id.
+func authorizeURL(extensionID string) string {
+	return "/api/v1/worker-auth/authorize?extension_id=" + url.QueryEscape(extensionID)
+}
+
+var loginRequiredTmpl = template.Must(template.New("loginRequired").Parse(`<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -429,7 +435,7 @@ func loginRequiredHTML() string {
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
             background: #0f0f0f;
             color: #e0e0e0;
             min-height: 100vh;
@@ -498,10 +504,19 @@ func loginRequiredHTML() string {
         </div>
         <h1>Sesión Requerida</h1>
         <p>Debes iniciar sesión en Yara primero para autorizar la extensión del navegador.</p>
-        <a href="/#/login" class="btn">Iniciar Sesión</a>
+        <p>Después de iniciar sesión volverás automáticamente a la pantalla de autorización.</p>
+        <a href="{{.LoginURL}}" class="btn">Iniciar Sesión</a>
     </div>
 </body>
-</html>`
+</html>`))
+
+func loginRequiredHTML(authorizePath string) string {
+	var buf bytes.Buffer
+	loginURL := "/login?redirect=" + url.QueryEscape(authorizePath)
+	loginRequiredTmpl.Execute(&buf, map[string]string{
+		"LoginURL": loginURL,
+	})
+	return buf.String()
 }
 
 func callbackSuccessHTML(token, userID string) string {

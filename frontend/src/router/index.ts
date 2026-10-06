@@ -112,6 +112,14 @@ router.beforeEach((to) => {
     return { name: "login", query: { redirect: to.fullPath } };
   }
   if (to.meta.guestOnly && authState.isAuthenticated.value) {
+    // Sesión ya activa entrando a /login?redirect=/api/... (flujo de la
+    // extensión): no tirar el redirect al dashboard, salir al destino real
+    // con recarga completa porque no es una ruta del SPA.
+    const redirect = String(to.query.redirect || "");
+    if (redirect.startsWith("/api/")) {
+      window.location.href = redirect;
+      return false;
+    }
     return { name: "dashboard" };
   }
   if (to.meta.requiresAdmin && !authState.isAdmin.value) {
