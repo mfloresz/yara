@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.44.0] - 2026-10-07
+
+### What's new
+
+- **Browser-worker auth pages follow the system theme.** The login/consent pages served to the Chrome and Firefox extensions now support light/dark mode via `prefers-color-scheme`, with Quiet Shelf tokens, updated typography, pill-shaped buttons, and accessible focus-visible outlines.
+
+### Fixes
+
+- **Browser-worker login no longer loops back to the dashboard.** The authorize URL is now passed through the login page so the post-login redirect returns to the consent screen, and `/api/` redirect targets are handled via full-page navigation instead of the SPA router.
+
 ## [v0.43.1] - 2026-10-06
 
 ### Fixes
@@ -614,5 +624,6 @@
 [v0.11.1]: https://github.com/mfloresz/yara/compare/v0.11.0...v0.11.1
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
+[v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
 [v0.43.1]: https://github.com/mfloresz/yara/compare/v0.43.0...v0.43.1
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.43.0
