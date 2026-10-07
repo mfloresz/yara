@@ -209,7 +209,7 @@ var consentPageTmpl = template.Must(template.New("consent").Parse(`<!DOCTYPE htm
     <title>Autorizar Conexión</title>
     <meta name="color-scheme" content="light dark">
     <style>
-        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        /* Quiet Shelf tokens — mirror the extension popup stylesheet */
         :root {
             color-scheme: light dark;
             --page: #f5f4f2;
@@ -388,7 +388,7 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
     <meta http-equiv="refresh" content="1;url={{.CallbackURL}}">
     <meta name="color-scheme" content="light dark">
     <style>
-        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        /* Quiet Shelf tokens — mirror the extension popup stylesheet */
         :root {
             color-scheme: light dark;
             --page: #f5f4f2;
@@ -475,7 +475,6 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
             margin-bottom: 0;
         }
         .label a {
-            color: var(--text);
             text-underline-offset: 3px;
         }
         .btn {
@@ -545,7 +544,7 @@ var loginRequiredTmpl = template.Must(template.New("loginRequired").Parse(`<!DOC
     <title>Sesión Requerida</title>
     <meta name="color-scheme" content="light dark">
     <style>
-        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        /* Quiet Shelf tokens — mirror the extension popup stylesheet */
         :root {
             color-scheme: light dark;
             --page: #f5f4f2;
@@ -679,7 +678,7 @@ func callbackSuccessHTML(token, userID string) string {
     <title>Autenticación Completa</title>
     <meta name="color-scheme" content="light dark">
     <style>
-        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        /* Quiet Shelf tokens — mirror the extension popup stylesheet */
         :root {
             color-scheme: light dark;
             --page: #f5f4f2;
