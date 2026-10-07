@@ -207,50 +207,96 @@ var consentPageTmpl = template.Must(template.New("consent").Parse(`<!DOCTYPE htm
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Autorizar Conexión</title>
+    <meta name="color-scheme" content="light dark">
     <style>
+        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        :root {
+            color-scheme: light dark;
+            --page: #f5f4f2;
+            --surface: #fafaf9;
+            --surface-alt: #e8e6e2;
+            --border: #ddd9d3;
+            --text: #141413;
+            --text-muted: #57544c;
+            --text-faint: #6f6b64;
+            --success: #16a34a;
+            --warn: #a16207;
+            --danger: #dc2626;
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-pill: 999px;
+            --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --page: #121110;
+                --surface: #1b1a19;
+                --surface-alt: #262523;
+                --border: #3d3b35;
+                --text: #f5f4f2;
+                --text-muted: #b0aca4;
+                --text-faint: #918d85;
+                --success: #4ade80;
+                --warn: #fbbf24;
+                --danger: #f87171;
+            }
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::selection { background: color-mix(in oklab, var(--text) 16%, transparent); }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
+            font-family: Geist, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--page);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 24px 16px;
+            -webkit-font-smoothing: antialiased;
         }
         .card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 28px;
             max-width: 420px;
-            width: 90%;
+            width: 100%;
         }
         h1 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
+            letter-spacing: -0.01em;
             margin-bottom: 16px;
-            color: #fff;
         }
         .info {
-            background: #252525;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 20px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+            margin-bottom: 16px;
         }
         .info-row {
             display: flex;
             justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
             margin-bottom: 8px;
         }
         .info-row:last-child { margin-bottom: 0; }
-        .info-label { color: #888; font-size: 13px; }
-        .info-value { color: #fff; font-size: 13px; font-family: monospace; }
+        .info-label { color: var(--text-faint); font-size: 12px; font-weight: 500; }
+        .info-value {
+            color: var(--text-muted);
+            font-size: 12px;
+            font-family: 'SFMono-Regular', ui-monospace, SFMono, Menlo, monospace;
+            word-break: break-all;
+            text-align: right;
+        }
         .permissions {
-            margin-bottom: 24px;
-            font-size: 14px;
-            color: #aaa;
-            line-height: 1.6;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.55;
         }
         .permissions ul {
             margin-top: 8px;
@@ -258,28 +304,43 @@ var consentPageTmpl = template.Must(template.New("consent").Parse(`<!DOCTYPE htm
         }
         .buttons {
             display: flex;
-            gap: 12px;
+            gap: 8px;
         }
         .btn {
             flex: 1;
-            padding: 10px 16px;
-            border-radius: 8px;
-            border: none;
-            font-size: 14px;
-            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0 16px;
+            border: 1px solid transparent;
+            border-radius: var(--radius-pill);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            text-decoration: none;
+            transition: background var(--ease);
+        }
+        .btn:focus-visible {
+            outline: 2px solid var(--text-muted);
+            outline-offset: 2px;
         }
         .btn-cancel {
-            background: #2a2a2a;
-            color: #aaa;
+            background: var(--surface);
+            border-color: var(--border);
+            color: var(--text);
         }
-        .btn-cancel:hover { background: #333; }
+        .btn-cancel:hover { background: var(--surface-alt); }
         .btn-approve {
-            background: #3b82f6;
-            color: #fff;
+            background: var(--text);
+            color: var(--page);
+            border: none;
         }
-        .btn-approve:hover { background: #2563eb; }
+        .btn-approve:hover { background: color-mix(in oklab, var(--text) 85%, var(--page)); }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body>
@@ -325,73 +386,123 @@ var approvalSuccessTmpl = template.Must(template.New("success").Parse(`<!DOCTYPE
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conexión Autorizada</title>
     <meta http-equiv="refresh" content="1;url={{.CallbackURL}}">
+    <meta name="color-scheme" content="light dark">
     <style>
+        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        :root {
+            color-scheme: light dark;
+            --page: #f5f4f2;
+            --surface: #fafaf9;
+            --surface-alt: #e8e6e2;
+            --border: #ddd9d3;
+            --text: #141413;
+            --text-muted: #57544c;
+            --text-faint: #6f6b64;
+            --success: #16a34a;
+            --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --page: #121110;
+                --surface: #1b1a19;
+                --surface-alt: #262523;
+                --border: #3d3b35;
+                --text: #f5f4f2;
+                --text-muted: #b0aca4;
+                --text-faint: #918d85;
+                --success: #4ade80;
+            }
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::selection { background: color-mix(in oklab, var(--text) 16%, transparent); }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
+            font-family: Geist, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--page);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 24px 16px;
+            -webkit-font-smoothing: antialiased;
         }
         .card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
             max-width: 420px;
-            width: 90%;
+            width: 100%;
             text-align: center;
         }
         .icon {
-            width: 64px;
-            height: 64px;
-            background: #166534;
+            width: 56px;
+            height: 56px;
+            background: color-mix(in oklab, var(--success) 14%, var(--surface));
+            border: 1px solid color-mix(in oklab, var(--success) 32%, var(--border));
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 20px;
+            margin: 0 auto 16px;
+            color: var(--success);
         }
         .icon svg {
-            width: 32px;
-            height: 32px;
-            stroke: #4ade80;
+            width: 26px;
+            height: 26px;
+            stroke: currentColor;
         }
         h1 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
+            letter-spacing: -0.01em;
             margin-bottom: 8px;
-            color: #fff;
         }
         p {
-            font-size: 14px;
-            color: #888;
-            margin-bottom: 20px;
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.55;
+            margin-bottom: 16px;
         }
         .label {
-            background: #252525;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
             border-radius: 8px;
             padding: 12px;
-            font-size: 13px;
-            color: #aaa;
-            margin-bottom: 20px;
+            font-size: 12.5px;
+            color: var(--text-muted);
+            line-height: 1.55;
+            margin-bottom: 0;
+        }
+        .label a {
+            color: var(--text);
+            text-underline-offset: 3px;
         }
         .btn {
-            display: inline-block;
-            padding: 10px 24px;
-            background: #3b82f6;
-            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0 24px;
+            background: var(--text);
+            color: var(--page);
             border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
+            border-radius: 999px;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
             text-decoration: none;
+            transition: background var(--ease);
         }
-        .btn:hover { background: #2563eb; }
+        .btn:hover { background: color-mix(in oklab, var(--text) 85%, var(--page)); }
+        .btn:focus-visible {
+            outline: 2px solid var(--text-muted);
+            outline-offset: 2px;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body>
@@ -432,66 +543,106 @@ var loginRequiredTmpl = template.Must(template.New("loginRequired").Parse(`<!DOC
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sesión Requerida</title>
+    <meta name="color-scheme" content="light dark">
     <style>
+        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        :root {
+            color-scheme: light dark;
+            --page: #f5f4f2;
+            --surface: #fafaf9;
+            --border: #ddd9d3;
+            --text: #141413;
+            --text-muted: #57544c;
+            --warn: #a16207;
+            --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --page: #121110;
+                --surface: #1b1a19;
+                --border: #3d3b35;
+                --text: #f5f4f2;
+                --text-muted: #b0aca4;
+                --warn: #fbbf24;
+            }
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::selection { background: color-mix(in oklab, var(--text) 16%, transparent); }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
+            font-family: Geist, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--page);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 24px 16px;
+            -webkit-font-smoothing: antialiased;
         }
         .card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
             max-width: 420px;
-            width: 90%;
+            width: 100%;
             text-align: center;
         }
         .icon {
-            width: 64px;
-            height: 64px;
-            background: #7c2d12;
+            width: 56px;
+            height: 56px;
+            background: color-mix(in oklab, var(--warn) 14%, var(--surface));
+            border: 1px solid color-mix(in oklab, var(--warn) 32%, var(--border));
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 20px;
+            margin: 0 auto 16px;
+            color: var(--warn);
         }
         .icon svg {
-            width: 32px;
-            height: 32px;
-            stroke: #fb923c;
+            width: 26px;
+            height: 26px;
+            stroke: currentColor;
         }
         h1 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
-            margin-bottom: 16px;
-            color: #fff;
+            letter-spacing: -0.01em;
+            margin-bottom: 8px;
         }
         p {
-            font-size: 14px;
-            color: #888;
-            margin-bottom: 24px;
-            line-height: 1.5;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            line-height: 1.55;
         }
+        p:last-of-type { margin-bottom: 20px; }
         .btn {
-            display: inline-block;
-            padding: 10px 24px;
-            background: #3b82f6;
-            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0 24px;
+            background: var(--text);
+            color: var(--page);
             border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
+            border-radius: 999px;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
             text-decoration: none;
+            transition: background var(--ease);
         }
-        .btn:hover { background: #2563eb; }
+        .btn:hover { background: color-mix(in oklab, var(--text) 85%, var(--page)); }
+        .btn:focus-visible {
+            outline: 2px solid var(--text-muted);
+            outline-offset: 2px;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body>
@@ -526,51 +677,78 @@ func callbackSuccessHTML(token, userID string) string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Autenticación Completa</title>
+    <meta name="color-scheme" content="light dark">
     <style>
+        /* Quiet Shelf tokens — mirrors extensions/*/popup/popup.css */
+        :root {
+            color-scheme: light dark;
+            --page: #f5f4f2;
+            --surface: #fafaf9;
+            --border: #ddd9d3;
+            --text: #141413;
+            --text-muted: #57544c;
+            --success: #16a34a;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --page: #121110;
+                --surface: #1b1a19;
+                --border: #3d3b35;
+                --text: #f5f4f2;
+                --text-muted: #b0aca4;
+                --success: #4ade80;
+            }
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::selection { background: color-mix(in oklab, var(--text) 16%, transparent); }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
+            font-family: Geist, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--page);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 24px 16px;
+            -webkit-font-smoothing: antialiased;
         }
         .card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
             max-width: 420px;
-            width: 90%;
+            width: 100%;
             text-align: center;
         }
         .icon {
-            width: 64px;
-            height: 64px;
-            background: #166534;
+            width: 56px;
+            height: 56px;
+            background: color-mix(in oklab, var(--success) 14%, var(--surface));
+            border: 1px solid color-mix(in oklab, var(--success) 32%, var(--border));
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 20px;
+            margin: 0 auto 16px;
+            color: var(--success);
         }
         .icon svg {
-            width: 32px;
-            height: 32px;
-            stroke: #4ade80;
+            width: 26px;
+            height: 26px;
+            stroke: currentColor;
         }
         h1 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
+            letter-spacing: -0.01em;
             margin-bottom: 8px;
-            color: #fff;
         }
         p {
-            font-size: 14px;
-            color: #888;
-            margin-bottom: 20px;
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.55;
+            margin-bottom: 0;
         }
     </style>
 </head>

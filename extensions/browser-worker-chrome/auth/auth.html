@@ -3,68 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
     <title>Autenticación del Worker</title>
     <style>
+        /* Yara Browser Worker — auth
+           Tokens mirror popup.css ("The Quiet Shelf"): one warm-stone ramp,
+           colour only as semantic signal, flat surfaces with a 1px border,
+           pill buttons. Light/dark follows the browser setting. */
+
+        :root {
+            color-scheme: light dark;
+
+            --page:        #f5f4f2;
+            --surface:     #fafaf9;
+            --border:      #ddd9d3;
+            --text:        #141413;
+            --text-muted:  #57544c;
+
+            --success: #16a34a;
+            --danger:  #dc2626;
+
+            --radius-lg:   16px;
+            --radius-pill: 999px;
+            --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --page:        #121110;
+                --surface:     #1b1a19;
+                --border:      #3d3b35;
+                --text:        #f5f4f2;
+                --text-muted:  #b0aca4;
+
+                --success: #4ade80;
+                --danger:  #f87171;
+            }
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        ::selection { background: color-mix(in oklab, var(--text) 16%, transparent); }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
+            font-family: Geist, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--page);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 24px 16px;
+            -webkit-font-smoothing: antialiased;
         }
         .card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 28px;
             max-width: 400px;
-            width: 90%;
+            width: 100%;
             text-align: center;
         }
         .icon {
-            width: 64px;
-            height: 64px;
+            width: 56px;
+            height: 56px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 20px;
+            margin: 0 auto 16px;
         }
-        .icon.success { background: #166534; }
-        .icon.error { background: #7f1d1d; }
+        .icon.success {
+            background: color-mix(in oklab, var(--success) 14%, var(--surface));
+            border: 1px solid color-mix(in oklab, var(--success) 32%, var(--border));
+            color: var(--success);
+        }
+        .icon.error {
+            background: color-mix(in oklab, var(--danger) 14%, var(--surface));
+            border: 1px solid color-mix(in oklab, var(--danger) 32%, var(--border));
+            color: var(--danger);
+        }
         .icon svg {
-            width: 32px;
-            height: 32px;
+            width: 26px;
+            height: 26px;
+            stroke: currentColor;
         }
-        .icon.success svg { stroke: #4ade80; }
-        .icon.error svg { stroke: #f87171; }
         h1 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
+            letter-spacing: -0.01em;
             margin-bottom: 8px;
-            color: #fff;
         }
         p {
-            font-size: 14px;
-            color: #888;
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.55;
             margin-bottom: 20px;
         }
         .btn {
-            display: inline-block;
-            padding: 10px 24px;
-            background: #3b82f6;
-            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0 24px;
+            background: var(--text);
+            color: var(--page);
             border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
+            border-radius: var(--radius-pill);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
             text-decoration: none;
+            transition: background var(--ease);
         }
-        .btn:hover { background: #2563eb; }
+        .btn:hover { background: color-mix(in oklab, var(--text) 85%, var(--page)); }
+        .btn:focus-visible {
+            outline: 2px solid var(--text-muted);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body>
