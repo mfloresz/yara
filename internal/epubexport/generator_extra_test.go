@@ -145,6 +145,11 @@ func TestGenerateEpubFileStructure(t *testing.T) {
 	if mimetype.Method != zip.Store {
 		t.Errorf("mimetype must be stored uncompressed, got method %d", mimetype.Method)
 	}
+	for _, f := range zr.File {
+		if f.Name != "mimetype" && f.Method != zip.Deflate {
+			t.Errorf("entry %q should be deflated, got method %d", f.Name, f.Method)
+		}
+	}
 
 	opf := readZipEntry(t, zr, "OEBPS/content.opf")
 	if !strings.Contains(opf, "<dc:title>Generated Novel</dc:title>") {

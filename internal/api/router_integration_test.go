@@ -1028,6 +1028,56 @@ func TestJobPatchRequiresOwner(t *testing.T) {
 	}
 }
 
+func TestEpubDownloadIsOneShot(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-epub-download@example.com", "secret123", "Alice")
+
+	imported, err := env.store.ImportEpubNovel(&store.ImportEpubNovelInput{
+		OwnerID:        alice.User.ID,
+		FileName:       "novela.epub",
+		FileBlob:       []byte("fake-epub"),
+		MimeType:       "application/epub+zip",
+		SourceTitle:    "Novela completa",
+		SourceLanguage: "es",
+		TargetLanguage: "en",
+		Chapters:       []store.ImportedEpubChapter{{Title: "Capítulo 1", Content: "Texto 1"}},
+	})
+	if err != nil {
+		t.Fatalf("import novel: %v", err)
+	}
+	epub, err := env.store.UpsertEpub(alice.User.ID, &store.Epub{
+		NovelID:       imported.Novel.ID,
+		FileKind:      "translated",
+		SourceVariant: "translated",
+	}, "novela.epub", "application/epub+zip", []byte("fake-epub-blob"))
+	if err != nil {
+		t.Fatalf("upsert epub: %v", err)
+	}
+
+	dlResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/epubs/"+epub.ID+"/download", alice.Token, nil)
+	assertStatus(t, dlResp, http.StatusOK)
+	if got := dlResp.Header().Get("Content-Type"); got != "application/epub+zip" {
+		t.Errorf("expected application/epub+zip content type, got %q", got)
+	}
+	if disp := dlResp.Header().Get("Content-Disposition"); !strings.HasPrefix(disp, "attachment") || !strings.HasSuffix(disp, ".epub") {
+		t.Errorf("expected attachment disposition with an .epub filename, got %q", disp)
+	}
+	blob, err := io.ReadAll(dlResp.Body)
+	if err != nil {
+		t.Fatalf("read download body: %v", err)
+	}
+	if string(blob) != "fake-epub-blob" {
+		t.Errorf("downloaded blob = %q, want fake-epub-blob", blob)
+	}
+
+	if _, err := env.store.App.FindRecordById(store.EpubsCollection, epub.ID); err == nil {
+		t.Fatal("expected epub record to be deleted after download, but it still exists")
+	}
+
+	replayResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/epubs/"+epub.ID+"/download", alice.Token, nil)
+	assertStatus(t, replayResp, http.StatusNotFound)
+}
+
 func TestDeleteNovelCascadesRelatedRecords(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-delete-novel@example.com", "secret123", "Alice")

@@ -57,14 +57,12 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 
-	writeFile := func(name string, data []byte, compressed bool) error {
-		method := zip.Deflate
-		if !compressed {
-			method = zip.Store
-		}
+	// deflateWrite stores everything deflated; only mimetype must be stored
+	// raw per the EPUB OCF spec (first entry, uncompressed).
+	deflateWrite := func(name string, data []byte) error {
 		f, err := w.CreateHeader(&zip.FileHeader{
 			Name:   name,
-			Method: method,
+			Method: zip.Deflate,
 		})
 		if err != nil {
 			return err
@@ -73,16 +71,20 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 		return err
 	}
 
-	if err := writeFile("mimetype", []byte("application/epub+zip"), false); err != nil {
+	mf, err := w.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
+	if err != nil {
 		return nil, err
 	}
-	if err := writeFile("META-INF/container.xml", []byte(containerXML), false); err != nil {
+	if _, err := mf.Write([]byte("application/epub+zip")); err != nil {
 		return nil, err
 	}
-	if err := writeFile("META-INF/com.apple.ibooks.display-options.xml", []byte(ibooksDisplayXML), false); err != nil {
+	if err := deflateWrite("META-INF/container.xml", []byte(containerXML)); err != nil {
 		return nil, err
 	}
-	if err := writeFile("OEBPS/css/styles.css", []byte(defaultCSS), false); err != nil {
+	if err := deflateWrite("META-INF/com.apple.ibooks.display-options.xml", []byte(ibooksDisplayXML)); err != nil {
+		return nil, err
+	}
+	if err := deflateWrite("OEBPS/css/styles.css", []byte(defaultCSS)); err != nil {
 		return nil, err
 	}
 
@@ -94,20 +96,20 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 	coverExt := mimeToExt(coverMimeStr)
 
 	if hasCover {
-		if err := writeFile("OEBPS/cover"+coverExt, coverBytes, false); err != nil {
+		if err := deflateWrite("OEBPS/cover"+coverExt, coverBytes); err != nil {
 			return nil, err
 		}
 		// Create XHTML cover page
 		coverXhtml := buildCoverXHTML(coverExt, coverMimeStr)
-		if err := writeFile("OEBPS/cover.xhtml", []byte(coverXhtml), false); err != nil {
+		if err := deflateWrite("OEBPS/cover.xhtml", []byte(coverXhtml)); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := writeFile("OEBPS/toc.ncx", []byte(buildTocNCX(meta, chapters, hasCover)), false); err != nil {
+	if err := deflateWrite("OEBPS/toc.ncx", []byte(buildTocNCX(meta, chapters, hasCover))); err != nil {
 		return nil, err
 	}
-	if err := writeFile("OEBPS/toc.xhtml", []byte(buildTocXHTML(meta, chapters)), false); err != nil {
+	if err := deflateWrite("OEBPS/toc.xhtml", []byte(buildTocXHTML(meta, chapters))); err != nil {
 		return nil, err
 	}
 
@@ -118,19 +120,19 @@ func GenerateEpubFile(meta EpubMetadata, chapters []ChapterData, coverBytes []by
 				continue
 			}
 			zipPath, fileName := chapterImageZipPath(i, j, img.MimeType)
-			if err := writeFile(zipPath, img.Blob, false); err != nil {
+			if err := deflateWrite(zipPath, img.Blob); err != nil {
 				return nil, err
 			}
 			imgMap[fmt.Sprintf("[[IMG-%d]]", j+1)] = ImageFile{Name: fileName, Alt: img.Alt, MimeType: img.MimeType}
 		}
 		filename := fmt.Sprintf("OEBPS/chapter%d.xhtml", i+1)
 		html := buildChapterXHTML(ch, imgMap)
-		if err := writeFile(filename, []byte(html), false); err != nil {
+		if err := deflateWrite(filename, []byte(html)); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := writeFile("OEBPS/content.opf", []byte(buildContentOPF(meta, chapters, hasCover, coverMimeStr, coverExt)), false); err != nil {
+	if err := deflateWrite("OEBPS/content.opf", []byte(buildContentOPF(meta, chapters, hasCover, coverMimeStr, coverExt))); err != nil {
 		return nil, err
 	}
 

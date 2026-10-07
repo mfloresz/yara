@@ -32,7 +32,7 @@ export function useExportFlow(novel: Ref<Novel | null>) {
       anchor.remove();
       URL.revokeObjectURL(anchor.href);
       progress.value = 100;
-      feedback.value = `EPUB generado y guardado en el servidor.`;
+      feedback.value = `EPUB generado y descargado.`;
     } catch (err) {
       feedback.value = `Error: ${err instanceof Error ? err.message : String(err)}`;
     } finally {

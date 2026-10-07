@@ -2,7 +2,9 @@ package api
 
 import (
 	"io"
+	"mime"
 	"net/http"
+	"strconv"
 
 	"github.com/pocketbase/pocketbase/core"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
@@ -89,22 +91,18 @@ func (sharedEpubHandlers) create(s *Server) func(*core.RequestEvent) error {
 
 func (sharedEpubHandlers) download(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		record, fileName, err := s.Store.GetEpubDownloadFile(e.Auth.Id, e.Request.PathValue("id"))
+		// Exports are one-shot: the first download consumes and deletes the
+		// stored copy (see TakeEpubFile), so caching is meaningless anyway.
+		blob, fileName, err := s.Store.TakeEpubFile(e.Auth.Id, e.Request.PathValue("id"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
-		fsys, err := e.App.NewFilesystem()
-		if err != nil {
-			return e.InternalServerError("filesystem init failure", err)
-		}
-		defer fsys.Close()
-		// Epubs are regenerated in-place under the same record/download URL
-		// (see UpsertEpub), so disable caching entirely to avoid ever serving
-		// a stale copy after a rebuild. The frontend also cache-busts this
-		// URL with the epub's updatedAt, but this header protects any other
-		// caller (curl, other clients) too.
 		e.Response.Header().Set("Cache-Control", "no-store")
-		return fsys.Serve(e.Response, e.Request, record.BaseFilesPath()+"/"+fileName, fileName)
+		e.Response.Header().Set("Content-Type", "application/epub+zip")
+		e.Response.Header().Set("Content-Length", strconv.Itoa(len(blob)))
+		e.Response.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
+		_, err = e.Response.Write(blob)
+		return err
 	}
 }
 

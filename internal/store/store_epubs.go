@@ -1,6 +1,8 @@
 package store
 
 import (
+	"io"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
@@ -51,18 +53,40 @@ func (s *Store) ListEpubs(userID, novelID string) ([]Epub, error) {
 	return out, nil
 }
 
-func (s *Store) GetEpubDownloadFile(userID, epubID string) (*core.Record, string, error) {
+// TakeEpubFile returns the stored EPUB blob and deletes the record (and its
+// file) in the same call: exports are one-shot downloads, so the first
+// download consumes the stored copy. The blob is read fully into memory
+// before the delete, so a slow client never keeps the file alive on disk.
+func (s *Store) TakeEpubFile(userID, epubID string) ([]byte, string, error) {
 	record, err := s.App.FindRecordById(EpubsCollection, epubID)
 	if err != nil {
 		return nil, "", ErrNotFound
 	}
-	novelID := record.GetString("novel")
-	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+	if _, err := s.GetOwnedNovel(userID, record.GetString("novel")); err != nil {
 		return nil, "", err
 	}
 	files := record.GetStringSlice("file")
 	if len(files) == 0 {
 		return nil, "", ErrNotFound
 	}
-	return record, files[0], nil
+
+	fsys, err := s.App.NewFilesystem()
+	if err != nil {
+		return nil, "", err
+	}
+	defer fsys.Close()
+	reader, err := fsys.GetReader(record.BaseFilesPath() + "/" + files[0])
+	if err != nil {
+		return nil, "", ErrNotFound
+	}
+	blob, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		return nil, "", err
+	}
+
+	if err := s.App.Delete(record); err != nil {
+		return nil, "", err
+	}
+	return blob, files[0], nil
 }
