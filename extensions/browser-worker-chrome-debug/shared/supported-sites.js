@@ -22,6 +22,7 @@ export const SUPPORTED_SITE_HOSTS = [
   'gaydemon.com',
   'chrysanthemumgarden.com',
   'getinkspired.com',
+  'asianovel.net',
 ];
 
 // Match patterns for chrome.contextMenus documentUrlPatterns. Both the bare

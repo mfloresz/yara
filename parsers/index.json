@@ -8,6 +8,12 @@
       "requiresBrowser": true
     },
     {
+      "name": "asianovel",
+      "file": "asianovel.js",
+      "sha256": "e9b8c9e04eee5090b6d0aa13096cb48fe5a8d4e2c2dfb30ffdc1224cff64f52d",
+      "requiresBrowser": false
+    },
+    {
       "name": "brightnovels",
       "file": "brightnovels.js",
       "sha256": "785286577ddf651100fab950993d9ac43e135b4d540f7f6945beb6fb7b2d69f0",
@@ -134,5 +140,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "44f00aa096ab73fd4fe7ff5bcc215b19c84726370da272314fb0811730e9b256b347abf61b59477a5e0b53cbb104802967b413ad62d9708f2ed43d6e133ffa07"
+  "signature": "0ccac3049a5c4b1c4794fa653f516d0e6d362774634f9068f070585aeb87fc71065f99e8fb82580886b40772b1818321488588541a44af3269c53ec08eb9d60b"
 }
