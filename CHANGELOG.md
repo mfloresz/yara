@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.45.0] - 2026-10-07
+
+### What's new
+
+- **EPUB downloads are now one-shot.** The generated EPUB is streamed directly to the client and deleted from the server immediately after download. The file is no longer stored persistently — each download regenerates and serves a fresh copy.
+- **EPUB generator uses deflate compression** for all entries except `mimetype` (which remains stored uncompressed as the first entry, per the OCF spec).
+- **Updated download feedback message** in the UI to say "descargado" (downloaded) instead of "guardado en el servidor" (saved on server), reflecting the new one-shot behavior.
+
+### Fixes
+
+- None.
+
+### Housekeeping
+
+- Added integration test verifying one-shot EPUB download behavior (record deleted after download, 404 on replay).
+- Updated Quiet Shelf comments in browser-worker auth templates and removed a redundant CSS rule.
+
+# Changelog
+
 ## [v0.44.0] - 2026-10-07
 
 ### What's new
@@ -625,5 +644,7 @@
 [v0.11.0]: https://github.com/mfloresz/yara/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/mfloresz/yara/compare/v0.9.0...v0.10.0
 [v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
-[v0.43.1]: https://github.com/mfloresz/yara/compare/v0.43.0...v0.43.1
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.43.0
+
+[v0.45.0]: https://github.com/mfloresz/yara/compare/v0.44.0...v0.45.0
+[v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.44.0
