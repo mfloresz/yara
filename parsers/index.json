@@ -10,7 +10,7 @@
     {
       "name": "asianovel",
       "file": "asianovel.js",
-      "sha256": "e9b8c9e04eee5090b6d0aa13096cb48fe5a8d4e2c2dfb30ffdc1224cff64f52d",
+      "sha256": "4278bd59aa265535cdc85e8d3b139db7fab95f76120d033191a31c002c7d54dc",
       "requiresBrowser": false
     },
     {
@@ -140,5 +140,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "0ccac3049a5c4b1c4794fa653f516d0e6d362774634f9068f070585aeb87fc71065f99e8fb82580886b40772b1818321488588541a44af3269c53ec08eb9d60b"
+  "signature": "0ccdf80f58c0541d237514e2be1733f3e951d109e4c74274a037b42e12781e289e29841c6faf2be0d65052b41f2fcf79553921d52f37471015ec988815204d02"
 }

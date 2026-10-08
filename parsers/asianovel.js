@@ -16,7 +16,17 @@ module.exports = {
     // Extract novel metadata
     const title = ctx.css1(doc, 'meta[property="og:title"]')?.attr('content') || '';
     const coverUrl = ctx.css1(doc, 'meta[property="og:image"]')?.attr('content') || '';
-    const description = ctx.css1(doc, 'meta[property="og:description"]')?.attr('content') || '';
+    // Description from the story summary section (full text, not truncated meta)
+    let description = '';
+    const summarySection = ctx.css1(doc, 'section.story__summary');
+    if (summarySection !== null) {
+      const paragraphs = ctx.css(summarySection, 'p');
+      description = paragraphs.map(p => p.text.trim()).filter(t => t.length > 0).join(' ');
+    }
+    if (!description) {
+      const metaDesc = ctx.css1(doc, 'meta[property="og:description"]');
+      description = metaDesc ? metaDesc.attr('content') || '' : '';
+    }
     // Author from link
     let author = '';
     const authorLinks = ctx.css(doc, 'a[href*="/author/"]');
