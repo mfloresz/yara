@@ -32,6 +32,12 @@
       "requiresBrowser": false
     },
     {
+      "name": "dmxs",
+      "file": "dmxs.js",
+      "sha256": "a2b5d5fdf7c0ae1adb3e7ab95c28667a721dd59e81a4bbd601bc947199c601bd",
+      "requiresBrowser": false
+    },
+    {
       "name": "empirenovel",
       "file": "empirenovel.js",
       "sha256": "bf5632c8fdf186350dcb1f1291e7804c83153d3f3c0cbf6337ad8bdc33c28d36",
@@ -110,6 +116,12 @@
       "requiresBrowser": false
     },
     {
+      "name": "pearlandreef",
+      "file": "pearlandreef.js",
+      "sha256": "a28076aa7646d52481823dcc1e39cd27e10735fe2924910651d5de53503e2cf0",
+      "requiresBrowser": false
+    },
+    {
       "name": "skydemonorder",
       "file": "skydemonorder.js",
       "sha256": "e18bc6cd9c9295cacf937fd9894d3a6f2b67c44620e3e12e5fe2d8cdd8b8722f",
@@ -140,5 +152,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "0ccdf80f58c0541d237514e2be1733f3e951d109e4c74274a037b42e12781e289e29841c6faf2be0d65052b41f2fcf79553921d52f37471015ec988815204d02"
+  "signature": "c0cffdc1d157a2b8e5c436805a06173dd54f34e79c2c83d54283effd75073da9016e554e1745033187a345ae571871cfbc48cccb37cf9383ceff0f97575bb80a"
 }

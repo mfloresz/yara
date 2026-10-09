@@ -948,7 +948,11 @@ async function checkForChallenge(tabId) {
         if ((document.title || '').trim() === 'Just a moment...') signals.push('title');
         if (document.querySelector('script[src*="/cdn-cgi/challenge-platform/"]')) signals.push('script');
         if (document.querySelector('#cf-challenge-running, #cf-please-wait, #challenge-form')) signals.push('dom');
-        if (document.querySelector('.cf-turnstile, [data-sitekey]')) signals.push('turnstile');
+        // NOTE: match only .cf-turnstile, never a bare [data-sitekey] — sites
+        // like manhuaus.com (Madara theme) embed a Google reCAPTCHA
+        // (div.g-recaptcha[data-sitekey]) in normal pages, which caused an
+        // endless false-positive challenge loop.
+        if (document.querySelector('.cf-turnstile')) signals.push('turnstile');
         // A real challenge is still present only when a Cloudflare-exclusive
         // artifact exists. Plain prose (e.g. a chapter titled "Just a moment")
         // never injects these, so we never false-positive on it.
