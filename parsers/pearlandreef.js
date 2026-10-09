@@ -1,7 +1,7 @@
-// pearlandreef.com — JormunTL WordPress theme. The full chapter list ships in
-// the initial novel HTML (#novel-toc-list .chapter-item-improved, in reading
-// order) and each chapter body lives in div.chapter-content. Direct fetches
-// return 200 with everything inline, so no browser worker is needed.
+// pearlandreef.com — JormunTL WordPress theme. The chapter list paginates
+// 100 per page (?toc_page=2, ...) inside #novel-toc-list, in reading order,
+// and each chapter body lives in div.chapter-content. Direct fetches return
+// 200 with everything inline, so no browser worker is needed.
 function hostOf(u) {
   const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(u || "");
   return m ? m[1].toLowerCase().replace(/^www\./, "") : "";
@@ -64,6 +64,39 @@ function coverOf(ctx, doc) {
   );
 }
 
+function collectChapters(ctx, doc, baseURL, seen, chapters) {
+  for (const a of ctx.css(doc, "#novel-toc-list .chapter-item-improved a")) {
+    const raw = a.attr("href");
+    if (raw === null || raw === "") continue;
+    const href = ctx.resolveUrl(baseURL, raw).split("#")[0];
+    const key = href.replace(/\/$/, "");
+    if (seen[key]) continue;
+    seen[key] = true;
+    const t = ctx.css1(a, "h4");
+    chapters.push({ title: t ? t.text.trim() : a.text.trim(), url: href });
+  }
+}
+
+// The TOC paginates 100 chapters per page (?toc_page=2, ...) — the first
+// HTML only carries chapters 1-100. Discover the remaining pages from the
+// pagination <select> (each option carries its absolute data-jt-url).
+function tocPageUrls(ctx, doc, baseURL) {
+  const pages = [];
+  const seenPage = {};
+  for (const o of ctx.css(doc, "select.jt-page-jump option")) {
+    const rel = o.attr("data-jt-url");
+    if (rel === null || rel === "") continue;
+    const full = ctx.resolveUrl(baseURL, rel).split("#")[0];
+    const n = parseInt(o.attr("value") || "0", 10);
+    if (!seenPage[full]) {
+      seenPage[full] = true;
+      pages.push({ n: isNaN(n) ? 0 : n, url: full });
+    }
+  }
+  pages.sort((a, b) => a.n - b.n);
+  return pages.map((p) => p.url);
+}
+
 function paragraphsOf(ctx, sel) {
   const out = [];
   for (const p of ctx.css(sel, "p")) {
@@ -96,22 +129,28 @@ module.exports = {
 
     const chapters = [];
     const seen = {};
-    for (const a of ctx.css(doc, "#novel-toc-list .chapter-item-improved a")) {
-      const href = a.attr("href");
-      if (href === null || href === "") continue;
-      const key = href.replace(/\/$/, "");
-      if (seen[key]) continue;
-      seen[key] = true;
-      const t = ctx.css1(a, "h4");
-      chapters.push({ title: t ? t.text.trim() : a.text.trim(), url: href });
+    collectChapters(ctx, doc, url, seen, chapters);
+
+    // Walk the remaining TOC pages in order. The <select> lists every page
+    // ("Chapters 1-100 of 257", ...); fetching each ?toc_page=N back to back
+    // is cheap and keeps the snapshot complete.
+    const pageUrls = tocPageUrls(ctx, doc, url);
+    const fetched = {};
+    fetched[url.split("#")[0]] = true;
+    for (const pageUrl of pageUrls) {
+      if (fetched[pageUrl]) continue;
+      fetched[pageUrl] = true;
+      const pageDoc = ctx.get(pageUrl);
+      collectChapters(ctx, pageDoc, pageUrl, seen, chapters);
     }
+
     if (chapters.length === 0) ctx.fail("site_layout_changed", "no chapter list at " + url);
 
     const tocNode = ctx.css1(doc, "#novel-toc");
     if (tocNode) {
       const total = parseInt(tocNode.attr("data-total") || "0", 10);
       if (total > chapters.length) {
-        ctx.log("pearlandreef: page lists " + chapters.length + " of " + total + " chapters; the rest need JS pagination");
+        ctx.log("pearlandreef: collected " + chapters.length + " of " + total + " chapters");
       }
     }
 

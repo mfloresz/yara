@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Yara Browser Worker Debug (Firefox)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Debug browser proxy for Yara - no auth required, for development only (Firefox)",
   "browser_specific_settings": {
     "gecko": {

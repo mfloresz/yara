@@ -118,7 +118,7 @@
     {
       "name": "pearlandreef",
       "file": "pearlandreef.js",
-      "sha256": "a28076aa7646d52481823dcc1e39cd27e10735fe2924910651d5de53503e2cf0",
+      "sha256": "b67a0169eb25a14b918f353d5ca94b0b2db3e12d98170414ee3deda95683c094",
       "requiresBrowser": false
     },
     {
@@ -152,5 +152,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "c0cffdc1d157a2b8e5c436805a06173dd54f34e79c2c83d54283effd75073da9016e554e1745033187a345ae571871cfbc48cccb37cf9383ceff0f97575bb80a"
+  "signature": "c85bc584b0f93b471c5e437dde3d300c98705ef157de86e33e58117fbb3bd0d0e2a8211814d21c93b6bfe87c7e3b322f6a8ad9fa70cbaf502cd529acebf18f0a"
 }
