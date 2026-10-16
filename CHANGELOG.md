@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.46.1] - 2026-10-16
+
+### Fixes
+
+- **Navigating between pages no longer gets stuck after an update.** Page chunks are loaded on demand and their filenames change with every build; an open tab could keep referencing chunks that no longer exist on the server, so clicking a navigation button silently did nothing until a hard refresh. The app now serves `index.html` and `sw.js` with `no-cache` (long-term immutable caching applies only to hashed `/assets/*` files), the service worker takes over new versions automatically, and the app reloads itself once when a page chunk fails to load or a new version takes control.
+
 ## [v0.46.0] - 2026-10-16
 
 ### What's new
@@ -665,6 +671,7 @@
 [v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
 
 [v0.45.0]: https://github.com/mfloresz/yara/compare/v0.44.0...v0.45.0
+[v0.46.1]: https://github.com/mfloresz/yara/compare/v0.46.0...v0.46.1
 [v0.46.0]: https://github.com/mfloresz/yara/compare/v0.45.0...v0.46.0
 [v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.44.0
