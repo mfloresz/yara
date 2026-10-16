@@ -128,11 +128,32 @@ router.beforeEach((to) => {
   return true;
 });
 
+// After a deploy, a stale index.html can reference hashed chunks that no
+// longer exist on the server. The dynamic import then fails and vue-router
+// cancels the navigation silently. Reload once so the browser fetches the
+// fresh chunk manifest; the sessionStorage flag guards against reload loops.
+const CHUNK_RELOAD_KEY = "yara-chunk-reload";
+
+router.onError((err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (
+    /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk|ChunkLoadError/i.test(
+      msg,
+    )
+  ) {
+    if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+      sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+      window.location.reload();
+    }
+  }
+});
+
 // Static titles live here; novel-scoped routes (detail, chapter edition,
 // reader) set `Yara - <novel title>` from their own page once the novel loads.
 const DYNAMIC_TITLE_ROUTES = new Set(["novel-detail", "chapter-detail", "reader"]);
 
 router.afterEach((to) => {
+  sessionStorage.removeItem(CHUNK_RELOAD_KEY);
   if (to.name != null && DYNAMIC_TITLE_ROUTES.has(String(to.name))) return;
   setDocumentTitle(typeof to.meta.title === "string" ? to.meta.title : null);
 });

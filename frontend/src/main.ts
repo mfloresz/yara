@@ -36,7 +36,24 @@ async function bootstrap() {
   if ('serviceWorker' in navigator) {
     try {
       const swUrl = import.meta.env.PROD ? '/sw.js' : '/sw-dev.js';
-      await navigator.serviceWorker.register(swUrl);
+      const registration = await navigator.serviceWorker.register(swUrl);
+      if (import.meta.env.PROD) {
+        // The fresh SW takes over on its own (skipWaiting + clientsClaim).
+        // Reload so the open page runs the new bundle instead of lingering
+        // on chunks from the previous deploy. Skipped on first install,
+        // where there is no previous controller to be stale from.
+        const hadController = !!navigator.serviceWorker.controller;
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (hadController && !reloaded) {
+            reloaded = true;
+            window.location.reload();
+          }
+        });
+        // Browsers also check for SW updates on navigation; poll hourly so
+        // long-lived tabs pick up deploys without navigating.
+        setInterval(() => void registration.update(), 60 * 60 * 1000);
+      }
     } catch {
       // SW registration is best-effort: PWA features fall back gracefully.
     }

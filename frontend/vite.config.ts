@@ -22,6 +22,11 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA({
+      // A new deploy must take over on its own: without autoUpdate the fresh
+      // service worker stays "waiting" until every tab closes, so the open
+      // app keeps requesting hashed chunks that no longer exist on the server
+      // and lazy-route navigations fail silently until a hard refresh.
+      registerType: "autoUpdate",
       strategies: "generateSW",
       srcDir: "public",
       filename: "sw.js",
@@ -65,6 +70,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [

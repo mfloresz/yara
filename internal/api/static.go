@@ -44,8 +44,15 @@ func registerStaticHandler(router *pbrouter.Router[*core.RequestEvent], staticDi
 		if ext := path.Ext(filename); ext != "" {
 			f, err := fs.Stat(fsys, filename)
 			if err == nil && !f.IsDir() {
-				if strings.HasSuffix(filename, ".js") || strings.HasSuffix(filename, ".css") {
+				if strings.HasPrefix(filename, "assets/") {
+					// Hashed build output: the filename is the version.
 					e.Response.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					// Unhashed files (sw.js, theme-init.js, manifest, icons):
+					// always revalidate so a new deploy takes effect without
+					// a hard refresh. sw.js as immutable pinned the old
+					// service worker forever.
+					e.Response.Header().Set("Cache-Control", "no-cache")
 				}
 				return e.FileFS(fsys, filename)
 			}
@@ -54,6 +61,9 @@ func registerStaticHandler(router *pbrouter.Router[*core.RequestEvent], staticDi
 			return e.NotFoundError("", nil)
 		}
 
+		// index.html is the chunk manifest: it points at hashed assets that
+		// only exist in the current build, so it must never be cached.
+		e.Response.Header().Set("Cache-Control", "no-cache")
 		return e.FileFS(fsys, "index.html")
 	}
 	router.GET("/{path...}", static)
