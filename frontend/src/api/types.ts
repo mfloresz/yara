@@ -527,6 +527,14 @@ export type AgentCleanupProposal = {
   removedLines: number;
 };
 
+export type AgentChatUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens?: number;
+  reasoningTokens?: number;
+};
+
 export type AgentChatEvent = {
   type:
     | "session"
@@ -546,6 +554,7 @@ export type AgentChatEvent = {
   question?: string;
   options?: AgentChatOption[];
   proposal?: AgentCleanupProposal;
+  usage?: AgentChatUsage;
   message?: { role: string; content: string };
   steps?: number;
   code?: string;

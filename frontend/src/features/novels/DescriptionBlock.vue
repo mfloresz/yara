@@ -3,7 +3,10 @@
     <div
       ref="el"
       class="markdown-preview muted small novel-description"
-      :class="{ 'novel-description--collapsed': !expanded }"
+      :class="{
+        'novel-description--collapsed': overflow && !expanded,
+        'novel-description--fade': overflow && !expanded,
+      }"
       v-html="markdownToHtml(description)"
     />
     <n-button
@@ -57,6 +60,9 @@ watch(
 .novel-description--collapsed {
   max-height: calc(0.875rem * 1.3 * 5);
   overflow: hidden;
+}
+
+.novel-description--fade {
   mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
 }

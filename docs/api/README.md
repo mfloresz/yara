@@ -589,7 +589,7 @@ per user — one session each, enforced by a unique index on the owner.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `proposal`, `done`, `error`. A `proposal` event carries a cleanup the assistant proposes; the client renders it as an approval card and the cleanup only runs if the user approves it there. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `proposal`, `done`, `error`. A `proposal` event carries a cleanup the assistant proposes; the client renders it as an approval card and the cleanup only runs if the user approves it there. The `done` event carries `steps` plus `usage` (`promptTokens` = last step's input size, `completionTokens`/`totalTokens` summed across steps; absent when the provider reported none). Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 

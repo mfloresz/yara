@@ -78,6 +78,47 @@ type AgentChatOutput struct {
 	Messages []AgentMessage
 	Text     string
 	Steps    int
+	// Usage sums token usage across the turn's model calls (nil when the
+	// provider reported none).
+	Usage *AgentUsage
+}
+
+// AgentUsage is the summed token usage of one AgentChat turn. PromptTokens
+// is the last step's input size (the context held at answer time);
+// CompletionTokens and TotalTokens accumulate across steps.
+type AgentUsage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	TotalTokens      int `json:"totalTokens"`
+	CachedTokens     int `json:"cachedTokens,omitempty"`
+	ReasoningTokens  int `json:"reasoningTokens,omitempty"`
+}
+
+// accumulateAgentUsage folds one step's reported usage into the turn total.
+// PromptTokens keeps the latest value (the context size at answer time);
+// everything else sums, matching how the provider bills the turn.
+func accumulateAgentUsage(total *AgentUsage, msg *schema.Message) {
+	if total == nil || msg == nil || msg.ResponseMeta == nil || msg.ResponseMeta.Usage == nil {
+		return
+	}
+	u := msg.ResponseMeta.Usage
+	if u.PromptTokens > 0 {
+		total.PromptTokens = u.PromptTokens
+	}
+	total.CompletionTokens += u.CompletionTokens
+	total.TotalTokens += u.TotalTokens
+	total.CachedTokens += u.PromptTokenDetails.CachedTokens
+	total.ReasoningTokens += u.CompletionTokensDetails.ReasoningTokens
+}
+
+// agentUsageOrNil returns nil when nothing was reported so the wire format
+// omits the field instead of sending a zero usage object.
+func agentUsageOrNil(total AgentUsage) *AgentUsage {
+	if total == (AgentUsage{}) {
+		return nil
+	}
+	out := total
+	return &out
 }
 
 // AgentProvider is implemented by providers that can run tool-using chat
@@ -121,6 +162,7 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 
 	var trail []AgentMessage
 	trail = append(trail, in.Messages...)
+	var usage AgentUsage
 
 	for step := 0; step < maxSteps; step++ {
 		// The agent deliberately does NOT use the provider's Settings timeout
@@ -149,10 +191,11 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 			return AgentChatOutput{}, fmt.Errorf("openai agent chat: concat stream: %w", err)
 		}
 		msgs = append(msgs, final)
+		accumulateAgentUsage(&usage, final)
 
 		if len(final.ToolCalls) == 0 {
 			trail = append(trail, agentMessageFromEino(final))
-			return AgentChatOutput{Messages: trail, Text: final.Content, Steps: step + 1}, nil
+			return AgentChatOutput{Messages: trail, Text: final.Content, Steps: step + 1, Usage: agentUsageOrNil(usage)}, nil
 		}
 
 		calls := make([]AgentToolCall, 0, len(final.ToolCalls))
@@ -188,7 +231,7 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 			}
 		}
 		if terminal {
-			return AgentChatOutput{Messages: trail, Steps: step + 1}, nil
+			return AgentChatOutput{Messages: trail, Steps: step + 1, Usage: agentUsageOrNil(usage)}, nil
 		}
 	}
 
@@ -201,7 +244,8 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 	}
 	msgs = append(msgs, final)
 	trail = append(trail, agentMessageFromEino(final))
-	return AgentChatOutput{Messages: trail, Text: final.Content, Steps: maxSteps}, nil
+	accumulateAgentUsage(&usage, final)
+	return AgentChatOutput{Messages: trail, Text: final.Content, Steps: maxSteps, Usage: agentUsageOrNil(usage)}, nil
 }
 
 // agentToolByName finds a catalog tool by name; nil when the model invented

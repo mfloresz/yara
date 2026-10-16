@@ -97,6 +97,32 @@ type agentChatOption struct {
 	Value string `json:"value"`
 }
 
+// agentChatUsage mirrors ai.AgentUsage on the wire. PromptTokens is the last
+// step's input size (context held at answer time); completion/total
+// accumulate across the turn's steps.
+type agentChatUsage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	TotalTokens      int `json:"totalTokens"`
+	CachedTokens     int `json:"cachedTokens,omitempty"`
+	ReasoningTokens  int `json:"reasoningTokens,omitempty"`
+}
+
+// agentUsageFromAI maps the provider usage onto the wire shape, preserving
+// the nil-when-empty contract so providers without usage report nothing.
+func agentUsageFromAI(u *ai.AgentUsage) *agentChatUsage {
+	if u == nil {
+		return nil
+	}
+	return &agentChatUsage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		CachedTokens:     u.CachedTokens,
+		ReasoningTokens:  u.ReasoningTokens,
+	}
+}
+
 // agentChatEvent is one NDJSON line of the streaming response.
 type agentChatEvent struct {
 	Type        string                `json:"type"`
@@ -108,6 +134,7 @@ type agentChatEvent struct {
 	Result      string                `json:"result,omitempty"`
 	Message     map[string]any        `json:"message,omitempty"`
 	Steps       int                   `json:"steps,omitempty"`
+	Usage       *agentChatUsage       `json:"usage,omitempty"`
 	Code        string                `json:"code,omitempty"`
 	ErrorDetail string                `json:"error,omitempty"`
 	Question    string                `json:"question,omitempty"`
@@ -286,6 +313,7 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 			Type:      "done",
 			SessionID: session.ID,
 			Steps:     output.Steps,
+			Usage:     agentUsageFromAI(output.Usage),
 			Message: map[string]any{
 				"role":    "assistant",
 				"content": output.Text,

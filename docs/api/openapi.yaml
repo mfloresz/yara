@@ -2807,6 +2807,15 @@ components:
             removedLines: { type: integer, description: total lines the rule would remove }
         message: { type: object, description: done payload (role + content) }
         steps: { type: integer, description: done payload, model steps taken }
+        usage:
+          type: object
+          description: done payload, summed token usage of the turn (absent when the provider reported none). promptTokens is the last step's input size (context held at answer time); completionTokens/totalTokens accumulate across steps.
+          properties:
+            promptTokens: { type: integer }
+            completionTokens: { type: integer }
+            totalTokens: { type: integer }
+            cachedTokens: { type: integer }
+            reasoningTokens: { type: integer }
         code: { type: string, description: error code }
         error: { type: string, description: error detail }
 

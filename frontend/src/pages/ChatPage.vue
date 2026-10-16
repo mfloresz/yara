@@ -9,6 +9,7 @@
           </p>
         </div>
         <div class="page-actions">
+          <span v-if="usageLabel" class="muted small chat-usage" :title="usageTitle">{{ usageLabel }}</span>
           <n-button
             secondary
             size="small"
@@ -265,7 +266,7 @@ import CleanupProposalPanel from "@/components/CleanupProposalPanel.vue";
 import { useAppServices } from "@/app/services";
 import { MarkdownRender } from "markstream-vue";
 import "markstream-vue/index.css";
-import type { AgentChatEvent, AgentChatOption, AgentCleanupProposal, AgentSessionMessage } from "@/api/types";
+import type { AgentChatEvent, AgentChatOption, AgentChatUsage, AgentCleanupProposal, AgentSessionMessage } from "@/api/types";
 import type { Novel } from "@/domain";
 
 type ProposalChatItem = {
@@ -301,6 +302,7 @@ const items = ref<ChatItem[]>([]);
 const draft = ref("");
 const streaming = ref(false);
 const sessionId = ref("");
+const lastUsage = ref<AgentChatUsage | null>(null);
 const selectedNovel = ref<{ id: string; title: string } | null>(null);
 const scrollContainer = ref<HTMLElement | null>(null);
 // The proposal currently shown in the artifact side panel. It references the
@@ -345,6 +347,37 @@ const canSend = computed(() => !streaming.value && draft.value.trim().length > 0
 const waitingForFirstToken = computed(() => {
   const last = items.value[items.value.length - 1];
   return last?.kind === "message" && last.role === "user";
+});
+
+// Token usage of the last finished turn, as reported by the provider via the
+// `done` event. Shown as a quiet header note; absent when the provider
+// reported no usage. Prompt is the last step's input size (context held at
+// answer time); completion/total accumulate across the turn's steps.
+function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
+  if (n < 1000) return String(Math.round(n));
+  const k = n / 1000;
+  const str = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(".", ",");
+  return `${str} mil`;
+}
+
+const usageLabel = computed(() => {
+  const u = lastUsage.value;
+  if (!u) return "";
+  return `${formatTokens(u.totalTokens)} tokens · ${formatTokens(u.promptTokens)} entrada / ${formatTokens(u.completionTokens)} salida`;
+});
+
+const usageTitle = computed(() => {
+  const u = lastUsage.value;
+  if (!u) return "";
+  const parts = [
+    `${u.promptTokens.toLocaleString("es")} tokens de entrada (contexto del último paso)`,
+    `${u.completionTokens.toLocaleString("es")} de salida`,
+    `${u.totalTokens.toLocaleString("es")} en total en este turno`,
+  ];
+  if (u.cachedTokens) parts.push(`${u.cachedTokens.toLocaleString("es")} de caché`);
+  if (u.reasoningTokens) parts.push(`${u.reasoningTokens.toLocaleString("es")} de razonamiento`);
+  return parts.join(" · ");
 });
 
 // The last assistant message is the one still receiving token deltas.
@@ -608,6 +641,7 @@ async function resetChat(): Promise<void> {
   sessionId.value = "";
   selectedNovel.value = null;
   activeProposal.value = null;
+  lastUsage.value = null;
   items.value = [];
 }
 
@@ -795,6 +829,7 @@ async function sendMessage(message: string): Promise<void> {
         });
         settleRunningTools();
         sessionId.value = event.sessionId ?? sessionId.value;
+        if (event.usage) lastUsage.value = event.usage;
         streaming.value = false;
         scrollToBottom();
         break;
@@ -942,6 +977,18 @@ function chooseNovel(novel: PickerNovel): void {
 .page-context p {
   margin: 0.25rem 0 0;
   line-height: 1.4;
+}
+
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+/* Quiet usage note: same muted ramp as the subtitle, never competing with
+   the transcript. Wraps below the button on narrow headers. */
+.chat-usage {
+  white-space: nowrap;
 }
 
 /* Split layout: the transcript and the artifact side panel share the middle
