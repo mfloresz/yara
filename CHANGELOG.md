@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.46.0] - 2026-10-16
+
+### What's new
+
+- **Three new site parsers:** asianovel.net, dmxs.org (Chinese BL site with GBK charset, book/chapter page support), and pearlandreef.com (JormunTL WordPress theme, direct fetches without the browser worker). The browser-worker extensions' supported-sites lists cover the new sites.
+- **Token usage in agent chat.** The agent `done` event now carries summed token usage (`promptTokens`, `completionTokens`, `totalTokens`, plus optional `cachedTokens`/`reasoningTokens`), and the chat header shows a quiet usage label. The field is omitted when the provider reports no usage.
+
+### Fixes
+
+- **Pearlandreef TOC pagination.** Chapter catalogs spanning multiple pages are now fully collected.
+- **Cloudflare challenge detection no longer false-positives on reCAPTCHA.** The check matches only `.cf-turnstile` instead of any `[data-sitekey]`, so normal pages embedding Google reCAPTCHA no longer loop through challenge handling. The challenge tab is also brought to the front so it can be solved interactively.
+- **Asianovel descriptions use the full story summary.**
+- **Novel description collapse only applies when content overflows.** Short descriptions no longer render with the fade mask.
+
+### Housekeeping
+
+- Regenerated the signed parsers manifest (`parsers/index.json`) for the new and updated scripts.
+- Added unit test coverage for agent token-usage accumulation.
+
 ## [v0.45.0] - 2026-10-07
 
 ### What's new
@@ -646,5 +665,6 @@
 [v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
 
 [v0.45.0]: https://github.com/mfloresz/yara/compare/v0.44.0...v0.45.0
+[v0.46.0]: https://github.com/mfloresz/yara/compare/v0.45.0...v0.46.0
 [v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.44.0
