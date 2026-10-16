@@ -1,7 +1,8 @@
 // pearlandreef.com — JormunTL WordPress theme. The chapter list paginates
 // 100 per page (?toc_page=2, ...) inside #novel-toc-list, in reading order,
-// and each chapter body lives in div.chapter-content. Direct fetches return
-// 200 with everything inline, so no browser worker is needed.
+// and each chapter body lives in div.chapter-content. The site sits behind
+// Cloudflare ("Just a moment" challenge on direct fetches), so fetches are
+// routed through the browser worker.
 function hostOf(u) {
   const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(u || "");
   return m ? m[1].toLowerCase().replace(/^www\./, "") : "";
@@ -110,7 +111,7 @@ function paragraphsOf(ctx, sel) {
 module.exports = {
   name: "pearlandreef",
   apiVersion: 1,
-  requiresBrowser: false,
+  requiresBrowser: true,
 
   probe: (url) => parsePath(url) !== null,
 

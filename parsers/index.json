@@ -118,8 +118,8 @@
     {
       "name": "pearlandreef",
       "file": "pearlandreef.js",
-      "sha256": "b67a0169eb25a14b918f353d5ca94b0b2db3e12d98170414ee3deda95683c094",
-      "requiresBrowser": false
+      "sha256": "976e29d904670f88b073e114eb38bc04f6b54c9fd93e37857b73af94d9cf02ad",
+      "requiresBrowser": true
     },
     {
       "name": "skydemonorder",
@@ -152,5 +152,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "c85bc584b0f93b471c5e437dde3d300c98705ef157de86e33e58117fbb3bd0d0e2a8211814d21c93b6bfe87c7e3b322f6a8ad9fa70cbaf502cd529acebf18f0a"
+  "signature": "10db5fbe76a6b7e51f775d4f3eaf5452f0051553fec1a8b69504cb6b12bad866fdf876a492d8e4c3d5ff56b294b4359b5771b06da0d9c71bfd8e7d9ac1c36d03"
 }
