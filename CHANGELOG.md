@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.47.0] - 2026-10-16
+
+### What's new
+
+- **Independent assistant model routing.** Added `agentProvider` and `agentModel` settings for routing between different AI providers and models in the agent chat interface.
+- **Context window tracking.** Added token usage tracking for agent conversations, showing prompt tokens, completion tokens, and total tokens in the chat header.
+- **Provider catalog cleanup.** Removed lmstudio, meta, and google providers from the default provider registry.
+
+### Fixes
+
+- **Cloudflare false-positive on pearlandreef.** Fixed challenge detection to avoid false positives on normal pages embedding Google reCAPTCHA.
+
+### Housekeeping
+
+- Regenerated the signed parsers manifest (`parsers/index.json`) for the updated pearlandreef.js script.
+
 ## [v0.46.1] - 2026-10-16
 
 ### Fixes
