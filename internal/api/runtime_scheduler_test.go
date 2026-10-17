@@ -355,13 +355,13 @@ func TestSchedulerCapacityLimit(t *testing.T) {
 
 	env, alice, gate, novels := newSchedulerEnv(t, 3)
 	// The third job needs a third resolvable provider.
-	if _, err := env.store.UpsertProviderSettingsWithConcurrency(alice.User.ID, "google", "gemini-flash", "https://api.google.ai/v1", 120000, 1); err != nil {
-		t.Fatalf("upsert google provider: %v", err)
+	if _, err := env.store.UpsertProviderSettingsWithConcurrency(alice.User.ID, "inferx", "glm-5.3-flash", "https://model.inferx.net/endpoints/v1", 120000, 1); err != nil {
+		t.Fatalf("upsert inferx provider: %v", err)
 	}
 	jobs := []string{
 		createTranslateJob(t, env, alice, novels[0], "venice"),
 		createTranslateJob(t, env, alice, novels[1], "opencode-go"),
-		createTranslateJob(t, env, alice, novels[2], "google"),
+		createTranslateJob(t, env, alice, novels[2], "inferx"),
 	}
 	for _, id := range jobs {
 		if !env.server.enqueueJob(id) {

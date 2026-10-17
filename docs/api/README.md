@@ -419,7 +419,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/defaults` | Global default translation values. |
-| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `translation`). |
+| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `agentProvider`, `agentModel`, `translation`). |
 | `PUT` | `/api/v1/settings` | Update settings (same body shape). |
 
 ```json
@@ -430,6 +430,8 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
     "ai": { "provider": "opencode-go", "model": "kimi-k2", "concurrency": 1, "timeoutMs": 120000 },
     "titleProvider": "opencode-go",
     "titleModel": "kimi-k2",
+    "agentProvider": "opencode-go",
+    "agentModel": "kimi-k2",
     "translation": { "includePreviousTitleHints": false, "includePreviousContentHints": true, "autoSegment": false }
   }
 }
@@ -589,7 +591,7 @@ per user — one session each, enforced by a unique index on the owner.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `proposal`, `done`, `error`. A `proposal` event carries a cleanup the assistant proposes; the client renders it as an approval card and the cleanup only runs if the user approves it there. The `done` event carries `steps` plus `usage` (`promptTokens` = last step's input size, `completionTokens`/`totalTokens` summed across steps; absent when the provider reported none). Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
+| `POST` | `/api/v1/agent/chat` | Run one assistant turn. Body `{ sessionId?, novelId?, message }`. Response is an NDJSON stream of events: `session`, `text_delta`, `tool_call`, `tool_result`, `question`, `proposal`, `done`, `error`. A `proposal` event carries a cleanup the assistant proposes; the client renders it as an approval card and the cleanup only runs if the user approves it there. The `done` event carries `steps` plus `usage` (`promptTokens` = last step's input size, `completionTokens`/`totalTokens` summed across steps; absent when the provider reported none), plus the serving `model` and its `contextWindow` (max input tokens, 0 when unknown) so clients can show usage as a percentage. Without `sessionId` the latest session is reused (created when none). Rate limited per IP (burst 10, 20/min). |
 | `GET` | `/api/v1/agent/session` | Latest session with its parsed message trail, or `data: null` when the user has none. |
 | `DELETE` | `/api/v1/agent/session` | Reset the chat: delete every session of the user → 204. |
 

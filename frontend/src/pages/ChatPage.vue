@@ -9,7 +9,29 @@
           </p>
         </div>
         <div class="page-actions">
-          <span v-if="usageLabel" class="muted small chat-usage" :title="usageTitle">{{ usageLabel }}</span>
+          <!-- Context usage ring: percentage of the serving model's window
+               held at answer time (prompt tokens of the last step). Hover
+               shows Uso + Tokens only — never cost. Falls back to the quiet
+               text note when the window is unknown. -->
+          <n-popover v-if="usagePercent !== null" trigger="hover" placement="bottom-end">
+            <template #trigger>
+              <span class="chat-usage-ring" role="img" :aria-label="usageTitle">
+                <n-progress
+                  type="circle"
+                  :percentage="usagePercent"
+                  :show-indicator="false"
+                  :stroke-width="14"
+                  :offset-degree="120"
+                />
+              </span>
+            </template>
+            <div class="chat-usage-pop">
+              <div class="chat-usage-row"><span>Uso</span><strong>{{ usagePercentLabel }}</strong></div>
+              <div class="chat-usage-row"><span>Tokens</span><strong>{{ usageTokensLabel }}</strong></div>
+              <div v-if="lastModel" class="muted small chat-usage-model">{{ lastModel }}</div>
+            </div>
+          </n-popover>
+          <span v-else-if="usageLabel" class="muted small chat-usage" :title="usageTitle">{{ usageLabel }}</span>
           <n-button
             secondary
             size="small"
@@ -181,6 +203,30 @@
             class="chat-input"
             @keydown.enter.exact.prevent="send"
           />
+          <!-- Single cascading menu: providers at the top level, models as a
+               nested submenu per provider. Mirrors the model picker in the
+               reference composer. -->
+          <n-dropdown
+            trigger="click"
+            placement="top-end"
+            :options="modelMenuOptions"
+            :loading="providersLoading"
+            @select="onModelMenuSelect"
+          >
+            <n-button
+              secondary
+              size="small"
+              class="chat-model-trigger"
+              aria-label="Modelo del asistente"
+              :title="modelTriggerTitle"
+            >
+              <span class="chat-model-trigger-label">{{ modelTriggerLabel }}</span>
+              <template #icon><n-icon><ChevronDownOutline /></n-icon></template>
+            </n-button>
+          </n-dropdown>
+          <span v-if="agentKeyMissing" class="muted small chat-model-warn" title="Configura la API key en Ajustes">
+            Sin API key
+          </span>
           <n-button
             v-if="streaming"
             quaternary
@@ -244,17 +290,24 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { DropdownOption } from "naive-ui";
 import {
   NButton,
+  NDropdown,
   NIcon,
   NInput,
   NModal,
+  NPopover,
+  NProgress,
   NSpin,
+  useMessage,
 } from "naive-ui";
 import {
   BookOutline,
   BuildOutline,
   ChatbubbleEllipsesOutline,
+  CheckmarkOutline,
+  ChevronDownOutline,
   CloseOutline,
   RefreshOutline,
   SendOutline,
@@ -264,9 +317,11 @@ import AppLayout from "@/components/AppLayout.vue";
 import CleanupProposalCard from "@/components/CleanupProposalCard.vue";
 import CleanupProposalPanel from "@/components/CleanupProposalPanel.vue";
 import { useAppServices } from "@/app/services";
+import { useProviders } from "@/composables/useProviders";
 import { MarkdownRender } from "markstream-vue";
 import "markstream-vue/index.css";
 import type { AgentChatEvent, AgentChatOption, AgentChatUsage, AgentCleanupProposal, AgentSessionMessage } from "@/api/types";
+import type { ServerSettings } from "@/api/types";
 import type { Novel } from "@/domain";
 
 type ProposalChatItem = {
@@ -297,14 +352,26 @@ type PickerNovel = Pick<
 >;
 
 const { api } = useAppServices();
+const message = useMessage();
+const { providers, byId, loading: providersLoading, reload: reloadProviders } = useProviders();
 
 const items = ref<ChatItem[]>([]);
 const draft = ref("");
 const streaming = ref(false);
 const sessionId = ref("");
 const lastUsage = ref<AgentChatUsage | null>(null);
+const lastModel = ref("");
+const lastContextWindow = ref<number | null>(null);
 const selectedNovel = ref<{ id: string; title: string } | null>(null);
 const scrollContainer = ref<HTMLElement | null>(null);
+// Assistant model selection, independent from the translation provider.
+// Empty agentProvider follows the translation provider; empty agentModel
+// uses the effective provider's default. Persisted in settings.
+const settings = ref<ServerSettings | null>(null);
+const agentProvider = ref("");
+const agentModel = ref("");
+const agentSettingsReady = ref(false);
+const savingAgentSelection = ref(false);
 // The proposal currently shown in the artifact side panel. It references the
 // same reactive item as the transcript, so a decision made in the panel
 // updates the chip (and vice versa) with no extra wiring.
@@ -380,6 +447,29 @@ const usageTitle = computed(() => {
   return parts.join(" · ");
 });
 
+// Percentage of the serving model's context window held at answer time.
+// Null when the provider reported no usage or the window is unknown — the
+// header then falls back to the quiet text note (or nothing).
+const usagePercent = computed(() => {
+  const u = lastUsage.value;
+  const window = lastContextWindow.value;
+  if (!u || !window || window <= 0) return null;
+  const pct = (u.promptTokens / window) * 100;
+  if (!Number.isFinite(pct) || pct < 0) return null;
+  return Math.min(100, Math.round(pct * 10) / 10);
+});
+
+const usagePercentLabel = computed(() => {
+  if (usagePercent.value === null) return "";
+  return `${usagePercent.value.toLocaleString("es", { maximumFractionDigits: 1 })} %`;
+});
+
+const usageTokensLabel = computed(() => {
+  const u = lastUsage.value;
+  if (!u) return "";
+  return u.totalTokens.toLocaleString("es");
+});
+
 // The last assistant message is the one still receiving token deltas.
 function isStreamingTail(index: number): boolean {
   if (!streaming.value) return false;
@@ -394,6 +484,134 @@ function novelTitle(novel: PickerNovel): string {
 
 function novelAuthor(novel: PickerNovel): string {
   return novel.targetAuthor || novel.sourceAuthor || "";
+}
+
+// Effective provider driving the model list and the key warning: the
+// override when set, otherwise the translation provider.
+const effectiveAgentProviderId = computed(
+  () => agentProvider.value.trim() || settings.value?.ai.provider || "",
+);
+
+// Cascading menu: each provider opens a submenu with its models. The first
+// item clears the override (follow the translation provider + its default
+// model). Keys encode the choice: "default" resets, "provider:model" picks.
+const MENU_DEFAULT_KEY = "default";
+
+function modelMenuKey(providerId: string, model: string): string {
+  return `${providerId}:${model}`;
+}
+
+function splitModelMenuKey(key: string): { providerId: string; model: string } | null {
+  if (key === MENU_DEFAULT_KEY) return null;
+  const sep = key.indexOf(":");
+  if (sep <= 0) return null;
+  return { providerId: key.slice(0, sep), model: key.slice(sep + 1) };
+}
+
+// Selected leaf: which provider/model is currently chosen, for the trigger
+// label and the checkmark rendered on the active submenu item.
+const selectedModelMenuKey = computed(() => {
+  if (!agentProvider.value) return MENU_DEFAULT_KEY;
+  return modelMenuKey(agentProvider.value, agentModel.value);
+});
+
+const modelMenuOptions = computed<DropdownOption[]>(() => {
+  const current = selectedModelMenuKey.value;
+  const options: DropdownOption[] = [
+    {
+      label: "Mismo que traducción",
+      key: MENU_DEFAULT_KEY,
+      checked: current === MENU_DEFAULT_KEY,
+    },
+  ];
+  for (const p of providers.value) {
+    const info = byId.value.get(p.id);
+    const models = info?.models ?? [];
+    if (models.length === 0) {
+      options.push({
+        label: p.name,
+        key: modelMenuKey(p.id, ""),
+        checked: current === modelMenuKey(p.id, ""),
+      });
+      continue;
+    }
+    options.push({
+      label: p.name,
+      key: `provider:${p.id}`,
+      children: models.map((m) => ({
+        label: m,
+        key: modelMenuKey(p.id, m),
+        checked: current === modelMenuKey(p.id, m),
+      })),
+    });
+  }
+  return options;
+});
+
+const modelTriggerLabel = computed(() => {
+  if (agentModel.value) return agentModel.value;
+  const info = byId.value.get(effectiveAgentProviderId.value);
+  return info?.defaultModel || "Modelo por defecto";
+});
+
+const modelTriggerTitle = computed(() => {
+  const info = byId.value.get(effectiveAgentProviderId.value);
+  if (!info) return "Mismo que traducción";
+  if (agentModel.value) return `${info.name} · ${agentModel.value}`;
+  return `${info.name} · ${info.defaultModel || "modelo por defecto"}`;
+});
+
+function onModelMenuSelect(key: string): void {
+  if (key === MENU_DEFAULT_KEY) {
+    agentProvider.value = "";
+    agentModel.value = "";
+    void saveAgentSelection();
+    return;
+  }
+  const picked = splitModelMenuKey(key);
+  if (!picked) return;
+  agentProvider.value = picked.providerId;
+  agentModel.value = picked.model;
+  void saveAgentSelection();
+}
+
+// A provider without a usable key (neither personal nor shared) fails the
+// turn server-side; warn inline instead of letting the first message error.
+const agentKeyMissing = computed(() => {
+  const info = byId.value.get(effectiveAgentProviderId.value);
+  if (!info) return false;
+  return !info.apiKeyConfigured && !info.sharedKeyAvailable;
+});
+
+async function loadAgentSettings(): Promise<void> {
+  try {
+    const [s] = await Promise.all([api.settings.get(), reloadProviders()]);
+    settings.value = s;
+    agentProvider.value = s.agentProvider ?? "";
+    agentModel.value = s.agentModel ?? "";
+  } catch {
+    // The selector falls back to the translation defaults; chat still works.
+  } finally {
+    agentSettingsReady.value = true;
+  }
+}
+
+async function saveAgentSelection(): Promise<void> {
+  if (!agentSettingsReady.value || !settings.value || savingAgentSelection.value) return;
+  savingAgentSelection.value = true;
+  try {
+    settings.value = await api.settings.update({
+      ...settings.value,
+      agentProvider: agentProvider.value.trim(),
+      agentModel: agentModel.value.trim(),
+    });
+  } catch (err) {
+    message.error(
+      `No se pudo guardar el modelo del asistente: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    savingAgentSelection.value = false;
+  }
 }
 
 // Streaming coalescing. Deltas arrive far faster than a frame, so mutating
@@ -597,6 +815,7 @@ function mapHistory(messages: AgentSessionMessage[]): void {
 }
 
 onMounted(async () => {
+  void loadAgentSettings();
   try {
     const session = await api.agent.getSession();
     if (session) {
@@ -642,6 +861,8 @@ async function resetChat(): Promise<void> {
   selectedNovel.value = null;
   activeProposal.value = null;
   lastUsage.value = null;
+  lastModel.value = "";
+  lastContextWindow.value = null;
   items.value = [];
 }
 
@@ -829,7 +1050,11 @@ async function sendMessage(message: string): Promise<void> {
         });
         settleRunningTools();
         sessionId.value = event.sessionId ?? sessionId.value;
-        if (event.usage) lastUsage.value = event.usage;
+        if (event.usage) {
+          lastUsage.value = event.usage;
+          lastModel.value = event.model ?? "";
+          lastContextWindow.value = event.contextWindow ?? null;
+        }
         streaming.value = false;
         scrollToBottom();
         break;
@@ -952,7 +1177,9 @@ function chooseNovel(novel: PickerNovel): void {
 .chat-page {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  /* No column gap: the composer's border-top is the divider, and the old
+     0.75rem gap left a dead band above it. Header spacing lives on
+     .page-header instead. */
   height: calc(100dvh - 56px - 2.5rem);
   min-height: 0;
 }
@@ -963,6 +1190,7 @@ function chooseNovel(novel: PickerNovel): void {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+  margin-bottom: 0.75rem;
 }
 
 .page-title {
@@ -989,6 +1217,42 @@ function chooseNovel(novel: PickerNovel): void {
    the transcript. Wraps below the button on narrow headers. */
 .chat-usage {
   white-space: nowrap;
+}
+
+/* Context ring: the circle type renders 120px by default, so the width is
+   pinned here (scoped :deep beats the component stylesheet). */
+.chat-usage-ring {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.chat-usage-ring :deep(.n-progress--circle) {
+  width: 26px;
+}
+
+/* Popover body: two quiet label/value rows plus the model id, no cost. */
+.chat-usage-pop {
+  min-width: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.125rem 0;
+}
+
+.chat-usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8125rem;
+}
+
+.chat-usage-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
 }
 
 /* Split layout: the transcript and the artifact side panel share the middle
@@ -1156,6 +1420,14 @@ function chooseNovel(novel: PickerNovel): void {
   50% { opacity: 1; }
 }
 
+/* markstream-vue sizes its root and its paragraphs from --ms-text-body
+   (1rem), which outsize the bubble's own 0.9375rem. Rebase it so the
+   assistant and the user read at the same text size. */
+.chat-markdown :deep(.markstream-vue) {
+  --ms-text-body: 0.9375rem;
+  font-size: 0.9375rem;
+}
+
 .chat-markdown :deep(p) {
   margin: 0 0 0.5rem;
 }
@@ -1239,6 +1511,24 @@ function chooseNovel(novel: PickerNovel): void {
   gap: 0.5rem;
 }
 
+/* Trigger for the cascading provider/model menu: sits in the composer row
+   next to the send button, like the model pill in the reference composer. */
+.chat-model-trigger {
+  flex-shrink: 0;
+  max-width: 12rem;
+}
+
+.chat-model-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-model-warn {
+  white-space: nowrap;
+  color: var(--warning, var(--text-tertiary));
+}
+
 .chat-context-chip {
   display: inline-flex;
   align-items: center;
@@ -1257,11 +1547,6 @@ function chooseNovel(novel: PickerNovel): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.chat-composer-row {
-  align-items: flex-end;
-  gap: 0.5rem;
 }
 
 .chat-composer-row {

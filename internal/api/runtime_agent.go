@@ -82,21 +82,39 @@ func agentSelectedNovelContext(novel *store.Novel) string {
 }
 
 // resolveAgentRunner builds the user's configured AI provider and returns it
-// as an ai.AgentProvider. Only OpenAI-compatible providers implement the tool
-// loop (the Google provider does not), so the type assertion is the
-// capability gate.
-func (s *Server) resolveAgentRunner(userID string) (ai.AgentProvider, error) {
+// alongside the resolved settings (provider key + model), so callers can
+// report which model served the turn (e.g. token usage context window).
+//
+// The assistant has its own provider/model override (agentProvider/agentModel
+// on the user record): when set, the turn runs on that provider instead of
+// the translation provider, so a cheap chat model can coexist with a
+// stronger translation model. Empty override fields fall back to the main AI
+// settings.
+func (s *Server) resolveAgentRunner(userID string) (ai.AgentProvider, store.AISettings, error) {
 	appSettings, err := s.Store.GetAppSettings(userID)
 	if err != nil {
-		return nil, fmt.Errorf("get app settings: %w", err)
+		return nil, store.AISettings{}, fmt.Errorf("get app settings: %w", err)
 	}
 	providerKey := strings.TrimSpace(appSettings.AI.Provider)
 	if providerKey == "" {
 		providerKey = store.DefaultAISettings.Provider
 	}
+	// The assistant has its own provider/model override (agentProvider/
+	// agentModel on the user record): when set, the turn runs on that
+	// provider and/or model instead of the translation ones, so a cheap chat
+	// model can coexist with a stronger translation model. Empty fields fall
+	// back to the main AI settings field by field, which also covers
+	// same-provider-different-model without repeating the provider.
+	if agentProvider := strings.TrimSpace(appSettings.AgentProvider); agentProvider != "" {
+		providerKey = agentProvider
+	}
+	modelOverride := strings.TrimSpace(appSettings.AgentModel)
 	settings, err := s.Store.ResolveProviderAISettings(userID, providerKey)
 	if err != nil {
-		return nil, fmt.Errorf("resolve provider AI settings: %w", err)
+		return nil, store.AISettings{}, fmt.Errorf("resolve provider AI settings: %w", err)
+	}
+	if modelOverride != "" {
+		settings.Model = modelOverride
 	}
 	if strings.TrimSpace(settings.Model) == "" {
 		if info, ok := ai.ProviderByID(settings.Provider); ok {
@@ -105,13 +123,13 @@ func (s *Server) resolveAgentRunner(userID string) (ai.AgentProvider, error) {
 	}
 	provider, err := s.newAIProvider(settings, "")
 	if err != nil {
-		return nil, err
+		return nil, store.AISettings{}, err
 	}
 	agent, ok := provider.(ai.AgentProvider)
 	if !ok {
-		return nil, errAgentUnsupportedProvider
+		return nil, store.AISettings{}, errAgentUnsupportedProvider
 	}
-	return agent, nil
+	return agent, settings, nil
 }
 
 // agentTools builds the model-callable tool catalog for one user. Every tool

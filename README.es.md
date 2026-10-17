@@ -150,7 +150,7 @@ Anti-referencias: nada de “admin dashboard” denso ni móvil como breakpoint 
 |---|---|
 | Backend | Go 1.26, PocketBase embebido, `goai` para proveedores OpenAI-compatibles, `log/slog` |
 | Frontend | Vue 3 + Vite + Naive UI + TypeScript + vue-router + PWA |
-| IA | 8 providers registrados: `venice` (default), `openrouter`, `meta`, `opencode-go`, `opencode-zen`, `inferx`, `lmstudio`, `google` — claves almacenadas con AES-GCM |
+| IA | 4 providers registrados: `venice` (default), `openrouter`, `opencode-go`, `inferx` — claves almacenadas con AES-GCM |
 | Persistencia | SQLite (vía PocketBase), esquema idempotente en `store_schema.go`, flag `--migrate-db` para breaking changes |
 | Scraper | `parsers/*.js` — 16 parsers de sitio (NovelFire, FenrirRealm, FloraeGarden, CherryMist, EmpireNovel, 69Shuba, SkyNovels, SkyDemonOrder, Literotica, NovelArrow, Wattpad, Webnovel, Inkitt, GayDemon, ChrysanthemumGarden, Inkspired), cada uno un script CommonJS ejecutado por el motor goja embebido en `internal/parserhost`; `requiresBrowser: true` marca los que están detrás de Cloudflare. Contrato: [`docs/parsers.md`](docs/parsers.md) |
 | EPUB | `internal/epubimport` + `internal/epubexport` (paquetes puros, sin dependencias de HTTP/store) |

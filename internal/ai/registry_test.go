@@ -38,35 +38,41 @@ func TestProvidersContainKnownEntries(t *testing.T) {
 		}
 		ids[p.ID] = true
 	}
-	for _, want := range []string{"venice", "meta", "opencode-go", "openrouter"} {
+	for _, want := range []string{"venice", "opencode-go", "openrouter", "inferx"} {
 		if !ids[want] {
 			t.Fatalf("missing known provider %q", want)
 		}
 	}
+	if len(Providers()) != 4 {
+		t.Fatalf("expected 4 providers, got %d", len(Providers()))
+	}
 }
 
-func TestProviderByIDMeta(t *testing.T) {
-	info, ok := ProviderByID("meta")
-	if !ok {
-		t.Fatal("meta provider not registered")
+func TestProviderModelsHaveContextWindows(t *testing.T) {
+	for _, p := range Providers() {
+		for _, m := range p.Models {
+			if p.ContextWindow[m] <= 0 {
+				t.Fatalf("provider %q model %q has no context window (see docs/model-context-limits.md)", p.ID, m)
+			}
+		}
+		if p.ContextWindow[p.DefaultModel] <= 0 {
+			t.Fatalf("provider %q default model %q has no context window", p.ID, p.DefaultModel)
+		}
 	}
-	if info.Name != "Meta" {
-		t.Fatalf("unexpected provider name: %q", info.Name)
+}
+
+func TestContextWindowFor(t *testing.T) {
+	if got := ContextWindowFor("venice", "deepseek-v4-flash-0731"); got != 262144 {
+		t.Fatalf("venice context = %d, want 262144", got)
 	}
-	if info.BaseURL != "https://api.meta.ai/v1" {
-		t.Fatalf("unexpected base url: %q", info.BaseURL)
+	if got := ContextWindowFor("openrouter", "tencent/hy-mt2-30b-a3b"); got != 8000 {
+		t.Fatalf("hy-mt2 context = %d, want 8000", got)
 	}
-	if !info.OpenAICompat {
-		t.Fatal("meta should be OpenAI compatible")
+	if got := ContextWindowFor("does-not-exist", "x"); got != 0 {
+		t.Fatalf("unknown provider context = %d, want 0", got)
 	}
-	if got, _ := info.GoAIOptions["strictJsonSchema"].(bool); !got {
-		t.Fatal("meta should enable strict JSON schema")
-	}
-	if info.DefaultModel != "muse-spark-1.2-contributor" {
-		t.Fatalf("unexpected default model: %q", info.DefaultModel)
-	}
-	if len(info.Models) != 1 || info.Models[0] != "muse-spark-1.2-contributor" {
-		t.Fatalf("unexpected model list: %v", info.Models)
+	if got := ContextWindowFor("venice", "does-not-exist"); got != 0 {
+		t.Fatalf("unknown model context = %d, want 0", got)
 	}
 }
 
@@ -85,10 +91,6 @@ func TestProviderByIDOpenCodeGo(t *testing.T) {
 		t.Fatal("opencode-go should enable strict JSON schema")
 	}
 	wantModels := map[string]bool{
-		"openai/gpt-5.6-luna (reasoning: none)":   true,
-		"openai/gpt-5.6-luna (reasoning: low)":    true,
-		"openai/gpt-5.6-luna (reasoning: medium)": true,
-		"mimo-v2.5":           true,
 		"deepseek-v4.1-flash": true,
 	}
 	if len(info.Models) != len(wantModels) {
@@ -212,11 +214,10 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"deepseek/deepseek-v4-flash-0731",
 		"google/gemini-3.5-flash-lite",
 		"tencent/hy-mt2-30b-a3b",
-		"tencent/hy-mt2-1.8b",
-		"mistralai/ministral-8b-2512",
 		"mistralai/mistral-small-2603",
 		"mistralai/ministral-14b-2512",
-		"inception/mercury-2.5",
+		"inclusionai/ling-3.0-flash",
+		"xiaomi/mimo-v2.6-flash",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)

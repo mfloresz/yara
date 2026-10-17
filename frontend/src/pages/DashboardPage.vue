@@ -3,10 +3,21 @@
     <div class="stack-lg">
       <header class="page-header">
         <div class="page-context">
-          <h1 class="page-title">Biblioteca</h1>
-          <p class="muted small" aria-live="polite">
-            {{ novels.length }} novela{{ novels.length === 1 ? '' : 's' }}
-          </p>
+          <div class="page-title-row">
+            <h1 class="page-title">Biblioteca</h1>
+            <div v-if="activeFilters.length" class="active-filters">
+              <n-tag
+                v-for="filter in activeFilters"
+                :key="filter.param"
+                type="info"
+                closable
+                @close="clearFilter(filter.param)"
+              >
+                {{ filter.label }}: {{ filter.value }}
+              </n-tag>
+            </div>
+            <span class="muted small result-count" aria-live="polite">{{ resultSummary }}</span>
+          </div>
         </div>
         <div class="page-actions">
           <n-dropdown
@@ -29,18 +40,6 @@
         </div>
       </header>
 
-      <div v-if="activeFilters.length" class="active-filters">
-        <n-tag
-          v-for="filter in activeFilters"
-          :key="filter.param"
-          type="info"
-          closable
-          @close="clearFilter(filter.param)"
-        >
-          {{ filter.label }}: {{ filter.value }}
-        </n-tag>
-      </div>
-
       <div v-if="loading" class="library-grid" role="status" aria-label="Cargando biblioteca">
         <LibrarySkeleton />
       </div>
@@ -51,22 +50,28 @@
             <n-icon :size="40"><BookOutline /></n-icon>
           </div>
           <div>
-            <h2 class="empty-state-title">Sin novelas</h2>
-            <p class="muted empty-state-body">Crea una novela manualmente, importa un EPUB o descarga uno desde internet.</p>
+            <h2 class="empty-state-title">{{ isFiltered ? 'Sin resultados' : 'Sin novelas' }}</h2>
+            <p v-if="isFiltered" class="muted empty-state-body">
+              Ninguna novela coincide con los filtros activos<template v-if="activeQueryFilter"> para «{{ activeQueryFilter }}»</template>.
+            </p>
+            <p v-else class="muted empty-state-body">Crea una novela manualmente, importa un EPUB o descarga uno desde internet.</p>
           </div>
           <div class="empty-state-actions">
-            <n-button type="primary" @click="createOpen = true">
-              <template #icon><n-icon><AddOutline /></n-icon></template>
-              Nueva novela
-            </n-button>
-            <n-button secondary @click="importOpen = true">
-              <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
-              Importar EPUB
-            </n-button>
-            <n-button secondary @click="importUrlOpen = true">
-              <template #icon><n-icon><GlobeOutline /></n-icon></template>
-              Desde URL
-            </n-button>
+            <n-button v-if="isFiltered" secondary @click="clearAllFilters">Limpiar filtros</n-button>
+            <template v-else>
+              <n-button type="primary" @click="createOpen = true">
+                <template #icon><n-icon><AddOutline /></n-icon></template>
+                Nueva novela
+              </n-button>
+              <n-button secondary @click="importOpen = true">
+                <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+                Importar EPUB
+              </n-button>
+              <n-button secondary @click="importUrlOpen = true">
+                <template #icon><n-icon><GlobeOutline /></n-icon></template>
+                Desde URL
+              </n-button>
+            </template>
           </div>
         </div>
       </n-card>
@@ -381,6 +386,19 @@ const activeFilters = computed(() => {
   return out;
 });
 
+// Any filter narrowing the library — URL chips, the progress filter, or
+// "solo propias" from the view menu.
+const isFiltered = computed(
+  () => activeFilters.value.length > 0 || progressFilter.value !== "all" || !showShared.value,
+);
+
+// Header summary: the library size at rest, the result count while filtered.
+const resultSummary = computed(() => {
+  const n = sortedNovels.value.length;
+  if (isFiltered.value) return `${n} resultado${n === 1 ? "" : "s"}`;
+  return `${n} novela${n === 1 ? "" : "s"}`;
+});
+
 // Effective filters sent to the backend on every list call.
 function currentFilters(): NovelListFilters {
   return {
@@ -691,6 +709,22 @@ function clearFilter(param: string) {
   const query = { ...route.query };
   delete query[param];
   void router.replace({ path: "/", query });
+}
+
+// "Limpiar filtros" from the no-results state: drops every filter that can
+// narrow the library (URL chips + the persisted view-menu filters).
+function clearAllFilters() {
+  activeTagFilter.value = null;
+  activeAuthorFilter.value = null;
+  activeSeriesFilter.value = null;
+  activeQueryFilter.value = null;
+  progressFilter.value = "all";
+  showShared.value = true;
+  savePreferences();
+  const query = { ...route.query };
+  for (const param of ["tag", "author", "series", "q", "shared", "progress"]) delete query[param];
+  void router.replace({ path: "/", query });
+  void reloadLibrary();
 }
 
 function handleNovelCreationSelect(key: string) {
@@ -1021,7 +1055,7 @@ function onBackToUrlDialog() {
 
 .page-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem clamp(1rem, 3vw, 2rem);
   flex-wrap: wrap;
@@ -1030,7 +1064,6 @@ function onBackToUrlDialog() {
 .page-context {
   flex: 0 1 auto;
   min-width: 7rem;
-  padding-top: 0.6rem;
 }
 
 .page-title {
@@ -1038,6 +1071,18 @@ function onBackToUrlDialog() {
   font-size: 1.75rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.page-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.result-count {
+  white-space: nowrap;
 }
 
 .page-actions {
@@ -1113,6 +1158,7 @@ function onBackToUrlDialog() {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .empty-state {

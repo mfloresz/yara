@@ -207,6 +207,8 @@ export type ServerSettings = {
   };
   titleProvider: string;
   titleModel: string;
+  agentProvider?: string;
+  agentModel?: string;
   translation: {
     autoSegment: boolean;
     thresholdChars: number;
@@ -555,6 +557,8 @@ export type AgentChatEvent = {
   options?: AgentChatOption[];
   proposal?: AgentCleanupProposal;
   usage?: AgentChatUsage;
+  model?: string;
+  contextWindow?: number;
   message?: { role: string; content: string };
   steps?: number;
   code?: string;

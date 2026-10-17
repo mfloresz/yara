@@ -1,17 +1,31 @@
 package ai
 
 type ProviderInfo struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	BaseURL      string         `json:"baseUrl"`
-	Models       []string       `json:"models"`
-	DefaultModel string         `json:"defaultModel"`
-	OpenAICompat bool           `json:"openaiCompat"`
-	GoAIOptions  map[string]any `json:"goaiOptions,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	BaseURL      string   `json:"baseUrl"`
+	Models       []string `json:"models"`
+	DefaultModel string   `json:"defaultModel"`
+	OpenAICompat bool     `json:"openaiCompat"`
+	// ContextWindow holds the max input context in tokens per model, used
+	// to report context usage as a percentage. Sourced from
+	// docs/model-context-limits.md — keep both in sync.
+	ContextWindow map[string]int `json:"contextWindow,omitempty"`
+	GoAIOptions   map[string]any `json:"goaiOptions,omitempty"`
 	// ModelOptions holds per-model overrides merged over GoAIOptions for
 	// requests targeting that model. Recognized keys (eino): strictJsonSchema,
 	// venice_parameters.
 	ModelOptions map[string]map[string]any `json:"modelOptions,omitempty"`
+}
+
+// ContextWindowFor returns the max input context in tokens for a provider
+// model, or 0 when the provider or model is unknown.
+func ContextWindowFor(providerID, model string) int {
+	info, ok := ProviderByID(providerID)
+	if !ok {
+		return 0
+	}
+	return info.ContextWindow[model]
 }
 
 // OptionsForModel merges GoAIOptions with any per-model overrides.
@@ -35,9 +49,15 @@ var knownProviders = []ProviderInfo{
 		ID:           "venice",
 		Name:         "Venice",
 		BaseURL:      "https://api.venice.ai/api/v1",
-		Models:       []string{"e2ee-deepseek-v4-flash", "deepseek-v4-flash-0731", "mistral-small-3-2-24b-instruct", "google-gemma-4-31b-it:disable_thinking=true", "e2ee-gpt-oss-20b-p", "aion-labs-aion-3-0-mini", "e2ee-gemma-4-26b-a4b-uncensored-p", "google-gemma-4-26b-a4b-it:disable_thinking=true", "xiaomi-mimo-v2-5", "mistral-small-2603"},
-		DefaultModel: "e2ee-deepseek-v4-flash",
+		Models:       []string{"deepseek-v4-flash-0731", "google-gemma-4-31b-it:disable_thinking=true", "aion-labs-aion-3-0-mini", "google-gemma-4-26b-a4b-it:disable_thinking=true"},
+		DefaultModel: "deepseek-v4-flash-0731",
 		OpenAICompat: true,
+		ContextWindow: map[string]int{
+			"deepseek-v4-flash-0731":                          262144,
+			"google-gemma-4-31b-it:disable_thinking=true":     200000,
+			"aion-labs-aion-3-0-mini":                         262000,
+			"google-gemma-4-26b-a4b-it:disable_thinking=true": 200000,
+		},
 		GoAIOptions: map[string]any{
 			"strictJsonSchema": true,
 			"venice_parameters": map[string]any{
@@ -57,29 +77,25 @@ var knownProviders = []ProviderInfo{
 			"deepseek/deepseek-v4-flash-0731",
 			"google/gemini-3.5-flash-lite",
 			"tencent/hy-mt2-30b-a3b",
-			"tencent/hy-mt2-1.8b",
-			"mistralai/ministral-8b-2512",
 			"mistralai/mistral-small-2603",
 			"mistralai/ministral-14b-2512",
-			"inception/mercury-2.5",
+			"inclusionai/ling-3.0-flash",
+			"xiaomi/mimo-v2.6-flash",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
 		OpenAICompat: true,
-		GoAIOptions: map[string]any{
-			"strictJsonSchema": true,
+		ContextWindow: map[string]int{
+			"openai/gpt-5.6-luna (reasoning: none)":   262000,
+			"openai/gpt-5.6-luna (reasoning: low)":    262000,
+			"openai/gpt-5.6-luna (reasoning: medium)": 262000,
+			"deepseek/deepseek-v4-flash-0731":         262144,
+			"google/gemini-3.5-flash-lite":            262144,
+			"tencent/hy-mt2-30b-a3b":                  8000,
+			"mistralai/mistral-small-2603":            262000,
+			"mistralai/ministral-14b-2512":            262000,
+			"inclusionai/ling-3.0-flash":              262144,
+			"xiaomi/mimo-v2.6-flash":                  524288,
 		},
-	},
-
-	{
-		ID:      "meta",
-		Name:    "Meta",
-		BaseURL: "https://api.meta.ai/v1",
-		// Every OpenAI-compatible provider now goes through eino's
-		// /chat/completions path; the old useResponsesAPI switch is gone, so
-		// this entry only works while the endpoint exposes chat completions.
-		Models:       []string{"muse-spark-1.2-contributor"},
-		DefaultModel: "muse-spark-1.2-contributor",
-		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"strictJsonSchema": true,
 		},
@@ -90,29 +106,13 @@ var knownProviders = []ProviderInfo{
 		Name:    "OpenCode Go",
 		BaseURL: "https://opencode.ai/zen/go/v1",
 		Models: []string{
-			"openai/gpt-5.6-luna (reasoning: none)",
-			"openai/gpt-5.6-luna (reasoning: low)",
-			"openai/gpt-5.6-luna (reasoning: medium)",
-			"mimo-v2.5",
 			"deepseek-v4.1-flash",
 		},
-		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
+		DefaultModel: "deepseek-v4.1-flash",
 		OpenAICompat: true,
-		GoAIOptions: map[string]any{
-			"strictJsonSchema": true,
+		ContextWindow: map[string]int{
+			"deepseek-v4.1-flash": 262144,
 		},
-	},
-
-	{
-		ID:      "opencode-zen",
-		Name:    "OpenCode Zen",
-		BaseURL: "https://opencode.ai/zen/v1",
-		Models: []string{
-			"x-preview-f-free",
-			"mimo-v2.5-free",
-		},
-		DefaultModel: "x-preview-f-free",
-		OpenAICompat: true,
 		GoAIOptions: map[string]any{
 			"strictJsonSchema": true,
 		},
@@ -124,37 +124,21 @@ var knownProviders = []ProviderInfo{
 		BaseURL: "https://model.inferx.net/endpoints/v1",
 		Models: []string{
 			"deepseek-v4-flash-0731",
-			"deepseek-v4.1-flash",
 			"glm-5.3-flash",
 			"gemma-4-31B-it-fp8",
 			"Qwen3.6-35B-A3B-FP8",
 		},
 		DefaultModel: "deepseek-v4-flash-0731",
 		OpenAICompat: true,
+		ContextWindow: map[string]int{
+			"deepseek-v4-flash-0731": 262144,
+			"glm-5.3-flash":          262144,
+			"gemma-4-31B-it-fp8":     262144,
+			"Qwen3.6-35B-A3B-FP8":    262000,
+		},
 		GoAIOptions: map[string]any{
 			"strictJsonSchema": true,
 		},
-	},
-
-	{
-		ID:           "lmstudio",
-		Name:         "LM Studio",
-		BaseURL:      "http://localhost:1234/v1",
-		Models:       []string{"local-model"},
-		DefaultModel: "local-model",
-		OpenAICompat: true,
-		GoAIOptions: map[string]any{
-			"strictJsonSchema": false,
-		},
-	},
-
-	{
-		ID:           "google",
-		Name:         "Google Gemma",
-		BaseURL:      "https://generativelanguage.googleapis.com",
-		Models:       []string{"gemma-4-26b-a4b-it", "gemma-4-31b-it"},
-		DefaultModel: "gemma-4-31b-it",
-		OpenAICompat: false,
 	},
 }
 

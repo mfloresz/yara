@@ -2610,7 +2610,9 @@ paths:
       description: |
         Executes one agent turn against the user's configured AI provider
         (OpenAI-compatible providers only; the Google provider does not
-        support the tool loop). The assistant may call novel tools that run
+        support the tool loop). When the user set an agent provider/model
+        override in settings, the turn runs on that provider instead of the
+        translation provider. The assistant may call novel tools that run
         server-side against the user's OWN library; ownership is enforced by
         the backend through owner-scoped store methods, not by the model.
         A novel or session owned by another user is refused with 404 even when
@@ -2816,6 +2818,8 @@ components:
             totalTokens: { type: integer }
             cachedTokens: { type: integer }
             reasoningTokens: { type: integer }
+        model: { type: string, description: done payload, model that served the turn }
+        contextWindow: { type: integer, description: done payload, serving model's max input context in tokens (0/absent when unknown) }
         code: { type: string, description: error code }
         error: { type: string, description: error detail }
 
@@ -3412,6 +3416,8 @@ components:
             timeoutMs: { type: integer }
         titleProvider: { type: string }
         titleModel: { type: string }
+        agentProvider: { type: string }
+        agentModel: { type: string }
         translation: { $ref: '#/components/schemas/TranslationDefaults' }
 
     TranslationDefaults:

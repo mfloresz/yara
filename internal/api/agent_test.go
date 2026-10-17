@@ -1221,6 +1221,79 @@ func TestAgentChatTrimsHistoryToFitEncodedFieldCap(t *testing.T) {
 	}
 }
 
+// TestAgentChatUsesAgentProviderOverride pins the assistant's independent
+// model selection: an agentProvider/agentModel saved in settings routes the
+// turn to that provider instead of the translation (ai) provider.
+func TestAgentChatUsesAgentProviderOverride(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-agent-model@example.com", "secret123", "Alice")
+
+	// Baseline: without an override the turn runs on the main ai provider.
+	var got store.AISettings
+	env.server.NewAIProvider = func(s store.AISettings, _ string) (ai.Provider, error) {
+		got = s
+		return &fakeAgentProvider{finalText: "ok"}, nil
+	}
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "hola",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	if got.Provider == "" {
+		t.Fatal("turn must resolve a provider without an override")
+	}
+	baseProvider := got.Provider
+
+	// Save the assistant override through the settings surface.
+	settingsResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/settings", alice.Token, map[string]any{
+		"ai":            map[string]any{"provider": baseProvider},
+		"agentProvider": "opencode-go",
+		"agentModel":    "agent-chat-model",
+	})
+	assertStatus(t, settingsResp, http.StatusOK)
+	if !strings.Contains(settingsResp.Body.String(), `"agentProvider":"opencode-go"`) {
+		t.Fatalf("settings must echo the agent provider, got %s", settingsResp.Body.String())
+	}
+
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/settings", alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	if !strings.Contains(getResp.Body.String(), `"agentModel":"agent-chat-model"`) {
+		t.Fatalf("settings must persist the agent model, got %s", getResp.Body.String())
+	}
+
+	got = store.AISettings{}
+	resp2 := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "usa el otro modelo",
+	})
+	assertStatus(t, resp2, http.StatusOK)
+	if got.Provider != "opencode-go" {
+		t.Fatalf("turn must run on the agent provider, got %q", got.Provider)
+	}
+	if got.Model != "agent-chat-model" {
+		t.Fatalf("turn must run on the agent model, got %q", got.Model)
+	}
+	for _, ev := range parseNDJSON(t, []byte(resp2.Body.String())) {
+		if ev["type"] == "done" && ev["model"] != "agent-chat-model" {
+			t.Fatalf("done event must report the agent model, got %v", ev["model"])
+		}
+	}
+
+	// Clearing the override falls back to the translation provider.
+	clearResp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/settings", alice.Token, map[string]any{
+		"ai":            map[string]any{"provider": baseProvider},
+		"agentProvider": "",
+		"agentModel":    "",
+	})
+	assertStatus(t, clearResp, http.StatusOK)
+	got = store.AISettings{}
+	resp3 := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "vuelve al principal",
+	})
+	assertStatus(t, resp3, http.StatusOK)
+	if got.Provider != baseProvider {
+		t.Fatalf("cleared override must fall back to %q, got %q", baseProvider, got.Provider)
+	}
+}
+
 // agentHistoryRawSize is the raw-length accounting the trimming loop used
 // before it was corrected to measure the encoded trail. Kept here so the
 // fixture above can assert it sits in that accounting's blind spot.

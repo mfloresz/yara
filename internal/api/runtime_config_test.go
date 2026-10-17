@@ -95,7 +95,7 @@ func TestNewAIProviderCarriesRegistryOptions(t *testing.T) {
 	provider, err := server.newAIProvider(store.AISettings{
 		Provider: "venice",
 		APIKey:   "test-key",
-		Model:    "e2ee-deepseek-v4-flash",
+		Model:    "deepseek-v4-flash-0731",
 	}, "session-abc")
 	if err != nil {
 		t.Fatalf("new AI provider: %v", err)

@@ -14,15 +14,15 @@ import (
 )
 
 // einoChatModel builds an eino OpenAI-compatible chat model for this provider.
-// All known registry providers (venice, openrouter, opencode-*, inferx,
-// lmstudio, meta) speak chat completions, which is what eino's openai
-// component speaks. format is the response_format to request on every call of
-// the returned model (nil = plain text).
+// All known registry providers (venice, openrouter, opencode-go, inferx)
+// speak chat completions, which is what eino's openai component speaks.
+// format is the response_format to request on every call of the returned model
+// (nil = plain text).
 //
 // Note: eino's openai component does not speak the OpenAI Responses API.
 // Provider options that goai used to switch protocols (useResponsesAPI) are
-// ignored now; muse-spark model entries in the registry rely on it and will
-// only work against endpoints that also expose chat completions.
+// ignored now; a catalog endpoint that only speaks the Responses API will not
+// work until it also exposes chat completions.
 func (p *OpenAIProvider) einoChatModel(format *einoopenai.ChatCompletionResponseFormat) (*einoopenai.ChatModel, error) {
 	if p == nil || p.APIKey == "" {
 		return nil, fmt.Errorf("openai not configured")

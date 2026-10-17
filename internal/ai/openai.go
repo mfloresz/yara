@@ -23,7 +23,7 @@ type OpenAIProvider struct {
 	// tier for gpt-5.6-luna requests.
 	OpenRouter bool
 	// SessionID carries the opaque OpenCode session for cache grouping.
-	// Only set for opencode-go/opencode-zen; empty for every other provider.
+	// Only set for opencode-go; empty for every other provider.
 	SessionID string
 }
 

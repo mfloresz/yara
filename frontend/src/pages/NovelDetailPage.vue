@@ -71,7 +71,7 @@
         <header class="novel-main-header">
           <h1 class="novel-title">{{ getNovelDisplayTitle(novel) }}</h1>
           <div class="novel-meta">
-            <span v-if="getNovelDisplayAuthor(novel)" class="muted">{{ getNovelDisplayAuthor(novel) }}</span>
+            <span v-if="getNovelDisplayAuthor(novel)" class="muted clickable-author" @click="goToAuthor(getNovelDisplayAuthor(novel) || '')">{{ getNovelDisplayAuthor(novel) }}</span>
             <span v-if="getNovelDisplaySeries(novel) || getNovelDisplayNumber(novel)" class="novel-series muted small">
               <n-icon :size="14"><BookmarkOutline /></n-icon>
               <span v-if="getNovelDisplaySeries(novel)">{{ getNovelDisplaySeries(novel) }}</span>
@@ -560,6 +560,11 @@ function goToTag(tag: string) {
   void router.push({ path: "/", query: { tag } });
 }
 
+function goToAuthor(author: string) {
+  if (!author) return;
+  void router.push({ path: "/", query: { author } });
+}
+
 async function copyCurrentNovel() {
   if (!novel.value) return;
   const copy = await api.novels.copy(novel.value.id);
@@ -925,6 +930,17 @@ void refreshNovelAndChapterMeta();
 
 .clickable-tag:hover {
   opacity: 0.85;
+}
+
+.clickable-author {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--divide);
+}
+
+.clickable-author:hover {
+  text-decoration-color: var(--accent-link);
 }
 
 .tab-panel {

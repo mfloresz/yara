@@ -40,6 +40,12 @@ func getSettings(s *Server) func(*core.RequestEvent) error {
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
 		}
+		if settings.AgentProvider != "" {
+			resp["agentProvider"] = settings.AgentProvider
+		}
+		if settings.AgentModel != "" {
+			resp["agentModel"] = settings.AgentModel
+		}
 		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
@@ -51,6 +57,8 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 			AI            store.AISettings          `json:"ai"`
 			TitleProvider string                    `json:"titleProvider"`
 			TitleModel    string                    `json:"titleModel"`
+			AgentProvider string                    `json:"agentProvider"`
+			AgentModel    string                    `json:"agentModel"`
 			Translation   store.TranslationDefaults `json:"translation"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
@@ -65,6 +73,8 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 			AI:            body.AI,
 			TitleProvider: body.TitleProvider,
 			TitleModel:    body.TitleModel,
+			AgentProvider: body.AgentProvider,
+			AgentModel:    body.AgentModel,
 			Translation:   body.Translation,
 		})
 		if err != nil {
@@ -81,6 +91,12 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 		}
 		if settings.TitleModel != "" {
 			resp["titleModel"] = settings.TitleModel
+		}
+		if settings.AgentProvider != "" {
+			resp["agentProvider"] = settings.AgentProvider
+		}
+		if settings.AgentModel != "" {
+			resp["agentModel"] = settings.AgentModel
 		}
 		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}

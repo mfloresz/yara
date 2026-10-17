@@ -4,7 +4,7 @@
       ref="el"
       class="markdown-preview muted small novel-description"
       :class="{
-        'novel-description--collapsed': overflow && !expanded,
+        'novel-description--collapsed': !expanded,
         'novel-description--fade': overflow && !expanded,
       }"
       v-html="markdownToHtml(description)"

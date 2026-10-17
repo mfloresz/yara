@@ -123,23 +123,42 @@ func agentUsageFromAI(u *ai.AgentUsage) *agentChatUsage {
 	}
 }
 
+// agentTurnModel reports which model served the turn for the usage display.
+func agentTurnModel(aiSettings store.AISettings) string {
+	return effectiveModel(aiSettings)
+}
+
+// agentTurnContextWindow reports the serving model's max input context in
+// tokens (0 when the provider or model is unknown, e.g. a custom override).
+func agentTurnContextWindow(aiSettings store.AISettings) int {
+	providerKey := strings.TrimSpace(aiSettings.Provider)
+	if providerKey == "" {
+		providerKey = store.DefaultAISettings.Provider
+	}
+	return ai.ContextWindowFor(providerKey, effectiveModel(aiSettings))
+}
+
 // agentChatEvent is one NDJSON line of the streaming response.
 type agentChatEvent struct {
-	Type        string                `json:"type"`
-	SessionID   string                `json:"sessionId,omitempty"`
-	Text        string                `json:"text,omitempty"`
-	Step        int                   `json:"step,omitempty"`
-	Tool        string                `json:"tool,omitempty"`
-	Args        string                `json:"args,omitempty"`
-	Result      string                `json:"result,omitempty"`
-	Message     map[string]any        `json:"message,omitempty"`
-	Steps       int                   `json:"steps,omitempty"`
-	Usage       *agentChatUsage       `json:"usage,omitempty"`
-	Code        string                `json:"code,omitempty"`
-	ErrorDetail string                `json:"error,omitempty"`
-	Question    string                `json:"question,omitempty"`
-	Options     []agentChatOption     `json:"options,omitempty"`
-	Proposal    *agentCleanupProposal `json:"proposal,omitempty"`
+	Type      string          `json:"type"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	Step      int             `json:"step,omitempty"`
+	Tool      string          `json:"tool,omitempty"`
+	Args      string          `json:"args,omitempty"`
+	Result    string          `json:"result,omitempty"`
+	Message   map[string]any  `json:"message,omitempty"`
+	Steps     int             `json:"steps,omitempty"`
+	Usage     *agentChatUsage `json:"usage,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	// ContextWindow is the serving model's max input context in tokens
+	// (0 when unknown); the client ratios usage.promptTokens against it.
+	ContextWindow int                   `json:"contextWindow,omitempty"`
+	Code          string                `json:"code,omitempty"`
+	ErrorDetail   string                `json:"error,omitempty"`
+	Question      string                `json:"question,omitempty"`
+	Options       []agentChatOption     `json:"options,omitempty"`
+	Proposal      *agentCleanupProposal `json:"proposal,omitempty"`
 }
 
 // handleAgentChat streams one assistant turn as NDJSON. Pre-flight failures
@@ -196,7 +215,7 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		// Resolve the runner before streaming so configuration problems get a
 		// proper status code instead of a mid-stream error event. The resolved
 		// runner is handed to runAgentTurn so the turn does not rebuild it.
-		runner, err := s.resolveAgentRunner(userID)
+		runner, aiSettings, err := s.resolveAgentRunner(userID)
 		if err != nil {
 			if errors.Is(err, errAgentUnsupportedProvider) {
 				return writeV1Error(e, http.StatusBadRequest, "provider_unsupported", "the configured AI provider does not support agent chat")
@@ -310,10 +329,12 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		}
 
 		writeEvent(agentChatEvent{
-			Type:      "done",
-			SessionID: session.ID,
-			Steps:     output.Steps,
-			Usage:     agentUsageFromAI(output.Usage),
+			Type:          "done",
+			SessionID:     session.ID,
+			Steps:         output.Steps,
+			Usage:         agentUsageFromAI(output.Usage),
+			Model:         agentTurnModel(aiSettings),
+			ContextWindow: agentTurnContextWindow(aiSettings),
 			Message: map[string]any{
 				"role":    "assistant",
 				"content": output.Text,
