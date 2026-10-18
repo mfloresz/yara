@@ -2,12 +2,6 @@
   <AppLayout>
     <div class="chat-page">
       <header class="page-header">
-        <div class="page-context">
-          <h1 class="page-title">Asistente</h1>
-          <p class="muted small">
-            Consulta y edita tu biblioteca conversando
-          </p>
-        </div>
         <div class="page-actions">
           <!-- Context usage ring: percentage of the serving model's window
                held at answer time (prompt tokens of the last step). Hover
@@ -52,15 +46,19 @@
         <!-- role="log" announces appended messages instead of re-reading the
                  whole transcript; the pending/streaming indicator below carries its
                  own status so token-by-token deltas stay silent. -->
-            <div
+            <n-scrollbar
               ref="scrollContainer"
               class="chat-scroll"
-              role="log"
-              aria-live="polite"
-              aria-relevant="additions"
-              :aria-busy="streaming"
-              aria-label="Conversación con el asistente"
+              content-class="chat-scroll-content"
             >
+              <div
+                class="chat-scroll-inner"
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+                :aria-busy="streaming"
+                aria-label="Conversación con el asistente"
+              >
         <div v-if="items.length === 0" class="chat-empty">
           <n-icon :size="42" class="chat-empty-icon"><ChatbubbleEllipsesOutline /></n-icon>
           <h2 class="chat-empty-title">Pregúntale a tu biblioteca</h2>
@@ -163,6 +161,7 @@
           </div>
         </div>
         </div>
+            </n-scrollbar>
 
         <aside v-if="activeProposal" class="chat-artifact" aria-label="Vista previa de limpieza">
           <CleanupProposalPanel
@@ -249,10 +248,6 @@
             <template #icon><n-icon><SendOutline /></n-icon></template>
           </n-button>
         </div>
-        <p class="muted chat-disclaimer">
-          Las herramientas del asistente se ejecutan en el servidor y solo
-          afectan a tu biblioteca. Las ediciones se aplican de inmediato.
-        </p>
       </div>
     </div>
 
@@ -299,6 +294,7 @@ import {
   NModal,
   NPopover,
   NProgress,
+  NScrollbar,
   NSpin,
   useMessage,
 } from "naive-ui";
@@ -363,7 +359,7 @@ const lastUsage = ref<AgentChatUsage | null>(null);
 const lastModel = ref("");
 const lastContextWindow = ref<number | null>(null);
 const selectedNovel = ref<{ id: string; title: string } | null>(null);
-const scrollContainer = ref<HTMLElement | null>(null);
+const scrollContainer = ref<InstanceType<typeof NScrollbar> | null>(null);
 // Assistant model selection, independent from the translation provider.
 // Empty agentProvider follows the translation provider; empty agentModel
 // uses the effective provider's default. Persisted in settings.
@@ -651,9 +647,9 @@ function flushStreamNow(apply: () => void): void {
 const STICK_THRESHOLD_PX = 64;
 
 function isPinnedToBottom(): boolean {
-  const el = scrollContainer.value;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX;
+  const container = (scrollContainer.value?.scrollbarInstRef as any)?.containerRef as HTMLElement | null | undefined;
+  if (!container) return true;
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= STICK_THRESHOLD_PX;
 }
 
 // Call before mutating `items` so the pinned check reflects the pre-update
@@ -661,8 +657,8 @@ function isPinnedToBottom(): boolean {
 function scrollToBottom(force = false): void {
   if (!force && !isPinnedToBottom()) return;
   void nextTick(() => {
-    const el = scrollContainer.value;
-    if (el) el.scrollTop = el.scrollHeight;
+    const container = (scrollContainer.value?.scrollbarInstRef as any)?.containerRef as HTMLElement | null | undefined;
+    if (container) container.scrollTop = container.scrollHeight;
   });
 }
 
@@ -1171,16 +1167,14 @@ function chooseNovel(novel: PickerNovel): void {
 <style scoped>
 /* The transcript owns the leftover viewport height instead of pinning a
    480px floor: on a short viewport (landscape phone) a min-height would push
-   the composer below the fold while the transcript still refuses to scroll.
-   The header offset is the app-topbar's min-height; it lives in one place so
-   the desktop and mobile values can be corrected side by side. */
+   the composer below the fold while the transcript still refuses to scroll. */
 .chat-page {
   display: flex;
   flex-direction: column;
-  /* No column gap: the composer's border-top is the divider, and the old
-     0.75rem gap left a dead band above it. Header spacing lives on
-     .page-header instead. */
-  height: calc(100dvh - 56px - 2.5rem);
+  /* La altura la fija el encadenamiento flex desde AppLayout (ver el bloque
+     <style> no-scoped al final del archivo), no un calc() con offsets del
+     header que se desajustan por píxeles y cambiaban con cada breakpoint. */
+  flex: 1;
   min-height: 0;
 }
 
@@ -1268,12 +1262,17 @@ function chooseNovel(novel: PickerNovel): void {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  /* El scroll es manejado por n-scrollbar; no overflow nativo. */
+  padding: 0.25rem 0.125rem 0.5rem;
+  overscroll-behavior: contain;
+}
+
+.chat-scroll-inner {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding: 0.25rem 0.125rem 0.5rem;
-  overscroll-behavior: contain;
 }
 
 /* The artifact panel: fixed share of the row, its own internal scroll (the
@@ -1607,10 +1606,6 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 @media (max-width: 768px) {
-  .chat-page {
-    height: calc(100dvh - 52px - 2rem);
-  }
-
   /* The artifact panel has no room beside the transcript on a phone: it
      becomes a full-screen overlay with its own close button. */
   .chat-artifact {
@@ -1660,5 +1655,22 @@ function chooseNovel(novel: PickerNovel): void {
     color: var(--text-secondary);
     -webkit-text-fill-color: currentColor;
   }
+}
+</style>
+
+<!-- No-scoped: reaches AppLayout internals, which live outside this
+     component's scoped DOM. Guarded with :has() so only the chat page gets
+     the height chain; every other page keeps the auto-height, scrollable
+     .page-container untouched. -->
+<style>
+.page-container:has(> .chat-page) {
+  /* Resolves against n-scrollbar-container, which naive-ui sizes at 100%
+     of .app-scroll (flex: 1 of .app-main). With this, .chat-page's flex: 1
+     fills the viewport exactly and the page-level scrollbar disappears
+     regardless of the topbar's real height, its border or the breakpoint
+     paddings: no magic numbers to keep in sync. */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 </style>
