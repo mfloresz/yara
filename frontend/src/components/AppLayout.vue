@@ -8,14 +8,32 @@
       </template>
     </AppHeader>
 
-    <main id="main-content" class="page-container" tabindex="-1">
-      <slot />
+    <main id="main-content" class="app-main" tabindex="-1">
+      <n-scrollbar ref="scrollbarRef" class="app-scroll" content-class="page-container">
+        <slot />
+      </n-scrollbar>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from "vue";
+import { useRoute } from "vue-router";
+import { NScrollbar } from "naive-ui";
 import AppHeader from "@/components/AppHeader.vue";
+
+const route = useRoute();
+const scrollbarRef = ref<InstanceType<typeof NScrollbar> | null>(null);
+
+// Cada página instancia su propio AppLayout, así que al cambiar de vista el
+// scrollbar interno arranca en 0. Este watch cubre el reuso del mismo
+// componente con otros params (ej. /novels/A → /novels/B).
+watch(
+  () => route.fullPath,
+  () => {
+    scrollbarRef.value?.scrollTo({ top: 0 });
+  },
+);
 </script>
 
 <style scoped>

@@ -185,11 +185,10 @@ function handleMobileNav(command?: () => void) {
 
 <style scoped>
 .app-topbar {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 50;
-  background: color-mix(in oklab, var(--surface-elevated) 92%, transparent);
-  backdrop-filter: blur(12px);
+  flex-shrink: 0;
+  background: var(--surface-elevated);
   border-bottom: 1px solid var(--divide);
 }
 

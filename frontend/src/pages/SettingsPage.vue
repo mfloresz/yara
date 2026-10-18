@@ -705,7 +705,7 @@ function formatDateTime(value?: string) {
 
 .settings-header {
   position: sticky;
-  top: 56px;
+  top: 0;
   z-index: 20;
   display: flex;
   align-items: center;
@@ -728,7 +728,7 @@ function formatDateTime(value?: string) {
 
 .settings-nav {
   position: sticky;
-  top: 148px;
+  top: 92px;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -832,7 +832,7 @@ function formatDateTime(value?: string) {
   }
 
   .settings-header {
-    top: 52px;
+    top: 0;
   }
 
   .settings-body {
@@ -841,7 +841,7 @@ function formatDateTime(value?: string) {
   }
 
   .settings-nav {
-    top: 129px;
+    top: 77px;
     z-index: 15;
     flex-direction: row;
     overflow-x: auto;

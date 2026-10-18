@@ -83,13 +83,12 @@
         </n-input>
 
         <div v-if="open" class="gs-panel">
-          <n-scrollbar class="gs-scroll">
-            <div
-              id="gs-listbox"
-              class="gs-listbox"
-              role="listbox"
-              aria-label="Resultados de búsqueda"
-            >
+          <div
+            id="gs-listbox"
+            class="gs-listbox"
+            role="listbox"
+            aria-label="Resultados de búsqueda"
+          >
             <div v-if="loading && !searched" class="gs-loading" role="status" aria-label="Buscando">
               <n-skeleton text :repeat="3" />
             </div>
@@ -99,7 +98,7 @@
                 No se encontraron novelas para «{{ query.trim() }}»
               </p>
               <button
-                v-for="(novel, index) in results"
+                v-for="(novel, index) in visibleResults"
                 :id="`gs-opt-${index}`"
                 :key="novel.id"
                 type="button"
@@ -149,7 +148,7 @@
                   No se encontraron novelas
                 </p>
                 <button
-                  v-for="(novel, index) in facetNovels"
+                  v-for="(novel, index) in visibleFacetNovels"
                   :id="`gs-opt-${facetMatches.length + index}`"
                   :key="novel.id"
                   type="button"
@@ -169,12 +168,12 @@
               </div>
             </template>
           </div>
-          </n-scrollbar>
 
           <div v-if="hasNavigableItems || viewAllHref" class="gs-footer">
             <p v-if="hasNavigableItems" class="gs-hint" aria-hidden="true">
               ↑↓ navegar · Enter abrir · Esc cerrar
             </p>
+            <span v-if="hiddenCount > 0" class="gs-more">+{{ hiddenCount }} más</span>
             <n-button
               v-if="viewAllHref"
               text
@@ -201,7 +200,6 @@ import {
   NIcon,
   NInput,
   NPopover,
-  NScrollbar,
   NSkeleton,
   NSpin,
   NTag,
@@ -243,10 +241,22 @@ const activeIndex = ref(-1);
 
 const activeMeta = computed(() => criterionMeta(criterion.value));
 
+const MAX_VISIBLE = 6;
+
+const visibleResults = computed(() => results.value.slice(0, MAX_VISIBLE));
+const visibleFacetNovels = computed(() => facetNovels.value.slice(0, MAX_VISIBLE));
+
+const hiddenCount = computed(() => {
+  if (criterion.value === "title") {
+    return Math.max(0, results.value.length - visibleResults.value.length);
+  }
+  return Math.max(0, facetNovels.value.length - visibleFacetNovels.value.length);
+});
+
 const flatCount = computed(() =>
   criterion.value === "title"
-    ? results.value.length
-    : facetMatches.value.length + facetNovels.value.length,
+    ? visibleResults.value.length
+    : facetMatches.value.length + visibleFacetNovels.value.length,
 );
 
 const hasNavigableItems = computed(() => flatCount.value > 0);
@@ -336,8 +346,8 @@ function selectFlat(index: number) {
   }
   const novel =
     criterion.value === "title"
-      ? results.value[index]
-      : facetNovels.value[index - facetMatches.value.length];
+      ? visibleResults.value[index]
+      : visibleFacetNovels.value[index - facetMatches.value.length];
   if (novel) goToNovel(novel.id);
 }
 
@@ -490,7 +500,6 @@ onBeforeUnmount(() => {
   z-index: 70;
   display: flex;
   flex-direction: column;
-  max-height: 60vh;
   overflow: hidden;
   background: var(--surface-elevated);
   border: 1px solid var(--divide);
@@ -498,19 +507,17 @@ onBeforeUnmount(() => {
   padding: 0.375rem;
 }
 
-.gs-listbox {
-  min-height: 0;
-}
-
-.gs-scroll {
-  flex: 1;
-  min-height: 0;
-}
-
 .gs-footer {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.gs-more {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted, #8a8a8a);
+  white-space: nowrap;
 }
 
 .gs-view-all {

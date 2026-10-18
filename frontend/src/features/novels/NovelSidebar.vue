@@ -9,23 +9,31 @@
         <template #icon><n-icon><BookOutline /></n-icon></template>
         Leer
       </n-button>
-      <n-button v-if="isOwner" secondary block @click="emit('open-settings')">
-        <template #icon><n-icon><SettingsOutline /></n-icon></template>
-        Configuración
-      </n-button>
+      <span v-if="isOwner" class="sidebar-actions-group" role="group" aria-label="Acciones de la novela">
+        <n-button
+          class="sidebar-actions-main"
+          secondary
+          @click="emit('open-settings')"
+        >
+          <template #icon><n-icon><SettingsOutline /></n-icon></template>
+          Configuración
+        </n-button>
+        <n-dropdown trigger="click" placement="bottom-end" :options="sidebarMenuOptions" @select="handleSidebarMenuSelect">
+          <n-button
+            class="sidebar-actions-arrow"
+            secondary
+            aria-label="Más acciones"
+            aria-haspopup="menu"
+          >
+            <template #icon><n-icon :size="14"><ChevronDownOutline /></n-icon></template>
+          </n-button>
+        </n-dropdown>
+      </span>
       <n-button v-else secondary block @click="emit('copy-novel')">
         <template #icon><n-icon><CopyOutline /></n-icon></template>
         Copiar novela
       </n-button>
-      <n-button v-if="isOwner" secondary block @click="emit('toggle-visibility')">
-        <template #icon><n-icon><GlobeOutline /></n-icon></template>
-        {{ novel.isPublic ? 'Compartiendo' : 'Compartir' }}
-      </n-button>
-      <n-button v-if="isOwner && novel.url" secondary block @click="emit('open-update-url')">
-        <template #icon><n-icon><RefreshOutline /></n-icon></template>
-        Actualizar
-      </n-button>
-      <n-button secondary block :loading="downloadingOffline" @click="emit('toggle-offline')">
+      <n-button v-if="!isOwner" secondary block :loading="downloadingOffline" @click="emit('toggle-offline')">
         <template #icon>
           <n-icon><CloudDoneOutline v-if="isNovelCached" /><CloudDownloadOutline v-else /></n-icon>
         </template>
@@ -43,9 +51,10 @@
 </template>
 
 <script setup lang="ts">
-import { NButton, NIcon, NTag } from "naive-ui";
+import { NButton, NDropdown, NIcon, NTag } from "naive-ui";
 import {
   BookOutline,
+  ChevronDownOutline,
   CloudDoneOutline,
   CloudDownloadOutline,
   CopyOutline,
@@ -73,6 +82,26 @@ const emit = defineEmits<{
   (e: "open-update-url"): void;
   (e: "toggle-offline"): void;
 }>();
+
+const sidebarMenuOptions = [
+  { label: "Compartir", key: "share" },
+  { label: "Actualizar", key: "update" },
+  { label: "Guardar Offline", key: "offline" },
+];
+
+function handleSidebarMenuSelect(key: string) {
+  switch (key) {
+    case "share":
+      emit("toggle-visibility");
+      break;
+    case "update":
+      emit("open-update-url");
+      break;
+    case "offline":
+      emit("toggle-offline");
+      break;
+  }
+}
 
 function novelStatusLabel(status: NovelStatus) {
   switch (status) {
@@ -127,6 +156,21 @@ function novelStatusType(status: NovelStatus) {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.sidebar-actions-group {
+  display: flex;
+  width: 100%;
+}
+
+.sidebar-actions-main {
+  flex: 1;
+  border-radius: 999px 0 0 999px;
+}
+
+.sidebar-actions-arrow {
+  flex-shrink: 0;
+  border-radius: 0 999px 999px 0;
 }
 
 .novel-sidebar-tags {

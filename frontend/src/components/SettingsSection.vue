@@ -26,7 +26,7 @@ withDefaults(
 
 <style scoped>
 .settings-section {
-  scroll-margin-top: 148px;
+  scroll-margin-top: 92px;
 }
 
 .settings-section-head {

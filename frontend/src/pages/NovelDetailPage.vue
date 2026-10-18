@@ -87,8 +87,8 @@
             <n-tag
               v-for="tagItem in novel.tags"
               :key="tagItem"
-              type="info"
               size="small"
+              :bordered="false"
               class="clickable-tag"
               @click="goToTag(tagItem)"
             >{{ tagItem }}</n-tag>

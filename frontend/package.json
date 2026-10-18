@@ -9,29 +9,29 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/newsreader": "^5.2.10",
-    "@fontsource-variable/playfair-display": "^5.2.8",
-    "@tiptap/core": "^3.31.3",
-    "@tiptap/starter-kit": "^3.31.3",
-    "@tiptap/vue-3": "^3.31.3",
+    "@fontsource-variable/newsreader": "^5.3.0",
+    "@fontsource-variable/playfair-display": "^5.3.0",
+    "@tiptap/core": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
+    "@tiptap/vue-3": "^3.32.0",
     "@vicons/ionicons5": "^0.13.0",
-    "dompurify": "^3.4.12",
-    "jszip": "^3.10.1",
-    "marked": "^18.0.6",
-    "markstream-vue": "^2.0.14",
-    "naive-ui": "^2.44.1",
+    "dompurify": "^3.4.17",
+    "jszip": "^3.10.2",
+    "marked": "^18.1.1",
+    "markstream-vue": "^2.0.19",
+    "naive-ui": "^2.45.3",
     "turndown": "^7.2.4",
-    "vue": "^3.5.18",
-    "vue-router": "^4.5.1"
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
-    "@types/dompurify": "^3.0.5",
-    "@types/node": "^24.0.0",
+    "@types/dompurify": "^3.2.0",
+    "@types/node": "^24.19.2",
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-vue": "^5.2.4",
-    "typescript": "^5.8.3",
-    "vite": "^5.4.19",
-    "vite-plugin-pwa": "^0.20.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-pwa": "^0.20.5",
     "vue-tsc": "^2.2.12"
   }
 }

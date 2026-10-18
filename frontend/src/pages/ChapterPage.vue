@@ -518,10 +518,10 @@ async function handleMarkDone() {
   padding-bottom: 1rem;
 }
 
-/* ── Sticky workbench bar (bajo el topbar de AppLayout) ── */
+/* ── Sticky workbench bar (top del área de scroll interna) ── */
 .wb-bar {
   position: sticky;
-  top: 57px;
+  top: 0;
   z-index: 40;
   display: flex;
   align-items: center;
@@ -760,7 +760,7 @@ async function handleMarkDone() {
 
 @media (max-width: 768px) {
   .wb-bar {
-    top: 53px;
+    top: 0;
   }
 
   .wb-title {
