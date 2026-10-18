@@ -188,49 +188,51 @@
           <n-button
             quaternary
             circle
-            class="touch-target"
+            class="touch-target chat-attach-trigger"
             aria-label="Seleccionar novela sobre la que preguntar"
             @click="pickerOpen = true"
           >
             <template #icon><n-icon><BookOutline /></n-icon></template>
           </n-button>
-          <n-input
-            v-model:value="draft"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 6 }"
-            placeholder="Escribe una pregunta… (Enter para enviar)"
-            class="chat-input"
-            @keydown.enter.exact.prevent="send"
-          />
-          <!-- Single cascading menu: providers at the top level, models as a
-               nested submenu per provider. Mirrors the model picker in the
-               reference composer. -->
-          <n-dropdown
-            trigger="click"
-            placement="top-end"
-            :options="modelMenuOptions"
-            :loading="providersLoading"
-            @select="onModelMenuSelect"
-          >
-            <n-button
-              secondary
-              size="small"
-              class="chat-model-trigger"
-              aria-label="Modelo del asistente"
-              :title="modelTriggerTitle"
-            >
-              <span class="chat-model-trigger-label">{{ modelTriggerLabel }}</span>
-              <template #icon><n-icon><ChevronDownOutline /></n-icon></template>
-            </n-button>
-          </n-dropdown>
-          <span v-if="agentKeyMissing" class="muted small chat-model-warn" title="Configura la API key en Ajustes">
-            Sin API key
-          </span>
+          <div class="chat-input-shell">
+            <n-input
+              v-model:value="draft"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 6 }"
+              :bordered="false"
+              placeholder="Escribe una pregunta o continúa el análisis…"
+              class="chat-input"
+              @keydown.enter.exact.prevent="send"
+            />
+            <div class="chat-input-actions">
+              <!-- Keep provider/model selection attached to the text field. -->
+              <n-dropdown
+                trigger="click"
+                placement="top-end"
+                :options="modelMenuOptions"
+                :loading="providersLoading"
+                @select="onModelMenuSelect"
+              >
+                <n-button
+                  secondary
+                  size="small"
+                  class="chat-model-trigger"
+                  aria-label="Modelo del asistente"
+                  :title="modelTriggerTitle"
+                >
+                  <span class="chat-model-trigger-label">{{ modelTriggerLabel }}</span>
+                  <template #icon><n-icon><ChevronDownOutline /></n-icon></template>
+                </n-button>
+              </n-dropdown>
+              <span v-if="agentKeyMissing" class="muted small chat-model-warn" title="Configura la API key en Ajustes">
+                Sin API key
+              </span>
+            </div>
+          </div>
           <n-button
             v-if="streaming"
-            quaternary
             circle
-            class="touch-target"
+            class="touch-target chat-send-button"
             aria-label="Detener la respuesta"
             @click="stopStreaming"
           >
@@ -240,7 +242,7 @@
             v-else
             type="primary"
             circle
-            class="touch-target"
+            class="touch-target chat-send-button"
             aria-label="Enviar mensaje"
             :disabled="!canSend"
             @click="send"
@@ -1503,15 +1505,80 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .chat-composer {
-  border-top: 1px solid var(--divide);
   padding-top: 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-/* Trigger for the cascading provider/model menu: sits in the composer row
-   next to the send button, like the model pill in the reference composer. */
+.chat-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 4.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+}
+
+.chat-attach-trigger {
+  flex: 0 0 3rem;
+  width: 3rem;
+  height: 3rem;
+  color: var(--aged-stone, var(--text-secondary));
+  background: var(--background);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.chat-attach-trigger:hover {
+  color: var(--text-primary);
+  background: var(--mock-row);
+}
+
+.chat-input-shell {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 3.125rem;
+  padding: 0.25rem 0.375rem 0.25rem 1rem;
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-pill);
+  background: var(--surface-base);
+  transition: border-color 0.15s ease;
+}
+
+.chat-input-shell:focus-within {
+  border-color: var(--border-strong);
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-input :deep(.n-input) {
+  background: transparent;
+}
+
+.chat-input :deep(.n-input__textarea-el) {
+  padding-block: 0.625rem;
+  line-height: 1.45;
+}
+
+.chat-input :deep(.n-input__placeholder) {
+  color: var(--text-tertiary);
+}
+
+.chat-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
 .chat-model-trigger {
   flex-shrink: 0;
   max-width: 12rem;
@@ -1526,6 +1593,23 @@ function chooseNovel(novel: PickerNovel): void {
 .chat-model-warn {
   white-space: nowrap;
   color: var(--warning, var(--text-tertiary));
+}
+
+.chat-send-button {
+  flex: 0 0 3rem;
+  width: 3rem;
+  height: 3rem;
+  color: var(--surface-base) !important;
+  background: var(--text-primary) !important;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.chat-send-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--text-primary) 82%, transparent) !important;
+}
+
+.chat-send-button:disabled {
+  opacity: 0.58;
 }
 
 .chat-context-chip {
@@ -1546,16 +1630,6 @@ function chooseNovel(novel: PickerNovel): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.chat-composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-}
-
-.chat-input {
-  flex: 1;
 }
 
 .chat-disclaimer {
@@ -1629,6 +1703,33 @@ function chooseNovel(novel: PickerNovel): void {
     max-width: 88%;
   }
 
+  /* Keep the controls thumb-sized while allowing the text field to take the
+     width that remains on narrow phones. */
+  .chat-composer-row {
+    gap: 0.375rem;
+    padding: 0.375rem;
+  }
+
+  .chat-attach-trigger,
+  .chat-send-button {
+    flex-basis: 2.75rem;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .chat-input-shell {
+    gap: 0.25rem;
+    padding-left: 0.75rem;
+  }
+
+  .chat-model-trigger {
+    max-width: 7.5rem;
+  }
+
+  .chat-model-trigger-label {
+    max-width: 4.5rem;
+  }
+
   /* 44px minimum touch target for every tappable chip. */
   .chat-suggestion {
     min-height: 44px;
@@ -1639,7 +1740,10 @@ function chooseNovel(novel: PickerNovel): void {
 
 @media (prefers-reduced-motion: reduce) {
   .chat-suggestion,
-  .chat-picker-item {
+  .chat-picker-item,
+  .chat-attach-trigger,
+  .chat-input-shell,
+  .chat-send-button {
     transition: none;
   }
 
