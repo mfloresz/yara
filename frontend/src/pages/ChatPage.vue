@@ -463,7 +463,7 @@ const usagePercentLabel = computed(() => {
 const usageTokensLabel = computed(() => {
   const u = lastUsage.value;
   if (!u) return "";
-  return u.totalTokens.toLocaleString("es");
+  return u.promptTokens.toLocaleString("es");
 });
 
 // The last assistant message is the one still receiving token deltas.
