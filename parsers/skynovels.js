@@ -26,7 +26,7 @@ function fetchVolumeChapters(ctx, novel, volumeID) {
   const PAGE_SIZE = 100;
   const all = [];
   for (let page = 1; ; page++) {
-    const url = API + "/novels/" + novel + "/volumes/" + volumeID + "/" + page + "/chapters?page=" + page + "&limit=" + PAGE_SIZE;
+    const url = API + "/volumes/" + novel + "/" + volumeID + "/chapters?page=" + page + "&limit=" + PAGE_SIZE;
     const resp = fetchJSON(ctx, url);
     const items = (resp && resp.items) || [];
     for (const ch of items) {
