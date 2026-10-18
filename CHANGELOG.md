@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.48.0] - 2026-10-17
+
+### What's new
+
+- **PWA support.** Added Progressive Web App support (vite-plugin-pwa), so the translator SPA can be installed and used offline.
+- **App layout scrolling.** AppLayout now scrolls page content through an NScrollbar that resets to the top on navigation; AppHeader is now relative with a solid background instead of sticky with backdrop blur.
+- **Novel sidebar actions menu.** Owner actions (share, update, save offline) are consolidated into a dropdown menu next to the settings button.
+
+### Fixes
+
+- **Chat page scroll.** Replaced manual scroll management on ChatPage with NScrollbar and flex layout.
+- **Global novel search scroll.** Wrapped the results list in NScrollbar with flex column layout so it respects the 60vh max-height without overflowing the panel.
+
+### Housekeeping
+
+- Bumped naive-ui (2.44.1 → 2.45.3) and Tiptap editor patch versions.
+- Updated frontend build dependencies (Vite 8, plugin-vue 6, PWA plugin 2).
+- Added `docs/model-context-limits.md` documenting agent model context window limits.
+- Added packaged browser-worker extension archives (Chrome/Firefox v1.0.2, v1.0.3).
+
 ## [v0.47.0] - 2026-10-16
 
 ### What's new
@@ -689,5 +709,6 @@
 [v0.45.0]: https://github.com/mfloresz/yara/compare/v0.44.0...v0.45.0
 [v0.46.1]: https://github.com/mfloresz/yara/compare/v0.46.0...v0.46.1
 [v0.46.0]: https://github.com/mfloresz/yara/compare/v0.45.0...v0.46.0
-[v0.44.0]: https://github.com/mfloresz/yara/compare/v0.43.1...v0.44.0
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.44.0
+[v0.47.0]: https://github.com/mfloresz/yara/compare/v0.46.1...v0.47.0
+[v0.48.0]: https://github.com/mfloresz/yara/compare/v0.47.0...v0.48.0
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.47.0
