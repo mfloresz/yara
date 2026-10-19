@@ -985,7 +985,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         await http.delete<void>("/api/v1/agent/session");
       },
       chat(
-        payload: { sessionId?: string; novelId?: string; message: string },
+        payload: {
+          sessionId?: string;
+          novelId?: string;
+          message: string;
+          // Regenerate re-runs the last turn: the server drops the stored
+          // answer (and its tool trail) and re-asks with `message`, which the
+          // client sends as the turn's original user text.
+          regenerate?: boolean;
+        },
         onEvent: (event: AgentChatEvent) => void,
         signal?: AbortSignal,
       ): Promise<void> {

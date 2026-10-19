@@ -2,20 +2,26 @@
   <AppLayout>
     <div class="chat-page">
       <header class="page-header">
+        <!-- Everything in the header sits at the right edge: status ring first,
+             then the action button, so the corner keeps one reading order. -->
         <div class="page-actions">
-          <!-- Context usage ring: percentage of the serving model's window
-               held at answer time (prompt tokens of the last step). Hover
-               shows Uso + Tokens only — never cost. Falls back to the quiet
-               text note when the window is unknown. -->
-          <n-popover v-if="usagePercent !== null" trigger="hover" placement="bottom-end">
+          <!-- Context usage ring, always present (even on a fresh chat, where
+               it rests at 0): percentage of the serving model's window held at
+               answer time (prompt tokens of the last step). Hover shows Uso +
+               Tokens only — never cost. Persisted per session in localStorage,
+               so reloading the page does not lose the reading until the next
+               message. -->
+          <n-popover trigger="hover" placement="bottom-end">
             <template #trigger>
               <span class="chat-usage-ring" role="img" :aria-label="usageTitle">
                 <n-progress
                   type="circle"
                   :percentage="usagePercent"
                   :show-indicator="false"
-                  :stroke-width="14"
+                  :stroke-width="12"
                   :offset-degree="120"
+                  :color="usageRingColor"
+                  :rail-color="usageRingRail"
                 />
               </span>
             </template>
@@ -25,7 +31,6 @@
               <div v-if="lastModel" class="muted small chat-usage-model">{{ lastModel }}</div>
             </div>
           </n-popover>
-          <span v-else-if="usageLabel" class="muted small chat-usage" :title="usageTitle">{{ usageLabel }}</span>
           <n-button
             secondary
             size="small"
@@ -44,8 +49,10 @@
            artifacts. On narrow screens the panel becomes a full overlay. -->
       <div class="chat-body">
         <!-- role="log" announces appended messages instead of re-reading the
-                 whole transcript; the pending/streaming indicator below carries its
-                 own status so token-by-token deltas stay silent. -->
+                 whole transcript. Only additions are announced: streaming text
+                 mutates existing nodes (stays silent) and the pending bubble
+                 below carries its own status. Tool rows are deliberately NOT
+                 live regions — their duration ticks would re-announce. -->
             <n-scrollbar
               ref="scrollContainer"
               class="chat-scroll"
@@ -80,84 +87,185 @@
           </div>
         </div>
 
-        <template v-for="(item, index) in items" :key="index">
-          <div v-if="item.kind === 'message'" class="chat-row" :class="`chat-row--${item.role}`">
-            <div class="chat-bubble" :class="`chat-bubble--${item.role}`">
-              <template v-if="item.role === 'assistant' && item.content">
-                <!-- Streaming assistant text is excluded from the live region:
-                     aria-live="off" keeps per-token mutations from re-announcing. -->
-                <div
-                  class="markdown-preview chat-markdown"
-                  :aria-live="isStreamingTail(index) ? 'off' : undefined"
-                >
-                  <!-- markstream-vue parses incrementally and keeps partial
-                       markdown stable, so an unterminated heading or code fence
-                       does not flicker while the answer is still arriving.
-                       htmlPolicy="escape" matters here: this is LLM output, a
-                       lower-trust source than the novel text markdownToHtml
-                       was written for. -->
-                  <MarkdownRender
-                    :content="item.content"
-                    :final="!isStreamingTail(index)"
-                    html-policy="escape"
-                  />
-                </div>
+        <!-- A turn is the visual unit: the user's question (right-aligned
+             bubble) plus everything the agent did about it, wrapped in ONE
+             left-aligned assistant bubble — narration, step rows and the
+             final answer share the container, which closes when the turn
+             ends and the user writes again. -->
+        <div v-for="turn in turns" :key="turn.id" class="turn">
+          <div v-if="turn.user" class="turn-user">
+            <div class="chat-bubble chat-bubble--user">{{ turn.user.content }}</div>
+          </div>
+          <div
+            v-if="turn.agent.length > 0 || (turn.active && waitingForFirstToken)"
+            class="turn-bubble"
+          >
+            <!-- Finished turns with several steps collapse to one summary
+                 line so long transcripts stay scannable; the final answer,
+                 questions and proposals are always kept visible. -->
+            <button
+              v-if="!turn.active && turn.toolCount >= 3"
+              type="button"
+              class="turn-steps"
+              :aria-expanded="!isTurnCollapsed(turn)"
+              @click="toggleTurn(turn.id)"
+            >
+              <n-icon :size="12" aria-hidden="true">
+                <ChevronForwardOutline v-if="isTurnCollapsed(turn)" />
+                <ChevronDownOutline v-else />
+              </n-icon>
+              <template v-if="isTurnCollapsed(turn)">
+                {{ turn.toolCount }} pasos · {{ formatDuration(turn.toolMs) }}
               </template>
-              <p v-else class="chat-plain">{{ item.content }}</p>
-            </div>
-          </div>
+              <template v-else>
+                Ocultar los {{ turn.toolCount }} pasos
+              </template>
+            </button>
 
-          <div v-else-if="item.kind === 'tool'" class="chat-row chat-row--tool">
-            <!-- Ephemeral: the tool_result handler splices the chip out, so a
-                 finished turn shows nothing but the assistant's message. -->
-            <div class="chat-tool" role="status">
-              <n-icon :size="14" class="chat-tool-icon"><BuildOutline /></n-icon>
-              <span class="chat-tool-name">{{ toolLabel(item.name) }}…</span>
-            </div>
-          </div>
-
-          <div v-else-if="item.kind === 'question'" class="chat-row chat-row--assistant">
-            <div class="chat-bubble chat-bubble--assistant">
-              <div class="markdown-preview chat-markdown">
-                <MarkdownRender :content="item.question" final html-policy="escape" />
-              </div>
-              <div class="chat-options">
-                <button
-                  v-for="opt in item.options"
-                  :key="opt.value"
-                  type="button"
-                  class="chat-suggestion"
-                  :disabled="item.answered || streaming"
-                  @click="chooseOption(item, opt)"
+            <!-- v-memo + stable keys: only the streaming tail (and whatever
+                 the events actually touched) re-renders on each frame; the
+                 memo is keyed per item kind so a ticking tool duration costs
+                 one row, not the transcript. -->
+            <div
+              v-for="item in turnVisibleItems(turn)"
+              :key="item.id"
+              class="turn-item"
+              v-memo="itemDeps(item)"
+            >
+              <div
+                v-if="item.kind === 'message'"
+                class="turn-text chat-markdown"
+                :class="{ 'chat-markdown--streaming': item.id === tailId }"
+                :aria-live="item.id === tailId ? 'off' : undefined"
+              >
+                <!-- markstream-vue parses incrementally and keeps partial
+                     markdown stable, so an unterminated heading or code fence
+                     does not flicker while the answer is still arriving.
+                     htmlPolicy="escape" matters here: this is LLM output, a
+                     lower-trust source than the novel text markdownToHtml
+                     was written for. The caret is a CSS ::after on the last
+                     rendered block — no DOM measurement per token. -->
+                <MarkdownRender
+                  :content="item.content"
+                  :final="item.id !== tailId"
+                  html-policy="escape"
+                />
+                <!-- Action bar under the turn's final answer, chatbot-style:
+                     copy the answer, or regenerate the turn (replaces the
+                     answer in place, no new user bubble). Shown once the
+                     turn is over (never on the streaming tail) and only on the
+                     last message of the turn, so narration between steps does
+                     not grow buttons. It must live INSIDE this branch: an
+                     element between the v-if and the v-else-if below would
+                     break Vue's conditional chain. -->
+                <div
+                  v-if="item.role === 'assistant' && isTurnFinalMessage(turn, item)"
+                  class="turn-actions"
                 >
-                  {{ opt.label }}
+                  <n-button
+                    quaternary
+                    size="tiny"
+                    class="turn-action"
+                    :aria-label="copiedId === item.id ? 'Copiado' : 'Copiar respuesta'"
+                    @click="copyMessage(item)"
+                  >
+                    <template #icon>
+                      <n-icon :size="15">
+                        <CheckmarkOutline v-if="copiedId === item.id" />
+                        <CopyOutline v-else />
+                      </n-icon>
+                    </template>
+                  </n-button>
+                  <!-- Regenerate only on the newest turn: the backend truncates
+                       the session at the last user message, so re-running an
+                       older answer would erase every turn after it. -->
+                  <n-button
+                    v-if="isLastTurn(turn)"
+                    quaternary
+                    size="tiny"
+                    class="turn-action"
+                    aria-label="Regenerar respuesta"
+                    :disabled="streaming || !turn.user"
+                    @click="regenerateTurn(turn)"
+                  >
+                    <template #icon><n-icon :size="15"><RefreshOutline /></n-icon></template>
+                  </n-button>
+                </div>
+              </div>
+
+              <div v-else-if="item.kind === 'tool'" class="tool-row" :class="`tool-row--${item.status}`">
+                <!-- Steps stay in the transcript (collapsed to one line, like
+                     coding agents do) instead of being spliced out on
+                     tool_result: the user can audit what the agent ran.
+                     Disabled (not hidden) when there is no result to show. -->
+                <button
+                  type="button"
+                  class="tool-row-main"
+                  :disabled="!item.detail"
+                  :aria-expanded="!!item.open"
+                  @click="toggleTool(item)"
+                >
+                  <span class="tool-row-state" aria-hidden="true">
+                    <span v-if="item.status === 'running'" class="tool-row-spinner"></span>
+                    <n-icon v-else-if="item.status === 'done'" :size="13"><CheckmarkOutline /></n-icon>
+                    <n-icon v-else-if="item.status === 'error'" :size="13"><CloseOutline /></n-icon>
+                    <n-icon v-else :size="13"><StopOutline /></n-icon>
+                  </span>
+                  <span class="tool-row-name">{{ toolLabel(item.name) }}</span>
+                  <span v-if="toolArgsHint(item.args)" class="tool-row-args">{{ toolArgsHint(item.args) }}</span>
+                  <span v-if="item.summary" class="tool-row-summary">· {{ item.summary }}</span>
+                  <span v-if="toolTimeLabel(item)" class="tool-row-time">{{ toolTimeLabel(item) }}</span>
+                  <span v-if="item.detail" class="tool-row-chevron" aria-hidden="true">{{ item.open ? "▾" : "▸" }}</span>
                 </button>
+                <pre v-if="item.detail && item.open" class="tool-row-detail">{{ item.detail }}</pre>
+              </div>
+
+              <div v-else-if="item.kind === 'question'" class="turn-question">
+                <div class="markdown-preview chat-markdown">
+                  <MarkdownRender :content="item.question" final html-policy="escape" />
+                </div>
+                <div class="chat-options">
+                  <button
+                    v-for="opt in item.options"
+                    :key="opt.value"
+                    type="button"
+                    class="chat-suggestion"
+                    :disabled="item.answered || streaming"
+                    @click="chooseOption(item, opt)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-else-if="item.kind === 'proposal'">
+                <CleanupProposalCard
+                  :proposal="item.proposal"
+                  :resolved="item.resolved"
+                  :outcome="item.outcome"
+                  @open="activeProposal = item"
+                />
+              </div>
+
+              <div v-else class="chat-error">
+                <p class="chat-error-text">{{ item.content }}</p>
+                <n-button
+                  v-if="item.retry"
+                  size="tiny"
+                  secondary
+                  class="chat-error-retry"
+                  :disabled="streaming"
+                  @click="retryTurn(item)"
+                >
+                  Reintentar
+                </n-button>
               </div>
             </div>
-          </div>
 
-          <div v-else-if="item.kind === 'proposal'" class="chat-row chat-row--assistant">
-            <CleanupProposalCard
-              :proposal="item.proposal"
-              :resolved="item.resolved"
-              :outcome="item.outcome"
-              @open="activeProposal = item"
-            />
-          </div>
-
-          <div v-else class="chat-row chat-row--error">
-            <div class="chat-error">{{ item.content }}</div>
-          </div>
-        </template>
-
-        <div
-          v-if="streaming && waitingForFirstToken"
-          class="chat-row chat-row--assistant"
-          role="status"
-        >
-          <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
-            <span class="chat-pending-dot" aria-hidden="true"></span>
-            <span class="muted small">Pensando…</span>
+            <div v-if="turn.active && waitingForFirstToken" class="turn-pending" role="status">
+              <span class="chat-pending-dot" aria-hidden="true"></span>
+              <span class="muted small">Pensando…<template v-if="thinkingSeconds > 0"> {{ thinkingSeconds }} s</template></span>
+            </div>
           </div>
         </div>
         </div>
@@ -302,11 +410,12 @@ import {
 } from "naive-ui";
 import {
   BookOutline,
-  BuildOutline,
   ChatbubbleEllipsesOutline,
   CheckmarkOutline,
   ChevronDownOutline,
+  ChevronForwardOutline,
   CloseOutline,
+  CopyOutline,
   RefreshOutline,
   SendOutline,
   StopOutline,
@@ -322,7 +431,33 @@ import type { AgentChatEvent, AgentChatOption, AgentChatUsage, AgentCleanupPropo
 import type { ServerSettings } from "@/api/types";
 import type { Novel } from "@/domain";
 
+// Stable identity for transcript items. Every key in the v-for must survive
+// the in-place updates of a live turn (tool rows flipping status, the tail
+// receiving deltas), so Vue patches only what actually changed. A monotonic
+// counter is enough: ids only need to be unique within one page session.
+let lastItemId = 0;
+function uid(): string {
+  lastItemId += 1;
+  return `item-${lastItemId}`;
+}
+
+type ToolStatus = "running" | "done" | "error" | "cancelled";
+
+type ToolChatItem = {
+  id: string;
+  kind: "tool";
+  name: string;
+  args?: string;
+  status: ToolStatus;
+  startedAt: number;
+  finishedAt?: number;
+  summary?: string;
+  detail?: string;
+  open?: boolean;
+};
+
 type ProposalChatItem = {
+  id: string;
   kind: "proposal";
   proposal: AgentCleanupProposal;
   resolved: boolean;
@@ -330,11 +465,29 @@ type ProposalChatItem = {
 };
 
 type ChatItem =
-  | { kind: "message"; role: "user" | "assistant"; content: string }
-  | { kind: "tool"; name: string }
-  | { kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
+  | { id: string; kind: "message"; role: "user"; content: string }
+  | { id: string; kind: "message"; role: "assistant"; content: string }
+  | ToolChatItem
+  | { id: string; kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
   | ProposalChatItem
-  | { kind: "error"; content: string };
+  // retryRegenerate marks an error row that came from a regenerate: its retry
+  // must re-run the turn the same way (drop answer, re-ask), not append a
+  // second copy of the user's message.
+  | { id: string; kind: "error"; content: string; retry?: string; retryRegenerate?: boolean };
+
+type UserChatItem = Extract<ChatItem, { kind: "message"; role: "user" }>;
+
+// A turn is one user message plus everything the agent did about it. Derived
+// from the flat item list (the mutation code keeps operating on `items`), so
+// persistence, history replay and the live stream share one representation.
+type Turn = {
+  id: string;
+  active: boolean;
+  user: UserChatItem | null;
+  agent: ChatItem[];
+  toolCount: number;
+  toolMs: number;
+};
 
 type CleanApplyResult = {
   modified: number;
@@ -415,26 +568,14 @@ const waitingForFirstToken = computed(() => {
 });
 
 // Token usage of the last finished turn, as reported by the provider via the
-// `done` event. Shown as a quiet header note; absent when the provider
-// reported no usage. Prompt is the last step's input size (context held at
-// answer time); completion/total accumulate across the turn's steps.
-function formatTokens(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return "0";
-  if (n < 1000) return String(Math.round(n));
-  const k = n / 1000;
-  const str = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(".", ",");
-  return `${str} mil`;
-}
-
-const usageLabel = computed(() => {
-  const u = lastUsage.value;
-  if (!u) return "";
-  return `${formatTokens(u.totalTokens)} tokens · ${formatTokens(u.promptTokens)} entrada / ${formatTokens(u.completionTokens)} salida`;
-});
+// `done` event. Shown as a quiet header ring; absent (ring rests at 0) when
+// the provider reported no usage. Prompt is the last step's input size
+// (context held at answer time); completion/total accumulate across the
+// turn's steps.
 
 const usageTitle = computed(() => {
   const u = lastUsage.value;
-  if (!u) return "";
+  if (!u) return "Uso del contexto sin datos todavía";
   const parts = [
     `${u.promptTokens.toLocaleString("es")} tokens de entrada (contexto del último paso)`,
     `${u.completionTokens.toLocaleString("es")} de salida`,
@@ -446,35 +587,374 @@ const usageTitle = computed(() => {
 });
 
 // Percentage of the serving model's context window held at answer time.
-// Null when the provider reported no usage or the window is unknown — the
-// header then falls back to the quiet text note (or nothing).
+// The ring is always present, so it rests at 0 when the provider reported no
+// usage or the window is unknown.
 const usagePercent = computed(() => {
   const u = lastUsage.value;
   const window = lastContextWindow.value;
-  if (!u || !window || window <= 0) return null;
+  if (!u || !window || window <= 0) return 0;
   const pct = (u.promptTokens / window) * 100;
-  if (!Number.isFinite(pct) || pct < 0) return null;
+  if (!Number.isFinite(pct) || pct < 0) return 0;
   return Math.min(100, Math.round(pct * 10) / 10);
 });
 
 const usagePercentLabel = computed(() => {
-  if (usagePercent.value === null) return "";
+  if (!lastUsage.value) return "—";
   return `${usagePercent.value.toLocaleString("es", { maximumFractionDigits: 1 })} %`;
 });
 
 const usageTokensLabel = computed(() => {
   const u = lastUsage.value;
-  if (!u) return "";
+  if (!u) return "—";
   return u.promptTokens.toLocaleString("es");
 });
 
-// The last assistant message is the one still receiving token deltas.
-function isStreamingTail(index: number): boolean {
-  if (!streaming.value) return false;
-  const item = items.value[index];
-  if (item?.kind !== "message" || item.role !== "assistant") return false;
-  return index === items.value.length - 1;
+// Ring palette: the one accent of the warm-stone ramp (aged stone) at rest,
+// shifting to the semantic warn/danger steps as the window fills — color as
+// state signal only, per DESIGN.md, never the library blue.
+const usageRingColor = computed(() => {
+  const pct = usagePercent.value;
+  if (pct >= 90) return "var(--danger)";
+  if (pct >= 70) return "var(--warning)";
+  return "var(--accent-link)";
+});
+
+const usageRingRail = computed(() => {
+  const pct = usagePercent.value;
+  if (pct >= 90) return "color-mix(in oklab, var(--danger) 18%, transparent)";
+  if (pct >= 70) return "color-mix(in oklab, var(--warning) 18%, transparent)";
+  return "color-mix(in oklab, var(--accent-link) 15%, transparent)";
+});
+
+// The usage reading is display state, not conversation data: it is mirrored
+// into localStorage so reloading the page restores the ring immediately
+// instead of waiting for the next turn's `done` event. Cleared on reset.
+const USAGE_STORAGE_KEY = "yara.chat.usage";
+
+type PersistedUsage = {
+  usage: AgentChatUsage;
+  model: string;
+  contextWindow: number;
+};
+
+function persistUsage(): void {
+  try {
+    if (!lastUsage.value) return;
+    const payload: PersistedUsage = {
+      usage: lastUsage.value,
+      model: lastModel.value,
+      contextWindow: lastContextWindow.value ?? 0,
+    };
+    localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Storage full or blocked (private mode): the ring just starts empty.
+  }
 }
+
+function loadPersistedUsage(): void {
+  try {
+    const raw = localStorage.getItem(USAGE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Partial<PersistedUsage>;
+    if (!parsed.usage || typeof parsed.usage.promptTokens !== "number") return;
+    lastUsage.value = parsed.usage;
+    lastModel.value = parsed.model ?? "";
+    lastContextWindow.value =
+      typeof parsed.contextWindow === "number" && parsed.contextWindow > 0
+        ? parsed.contextWindow
+        : null;
+  } catch {
+    // Corrupt or unavailable storage: start without a reading.
+  }
+}
+
+function clearPersistedUsage(): void {
+  try {
+    localStorage.removeItem(USAGE_STORAGE_KEY);
+  } catch {
+    // Nothing to recover from; the in-memory values are cleared regardless.
+  }
+}
+
+// The last assistant message is the one still receiving token deltas: it is
+// the only item rendered "live" (non-final markdown, caret, no aria-live).
+const tailId = computed(() => {
+  if (!streaming.value) return "";
+  const last = items.value[items.value.length - 1];
+  if (last?.kind !== "message" || last.role !== "assistant") return "";
+  return last.id;
+});
+
+// ---------------------------------------------------------------------------
+// Turn grouping (derived view over `items`)
+// ---------------------------------------------------------------------------
+
+const turns = computed<Turn[]>(() => {
+  const list: Turn[] = [];
+  let current: Turn | null = null;
+  for (const item of items.value) {
+    if (item.kind === "message" && item.role === "user") {
+      current = { id: item.id, active: false, user: item, agent: [], toolCount: 0, toolMs: 0 };
+      list.push(current);
+      continue;
+    }
+    if (!current) {
+      // Defensive: a trail whose first stored message is an assistant one.
+      current = { id: `turn-${item.id}`, active: false, user: null, agent: [], toolCount: 0, toolMs: 0 };
+      list.push(current);
+    }
+    current.agent.push(item);
+    if (item.kind === "tool") {
+      current.toolCount += 1;
+      // Only finished steps contribute: the turn summary is a post-hoc stat.
+      if (item.finishedAt && item.startedAt) {
+        current.toolMs += item.finishedAt - item.startedAt;
+      }
+    }
+  }
+  if (list.length > 0) {
+    list[list.length - 1].active = streaming.value;
+  }
+  return list;
+});
+
+// Turns the user explicitly re-expanded. A Set of ids, replaced on toggle so
+// the computed views depending on it re-run.
+const expandedTurns = ref<Set<string>>(new Set());
+
+function isTurnCollapsed(turn: Turn): boolean {
+  if (turn.active || turn.toolCount < 3) return false;
+  return !expandedTurns.value.has(turn.id);
+}
+
+function toggleTurn(turnId: string): void {
+  const next = new Set(expandedTurns.value);
+  if (next.has(turnId)) {
+    next.delete(turnId);
+  } else {
+    next.add(turnId);
+  }
+  expandedTurns.value = next;
+}
+
+// Collapsed turns keep the final answer, questions, proposals and errors
+// visible; only the intermediate narration and the tool steps fold into the
+// "N pasos" summary chip.
+function turnVisibleItems(turn: Turn): ChatItem[] {
+  if (!isTurnCollapsed(turn)) return turn.agent;
+  const kept = turn.agent.filter((item) => item.kind !== "tool");
+  let lastMessage = -1;
+  for (let i = kept.length - 1; i >= 0; i -= 1) {
+    if (kept[i].kind === "message") {
+      lastMessage = i;
+      break;
+    }
+  }
+  return kept.filter((item, index) => item.kind !== "message" || index === lastMessage);
+}
+
+// Per-item v-memo dependencies. Scoped per kind so a ticking tool duration
+// re-renders one row while the rest of the transcript stays cached, and an
+// idle transcript re-renders nothing at all.
+function itemDeps(item: ChatItem): unknown[] {
+  switch (item.kind) {
+    case "message":
+      return [item.content, item.id === tailId.value, item.id === copiedId.value];
+    case "tool":
+      return [item.status, item.summary, item.detail, item.open, toolTimeLabel(item)];
+    case "question":
+      return [item.question, item.answered];
+    case "proposal":
+      return [item.resolved, item.outcome];
+    default:
+      return [item.content, streaming.value];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Final-answer actions (copy / regenerate)
+// ---------------------------------------------------------------------------
+
+// The action bar belongs to the LAST assistant message of a finished turn:
+// the answer, not the narration between steps. `turn.active` covers the live
+// turn (its last message is still the tail); the identity check covers turns
+// that ended with a tool call, question or proposal after the last text.
+function isTurnFinalMessage(turn: Turn, item: ChatItem): boolean {
+  if (turn.active || streaming.value) return false;
+  if (item.kind !== "message" || item.role !== "assistant") return false;
+  return turn.agent[turn.agent.length - 1] === item;
+}
+
+// Regenerate rewrites the transcript's tail: the backend truncates the session
+// to just before the LAST user message, so only the newest turn can be
+// regenerated — re-running an older answer would erase every turn after it.
+function isLastTurn(turn: Turn): boolean {
+  const list = turns.value;
+  return list.length > 0 && list[list.length - 1].id === turn.id;
+}
+
+// Icon feedback id plus its timer: the checkmark shows ~1.5s after a copy.
+const copiedId = ref("");
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyMessage(item: ChatItem): Promise<void> {
+  if (item.kind !== "message" || !item.content) return;
+  try {
+    await navigator.clipboard.writeText(item.content);
+    copiedId.value = item.id;
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copiedId.value = "";
+      copyTimer = null;
+    }, 1500);
+  } catch {
+    message.error("No se pudo copiar la respuesta");
+  }
+}
+
+// Regenerate rewrites the transcript's tail instead of appending a new turn:
+// the last turn's agent-side items (steps, narration, the answer itself) are
+// dropped from the local transcript and the SAME question is re-sent through
+// the backend's `regenerate` path, which truncates the stored session to just
+// before that user message and re-runs the turn. Net effect, exactly like
+// keryx: the old answer is replaced, no second user bubble appears.
+function regenerateTurn(turn: Turn): void {
+  if (streaming.value || !turn.user || !isLastTurn(turn)) return;
+  reaskLastTurn();
+}
+
+// The shared drop-and-re-run used by the regenerate button and by the retry
+// on an error row that came from a regenerate. Everything after the last user
+// message goes — including a restored previous answer and the error row —
+// so the retry lands on a clean slate.
+function reaskLastTurn(): void {
+  const list = turns.value;
+  const turn = list[list.length - 1];
+  if (!turn || !turn.user || streaming.value) return;
+  const userIdx = items.value.indexOf(turn.user);
+  if (userIdx === -1) return;
+  if (activeProposal.value && turn.agent.includes(activeProposal.value)) {
+    activeProposal.value = null;
+  }
+  const removed = turn.agent.slice();
+  items.value.splice(userIdx + 1, turn.agent.length);
+  void sendMessage(turn.user.content, { regenerate: true, restoreItems: removed });
+}
+
+// ---------------------------------------------------------------------------
+// Tool step presentation
+// ---------------------------------------------------------------------------
+
+const TOOL_SUMMARY_MAX = 72;
+const TOOL_ARGS_MAX = 56;
+const TOOL_DETAIL_MAX = 4000;
+
+function shorten(text: string, max: number): string {
+  const t = text.trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+}
+
+// One-line result summary for a tool row. Tool results are JSON envelopes
+// ({"returned": n}, {"hits": [...]}, {"ok": true} …) or an "error: …" string,
+// so the summary reads the common keys and falls back to the first line.
+function summarizeToolResult(raw: string): string {
+  const text = (raw ?? "").trim();
+  if (!text) return "";
+  if (/^error:/i.test(text)) {
+    return shorten(text.replace(/^error:\s*/i, ""), TOOL_SUMMARY_MAX);
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) {
+      return `${parsed.length} ${parsed.length === 1 ? "elemento" : "elementos"}`;
+    }
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.returned === "number") return `${obj.returned} resultados`;
+      if (typeof obj.total === "number") return `${obj.total} resultados`;
+      if (Array.isArray(obj.hits)) return `${obj.hits.length} coincidencias`;
+      if (obj.ok === false && typeof obj.error === "string") {
+        return shorten(obj.error, TOOL_SUMMARY_MAX);
+      }
+      if (obj.ok === true) return "hecho";
+    }
+    return "";
+  } catch {
+    // Not JSON — a plain sentence, take its first line below.
+  }
+  return shorten(text.split("\n")[0] ?? "", TOOL_SUMMARY_MAX);
+}
+
+// Compact preview of the call arguments, coding-agent style
+// ("Título: X · Modo: regex"). Objects are trimmed to their first entries.
+function toolArgsHint(args?: string): string {
+  const raw = (args ?? "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const entries = Object.entries(parsed as Record<string, unknown>)
+        .filter(([, v]) => v !== null && v !== undefined && v !== "")
+        .slice(0, 2)
+        .map(([k, v]) => `${k}: ${typeof v === "object" ? "…" : String(v)}`);
+      if (entries.length > 0) return shorten(entries.join(" · "), TOOL_ARGS_MAX);
+      return "";
+    }
+  } catch {
+    // Not JSON — fall through to the raw preview.
+  }
+  return shorten(raw, TOOL_ARGS_MAX);
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
+  const s = ms / 1000;
+  return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+}
+
+function toolTimeLabel(item: ToolChatItem): string {
+  if (item.status === "running") {
+    const elapsed = now.value - item.startedAt;
+    return elapsed < 1000 ? "" : formatDuration(elapsed);
+  }
+  // Replayed-from-history steps carry no timing.
+  if (!item.startedAt || !item.finishedAt) return "";
+  return formatDuration(item.finishedAt - item.startedAt);
+}
+
+function toggleTool(item: ToolChatItem): void {
+  if (!item.detail) return;
+  item.open = !item.open;
+}
+
+// ---------------------------------------------------------------------------
+// Clock: drives the running-step duration and the "Pensando… Ns" counter.
+// Ticked once per second and only while a turn is in flight.
+// ---------------------------------------------------------------------------
+
+const now = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+
+function startTicker(): void {
+  if (nowTimer) return;
+  nowTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
+}
+
+function stopTicker(): void {
+  if (nowTimer) {
+    clearInterval(nowTimer);
+    nowTimer = null;
+  }
+}
+
+let turnStartedAt = 0;
+const thinkingSeconds = computed(() => {
+  if (!waitingForFirstToken.value) return 0;
+  return Math.max(0, Math.floor((now.value - turnStartedAt) / 1000));
+});
 
 function novelTitle(novel: PickerNovel): string {
   return novel.targetTitle || novel.sourceTitle || "(sin título)";
@@ -615,29 +1095,30 @@ async function saveAgentSelection(): Promise<void> {
 // Streaming coalescing. Deltas arrive far faster than a frame, so mutating
 // the reactive message on every one of them re-renders the whole bubble (and
 // forces a layout for the scroll pin) dozens of times per second. Deltas are
-// accumulated into a local string and the reactive update happens at most
-// once per frame. Parsing itself is incremental now: markstream-vue handles
-// partial markdown instead of re-running marked over the whole message.
-const STREAM_FLUSH_MS = 60;
-
-let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+// accumulated into a local string and the reactive update happens once per
+// animation frame: rAF is aligned with the paint, so nothing renders into a
+// frame the compositor is about to discard, and the text lands ~45 ms sooner
+// than it did on the old 60 ms timer. Parsing itself is incremental:
+// markstream-vue handles partial markdown instead of re-running marked over
+// the whole message.
+let streamRaf: number | null = null;
 let streamDirty = false;
 
 function scheduleStreamFlush(apply: () => void): void {
   streamDirty = true;
-  if (streamFlushTimer) return;
-  streamFlushTimer = setTimeout(() => {
-    streamFlushTimer = null;
+  if (streamRaf !== null) return;
+  streamRaf = requestAnimationFrame(() => {
+    streamRaf = null;
     if (!streamDirty) return;
     streamDirty = false;
     apply();
-  }, STREAM_FLUSH_MS);
+  });
 }
 
 function flushStreamNow(apply: () => void): void {
-  if (streamFlushTimer) {
-    clearTimeout(streamFlushTimer);
-    streamFlushTimer = null;
+  if (streamRaf !== null) {
+    cancelAnimationFrame(streamRaf);
+    streamRaf = null;
   }
   streamDirty = false;
   apply();
@@ -670,20 +1151,28 @@ function stopStreaming(): void {
   // pending read() rejects, which is bounded only by the server's per-turn
   // timeout — up to eight minutes of a frozen page after the user asked to
   // stop.
-  if (streamFlushTimer) {
-    clearTimeout(streamFlushTimer);
-    streamFlushTimer = null;
+  if (streamRaf !== null) {
+    cancelAnimationFrame(streamRaf);
+    streamRaf = null;
   }
   streamDirty = false;
   streaming.value = false;
-  settleRunningTools();
+  settleRunningTools("cancelled");
+  stopTicker();
 }
 
-// settleRunningTools drops any tool chip left mid-flight. A turn can end
-// without a tool_result (a mid-stream error, an abort, a malformed ask_user)
-// and an orphaned shimmer reads as a hang.
-function settleRunningTools(): void {
-  items.value = items.value.filter((item) => item.kind !== "tool");
+// settleRunningTools closes any step left mid-flight. A turn can end without
+// a tool_result (a mid-stream error, an abort, a malformed ask_user) and a
+// row stuck on the spinner reads as a hang. The steps are kept — marked
+// cancelled/errored — instead of removed, so the transcript stays auditable.
+function settleRunningTools(status: ToolStatus): void {
+  const finishedAt = Date.now();
+  for (const item of items.value) {
+    if (item.kind === "tool" && item.status === "running") {
+      item.status = status;
+      item.finishedAt = finishedAt;
+    }
+  }
 }
 
 function fillSuggestion(text: string): void {
@@ -764,38 +1253,58 @@ function mapHistory(messages: AgentSessionMessage[]): void {
         (mapped[lastProposalIndex] as ProposalChatItem).resolved = true;
         lastProposalIndex = -1;
       }
-      mapped.push({ kind: "message", role: "user", content: message.content ?? "" });
+      mapped.push({ id: uid(), kind: "message", role: "user", content: message.content ?? "" });
       continue;
     }
     if (message.role === "assistant") {
-      // Live turns render tool calls as an ephemeral shimmer spliced out on
-      // tool_result, so a reloaded transcript shows narration, ask_user
-      // cards, proposal cards — the same thing the user saw while streaming.
+      // Order matters: within a persisted step the narration (content) was
+      // streamed before the tool calls it triggered, so replay text first,
+      // then the step rows — same sequence the user watched live.
       if (message.content) {
-        mapped.push({ kind: "message", role: "assistant", content: message.content });
+        mapped.push({ id: uid(), kind: "message", role: "assistant", content: message.content });
         lastQuestionIndex = -1;
         lastProposalIndex = -1;
       }
+      // Persisted tool calls replay as completed step rows, matching what the
+      // user saw while streaming — steps are part of the record now, not an
+      // ephemeral shimmer. Timing and result detail were not persisted, so
+      // the row shows the label and the args hint only.
       for (const call of message.toolCalls ?? []) {
         if (call.name === "ask_user") {
           const parsed = parseAskUserQuestion(call.args);
           if (parsed) {
             lastQuestionIndex = mapped.length;
             mapped.push({
+              id: uid(),
               kind: "question",
               question: parsed.question,
               options: parsed.options,
               answered: false,
             });
           }
+          continue;
         }
         if (call.name === "propose_cleanup") {
           const parsed = parseAgentProposal(call.args);
           if (parsed) {
             lastProposalIndex = mapped.length;
-            mapped.push({ kind: "proposal", proposal: parsed, resolved: false });
+            mapped.push({
+              id: uid(),
+              kind: "proposal",
+              proposal: parsed,
+              resolved: false,
+            });
           }
+          continue;
         }
+        mapped.push({
+          id: uid(),
+          kind: "tool",
+          name: call.name,
+          args: call.args,
+          status: "done",
+          startedAt: 0,
+        });
       }
       continue;
     }
@@ -814,6 +1323,9 @@ function mapHistory(messages: AgentSessionMessage[]): void {
 
 onMounted(async () => {
   void loadAgentSettings();
+  // Restore the ring before the session request resolves, so a reload shows
+  // the last reading immediately instead of an empty ring until the next turn.
+  loadPersistedUsage();
   try {
     const session = await api.agent.getSession();
     if (session) {
@@ -828,10 +1340,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   abortController?.abort();
-  if (streamFlushTimer) {
-    clearTimeout(streamFlushTimer);
-    streamFlushTimer = null;
+  if (streamRaf !== null) {
+    cancelAnimationFrame(streamRaf);
+    streamRaf = null;
   }
+  stopTicker();
+  if (copyTimer) clearTimeout(copyTimer);
   if (pickerDebounce) clearTimeout(pickerDebounce);
 });
 
@@ -852,20 +1366,36 @@ async function resetChat(): Promise<void> {
       error instanceof Error && error.message
         ? error.message
         : "no se pudo reiniciar el chat";
-    items.value.push({ kind: "error", content: detail });
+    items.value.push({ id: uid(), kind: "error", content: detail });
     return;
   }
   sessionId.value = "";
   selectedNovel.value = null;
   activeProposal.value = null;
+  expandedTurns.value = new Set();
   lastUsage.value = null;
   lastModel.value = "";
   lastContextWindow.value = null;
+  clearPersistedUsage();
   items.value = [];
 }
 
 function send(): void {
   void sendMessage(draft.value.trim());
+}
+
+// retryTurn resends the message that produced an error item. The partial
+// answer (if any) stays in the transcript, so the retry reads as a follow-up
+// rather than a rewrite of what the user already saw. An error that came from
+// a regenerate retries the same way (drop and re-run) instead of appending a
+// second copy of the question.
+function retryTurn(item: ChatItem): void {
+  if (item.kind !== "error" || !item.retry || streaming.value) return;
+  if (item.retryRegenerate) {
+    reaskLastTurn();
+    return;
+  }
+  void sendMessage(item.retry);
 }
 
 async function chooseOption(
@@ -906,8 +1436,24 @@ function onProposalDiscarded(item: ProposalChatItem | null): void {
   void sendMessage("Limpieza descartada sin aplicar cambios.");
 }
 
-async function sendMessage(message: string): Promise<void> {
+async function sendMessage(
+  message: string,
+  opts?: {
+    // Regenerate re-runs the last turn: no new user bubble (the turn's user
+    // item is already in the transcript) and the backend truncates the stored
+    // session before re-asking, so the answer is replaced, not appended.
+    regenerate?: boolean;
+    // Items a regenerate just dropped. Restored if the re-run fails without
+    // producing anything, so a network error cannot silently cost the user
+    // the answer they already had (the server kept it, so local and stored
+    // transcript stay in agreement).
+    restoreItems?: ChatItem[];
+  },
+): Promise<void> {
   if (!message || streaming.value) return;
+
+  const regenerate = opts?.regenerate === true;
+  const restoreItems = opts?.restoreItems ?? [];
 
   draft.value = "";
   // A new user message closes any pending proposal card: the decision either
@@ -916,10 +1462,21 @@ async function sendMessage(message: string): Promise<void> {
   for (const item of items.value) {
     if (item.kind === "proposal") item.resolved = true;
   }
-  items.value.push({ kind: "message", role: "user", content: message });
+  if (!regenerate) {
+    items.value.push({ id: uid(), kind: "message", role: "user", content: message });
+  }
+  // The user item this turn answers: the one just pushed, or (on regenerate)
+  // the one already sitting at the tail. Restore anchors on it so a dropped
+  // answer lands back inside its own turn even if the text repeats.
+  const anchorUser: UserChatItem | null = items.value
+    .slice()
+    .reverse()
+    .find((it): it is UserChatItem => it.kind === "message" && it.role === "user") ?? null;
   scrollToBottom();
 
   streaming.value = true;
+  turnStartedAt = Date.now();
+  startTicker();
   // Captured locally. stopStreaming clears `streaming` while this turn's
   // promise is still pending, so the user can send again immediately; the
   // catch/finally below then run against the NEW turn's controller. Reading
@@ -936,6 +1493,10 @@ async function sendMessage(message: string): Promise<void> {
   let committedText = "";
   let sawDone = false;
   let sawError = false;
+  // Whether the re-run produced anything at all (a delta, a step, a question).
+  // Only an answer-less failure is worth restoring the dropped items for: if
+  // new content arrived it replaced them legitimately.
+  let producedContent = false;
 
   const commitAssistant = (): void => {
     if (assistantText === committedText) return;
@@ -954,7 +1515,18 @@ async function sendMessage(message: string): Promise<void> {
       }
       if (last.content === assistantText) return;
     }
-    items.value.push({ kind: "message", role: "assistant", content: assistantText });
+    items.value.push({ id: uid(), kind: "message", role: "assistant", content: assistantText });
+  };
+
+  // Puts a regenerate's dropped items back after the last user message. Only
+  // called when the re-run produced nothing: the old answer is still the
+  // stored truth server-side (a failed turn saves nothing), so keeping it on
+  // screen keeps local and persisted transcripts in agreement.
+  const restoreDropped = (): void => {
+    if (restoreItems.length === 0) return;
+    const at = anchorUser ? items.value.indexOf(anchorUser) + 1 : items.value.length;
+    items.value.splice(at < 0 ? items.value.length : at, 0, ...restoreItems);
+    restoreItems.length = 0;
   };
 
   const handleEvent = (event: AgentChatEvent): void => {
@@ -963,36 +1535,57 @@ async function sendMessage(message: string): Promise<void> {
         if (event.sessionId) sessionId.value = event.sessionId;
         break;
       case "text_delta": {
+        producedContent = true;
         assistantText += event.text ?? "";
         scheduleStreamFlush(() => {
           if (assistantText === committedText) return;
+          // The pin check runs against the pre-mutation geometry (the DOM
+          // still reflects the previous frame), so a user parked at the
+          // bottom keeps following the answer and a user reading back is
+          // never dragged down.
+          const pinned = isPinnedToBottom();
           const last = items.value[items.value.length - 1];
           if (last && last.kind === "message" && last.role === "assistant") {
             last.content = assistantText;
           } else {
-            items.value.push({ kind: "message", role: "assistant", content: assistantText });
+            items.value.push({ id: uid(), kind: "message", role: "assistant", content: assistantText });
           }
           committedText = assistantText;
-          scrollToBottom();
+          if (pinned) scrollToBottom(true);
         });
         break;
       }
       case "tool_call": {
+        producedContent = true;
         flushStreamNow(commitAssistant);
         assistantText = "";
         committedText = "";
-        items.value.push({ kind: "tool", name: event.tool ?? "tool" });
+        items.value.push({
+          id: uid(),
+          kind: "tool",
+          name: event.tool ?? "tool",
+          args: event.args,
+          status: "running",
+          startedAt: Date.now(),
+        });
         scrollToBottom();
         break;
       }
       case "tool_result": {
         // Results and errors go back to the model (which self-corrects across
-        // steps), not to the UI: the shimmer is removed so only the
-        // assistant's message stays in the transcript.
+        // steps); the UI keeps the step as a completed row with its duration
+        // and a one-line summary, expandable to the raw result. Matching the
+        // newest RUNNING step of that name: two steps of the same tool can
+        // run in one turn, and a stale match would report the wrong duration.
+        const raw = event.result ?? "";
+        const failed = /^error:/i.test(raw.trim());
         for (let i = items.value.length - 1; i >= 0; i -= 1) {
           const item = items.value[i];
-          if (item.kind === "tool" && item.name === event.tool) {
-            items.value.splice(i, 1);
+          if (item.kind === "tool" && item.status === "running" && item.name === (event.tool ?? "tool")) {
+            item.status = failed ? "error" : "done";
+            item.finishedAt = Date.now();
+            item.summary = summarizeToolResult(raw);
+            item.detail = raw.length > TOOL_DETAIL_MAX ? `${raw.slice(0, TOOL_DETAIL_MAX)}\n…` : raw;
             break;
           }
         }
@@ -1000,10 +1593,12 @@ async function sendMessage(message: string): Promise<void> {
         break;
       }
       case "question": {
+        producedContent = true;
         flushStreamNow(commitAssistant);
         assistantText = "";
         committedText = "";
         items.value.push({
+          id: uid(),
           kind: "question",
           question: event.question ?? "",
           options: event.options ?? [],
@@ -1016,11 +1611,13 @@ async function sendMessage(message: string): Promise<void> {
         // A cleanup proposal ends the turn: a compact chip lands in the
         // transcript and the artifact panel opens with the live diff preview.
         // Nothing is applied until the user approves it in the panel.
+        producedContent = true;
         flushStreamNow(commitAssistant);
         assistantText = "";
         committedText = "";
         if (event.proposal) {
           const item: ProposalChatItem = {
+            id: uid(),
             kind: "proposal",
             proposal: event.proposal,
             resolved: false,
@@ -1041,17 +1638,18 @@ async function sendMessage(message: string): Promise<void> {
           if (finalText && last && last.kind === "message" && last.role === "assistant") {
             last.content = finalText;
           } else if (finalText) {
-            items.value.push({ kind: "message", role: "assistant", content: finalText });
+            items.value.push({ id: uid(), kind: "message", role: "assistant", content: finalText });
           }
           committedText = finalText;
           assistantText = finalText;
         });
-        settleRunningTools();
+        settleRunningTools("cancelled");
         sessionId.value = event.sessionId ?? sessionId.value;
         if (event.usage) {
           lastUsage.value = event.usage;
           lastModel.value = event.model ?? "";
           lastContextWindow.value = event.contextWindow ?? null;
+          persistUsage();
         }
         streaming.value = false;
         scrollToBottom();
@@ -1060,9 +1658,16 @@ async function sendMessage(message: string): Promise<void> {
       case "error": {
         sawError = true;
         flushStreamNow(commitAssistant);
+        if (!producedContent) restoreDropped();
         const detail = event.error || event.code || "error del servidor";
-        items.value.push({ kind: "error", content: detail });
-        settleRunningTools();
+        items.value.push({
+          id: uid(),
+          kind: "error",
+          content: detail,
+          retry: message,
+          retryRegenerate: regenerate || undefined,
+        });
+        settleRunningTools("error");
         streaming.value = false;
         scrollToBottom();
         break;
@@ -1076,6 +1681,7 @@ async function sendMessage(message: string): Promise<void> {
         sessionId: sessionId.value || undefined,
         novelId: selectedNovel.value?.id,
         message,
+        regenerate: regenerate || undefined,
       },
       handleEvent,
       controller.signal,
@@ -1087,11 +1693,18 @@ async function sendMessage(message: string): Promise<void> {
     // already replaced.
     if (!controller.signal.aborted) {
       flushStreamNow(commitAssistant);
+      if (!producedContent) restoreDropped();
       const detail =
         error instanceof Error && error.message
           ? error.message
           : "no se pudo contactar al servidor";
-      items.value.push({ kind: "error", content: detail });
+      items.value.push({
+        id: uid(),
+        kind: "error",
+        content: detail,
+        retry: message,
+        retryRegenerate: regenerate || undefined,
+      });
     }
   } finally {
     flushStreamNow(commitAssistant);
@@ -1099,18 +1712,23 @@ async function sendMessage(message: string): Promise<void> {
     // dropped connection). Without this the partial answer is left on screen
     // looking exactly like a finished one.
     if (!sawDone && !sawError && !controller.signal.aborted) {
+      if (!producedContent) restoreDropped();
       items.value.push({
+        id: uid(),
         kind: "error",
         content: "La respuesta se cortó a mitad. Vuelve a intentarlo.",
+        retry: message,
+        retryRegenerate: regenerate || undefined,
       });
     }
-    settleRunningTools();
+    settleRunningTools("cancelled");
     // Only tear down shared state if this turn still owns it. A turn that was
-    // stopped and superseded must not clear the new turn's controller or flip
-    // its streaming flag.
+    // stopped and superseded must not clear the new turn's controller, flip
+    // its streaming flag or stop the ticker its step durations depend on.
     if (abortController === controller) {
       streaming.value = false;
       abortController = null;
+      stopTicker();
     }
     scrollToBottom();
   }
@@ -1182,11 +1800,13 @@ function chooseNovel(novel: PickerNovel): void {
 
 .page-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: center;
+  /* Single right-aligned group (ring + new-chat button); no title on the
+     left, so space-between would have pinned the group to the edge anyway. */
+  justify-content: flex-end;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.375rem;
 }
 
 .page-title {
@@ -1209,22 +1829,42 @@ function chooseNovel(novel: PickerNovel): void {
   gap: 0.625rem;
 }
 
-/* Quiet usage note: same muted ramp as the subtitle, never competing with
-   the transcript. Wraps below the button on narrow headers. */
-.chat-usage {
-  white-space: nowrap;
+/* Action bar under a finished turn's final answer: quiet ghost icons, same
+   rhythm as the rest of the chrome; only the copy icon reacts (checkmark). */
+.turn-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin-top: 0.125rem;
+}
+
+.turn-action {
+  color: var(--text-tertiary);
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+
+.turn-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--mock-row);
+}
+
+.turn-action:disabled {
+  opacity: 0.5;
 }
 
 /* Context ring: the circle type renders 120px by default, so the width is
-   pinned here (scoped :deep beats the component stylesheet). */
+   pinned here (scoped :deep beats the component stylesheet). Kept small on
+   purpose — it is a glanceable status, not a chart; the popover carries the
+   numbers. */
 .chat-usage-ring {
   display: inline-flex;
   align-items: center;
   cursor: default;
+  flex-shrink: 0;
 }
 
 .chat-usage-ring :deep(.n-progress--circle) {
-  width: 26px;
+  width: 20px;
 }
 
 /* Popover body: two quiet label/value rows plus the model id, no cost. */
@@ -1274,7 +1914,7 @@ function chooseNovel(novel: PickerNovel): void {
 .chat-scroll-inner {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.125rem;
 }
 
 /* The artifact panel: fixed share of the row, its own internal scroll (the
@@ -1357,19 +1997,220 @@ function chooseNovel(novel: PickerNovel): void {
   margin-top: 0.5rem;
 }
 
-.chat-row {
+/* --- Turns ----------------------------------------------------------------
+   One turn = the user's bubble + ONE assistant bubble holding the whole
+   turn: narration, step rows and the final answer. The bubble closes when
+   the turn ends, so "what the assistant did about my question" is a single
+   scannable object. It is deliberately wider than the user bubble: agent
+   answers carry tables and long lists that need the measure. */
+
+.turn {
   display: flex;
-  width: 100%;
+  flex-direction: column;
+  gap: 0.625rem;
 }
 
-.chat-row--user {
+.turn-user {
+  display: flex;
   justify-content: flex-end;
 }
 
-.chat-row--assistant,
-.chat-row--tool,
-.chat-row--error {
-  justify-content: flex-start;
+.turn-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: min(54rem, 100%);
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  padding: 0.75rem 1rem;
+}
+
+/* display:contents keeps the (memoized) item wrappers out of the layout:
+   the rows below become the flex children of .turn-bubble directly. */
+.turn-item {
+  display: contents;
+}
+
+/* Assistant prose: reading width inside the bubble, no chrome of its own —
+   the bubble is the container now, so code blocks and tables get the room. */
+.turn-text {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* The caret is a ::after on the last block markdown produced — no DOM
+   measurement per token, and it disappears the moment the item stops being
+   the streaming tail (class removed / final set). */
+.chat-markdown--streaming :deep(.markstream-vue > :last-child)::after {
+  content: "";
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 0.1em;
+  vertical-align: -0.12em;
+  background: var(--text-primary);
+  animation: stream-caret 1.1s steps(1, end) infinite;
+}
+
+@keyframes stream-caret {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+/* Collapsed-steps chip: quiet pill, the only entry point to a fold. */
+.turn-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  align-self: flex-start;
+  border: 1px solid var(--divide);
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: 0.1875rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+
+.turn-steps:hover {
+  background: var(--mock-row);
+}
+
+/* Tool step row: one line, state on the left, duration on the right;
+   expands to the raw result when there is one to read. Inside the bubble it
+   sits on a lower tonal step instead of its own bordered card. */
+.tool-row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+.tool-row--error {
+  border-color: var(--danger);
+}
+
+.tool-row--cancelled {
+  opacity: 0.66;
+}
+
+.tool-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.3125rem 0.625rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+
+.tool-row-main:disabled {
+  cursor: default;
+}
+
+.tool-row-main:hover:not(:disabled) {
+  background: var(--mock-row);
+}
+
+.tool-row-state {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.tool-row--error .tool-row-state {
+  color: var(--danger);
+}
+
+.tool-row-spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 1.5px solid color-mix(in oklab, var(--text-tertiary) 30%, transparent);
+  border-top-color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  animation: tool-spin 0.8s linear infinite;
+}
+
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tool-row-name {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tool-row-args {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.tool-row-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.tool-row-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tool-row-chevron {
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+
+.tool-row-detail {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--divide);
+  background: var(--background);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+/* Question card: inside the bubble it carries its own tonal step (it is an
+   interactive object, not prose) and fills the bubble's width. */
+.turn-question {
+  border: 1px solid var(--divide);
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .chat-bubble {
@@ -1381,9 +2222,9 @@ function chooseNovel(novel: PickerNovel): void {
   overflow-wrap: anywhere;
 }
 
-/* User turns stay narrower than assistant turns: they are typically a question
-   or a short instruction, and the asymmetry is what makes the thread readable
-   without alternating heavy blocks. */
+/* User turns stay narrower than the agent column: they are typically a
+   question or a short instruction, and the asymmetry is what makes the
+   thread readable without alternating heavy blocks. */
 .chat-bubble--user {
   max-width: min(38rem, 82%);
   background: var(--btn-primary-bg);
@@ -1391,18 +2232,9 @@ function chooseNovel(novel: PickerNovel): void {
   white-space: pre-wrap;
 }
 
-.chat-bubble--assistant {
-  background: var(--surface-elevated);
-  border: 1px solid var(--divide);
-}
-
-/* Reset the UA's 1em block margin on the plain-text path. This was scoped to
-   assistant bubbles only, so user turns carried a stray gap inside the bubble. */
-.chat-plain {
-  margin: 0;
-}
-
-.chat-bubble--pending {
+/* Pending state: shown inside the active turn's rail until the first token.
+   The counter only appears once a second has actually passed. */
+.turn-pending {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -1422,8 +2254,8 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 /* markstream-vue sizes its root and its paragraphs from --ms-text-body
-   (1rem), which outsize the bubble's own 0.9375rem. Rebase it so the
-   assistant and the user read at the same text size. */
+   (1rem), which outsize the turn's own 0.9375rem. Rebase it so the agent
+   text and the user bubble read at the same text size. */
 .chat-markdown :deep(.markstream-vue) {
   --ms-text-body: 0.9375rem;
   font-size: 0.9375rem;
@@ -1451,57 +2283,25 @@ function chooseNovel(novel: PickerNovel): void {
   padding: 0.05rem 0.3rem;
 }
 
-.chat-tool {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  max-width: 100%;
-  border: 1px dashed var(--divide);
-  border-radius: var(--radius-md);
-  background: color-mix(in oklab, var(--surface-elevated) 70%, transparent);
-  padding: 0.3125rem 0.625rem;
-  font-size: 0.8125rem;
-}
-
-.chat-tool-icon {
-  color: var(--text-tertiary);
-}
-
-.chat-tool-name {
-  font-size: 0.75rem;
-  /* Shimmer sweep in the neutral ramp: the chip is ephemeral (spliced out on
-     tool_result), so there is no result toggle to discover afterwards. */
-  background: linear-gradient(
-    90deg,
-    var(--text-tertiary) 0%,
-    var(--text-secondary) 50%,
-    var(--text-tertiary) 100%
-  );
-  background-size: 200% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: chat-shimmer 1.6s linear infinite;
-}
-
-@keyframes chat-shimmer {
-  from {
-    background-position: 200% 0;
-  }
-  to {
-    background-position: -200% 0;
-  }
-}
-
 .chat-error {
-  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
   border: 1px solid var(--danger);
   color: var(--danger);
   border-radius: var(--radius-md);
   padding: 0.625rem 0.75rem;
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.chat-error-text {
+  margin: 0;
+}
+
+.chat-error-retry {
+  color: var(--danger);
 }
 
 .chat-composer {
@@ -1703,6 +2503,10 @@ function chooseNovel(novel: PickerNovel): void {
     max-width: 88%;
   }
 
+  .turn-bubble {
+    padding: 0.625rem 0.75rem;
+  }
+
   /* Keep the controls thumb-sized while allowing the text field to take the
      width that remains on narrow phones. */
   .chat-composer-row {
@@ -1743,7 +2547,10 @@ function chooseNovel(novel: PickerNovel): void {
   .chat-picker-item,
   .chat-attach-trigger,
   .chat-input-shell,
-  .chat-send-button {
+  .chat-send-button,
+  .turn-steps,
+  .turn-action,
+  .tool-row-main {
     transition: none;
   }
 
@@ -1752,12 +2559,15 @@ function chooseNovel(novel: PickerNovel): void {
     opacity: 0.7;
   }
 
-  /* Static label in place of the sweep. */
-  .chat-tool-name {
+  /* The caret stops blinking and reads as a static end-of-text marker. */
+  .chat-markdown--streaming :deep(.markstream-vue > :last-child)::after {
     animation: none;
-    background: none;
-    color: var(--text-secondary);
-    -webkit-text-fill-color: currentColor;
+    opacity: 0.6;
+  }
+
+  /* The spinner holds still; the row's own duration still ticks. */
+  .tool-row-spinner {
+    animation: none;
   }
 }
 </style>

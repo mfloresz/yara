@@ -23,9 +23,14 @@ import (
 type fakeAgentProvider struct {
 	*ai.OpenAIProvider
 	finalText string
+	// seenHistories records the input history of every turn, so tests can
+	// assert what the model was actually shown (e.g. that a regenerate does
+	// not replay the answer it is replacing).
+	seenHistories [][]ai.AgentMessage
 }
 
 func (f *fakeAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatInput) (ai.AgentChatOutput, error) {
+	f.seenHistories = append(f.seenHistories, append([]ai.AgentMessage{}, in.Messages...))
 	toolResult := ""
 	for _, tool := range in.Tools {
 		if tool.Name == "list_novels" {
@@ -1607,4 +1612,95 @@ func TestAgentTurnLockMapDoesNotGrow(t *testing.T) {
 	if remaining != 0 {
 		t.Errorf("agentTurnLocks still holds %d entries after every turn finished; the map grows per user", remaining)
 	}
+}
+
+// TestAgentChatRegenerateReplacesLastAnswer locks the regenerate contract: the
+// turn is re-run with the same user message, the model does NOT see the answer
+// being replaced, and the persisted trail keeps one turn (no duplicated user
+// message, no orphaned tool results).
+func TestAgentChatRegenerateReplacesLastAnswer(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-regen@example.com", "secret123", "Alice")
+
+	provider := &fakeAgentProvider{finalText: "respuesta vieja"}
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return provider, nil
+	}
+
+	// First turn: a normal ask.
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token,
+		map[string]any{"message": "hola"})
+	assertStatus(t, resp, http.StatusOK)
+	events := parseNDJSON(t, []byte(resp.Body.String()))
+	sessionID, _ := events[0]["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatal("session event must carry a sessionId")
+	}
+
+	// Second turn: regenerate with the SAME message. The answer must be
+	// replaced, not appended.
+	provider.finalText = "respuesta nueva"
+	resp = doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token,
+		map[string]any{"message": "hola", "sessionId": sessionID, "regenerate": true})
+	assertStatus(t, resp, http.StatusOK)
+	events = parseNDJSON(t, []byte(resp.Body.String()))
+
+	var done map[string]any
+	for _, ev := range events {
+		if ev["type"] == "done" {
+			done = ev
+		}
+	}
+	if done == nil {
+		t.Fatal("regenerate stream must end with a done event")
+	}
+	if msg, ok := done["message"].(map[string]any); !ok || msg["content"] != "respuesta nueva" {
+		t.Fatalf("regenerated answer should be the new one, got %v", done["message"])
+	}
+
+	// The model must not be shown the answer it is replacing: its history for
+	// the regenerated turn is just the user message.
+	if len(provider.seenHistories) != 2 {
+		t.Fatalf("expected 2 provider turns, got %d", len(provider.seenHistories))
+	}
+	regenHistory := provider.seenHistories[1]
+	if len(regenHistory) != 1 || regenHistory[0].Role != "user" || regenHistory[0].Content != "hola" {
+		t.Fatalf("regenerate history should be exactly the user message, got %#v", regenHistory)
+	}
+
+	// The persisted trail must be one turn again: user, assistant tool call,
+	// tool result, final assistant message — not eight messages.
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/agent/session", alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	var session struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	decodeData(t, getResp, &session)
+	if len(session.Messages) != 4 {
+		t.Fatalf("expected 4 persisted messages after regenerate, got %d: %#v", len(session.Messages), session.Messages)
+	}
+	if session.Messages[0].Role != "user" {
+		t.Fatalf("first persisted message should be the user message, got %#v", session.Messages[0])
+	}
+	if session.Messages[3].Content != "respuesta nueva" {
+		t.Fatalf("persisted final answer should be the regenerated one, got %#v", session.Messages[3])
+	}
+}
+
+// TestAgentChatRegenerateWithoutHistory refuses to regenerate a chat that has
+// nothing to re-run: the error must be a proper status code, not a stream.
+func TestAgentChatRegenerateWithoutHistory(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-regen2@example.com", "secret123", "Alice")
+
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &fakeAgentProvider{finalText: "nunca"}, nil
+	}
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token,
+		map[string]any{"message": "hola", "regenerate": true})
+	assertStatus(t, resp, http.StatusBadRequest)
 }

@@ -85,10 +85,15 @@ func registerV1AgentRoutes(authed *pbrouter.RouterGroup[*core.RequestEvent], s *
 	agent.DELETE("/session", handleAgentDeleteSession(s))
 }
 
+// agentChatRequest is one chat turn. Regenerate asks the server to drop the
+// current answer and re-run it: the handler truncates the persisted trail to
+// just before the last user message and re-runs the turn with the same text,
+// so no second user message appears in the history.
 type agentChatRequest struct {
-	SessionID string `json:"sessionId"`
-	NovelID   string `json:"novelId"`
-	Message   string `json:"message"`
+	SessionID  string `json:"sessionId"`
+	NovelID    string `json:"novelId"`
+	Message    string `json:"message"`
+	Regenerate bool   `json:"regenerate"`
 }
 
 // agentChatOption is one clickable choice of a "question" event.
@@ -195,6 +200,37 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		session, err := resolveAgentSession(s, userID, in.SessionID)
 		if err != nil {
 			return notFoundOrForbidden(e, err)
+		}
+
+		// Regenerate: drop the last user message and everything after it (the
+		// old answer and its tool trail) from the in-memory session, then re-run
+		// the turn below with Message. runAgentTurn rebuilds the trail from the
+		// session snapshot, so the cut is what erases the previous answer — the
+		// re-appended user message keeps the history valid and no second user
+		// message ever appears.
+		//
+		// The truncation is deliberately NOT persisted on its own: if the re-run
+		// fails (provider error, timeout, disconnect) nothing is saved, the old
+		// answer survives server-side, and the client restores it from its own
+		// state. Only a successful turn commits the shorter trail plus the new
+		// answer, so a failed regenerate can never destroy a stored response.
+		if in.Regenerate {
+			history := agentHistoryFromSession(session)
+			cut := -1
+			for i := len(history) - 1; i >= 0; i-- {
+				if history[i].Role == "user" {
+					cut = i
+					break
+				}
+			}
+			if cut < 0 {
+				return writeV1Error(e, http.StatusBadRequest, "validation_failed", "nothing to regenerate: the chat has no messages yet")
+			}
+			trimmed, err := json.Marshal(history[:cut])
+			if err != nil {
+				return writeV1Error(e, http.StatusInternalServerError, "internal_error", "could not rebuild the chat history")
+			}
+			session.Messages = string(trimmed)
 		}
 
 		var selectedNovel *store.Novel

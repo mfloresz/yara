@@ -2638,6 +2638,17 @@ paths:
                 sessionId: { type: string, description: "Continue this session; omit to reuse the latest one." }
                 novelId: { type: string, description: "Selected novel context for this message." }
                 message: { type: string, maxLength: 8000 }
+                regenerate:
+                  type: boolean
+                  description: |
+                    Re-run the last turn instead of appending a new one. The
+                    trail is truncated in memory to just before the last user
+                    message and the turn re-runs with `message` (the client
+                    sends that turn's original text), so the previous answer is
+                    replaced and no second user message appears. The truncation
+                    is not persisted on its own: a failed re-run leaves the
+                    stored answer intact, and only a successful turn commits
+                    the shorter trail plus the new answer.
       responses:
         '200':
           description: NDJSON event stream.
