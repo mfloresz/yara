@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.49.0] - 2026-10-20
+
+### What's new
+
+- **Agent chat regenerate option.** Added a regenerate option to the agent chat interface.
+- **ChatPage layout refactor.** Restructured ChatPage into a shell with an integrated model selector and send button.
+
+### Fixes
+
+- **Usage token label accuracy.** Fixed the token label to show prompt tokens instead of total tokens.
+- **Agent title preferences.** Updated the agent rule to prefer human-readable titles over raw IDs.
+- **SkyNovels parser chapter list.** Fixed the chapter list URL path for the `skynovels` parser and regenerated the signed manifest (`parsers/index.json`).
+
+### Housekeeping
+
+- Regenerated the signed parsers manifest (`parsers/index.json`) for the updated `skynovels.js` script.
+
 ## [v0.48.0] - 2026-10-17
 
 ### What's new
@@ -711,4 +728,5 @@
 [v0.46.0]: https://github.com/mfloresz/yara/compare/v0.45.0...v0.46.0
 [v0.47.0]: https://github.com/mfloresz/yara/compare/v0.46.1...v0.47.0
 [v0.48.0]: https://github.com/mfloresz/yara/compare/v0.47.0...v0.48.0
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.47.0
+[v0.49.0]: https://github.com/mfloresz/yara/compare/v0.48.0...v0.49.0
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
