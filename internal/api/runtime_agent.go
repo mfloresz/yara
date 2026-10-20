@@ -49,6 +49,7 @@ Rules:
 - Excluded chapters are logically DELETED: omit them from every analysis, count and chapter listing by default (in query_library that means is_excluded = 0). At most mention how many exist; surface the chapters themselves only when the user explicitly asks about excluded ones. set_chapter_excluded and bulk_set_chapter_excluded control the flag.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body. A negative startLine counts from the end (startLine -10, lineCount 10 returns the last 10 lines), and lineCount 1 is a cheap probe that reveals a chapter's exact length (totalLines) without pulling its text.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
+- search_library does the same literal match across every novel the user owns at once, grouped by novel with snippets and pagination (novelPage / novelOffset, hasMoreNovels). Use it when you don't know which novel contains the text; then read with get_chapter or pinpoint with search_chapters inside one novel.
 - query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those. For whole-library sweeps, run a COUNT(*) first and then SELECT ... LIMIT 200 OFFSET k, raising k each call until nothing is left — never present a truncated page as the complete answer.
 - Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded, bulk_set_chapter_status, bulk_set_chapter_excluded, update_glossary, set_reading_progress) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. update_novel can also edit targetAuthor, targetSeries, tags and the novel status (ongoing, completed, hiatus, cancelled); source-side metadata stays untouched. While a novel has active download/translation jobs, chapter and glossary writes are refused — say so instead of retrying.
 - bulk_set_chapter_status and bulk_set_chapter_excluded take fromOrder AND toOrder (inclusive) and change whole ranges in one call; they skip excluded and processing chapters.
@@ -147,6 +148,7 @@ func (s *Server) agentTools(userID string) []ai.AgentTool {
 		s.agentToolGetNovelChapters(userID),
 		s.agentToolGetChapter(userID),
 		s.agentToolSearchChapters(userID),
+		s.agentToolSearchLibrary(userID),
 		s.agentToolQueryLibrary(userID),
 		// Jobs
 		s.agentToolGetActiveJobs(userID),
@@ -690,6 +692,46 @@ func (s *Server) agentToolSearchChapters(userID string) ai.AgentTool {
 				return "", err
 			}
 			return marshalToolResult(map[string]any{"hits": hits})
+		},
+	}
+}
+
+func (s *Server) agentToolSearchLibrary(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "search_library",
+		Description: "Read-only whole-library search over chapter titles AND bodies of all the user's own novels, for a literal text match (case-sensitive substring). Returns hits grouped by novel with short snippets — never full bodies. Paginated: novelPage (default 20, max 100) novels per call starting at novelOffset; per novel at most chapterLimit (default 10, max 25) hits. hasMoreNovels tells you whether to call again with a higher novelOffset. Use this instead of calling search_chapters novel by novel when you don't know which novel contains the text. Only novels the user owns are scanned; other users' libraries are unreachable.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "query": {"type": "string", "description": "Literal text to search for in every chapter of every owned novel."},
+    "novelPage": {"type": "integer", "minimum": 1, "maximum": 100, "description": "How many novels to scan in this call (default 20)."},
+    "novelOffset": {"type": "integer", "minimum": 0, "description": "Skip this many novels before scanning (default 0). Page with it."},
+    "chapterLimit": {"type": "integer", "minimum": 1, "maximum": 25, "description": "Max hits per novel (default 10)."}
+  },
+  "required": ["query"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				Query        string `json:"query"`
+				NovelPage    int    `json:"novelPage"`
+				NovelOffset  int    `json:"novelOffset"`
+				ChapterLimit int    `json:"chapterLimit"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Query) == "" {
+				return "", fmt.Errorf("invalid query")
+			}
+			result, err := s.Store.SearchLibraryChapters(userID, strings.TrimSpace(a.Query), a.NovelPage, a.NovelOffset, a.ChapterLimit)
+			if err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{
+				"query":         a.Query,
+				"novels":        result.Novels,
+				"novelOffset":   result.NovelOffset,
+				"novelPage":     result.NovelPage,
+				"hasMoreNovels": result.HasMoreNovels,
+				"scannedNovels": result.ScannedNovels,
+			})
 		},
 	}
 }

@@ -1288,6 +1288,99 @@ func (s *Store) SearchOwnedChapters(userID, novelID, query string, limit int) ([
 	return hits, nil
 }
 
+// NovelChapterHits groups the per-chapter hits of one library scan for one novel.
+type NovelChapterHits struct {
+	NovelID    string             `json:"novelId"`
+	NovelTitle string             `json:"novelTitle"`
+	Hits       []ChapterSearchHit `json:"hits"`
+	HitCount   int                `json:"hitCount"`
+	Truncated  bool               `json:"truncated"`
+}
+
+// LibrarySearchResult is one paginated search_library call: hits grouped by
+// novel plus whether more novels remain to scan.
+type LibrarySearchResult struct {
+	Novels        []NovelChapterHits `json:"novels"`
+	NovelOffset   int                `json:"novelOffset"`
+	NovelPage     int                `json:"novelPage"`
+	HasMoreNovels bool               `json:"hasMoreNovels"`
+	ScannedNovels int                `json:"scannedNovels"`
+}
+
+// maxLibraryNovelPage caps how many novels one search_library call scans.
+const maxLibraryNovelPage = 100
+
+// defaultLibraryNovelPage is how many novels search_library scans per call.
+const defaultLibraryNovelPage = 20
+
+// SearchLibraryChapters runs a case-sensitive literal substring search over
+// chapter titles AND bodies across every novel the user owns. Read-only and
+// owner-scoped: only the caller's novels are listed, and each per-novel
+// search re-validates ownership through SearchOwnedChapters. Results are
+// paginated by novel (novelPage / novelOffset) and capped per novel
+// (chapterLimit) so one call cannot scan a whole library or dump full
+// bodies — only snippets and metadata are returned. Call again with a higher
+// novelOffset while HasMoreNovels is true.
+func (s *Store) SearchLibraryChapters(userID, query string, novelPage, novelOffset, chapterLimit int) (LibrarySearchResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return LibrarySearchResult{}, fmt.Errorf("%w: empty search query", ErrInvalidInput)
+	}
+	if novelPage <= 0 {
+		novelPage = defaultLibraryNovelPage
+	}
+	if novelPage > maxLibraryNovelPage {
+		novelPage = maxLibraryNovelPage
+	}
+	if novelOffset < 0 {
+		novelOffset = 0
+	}
+	if chapterLimit <= 0 {
+		chapterLimit = 10
+	}
+	if chapterLimit > 25 {
+		chapterLimit = 25
+	}
+
+	// Request one extra novel so we can report hasMoreNovels without a
+	// separate COUNT query.
+	records, err := s.App.FindRecordsByFilter(NovelsCollection, "owner = {:owner}", "-created", novelPage+1, novelOffset, dbx.Params{"owner": userID})
+	if err != nil {
+		return LibrarySearchResult{}, err
+	}
+	hasMore := len(records) > novelPage
+	if hasMore {
+		records = records[:novelPage]
+	}
+
+	out := LibrarySearchResult{
+		Novels:        make([]NovelChapterHits, 0, len(records)),
+		NovelOffset:   novelOffset,
+		NovelPage:     novelPage,
+		HasMoreNovels: hasMore,
+	}
+	for _, record := range records {
+		novelID := record.Id
+		novelTitle := record.GetString("source_title")
+		if novelTitle == "" {
+			novelTitle = record.GetString("target_title")
+		}
+		hits, err := s.SearchOwnedChapters(userID, novelID, query, chapterLimit)
+		if err != nil {
+			return LibrarySearchResult{}, err
+		}
+		out.Novels = append(out.Novels, NovelChapterHits{
+			NovelID:    novelID,
+			NovelTitle: novelTitle,
+			Hits:       hits,
+			HitCount:   len(hits),
+			Truncated:  len(hits) == chapterLimit,
+		})
+		out.ScannedNovels++
+	}
+	return out, nil
+}
+
 // buildSearchSnippet cuts a ±searchSnippetWindow window around the first
 // occurrence of query in body, collapsing newlines for the tool result.
 //

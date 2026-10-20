@@ -608,7 +608,7 @@ line window: `startLine` + `lineCount`, default 60 / max 400, returning
 **negative `startLine` counts from the end**, and `lineCount: 1` probes the
 chapter's exact length without pulling its text),
 `search_chapters` (case-sensitive literal search over titles and bodies with
-snippets), `query_library` (one read-only analytics SELECT over the
+snippets), `search_library` (the same literal match across every novel the user owns at once, grouped by novel with snippets and pagination via `novelPage`/`novelOffset`/`hasMoreNovels`; use it when the containing novel is unknown), `query_library` (one read-only analytics SELECT over the
 `v_agent_novel_progress` / `v_agent_chapter_overview` tables — aggregates like
 "novels missing fewer than 10 chapters" in a single call), `get_active_jobs`
 and `get_novel_jobs` (narrow job overviews: progress counters, no chapter id

@@ -618,9 +618,78 @@ func TestAgentChatChapterToolsExercisesNewCatalog(t *testing.T) {
 	}
 }
 
-// TestAgentChatChapterToolsRejectsForeignNovel pins ownership: every chapter
-// tool resolves the novel through the requesting user, so another user's
-// chapter ids are indistinguishable from unknown ones.
+// TestAgentChatSearchLibrary drives the whole-library chapter search: it
+// scans every owned novel, groups hits per novel with snippets, paginates
+// novels and never leaks another user's library.
+func TestAgentChatSearchLibrary(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-lib@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-lib@example.com", "secret123", "Bob")
+
+	novelA := createNovel(t, env.handler, alice.Token, "Primera", "es", "en")
+	novelB := createNovel(t, env.handler, alice.Token, "Segunda", "es", "en")
+	bobNovel := createNovel(t, env.handler, bob.Token, "Ajena", "es", "en")
+
+	makeChapter := func(t *testing.T, token, novelID, title, original, translated string) string {
+		resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novelID+"/chapters", token, map[string]any{
+			"chapterOrder":      1,
+			"title":             title,
+			"originalContent":   original,
+			"translatedContent": translated,
+			"status":            "translated",
+		})
+		assertStatus(t, resp, http.StatusCreated)
+		var chapter struct {
+			ID string `json:"id"`
+		}
+		decodeData(t, resp, &chapter)
+		return chapter.ID
+	}
+
+	const separator = "~~~***~~~"
+	makeChapter(t, alice.Token, novelA.ID, "Capítulo 1", "Antes del separador", separator+" después del separador")
+	makeChapter(t, alice.Token, novelB.ID, "Capítulo 2", separator, "contenido normal "+separator+" más")
+	makeChapter(t, bob.Token, bobNovel.ID, "Capítulo ajeno", separator, separator)
+
+	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
+		return &scriptedAgentProvider{toolCalls: []string{
+			`{"_tool":"search_library","args":{"query":"` + separator + `"}}`,
+		}}, nil
+	}
+
+	chatResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
+		"message": "busca en toda la biblioteca el separador de escenas",
+	})
+	assertStatus(t, chatResp, http.StatusOK)
+
+	var toolResult string
+	for _, ev := range parseNDJSON(t, []byte(chatResp.Body.String())) {
+		if ev["type"] == "tool_result" && ev["tool"] == "search_library" {
+			toolResult, _ = ev["result"].(string)
+		}
+	}
+	if toolResult == "" {
+		t.Fatalf("search_library tool result missing, body: %s", chatResp.Body.String())
+	}
+
+	// Las novelas de Alice deben aparecer; la de Bob no.
+	if !strings.Contains(toolResult, novelA.ID) || !strings.Contains(toolResult, "Primera") {
+		t.Fatalf("novela A ausente del resultado de search_library: %q", toolResult)
+	}
+	if !strings.Contains(toolResult, novelB.ID) || !strings.Contains(toolResult, "Segunda") {
+		t.Fatalf("novela B ausente del resultado de search_library: %q", toolResult)
+	}
+	if strings.Contains(toolResult, bobNovel.ID) || strings.Contains(toolResult, "Ajena") {
+		t.Fatalf("novela extranjera filtró en search_library: %q", toolResult)
+	}
+	if !strings.Contains(toolResult, separator) {
+		t.Fatalf("el snippet debería mostrar el separador coincidente: %q", toolResult)
+	}
+	if strings.Contains(toolResult, `"hasMoreNovels":true`) {
+		t.Fatalf("con solo dos novelas nada debería paginarse: %q", toolResult)
+	}
+}
+
 func TestAgentChatChapterToolsRejectsForeignNovel(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-chown@example.com", "secret123", "Alice")
