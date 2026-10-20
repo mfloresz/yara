@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.50.0] - 2026-10-19
+
+### What's new
+
+- **Whole-library search in the agent chat.** The assistant can now look for a literal text across the titles and bodies of every chapter of every novel you own in a single call, through the new `search_library` tool. Results come back grouped by novel with short snippets (never full chapter bodies) and are paginated by novel, so the agent can page through the library instead of searching one novel at a time when it doesn't know where the text lives. Only novels you own are scanned; other users' libraries remain unreachable.
+
+### Housekeeping
+
+- Documented the new `search_library` tool in the API documentation.
+
 ## [v0.49.0] - 2026-10-20
 
 ### What's new
@@ -729,4 +739,5 @@
 [v0.47.0]: https://github.com/mfloresz/yara/compare/v0.46.1...v0.47.0
 [v0.48.0]: https://github.com/mfloresz/yara/compare/v0.47.0...v0.48.0
 [v0.49.0]: https://github.com/mfloresz/yara/compare/v0.48.0...v0.49.0
+[v0.50.0]: https://github.com/mfloresz/yara/compare/v0.49.0...v0.50.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
