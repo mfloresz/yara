@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.50.1] - 2026-10-22
+
+### Fixes
+
+- **Security hardening across parsing, rendering and the browser worker.**
+  - Site fetches now validate hosts exactly as a browser would: shorthand IPv4 forms (`127.1`, `0x7f.1`, `2130706433`, leading-zero octal, fullwidth digits, the ideographic dot and trailing-dot tricks) are canonicalized and refused when they point at loopback or private addresses, and the address is re-checked at dial time so a DNS-rebinding hostname cannot slip past the pre-flight check.
+  - Every redirect hop of a site fetch is re-validated, and a refused fetch is never retried through your browser worker, whose machine usually has more reach into your network than the server.
+  - Browser-worker extensions (Chrome and Firefox) refuse to return pages or images whose final post-redirect URL lands on a private/loopback target, closing the gap the server cannot see.
+  - Untrusted markdown (imported site text, member chapters, EPUB content) is now sanitized to content-only markup: `<style>`/`<form>` elements, `style` attributes and form-aiming attributes are stripped.
+  - State-changing API requests that arrive as a top-level navigation (an injected HTML form riding your session) are rejected with `403`; scripts, `curl` and the SPA are unaffected.
+  - A user-supplied provider `base_url` override can no longer pair a shared admin API key with a server of the user's choosing — the shared key always goes to the provider's official endpoint.
+  - Worker tokens' owner relation is now immutable through the record API (migrated automatically on existing installs).
+  - Obfuscated-font handling (Chrysanthemum Garden parsers) caps WOFF2 decompression and validates font table bounds, so a crafted font can no longer exhaust memory or spin the parser.
+
+### Housekeeping
+
+- Browser-worker WebSocket writes (dispatch, ping, messages) are now bounded by write deadlines, and a worker whose write fails is evicted and closed instead of wedging the relay.
+- Added regression tests for the SSRF guard, the WOFF2 parser and the shared-key base_url isolation.
+
 ## [v0.50.0] - 2026-10-19
 
 ### What's new
@@ -740,4 +759,5 @@
 [v0.48.0]: https://github.com/mfloresz/yara/compare/v0.47.0...v0.48.0
 [v0.49.0]: https://github.com/mfloresz/yara/compare/v0.48.0...v0.49.0
 [v0.50.0]: https://github.com/mfloresz/yara/compare/v0.49.0...v0.50.0
+[v0.50.1]: https://github.com/mfloresz/yara/compare/v0.50.0...v0.50.1
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
