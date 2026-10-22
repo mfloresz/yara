@@ -106,21 +106,137 @@ func (s *Server) validateSiteFetchTarget(rawURL string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("refusing to fetch non-http(s) URL %q", rawURL)
 	}
-	host := u.Hostname()
+	host := browserCanonicalHost(u.Hostname())
 	if host == "" {
 		return fmt.Errorf("refusing to fetch URL without a host %q", rawURL)
+	}
+	// Classify the host exactly as a browser's WHATWG URL parser would: the
+	// user's browser resolves and dials the host after this same
+	// canonicalization, so anything a browser treats as loopback or private
+	// must be refused here. net.ParseIP alone is not enough — it rejects the
+	// IPv4 forms every browser accepts (127.1, 0x7f.1, 2130706433, leading
+	// zero octal, fullwidth digits, the ideographic dot U+3002), and a
+	// trailing dot used to smuggle 127.0.0.1. past a literal check while the
+	// browser dialed loopback.
+	if ip := parseBrowserIPv4(host); ip != nil && !isPublicFetchIP(ip) {
+		return fmt.Errorf("refusing to fetch %q: %s is not a public address", rawURL, ip.String())
 	}
 	if ip := net.ParseIP(host); ip != nil && !isPublicFetchIP(ip) {
 		return fmt.Errorf("refusing to fetch %q: %s is not a public address", rawURL, ip.String())
 	}
 	// Hostnames that name the local machine without a lookup.
-	lower := strings.ToLower(strings.TrimSuffix(host, "."))
-	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") ||
-		lower == "local" || strings.HasSuffix(lower, ".local") ||
-		lower == "internal" || strings.HasSuffix(lower, ".internal") {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "local" || strings.HasSuffix(host, ".local") ||
+		host == "internal" || strings.HasSuffix(host, ".internal") {
 		return fmt.Errorf("refusing to fetch internal hostname %q", host)
 	}
 	return nil
+}
+
+// browserCanonicalHost applies the non-IP canonicalization a WHATWG URL
+// parser performs on a host before it is classified: lowercased, ASCII
+// compatibility mapping (fullwidth letters/digits), ideographic and other
+// full stop code points mapped to U+002E, trailing dots trimmed, and any
+// zone identifier (fe80::1%eth0) or IE-style backslash separator cut off so
+// net.ParseIP can classify what remains. A browser rejects a zone outright;
+// dropping it hands the bare literal to the IP checks.
+func browserCanonicalHost(host string) string {
+	var b strings.Builder
+	for _, r := range host {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 32)
+		case r == 0x3002 || r == 0xFF0E || r == 0xFF61:
+			b.WriteRune('.')
+		case r >= 0xFF01 && r <= 0xFF5E:
+			b.WriteRune(r - 0xFEE0)
+		case r == '%' || r == '\\':
+			return strings.TrimRight(b.String(), ".")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimRight(b.String(), ".")
+}
+
+// parseBrowserIPv4 parses the extended IPv4 forms a WHATWG URL parser
+// canonicalizes before dialing but net.ParseIP rejects: dotted prefixes with
+// fewer than four parts whose last part fills the remaining bytes (127.1 →
+// 127.0.0.1), leading-zero octal and hex (0177.0.0.1, 0x7f.1), and bare
+// 32-bit integers (2130706433 → 127.0.0.1). Returns nil when host is not an
+// IPv4 literal in these forms.
+func parseBrowserIPv4(host string) net.IP {
+	parts := strings.Split(host, ".")
+	vals := make([]uint64, len(parts))
+	for i, p := range parts {
+		v, ok := parseIPv4Number(p)
+		if !ok {
+			return nil
+		}
+		vals[i] = v
+	}
+	if len(vals) == 0 || len(vals) > 4 {
+		return nil
+	}
+	var ip uint64
+	for i, v := range vals[:len(vals)-1] {
+		if v > 255 {
+			return nil
+		}
+		ip |= v << (8 * (3 - i))
+	}
+	last := vals[len(vals)-1]
+	// The final part occupies 5-len(parts) bytes; it must fit them.
+	if last >= 1<<(8*(5-len(vals))) {
+		return nil
+	}
+	ip |= last
+	return net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip))
+}
+
+// parseIPv4Number parses one dotted-quad decimal/octal/hex part the way the
+// WHATWG IPv4 parser does. Reports false for anything non-numeric.
+func parseIPv4Number(s string) (uint64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	base := 10
+	digits := s
+	if len(s) > 1 && s[0] == '0' {
+		switch s[1] {
+		case 'x', 'X':
+			base, digits = 16, s[2:]
+		default:
+			base, digits = 8, s[1:]
+		}
+		if digits == "" {
+			return 0, false
+		}
+	}
+	var v uint64
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		var d uint64
+		switch {
+		case c >= '0' && c <= '9':
+			d = uint64(c - '0')
+		case base == 16 && c >= 'a' && c <= 'f':
+			d = uint64(c-'a') + 10
+		case base == 16 && c >= 'A' && c <= 'F':
+			d = uint64(c-'A') + 10
+		default:
+			return 0, false
+		}
+		if d >= uint64(base) {
+			return 0, false
+		}
+		v = v*uint64(base) + d
+		// WHATWG: the number must fit in 32 bits (0 .. 2^32-1).
+		if v >= 1<<32 {
+			return 0, false
+		}
+	}
+	return v, true
 }
 
 // isPublicFetchIP reports whether an IP is a plausible public fetch target.

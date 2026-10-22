@@ -474,14 +474,30 @@ func parseWOFF2Tables(fontData []byte) (map[string]woff2Table, error) {
 		return nil, fmt.Errorf("truncated WOFF2 payload")
 	}
 	compressed := fontData[r.pos : r.pos+int(totalCompressedSize)]
-	decompressed, err := io.ReadAll(brotli.NewReader(bytes.NewReader(compressed)))
+	// The compressed input is capped at 1 MiB by fetchSiteAsset, but brotli
+	// expands crafted streams by many orders of magnitude; io.ReadAll would
+	// buffer gigabytes before any table validation runs. The protection
+	// fonts are 52-glyph subsets (tens of KB), so 4 MiB is a generous
+	// ceiling — read one byte past it to detect the overflow without
+	// buffering more.
+	const maxWOFF2DecompressedBytes = 4 << 20
+	decompressed, err := io.ReadAll(io.LimitReader(
+		brotli.NewReader(bytes.NewReader(compressed)), maxWOFF2DecompressedBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("brotli decompress: %w", err)
+	}
+	if len(decompressed) > maxWOFF2DecompressedBytes {
+		return nil, fmt.Errorf("woff2 payload decompresses past %d bytes", maxWOFF2DecompressedBytes)
 	}
 	tables := make(map[string]woff2Table, len(entries))
 	pos := 0
 	for _, e := range entries {
-		if pos+int(e.length) > len(decompressed) {
+		// e.length is attacker-declared and may have its high bit set. On
+		// 32-bit builds (GOARCH=arm/386) int(e.length) wraps negative and
+		// an int-domain bound check would pass. Compare in uint64 against
+		// the bytes actually remaining so the check holds on every
+		// platform.
+		if uint64(e.length) > uint64(len(decompressed)-pos) {
 			return nil, fmt.Errorf("table %s overruns decompressed data", e.tag)
 		}
 		tables[e.tag] = woff2Table{data: decompressed[pos : pos+int(e.length)], transformed: e.transformed}
@@ -559,6 +575,19 @@ func parseCmapFormat4(data []byte) (map[rune]uint16, error) {
 		startCodes[i], err = r.uint16()
 		if err != nil {
 			return nil, err
+		}
+	}
+	// cmap format 4 requires ordered, non-overlapping, non-empty segments
+	// (startCode <= endCode, endCodes strictly increasing, no overlap
+	// between neighbors). Without these checks a hostile table can repeat
+	// or overlap full-BMP segments segCountX2/2 times and drive up to
+	// ~2^31 inner-loop iterations from a ~300 KB decompressed font.
+	for i := 0; i < n; i++ {
+		if startCodes[i] > endCodes[i] {
+			return nil, fmt.Errorf("cmap segment %d: startCode %d > endCode %d", i, startCodes[i], endCodes[i])
+		}
+		if i > 0 && startCodes[i] <= endCodes[i-1] {
+			return nil, fmt.Errorf("cmap segment %d overlaps or precedes segment %d", i, i-1)
 		}
 	}
 	idDeltas := make([]int16, n)

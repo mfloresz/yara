@@ -80,6 +80,14 @@ type Server struct {
 	// Bounds are set once here from the config and never mutated afterwards
 	// (see setDelays, tests only), so concurrent fetchers share it race-free.
 	parserThrottle *parseThrottle
+	// parserTransport is the shared dial-time-guarded transport for direct
+	// site fetches, built once on first use. A fresh clone per fetch would
+	// strand a new idle connection pool per request: no keep-alive reuse
+	// across fetches and an idle conn kept alive until its timeout per
+	// request. The Control closure reads Cfg at dial time, so lazy init
+	// stays consistent with config changes before first fetch.
+	parserTransportOnce sync.Once
+	parserTransport     *http.Transport
 	// parserUpdates caches the release manifest for parser auto-update and
 	// serializes parser file replacement (see parser_update.go). Value field:
 	// the zero value is ready to use.
@@ -283,7 +291,8 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 	})
 
 	// Versioning middleware: sets X-API-Version on /api/v1/* responses.
-	// Must run before any handler.
+	// Must run before any handler, including the CSRF-style guard below,
+	// so its 403 responses carry the header too.
 	router.Bind(&hook.Handler[*core.RequestEvent]{
 		Id: "v1HeaderMiddleware",
 		Func: func(e *core.RequestEvent) error {
@@ -294,6 +303,38 @@ func registerRoutes(router *pbrouter.Router[*core.RequestEvent], s *Server) {
 				e.Response.Header().Set("X-API-Version", "v1")
 			}
 			return nil
+		},
+	})
+
+	// Reject state-changing requests that arrive as a top-level navigation.
+	// The v1 API is cookie-authenticated (loadAuthFromCookie), so an HTML
+	// <form> injected into any page of the app's own origin — stored
+	// markdown from a public novel, a hostile source-site description —
+	// can ride a user's session with a single click: SameSite=Strict only
+	// blocks cross-site requests, not same-origin form submissions. The
+	// SPA always calls the API through fetch() (Sec-Fetch-Mode: cors); a
+	// form submission is Sec-Fetch-Mode: navigate. Requests without the
+	// header (curl, scripts, older clients) are unaffected. The one
+	// server-rendered form — the worker-auth consent page — is exempt: its
+	// single-use, short-lived state token is the CSRF protection for that
+	// endpoint.
+	router.Bind(&hook.Handler[*core.RequestEvent]{
+		Id: "blockNavigationalWrites",
+		Func: func(e *core.RequestEvent) error {
+			switch e.Request.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			default:
+				return e.Next()
+			}
+			if !hasPrefix(e.Request.URL.Path, "/api/v1/") ||
+				e.Request.URL.Path == workerAuthApprovePath {
+				return e.Next()
+			}
+			if e.Request.Header.Get("Sec-Fetch-Mode") == "navigate" {
+				return writeV1Error(e, http.StatusForbidden, "forbidden",
+					"state-changing requests must not arrive as a top-level navigation")
+			}
+			return e.Next()
 		},
 	})
 

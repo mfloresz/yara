@@ -254,6 +254,16 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 			}
 			return result, nil
 		}
+		// A refusal typed by the SSRF guard — most importantly the per-hop
+		// redirect policy of the direct client — is a deliberate refusal,
+		// not a transport failure a real browser could fix. Routing it
+		// through the worker would re-fetch the very chain the guard just
+		// refused, in the user's browser, whose machine typically has more
+		// internal reach than the server (same invariant the cover path
+		// enforces via isSiteFetchRefused).
+		if isSiteFetchRefused(err) {
+			return nil, err
+		}
 		// The direct attempt failed. Retry through the worker only when a real
 		// browser could plausibly fix it — a transport error, a challenge page,
 		// or a blocked/transient status. A definitive 404/410 is the site saying

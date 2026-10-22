@@ -265,6 +265,85 @@ func TestValidateSiteFetchURL(t *testing.T) {
 	}
 }
 
+// Browsers canonicalize IPv4 shorthand/octal/hex/bare-integer forms and
+// ideographic dots before dialing, so the guard must classify hosts with the
+// same rules: net.ParseIP calls 127.000.000.001 a hostname while the user's
+// browser dials loopback for it — and on the worker path that literal is
+// aimed at the browser itself.
+func TestValidateSiteFetchTargetBrowserCanonicalForms(t *testing.T) {
+	s := &Server{Cfg: &config.Config{}}
+	for _, raw := range []string{
+		"http://127.1/x",                 // short form → 127.0.0.1
+		"http://127.0.1/x",               // three-part form → 127.0.0.1
+		"http://0x7f.1/x",                // hex → 127.0.0.1
+		"http://2130706433/x",            // bare integer → 127.0.0.1
+		"http://0177.0.0.1/x",            // octal → 127.0.0.1
+		"http://127.000.000.001/x",       // leading-zero octal → 127.0.0.1
+		"http://127.0.0.1./x",            // trailing dot still dials loopback
+		"http://127.1./x",                // short form + trailing dot
+		"http://0xa9.0xfe.0xa9.0xfe/x",   // 169.254.169.254 in hex
+		"http://127。0。0。1/x",            // ideographic dot U+3002
+		"http://[fe80::1]/x",             // link-local IPv6 literal
+		"http://[fe80::1%25eth0]/x",      // zone identifier stripped → still link-local
+		"http://[::ffff:127.0.0.1]/x",    // IPv4-mapped loopback
+		"http://[::ffff:169.254.169.254]/x", // IPv4-mapped link-local
+	} {
+		if err := s.validateSiteFetchTarget(raw); err == nil {
+			t.Errorf("%s: browser-canonical private target accepted", raw)
+		}
+	}
+	for _, raw := range []string{"https://8.8.8.8/x", "http://93.184.216.34/x"} {
+		if err := s.validateSiteFetchTarget(raw); err != nil {
+			t.Errorf("%s: public literal refused: %v", raw, err)
+		}
+	}
+}
+
+// parseBrowserIPv4 classifies the extended IPv4 forms the WHATWG URL parser
+// accepts, and leaves everything else for the DNS path.
+func TestParseBrowserIPv4(t *testing.T) {
+	for host, want := range map[string]string{
+		"127.1":           "127.0.0.1",
+		"127.0.1":         "127.0.0.1",
+		"0x7f.1":          "127.0.0.1",
+		"2130706433":      "127.0.0.1",
+		"0177.0.0.1":      "127.0.0.1",
+		"0300.0250.0.1":   "192.168.0.1",
+		"8.8.8.8":         "8.8.8.8",
+		"169.254.169.254": "169.254.169.254",
+		"example.com":     "",
+		"256.1.1.1":       "", // out-of-range part → domain, not a literal
+		"0x":              "", // empty number → domain
+		"1.2.3.4.5":       "", // too many parts
+	} {
+		ip := parseBrowserIPv4(host)
+		got := ""
+		if ip != nil {
+			got = ip.String()
+		}
+		if got != want {
+			t.Errorf("parseBrowserIPv4(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+// browserCanonicalHost applies the non-IP normalization before classification.
+func TestBrowserCanonicalHost(t *testing.T) {
+	for host, want := range map[string]string{
+		"EXAMPLE.com.":      "example.com",
+		"127.0.0.1.":        "127.0.0.1",
+		"fe80::1%eth0":      "fe80::1",
+		"127。0。0。1":         "127.0.0.1",
+		"ｌｏｃａｌｈｏｓｔ":        "localhost",
+		"example.com":       "example.com",
+		"host\\path.example": "host",
+	} {
+		if got := browserCanonicalHost(host); got != want {
+			t.Errorf("browserCanonicalHost(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
 // Read-only probe outcomes are cached per host, so the novel list does not
 // recompile every script per row; removing a script keeps serving the cached
 // outcome until the short TTL expires.

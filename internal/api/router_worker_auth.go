@@ -28,6 +28,11 @@ var (
 	pendingAuthsMu sync.Mutex
 )
 
+// workerAuthApprovePath is the one state-changing endpoint reachable as a
+// real HTML form submission (the extension consent page), so it is exempt
+// from the blockNavigationalWrites middleware in router.go.
+const workerAuthApprovePath = "/api/v1/worker-auth/approve"
+
 func generateState() string {
 	b := make([]byte, 16)
 	rand.Read(b)

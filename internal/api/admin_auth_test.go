@@ -517,6 +517,24 @@ func TestSharedProviderKeysLifecycle(t *testing.T) {
 		t.Fatalf("expected shared key fallback, got %q", settings.APIKey)
 	}
 
+	// The shared admin key must never travel to a user-controlled endpoint:
+	// with a user base_url override in place, resolution pins the request
+	// back to the provider's official endpoint instead of pairing the
+	// credential with a URL the user chose.
+	if _, err := env.store.UpsertProviderSettings(user.User.ID, "venice", "", "https://attacker.example/v1"); err != nil {
+		t.Fatalf("set user base_url: %v", err)
+	}
+	settings, err = env.store.ResolveProviderAISettings(user.User.ID, "venice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if settings.APIKey != "sk-shared-1" {
+		t.Fatalf("expected shared key fallback, got %q", settings.APIKey)
+	}
+	if settings.BaseURL == "https://attacker.example/v1" {
+		t.Fatalf("shared admin key paired with a user-controlled base_url %q", settings.BaseURL)
+	}
+
 	// The user's own key takes precedence.
 	if _, err := env.store.ReplaceProviderAPIKey(user.User.ID, "venice", "sk-own-1"); err != nil {
 		t.Fatalf("replace user key: %v", err)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"translator-server/internal/parserhost"
@@ -65,12 +67,57 @@ const maxCoverBytes = int64(10 << 20)
 
 // parserHTTPClient returns the direct HTTP client used for parser fetches.
 // The factory indirection lets tests point site hosts at an httptest server,
-// mirroring the old DownloaderFactory override.
+// mirroring the old DownloaderFactory override. The transport itself is built
+// once per server and shared so keep-alive connections are pooled across
+// fetches instead of being stranded in a throwaway pool per request.
 func (s *Server) parserHTTPClient(userID string) *http.Client {
 	if s.ParserHTTPClientFactory != nil {
 		return s.ParserHTTPClientFactory(userID)
 	}
-	return &http.Client{Timeout: 30 * time.Second, CheckRedirect: s.siteRedirectPolicy()}
+	return &http.Client{Timeout: 30 * time.Second, CheckRedirect: s.siteRedirectPolicy(), Transport: s.sharedParserTransport()}
+}
+
+// sharedParserTransport lazily builds the server-wide parser transport. The
+// SSRF guard's LookupIPAddr is a separate DNS query from the transport's
+// dial-time resolution, so a hostname validated as public can rebind to a
+// private address before the connection is made. Control runs after resolution
+// and immediately before connect for every dial attempt — the initial fetch
+// and every redirect hop alike — so the address the socket will actually use
+// is the one checked.
+func (s *Server) sharedParserTransport() *http.Transport {
+	s.parserTransportOnce.Do(func() {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control: func(network, address string, _ syscall.RawConn) error {
+				if s != nil && s.Cfg != nil && s.Cfg.ParsersAllowPrivateNets {
+					return nil
+				}
+				host, _, err := net.SplitHostPort(address)
+				if err != nil {
+					return fmt.Errorf("invalid dial address %q", address)
+				}
+				ip := net.ParseIP(host)
+				if ip == nil {
+					return fmt.Errorf("dial address %q is not an IP literal", address)
+				}
+				if !isPublicFetchIP(ip) {
+					// Typed like the pre-flight and per-hop refusals: a
+					// private address at dial time is the DNS-rebinding
+					// window the literal checks cannot see, and it is a
+					// deliberate refusal — never a transport failure to
+					// retry through the browser worker, whose machine
+					// typically has more internal reach than the server.
+					return &siteFetchRefusedError{fmt.Errorf("refusing to connect to non-public IP %s", ip.String())}
+				}
+				return nil
+			},
+		}
+		transport.DialContext = dialer.DialContext
+		s.parserTransport = transport
+	})
+	return s.parserTransport
 }
 
 // siteRedirectPolicy is the CheckRedirect policy for direct site clients:

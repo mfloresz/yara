@@ -309,6 +309,82 @@ async function handleJobRequest(payload) {
   }
 }
 
+// Raised when a fetch lands on a private/loopback target after following
+// redirects the server never sees. It is terminal: unlike a transport
+// failure or a Cloudflare challenge, no tab fallback can make it OK, so it
+// must not be swallowed by the null-on-failure contract.
+class PrivateTargetError extends Error {}
+
+// True when rawUrl's host is a literal loopback/private/link-local target
+// (or a localhost-style name). The browser's URL parser has already
+// canonicalized IPv4 shorthand forms (127.1, 0x7f.1, 2130706433) into
+// dotted quads in .hostname, so a plain range check is complete for
+// literals. DNS names are deliberately NOT checked: names resolvable only
+// inside the user's network must stay relayable (split-horizon support).
+// The server validates only the URL it was originally given — never the
+// hops the browser follows or the address the victim's resolver returns —
+// so the extension must refuse to return bytes from private targets.
+function isPrivateFetchTarget(rawUrl) {
+  let host;
+  try {
+    host = new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return true;
+  }
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  if (host === 'localhost' || host.endsWith('.localhost') ||
+      host === 'local' || host.endsWith('.local') ||
+      host === 'internal' || host.endsWith('.internal')) {
+    return true;
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) return isPrivateV4(v4.slice(1).map(Number));
+  if (host.startsWith('[') && host.endsWith(']')) {
+    const v6 = host.slice(1, -1);
+    if (v6 === '::' || v6 === '::1') return true;
+    if (v6.startsWith('fe80:')) return true;                     // link-local
+    if (v6.startsWith('fc') || v6.startsWith('fd')) return true; // ULA
+    if (v6.startsWith('64:ff9b::')) return true;                 // NAT64
+    if (v6.startsWith('::ffff:0:')) return true;                 // deprecated IPv4-compatible
+    // IPv4-mapped (::ffff:0:0/96): the embedded IPv4 must pass the same
+    // range check as a literal — the browser serializes it as a dotted
+    // quad (RFC 5952), but the hex form still reaches us when typed.
+    if (v6.startsWith('::ffff:')) {
+      const tail = v6.slice('::ffff:'.length);
+      const dotted = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tail);
+      if (dotted) return isPrivateV4(dotted.slice(1).map(Number));
+      const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+      if (hex) {
+        const hi = parseInt(hex[1], 16);
+        const lo = parseInt(hex[2], 16);
+        return isPrivateV4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
+      }
+      return true; // unparseable mapped form — refuse
+    }
+    return false;
+  }
+  return false;
+}
+
+// Range check shared by the literal-IPv4 branch above and the IPv4 address
+// embedded in an IPv4-mapped IPv6 literal. Mirrors the server's
+// isPublicFetchIP: loopback, RFC1918, CGNAT, link-local, multicast/reserved
+// (>= 224), benchmarking and the TEST-NET documentation ranges. A malformed
+// octet is refused rather than parsed.
+function isPrivateV4(a) {
+  if (a.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true; // malformed literal — refuse
+  const [b1, b2] = a;
+  return b1 === 0 || b1 === 10 || b1 === 127 || b1 >= 224 ||
+    (b1 === 100 && b2 >= 64 && b2 <= 127) ||  // CGNAT
+    (b1 === 169 && b2 === 254) ||              // link-local
+    (b1 === 172 && b2 >= 16 && b2 <= 31) ||    // RFC1918
+    (b1 === 192 && b2 === 168) ||              // RFC1918
+    (b1 === 198 && (b2 === 18 || b2 === 19)) || // benchmarking
+    (b1 === 192 && b2 === 0) ||                // TEST-NET-1
+    (b1 === 198 && b2 === 51) ||               // TEST-NET-2
+    (b1 === 203 && b2 === 113);                // TEST-NET-3
+}
+
 // Fetches a binary image (e.g. a novel cover) through the browser so it
 // inherits site cookies such as cf_clearance. Hosts that hotlink- or
 // Cloudflare-protect their images return a 403 challenge to a plain HTTP GET,
@@ -324,6 +400,9 @@ async function fetchImage(url, params = {}) {
   try {
     return await fetchImageBackground(url);
   } catch (e) {
+    // A private-target refusal is terminal: the tab fallback would drive
+    // a real navigation into the very redirect chain just refused.
+    if (e instanceof PrivateTargetError) throw e;
     log(`fetch_image background failed (${e.message}), falling back to tab`);
     return await fetchImageViaTab(url, maxWait);
   }
@@ -343,6 +422,12 @@ async function fetchImageBackground(url) {
     let snippet = '';
     try { snippet = (await resp.text()).slice(0, 200); } catch { /* ignore */ }
     throw new Error(`HTTP ${resp.status} :: ${snippet}`);
+  }
+  // resp.url is the final (post-redirect) URL the bytes came from; the
+  // server never sees the hops, so this is the only place a redirect to a
+  // private target can be caught.
+  if (isPrivateFetchTarget(resp.url || url)) {
+    throw new PrivateTargetError(`refusing image from private/loopback target: ${resp.url || url}`);
   }
   const buffer = await resp.arrayBuffer();
   const { dataBase64 } = bytesToBase64(buffer);
@@ -384,6 +469,11 @@ async function fetchImageViaTab(url, maxWait) {
     let tabInfo;
     try { tabInfo = await chrome.tabs.get(tab.id); } catch { break; }
     if (tabInfo.status === 'complete') {
+      // The tab's final URL is what actually loaded (post-redirect).
+      if (isPrivateFetchTarget(tabInfo.url || url)) {
+        await cleanup();
+        throw new PrivateTargetError(`refusing image from private/loopback target: ${tabInfo.url || url}`);
+      }
       const isChallenge = await checkForChallenge(tab.id);
       if (isChallenge) {
         log('fetch_image tab hit Cloudflare challenge, waiting for user...');
@@ -519,6 +609,14 @@ async function fetchLivewirePage(url, params = {}) {
     try {
       const tabInfo = await chrome.tabs.get(tab.id);
       if (tabInfo.status === 'complete') {
+        // The tab's final URL is what actually loaded (post-redirect);
+        // the server validated only the URL it dispatched.
+        if (isPrivateFetchTarget(tabInfo.url || url)) {
+          try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+          challengeTabId = null;
+          challengeOrigin = null;
+          throw new PrivateTargetError(`refusing page from private/loopback target: ${tabInfo.url || url}`);
+        }
         const isChallenge = await checkForChallenge(tab.id);
         if (isChallenge) {
           log('Livewire: Cloudflare challenge detected, bringing tab to front for user...');
@@ -648,6 +746,7 @@ async function fetchLivewirePage(url, params = {}) {
       }
       await sleep(500);
     } catch (e) {
+      if (e instanceof PrivateTargetError) throw e;
       err('Livewire: error checking tab:', e);
       await sleep(1000);
     }
@@ -774,6 +873,14 @@ async function tryBackgroundFetch(url) {
       },
     });
 
+    // resp.url is the final (post-redirect) URL. The server validated only
+    // the URL it dispatched; a redirect to a literal private target must
+    // not be followed into the user's LAN, and its bytes must never travel
+    // back. Terminal: no tab fallback can make it legitimate.
+    if (isPrivateFetchTarget(resp.url || url)) {
+      throw new PrivateTargetError(`refusing page from private/loopback target: ${resp.url || url}`);
+    }
+
     if (!resp.ok) {
       log(`Background fetch returned ${resp.status} for ${url}`);
       return null;
@@ -837,6 +944,7 @@ async function tryBackgroundFetch(url) {
 
     return { html, text: '', title, url };
   } catch (e) {
+    if (e instanceof PrivateTargetError) throw e;
     log(`Background fetch error for ${url}:`, e);
     return null;
   }
@@ -874,6 +982,14 @@ async function fetchViaChallengeTab(url, maxWait) {
     try {
       const tabInfo = await chrome.tabs.get(tab.id);
       if (tabInfo.status === 'complete') {
+        // The tab's final URL is what actually loaded (post-redirect);
+        // the server validated only the URL it dispatched.
+        if (isPrivateFetchTarget(tabInfo.url || url)) {
+          try { await chrome.tabs.remove(tab.id); } catch { /* already closed */ }
+          challengeTabId = null;
+          challengeOrigin = null;
+          throw new PrivateTargetError(`refusing page from private/loopback target: ${tabInfo.url || url}`);
+        }
         const isChallenge = await checkForChallenge(tab.id);
         if (isChallenge) {
           log('Cloudflare challenge detected, waiting for user to solve it...');
@@ -932,6 +1048,7 @@ async function fetchViaChallengeTab(url, maxWait) {
       }
       await sleep(500);
     } catch (e) {
+      if (e instanceof PrivateTargetError) throw e;
       err('Error checking challenge tab:', e);
       await sleep(1000);
     }

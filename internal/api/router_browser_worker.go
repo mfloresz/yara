@@ -163,10 +163,20 @@ func (s *Server) handleBrowserWorkerWS(w http.ResponseWriter, r *http.Request) {
 		for {
 			select {
 			case <-ticker.C:
+				// Bounded like the dispatch write: a stalled peer must
+				// not park the ping forever while holding the mutex. A
+				// failed write leaves the connection corrupt, so evict
+				// and close — that is what releases everything parked on
+				// worker.mu and stops further dispatches to a dead
+				// socket.
 				worker.mu.Lock()
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				err := conn.WriteMessage(websocket.PingMessage, nil)
+				conn.SetWriteDeadline(time.Time{})
 				worker.mu.Unlock()
 				if err != nil {
+					slog.Warn("browser worker ping failed, closing connection", "workerId", worker.ID, "error", err)
+					evictWorker(worker)
 					return
 				}
 			}
@@ -399,11 +409,25 @@ func (s *Server) dispatchBrowserJob(job BrowserJob) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
+	// Bound the dispatch write. A stalled worker peer (zero TCP receive
+	// window) parks a deadline-less WriteJSON forever while holding
+	// worker.mu, wedging this sole dispatcher goroutine — the per-job
+	// safety-net timeout below is armed only after the write returns, so
+	// it never fires while the write is parked. gorilla semantics: after
+	// a write times out the connection is corrupt, so any dispatch write
+	// error also evicts the worker so the relay moves to healthy ones.
 	worker.mu.Lock()
+	worker.Conn.SetWriteDeadline(time.Now().Add(2 * time.Minute))
 	err := worker.Conn.WriteJSON(msg)
+	worker.Conn.SetWriteDeadline(time.Time{})
 	worker.mu.Unlock()
 
 	if err != nil {
+		// A failed (possibly timed-out) write leaves the connection
+		// corrupt: gorilla requires closing it. Evicting the worker also
+		// unparks everything holding worker.mu (read loop, ping ticker)
+		// and stops further dispatches to a dead socket.
+		evictWorker(worker)
 		slog.Error("failed to send job to browser worker",
 			"workerId", worker.ID, "jobId", job.Request.JobID, "error", err)
 		s.resolvePending(job.Request.JobID, &BrowserWorkerJobResult{
@@ -683,11 +707,6 @@ func CloseWorkerByTokenID(tokenID string) {
 }
 
 func (s *Server) sendWorkerMessage(worker *BrowserWorker, msgType string, payload interface{}) {
-	worker.mu.Lock()
-	defer worker.mu.Unlock()
-	if worker.Conn == nil {
-		return
-	}
 	msg := BrowserWorkerMessage{
 		Type:      msgType,
 		Timestamp: time.Now().UnixMilli(),
@@ -700,8 +719,43 @@ func (s *Server) sendWorkerMessage(worker *BrowserWorker, msgType string, payloa
 		}
 		msg.Payload = data
 	}
-	if err := worker.Conn.WriteJSON(msg); err != nil {
+	worker.mu.Lock()
+	if worker.Conn == nil {
+		worker.mu.Unlock()
+		return
+	}
+	// Bounded like the dispatch write: this runs under the same
+	// worker.mu, so an unbounded write here would wedge the caller the
+	// same way.
+	worker.Conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	err := worker.Conn.WriteJSON(msg)
+	worker.Conn.SetWriteDeadline(time.Time{})
+	// worker.mu is released BEFORE evicting: evictWorker takes
+	// browserWorkersMu.Lock(), and taking it while still holding
+	// worker.mu inverts the order countUnauthenticatedWorkers relies on
+	// (browserWorkersMu.RLock → w.mu) — an ABBA deadlock that would
+	// wedge every new WS connection and every HasBrowserWorkerForUser
+	// caller. A failed write corrupts the connection, so evict + close
+	// still happens; the close is what unparks everything else waiting
+	// on worker.mu.
+	worker.mu.Unlock()
+	if err != nil {
 		slog.Error("failed to send message to worker", "workerId", worker.ID, "type", msgType, "error", err)
+		evictWorker(worker)
+	}
+}
+
+// evictWorker removes a worker from the registry and closes its connection.
+// Used when a write fails: gorilla leaves the connection unusable after a
+// write error, and closing it is what releases every goroutine parked on the
+// worker's mutex (read loop, ping ticker, other dispatchers). It must not be
+// called while holding browserWorkersMu.
+func evictWorker(worker *BrowserWorker) {
+	browserWorkersMu.Lock()
+	delete(browserWorkers, worker.ID)
+	browserWorkersMu.Unlock()
+	if worker.Conn != nil {
+		worker.Conn.Close()
 	}
 }
 

@@ -219,6 +219,11 @@ func (s *Store) ResolveProviderAISettings(userID, providerKey string) (AISetting
 			}
 			if ok {
 				apiKey = sharedKey
+				// The shared admin key must only ever be sent to the
+				// provider's official endpoint: a user-supplied base_url
+				// override must not be able to redirect a credential the
+				// user does not own to a server of their choosing.
+				item.BaseURL = strings.TrimSpace(providerRecord.GetString("base_url"))
 			}
 		}
 		timeoutMs := item.TimeoutMs

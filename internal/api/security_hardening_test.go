@@ -273,3 +273,51 @@ func TestGlobalRateLimitBackstop(t *testing.T) {
 	}
 	t.Fatalf("expected the global rate limit to trigger within 700 requests, got %d allowed", allowed)
 }
+
+// Cookie-authenticated writes arriving as a top-level navigation are
+// refused: SameSite=Strict does not apply to same-origin form submissions,
+// so an HTML form injected into the app's own origin (stored markdown from a
+// public novel, a hostile source-site description) could otherwise ride a
+// user's session with one click. The SPA always calls the API through
+// fetch() (Sec-Fetch-Mode: cors), and requests without the header (curl,
+// scripts, older clients) are unaffected.
+func TestNavigationalWritesRejected(t *testing.T) {
+	env := newAPITestEnv(t)
+
+	nav := doRequestWithHeader(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", "Sec-Fetch-Mode", "navigate", nil)
+	assertStatus(t, nav, http.StatusForbidden)
+
+	// A write without the navigation marker is handled normally.
+	plain := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{})
+	if plain.Code == http.StatusForbidden {
+		t.Fatal("non-navigational login refused")
+	}
+
+	// GETs are never affected.
+	get := doRequestWithHeader(t, env.handler, http.MethodGet, "/api/v1/providers", "", "Sec-Fetch-Mode", "navigate", nil)
+	assertStatus(t, get, http.StatusUnauthorized)
+
+	// The worker-auth consent page is a real server-rendered form and stays
+	// exempt: its single-use state token is the CSRF defense there.
+	exempt := doRequestWithHeader(t, env.handler, http.MethodPost, workerAuthApprovePath, "", "Sec-Fetch-Mode", "navigate", nil)
+	assertStatus(t, exempt, http.StatusUnauthorized)
+}
+
+// worker_tokens.owner is the identity anchor of a worker token; Hidden keeps
+// it out of native-API request payloads for non-superusers even though the
+// record API itself is answered 404, so the store layer stays the only
+// writer.
+func TestWorkerTokensOwnerFieldHidden(t *testing.T) {
+	env := newAPITestEnv(t)
+	coll, err := env.store.App.FindCollectionByNameOrId("worker_tokens")
+	if err != nil {
+		t.Fatalf("find worker_tokens collection: %v", err)
+	}
+	owner := coll.Fields.GetByName("owner")
+	if owner == nil {
+		t.Fatal("worker_tokens has no owner field")
+	}
+	if !owner.GetHidden() {
+		t.Fatal("worker_tokens.owner is not Hidden")
+	}
+}

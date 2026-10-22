@@ -339,3 +339,108 @@ func TestApplySiteHelpersSkipsUnrelatedResponses(t *testing.T) {
 		t.Errorf("non-registered host fetched a font: %v", assets.calls)
 	}
 }
+
+// buildRawWOFF2 assembles a WOFF2 container around a hand-built table
+// directory and a real brotli payload, so tests can lie about table lengths
+// and feed expansion bombs without needing a valid font.
+func buildRawWOFF2(t *testing.T, dir []byte, payload []byte) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	w := brotli.NewWriter(&compressed)
+	if _, err := w.Write(payload); err != nil {
+		t.Fatalf("brotli write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("brotli close: %v", err)
+	}
+	font := []byte("wOF2")
+	font = binary.BigEndian.AppendUint32(font, 0x00010000)               // flavor
+	font = binary.BigEndian.AppendUint32(font, 0)                        // length (unused)
+	font = binary.BigEndian.AppendUint16(font, 1)                        // numTables
+	font = binary.BigEndian.AppendUint16(font, 0)                        // reserved
+	font = binary.BigEndian.AppendUint32(font, 0)                        // totalSfntSize
+	font = binary.BigEndian.AppendUint32(font, uint32(compressed.Len())) // totalCompressedSize
+	font = binary.BigEndian.AppendUint16(font, 1)                        // majorVersion
+	font = binary.BigEndian.AppendUint16(font, 0)                        // minorVersion
+	font = append(font, bytes.Repeat([]byte{0}, 20)...)                  // meta + priv blocks
+	font = append(font, dir...)
+	font = append(font, compressed.Bytes()...)
+	return font
+}
+
+// The compressed input is attacker-sized but the expansion is not: a brotli
+// bomb must be refused at the decompression ceiling, before io.ReadAll can
+// buffer gigabytes.
+func TestDecodeWOFF2CapsBrotliExpansion(t *testing.T) {
+	dir := append([]byte{0x00}, appendBase128(nil, 4)...) // cmap, tiny declared length
+	font := buildRawWOFF2(t, dir, make([]byte, 8<<20))    // 8 MiB of zeros compresses to KBs
+	if _, err := parseWOFF2Tables(font); err == nil || !strings.Contains(err.Error(), "decompresses past") {
+		t.Fatalf("brotli bomb not refused at the ceiling: %v", err)
+	}
+}
+
+// A directory entry declaring a length with its high bit set must not slip
+// past the bounds check via int truncation on 32-bit builds.
+func TestDecodeWOFF2RejectsOverlongTableLength(t *testing.T) {
+	dir := append([]byte{0x00}, appendBase128(nil, 0x80000010)...)
+	font := buildRawWOFF2(t, dir, []byte{1, 2, 3, 4})
+	if _, err := parseWOFF2Tables(font); err == nil || !strings.Contains(err.Error(), "overruns") {
+		t.Fatalf("overlong table length not refused: %v", err)
+	}
+}
+
+// cmap format 4 requires ordered, non-overlapping segments. Without that
+// validation a hostile table can repeat full-BMP segments thousands of times
+// and drive ~2^31 inner-loop iterations from a ~300 KB decompressed font.
+func TestParseCmapFormat4RejectsBadSegments(t *testing.T) {
+	buildCmap := func(segments [][2]uint16) []byte {
+		sub := []byte{}
+		sub = binary.BigEndian.AppendUint16(sub, 4) // format
+		sub = binary.BigEndian.AppendUint16(sub, 0) // length (unchecked by the parser)
+		sub = binary.BigEndian.AppendUint16(sub, 0) // language
+		sub = binary.BigEndian.AppendUint16(sub, uint16(len(segments)*2))
+		sub = append(sub, make([]byte, 6)...) // searchRange, entrySelector, rangeShift
+		for _, s := range segments {
+			sub = binary.BigEndian.AppendUint16(sub, s[1]) // endCode
+		}
+		sub = binary.BigEndian.AppendUint16(sub, 0) // reservedPad
+		for _, s := range segments {
+			sub = binary.BigEndian.AppendUint16(sub, s[0]) // startCode
+		}
+		for range segments {
+			sub = binary.BigEndian.AppendUint16(sub, 1) // idDelta
+		}
+		for range segments {
+			sub = binary.BigEndian.AppendUint16(sub, 0) // idRangeOffset
+		}
+		cmap := []byte{}
+		cmap = binary.BigEndian.AppendUint16(cmap, 0) // version
+		cmap = binary.BigEndian.AppendUint16(cmap, 1) // numTables
+		cmap = binary.BigEndian.AppendUint16(cmap, 3) // platformID
+		cmap = binary.BigEndian.AppendUint16(cmap, 1) // encodingID
+		cmap = binary.BigEndian.AppendUint32(cmap, 12)
+		return append(cmap, sub...)
+	}
+
+	good, err := parseCmapFormat4(buildCmap([][2]uint16{{0x4E00, 0x4E01}, {0xFFFF, 0xFFFF}}))
+	if err != nil {
+		t.Fatalf("valid cmap rejected: %v", err)
+	}
+	if len(good) != 2 {
+		t.Fatalf("expected 2 mapped runes, got %d", len(good))
+	}
+
+	hostile := make([][2]uint16, 1000)
+	for i := range hostile {
+		hostile[i] = [2]uint16{0x0000, 0xFFFF}
+	}
+	for name, segs := range map[string][][2]uint16{
+		"inverted segment": {{0x4E10, 0x4E00}, {0xFFFF, 0xFFFF}},
+		"overlapping":      {{0x4E00, 0x4E10}, {0x4E05, 0x4E20}},
+		"repeated BMP":     hostile,
+	} {
+		if _, err := parseCmapFormat4(buildCmap(segs)); err == nil {
+			t.Errorf("%s: hostile cmap accepted", name)
+		}
+	}
+}

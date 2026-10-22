@@ -74,6 +74,73 @@ func TestFetchRefusedURLIsNotRelayedToWorker(t *testing.T) {
 	}
 }
 
+// The same invariant must hold for a refusal the redirect policy raises
+// mid-flight: re-fetching the refused chain through the user's browser would
+// re-run exactly the hop the guard just blocked, from a machine with more
+// internal reach than the server.
+func TestRedirectRefusalIsNotRelayedToWorker(t *testing.T) {
+	env := newAPITestEnv(t)
+	// Every request answers with a redirect to loopback, so the direct
+	// client's per-hop policy refuses it before any body is read.
+	env.server.ParserHTTPClientFactory = func(string) *http.Client {
+		return &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Status:     "302 Found",
+					Header:     http.Header{"Location": []string{"http://127.0.0.1/secret"}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			}),
+			CheckRedirect: env.server.siteRedirectPolicy(),
+		}
+	}
+	fakeWorker(t, "user-1")
+
+	var ops []string
+	env.server.BrowserJobEnqueuer = recordingEnqueuer(&ops, map[string]string{
+		"/secret": "<html><body>leaked</body></html>",
+	}, nil)
+
+	f := newParserFetcher(env.server, "user-1", false, nil)
+	_, err := f.Fetch(context.Background(), "https://redir.example/book/1")
+	if err == nil {
+		t.Fatal("fetch through a redirect to loopback succeeded")
+	}
+	if !isSiteFetchRefused(err) {
+		t.Fatalf("redirect refusal not surfaced as siteFetchRefusedError: %v", err)
+	}
+	if len(ops) != 0 {
+		t.Fatalf("redirect refusal was relayed to the browser worker: %v", ops)
+	}
+}
+
+// The default parser client dials through a Control hook that re-checks the
+// address after DNS resolution: a host that passed the resolver guard can
+// still rebind to a private target before the connection is made, and every
+// dial — initial request and redirect hops alike — goes through this hook.
+func TestParserHTTPClientRefusesPrivateDial(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(mock.Close)
+
+	guarded := &Server{Cfg: &config.Config{}}
+	resp, err := guarded.parserHTTPClient("").Get(mock.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("dial to a loopback target allowed with the guard on")
+	}
+
+	open := &Server{Cfg: &config.Config{ParsersAllowPrivateNets: true}}
+	resp, err = open.parserHTTPClient("").Get(mock.URL)
+	if err != nil {
+		t.Fatalf("bypass enabled but loopback dial refused: %v", err)
+	}
+	resp.Body.Close()
+}
+
 // Concurrent waiters for the same host must serialize: each reserves its slot
 // under the lock, so the actual fetches stay spaced by the minimum delay
 // instead of all firing at once.

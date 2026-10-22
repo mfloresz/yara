@@ -65,6 +65,22 @@ export function markdownToHtml(markdown: string, images?: ChapterImage[]): strin
   if (!markdown) return "";
   const normalized = resolveImageTokens(markdown.replace(/^•••\s*$/gm, "***"), images);
   const rawHtml = marked.parse(normalized) as string;
-  const sanitized = DOMPurify.sanitize(rawHtml);
+  // The reader renders untrusted stored content: source-site text and
+  // descriptions (imported verbatim), member-authored chapters of public
+  // novels, and EPUB text. DOMPurify's default allow-list keeps
+  // <style>/<form>/<input>/<button> and never inspects style attribute
+  // values; combined with the app CSP (style-src 'unsafe-inline',
+  // form-action 'self') and the cookie-authenticated API (no CSRF token),
+  // any surviving injection becomes persistent UI redressing plus
+  // one-click same-origin session riding (SameSite=Strict does not apply
+  // to forms injected into the app's own origin — the server also rejects
+  // Sec-Fetch-Mode: navigate writes). Restrict to content-only markup: no
+  // style elements/attributes, no form controls or form-aiming
+  // attributes. Task-list checkboxes (marked renders
+  // <input type=checkbox disabled>) stay inert without a <form>.
+  const sanitized = DOMPurify.sanitize(rawHtml, {
+    FORBID_TAGS: ["style", "form"],
+    FORBID_ATTR: ["style", "action", "method", "formaction", "enctype"],
+  });
   return enhanceFootnotes(sanitized);
 }

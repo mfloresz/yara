@@ -744,6 +744,9 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 		if err := s.ensureField(existing, &core.DateField{Name: "expires_at"}); err != nil {
 			return nil, err
 		}
+		if err := s.migrateWorkerTokensOwnerHidden(existing); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(WorkerTokensCollection)
@@ -753,7 +756,12 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 	c.CreateRule = nil
 	c.UpdateRule = types.Pointer(ownerOnly)
 	c.DeleteRule = types.Pointer(ownerOnly)
-	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	// Hidden strips the field from native-API request payloads for
+	// non-superusers, making the identity-anchoring owner immutable through
+	// the record API even if the /api/collections block is ever relaxed; the
+	// Go store layer (ValidateWorkerToken, CreateWorkerToken, Revoke,
+	// Delete) is unaffected.
+	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1, Hidden: true})
 	c.Fields.Add(&core.TextField{Name: "extension_id", Required: true, Max: 128})
 	c.Fields.Add(&core.TextField{Name: "token_hash", Required: true, Max: 128})
 	c.Fields.Add(&core.TextField{Name: "label", Max: 250})
@@ -767,6 +775,19 @@ func (s *Store) ensureWorkerTokensCollection(users *core.Collection) (*core.Coll
 		return nil, err
 	}
 	return c, nil
+}
+
+// migrateWorkerTokensOwnerHidden marks worker_tokens.owner as Hidden on
+// pre-existing collections (same pattern as users.role/users.blocked), so a
+// token's owner stays immutable through the record API on installs whose
+// collection was created before Hidden was set in code.
+func (s *Store) migrateWorkerTokensOwnerHidden(c *core.Collection) error {
+	owner := c.Fields.GetByName("owner")
+	if owner == nil || owner.GetHidden() {
+		return nil
+	}
+	owner.SetHidden(true)
+	return s.App.Save(c)
 }
 
 // adminOnlyRule is the PocketBase collection rule used for admin-managed
