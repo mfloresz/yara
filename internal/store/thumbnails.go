@@ -71,15 +71,15 @@ func (s *Store) attachCoverThumbnail(recordID string, coverData []byte) {
 		slog.Warn("failed to generate cover thumbnail", "novelId", recordID, "error", err)
 		return
 	}
-	collection, err := s.App.FindCollectionByNameOrId(NovelsCollection)
+	// The record may belong to either media tree (novels or comics); both
+	// carry the same cover/thumbnail file fields.
+	record, err := s.App.FindRecordById(NovelsCollection, recordID)
 	if err != nil {
-		slog.Warn("failed to find novels collection for thumbnail", "novelId", recordID, "error", err)
-		return
-	}
-	record, err := s.App.FindRecordById(collection, recordID)
-	if err != nil {
-		slog.Warn("failed to find novel record for thumbnail", "novelId", recordID, "error", err)
-		return
+		record, err = s.App.FindRecordById(ComicsCollection, recordID)
+		if err != nil {
+			slog.Warn("failed to find record for thumbnail", "recordId", recordID, "error", err)
+			return
+		}
 	}
 	thumbFile, err := filesystem.NewFileFromBytes(thumbBlob, thumbnailFileNameForBlob(thumbBlob))
 	if err != nil {

@@ -277,19 +277,19 @@ func TestValidateSiteFetchURL(t *testing.T) {
 func TestValidateSiteFetchTargetBrowserCanonicalForms(t *testing.T) {
 	s := &Server{Cfg: &config.Config{}}
 	for _, raw := range []string{
-		"http://127.1/x",                 // short form → 127.0.0.1
-		"http://127.0.1/x",               // three-part form → 127.0.0.1
-		"http://0x7f.1/x",                // hex → 127.0.0.1
-		"http://2130706433/x",            // bare integer → 127.0.0.1
-		"http://0177.0.0.1/x",            // octal → 127.0.0.1
-		"http://127.000.000.001/x",       // leading-zero octal → 127.0.0.1
-		"http://127.0.0.1./x",            // trailing dot still dials loopback
-		"http://127.1./x",                // short form + trailing dot
-		"http://0xa9.0xfe.0xa9.0xfe/x",   // 169.254.169.254 in hex
-		"http://127。0。0。1/x",            // ideographic dot U+3002
-		"http://[fe80::1]/x",             // link-local IPv6 literal
-		"http://[fe80::1%25eth0]/x",      // zone identifier stripped → still link-local
-		"http://[::ffff:127.0.0.1]/x",    // IPv4-mapped loopback
+		"http://127.1/x",                    // short form → 127.0.0.1
+		"http://127.0.1/x",                  // three-part form → 127.0.0.1
+		"http://0x7f.1/x",                   // hex → 127.0.0.1
+		"http://2130706433/x",               // bare integer → 127.0.0.1
+		"http://0177.0.0.1/x",               // octal → 127.0.0.1
+		"http://127.000.000.001/x",          // leading-zero octal → 127.0.0.1
+		"http://127.0.0.1./x",               // trailing dot still dials loopback
+		"http://127.1./x",                   // short form + trailing dot
+		"http://0xa9.0xfe.0xa9.0xfe/x",      // 169.254.169.254 in hex
+		"http://127。0。0。1/x",                // ideographic dot U+3002
+		"http://[fe80::1]/x",                // link-local IPv6 literal
+		"http://[fe80::1%25eth0]/x",         // zone identifier stripped → still link-local
+		"http://[::ffff:127.0.0.1]/x",       // IPv4-mapped loopback
 		"http://[::ffff:169.254.169.254]/x", // IPv4-mapped link-local
 	} {
 		if err := s.validateSiteFetchTarget(raw); err == nil {
@@ -334,12 +334,12 @@ func TestParseBrowserIPv4(t *testing.T) {
 // browserCanonicalHost applies the non-IP normalization before classification.
 func TestBrowserCanonicalHost(t *testing.T) {
 	for host, want := range map[string]string{
-		"EXAMPLE.com.":      "example.com",
-		"127.0.0.1.":        "127.0.0.1",
-		"fe80::1%eth0":      "fe80::1",
-		"127。0。0。1":         "127.0.0.1",
-		"ｌｏｃａｌｈｏｓｔ":        "localhost",
-		"example.com":       "example.com",
+		"EXAMPLE.com.":       "example.com",
+		"127.0.0.1.":         "127.0.0.1",
+		"fe80::1%eth0":       "fe80::1",
+		"127。0。0。1":          "127.0.0.1",
+		"ｌｏｃａｌｈｏｓｔ":          "localhost",
+		"example.com":        "example.com",
 		"host\\path.example": "host",
 	} {
 		if got := browserCanonicalHost(host); got != want {

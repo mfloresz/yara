@@ -266,9 +266,11 @@ func comicChapterSummaryFromRecord(record *core.Record) ComicChapterSummary {
 // unicode-aware trim), so content holding only tabs/newlines would report
 // has_* = true where the previous strings.TrimSpace check reported false;
 // whitespace-only chapter content does not occur in practice.
-const comicChapterSummaryColumns = `id, comic, chapter_order, position, excluded,
-	title, status, error_message, page_count,
-	created, updated`
+var comicChapterSummaryColumns = []string{
+	"id", "comic", "chapter_order", "position", "excluded",
+	"title", "status", "error_message", "page_count",
+	"created", "updated",
+}
 
 // comicChapterSummaryRow mirrors comicChapterSummaryColumns for dbx struct scanning.
 // Numerics are scanned as float64 because SQLite NUMERIC values come back
@@ -312,8 +314,8 @@ func (row comicChapterSummaryRow) summary() ComicChapterSummary {
 // (AND, not fexpr &&) with {:name} placeholders bound through params.
 func (s *Store) findComicChapterSummaries(where string, limit, offset int, params dbx.Params, orderBys ...string) ([]ComicChapterSummary, error) {
 	query := s.App.DB().
-		Select(comicChapterSummaryColumns).
-		From("chapters").
+		Select(comicChapterSummaryColumns...).
+		From(ComicChaptersCollection).
 		Where(dbx.NewExp(where, params)).
 		OrderBy(orderBys...)
 	if limit > 0 {

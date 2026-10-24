@@ -554,6 +554,9 @@ func mapImportCoreError(e *core.RequestEvent, err error) error {
 	if errors.Is(err, errNovelBusy) {
 		return e.Error(http.StatusConflict, novelBusyMessage, nil)
 	}
+	if errors.Is(err, errComicBusy) {
+		return e.Error(http.StatusConflict, comicBusyMessage, nil)
+	}
 	return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
 }
 

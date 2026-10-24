@@ -8,7 +8,8 @@ import (
 )
 
 // TestV1NovelListEnvelope verifies the v1 list response shape:
-//   {data: [...], meta: {total, page, per_page, has_more}, links: {self, next}}
+//
+//	{data: [...], meta: {total, page, per_page, has_more}, links: {self, next}}
 func TestV1NovelListEnvelope(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-v1-envelope@example.com", "secret123", "Alice")

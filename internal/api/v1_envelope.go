@@ -45,9 +45,9 @@ type v1Links struct {
 }
 
 type v1ErrorObj struct {
-	Code    string           `json:"code"`
-	Message string           `json:"message"`
-	Details []v1ErrorDetail  `json:"details,omitempty"`
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details []v1ErrorDetail `json:"details,omitempty"`
 }
 
 type v1ErrorDetail struct {

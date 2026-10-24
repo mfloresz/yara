@@ -196,7 +196,7 @@ func TestSequentialWhenConcurrencyDisabled(t *testing.T) {
 		t.Fatalf("set key: %v", err)
 	}
 	if _, err := env.store.SaveAppSettings(alice.User.ID, store.AppSettings{
-		AI: store.AISettings{Provider: "venice", Model: "deepseek-v4-flash", BaseURL: "https://api.venice.ai/api/v1", TimeoutMs: 120000, Concurrency: 1},
+		AI:          store.AISettings{Provider: "venice", Model: "deepseek-v4-flash", BaseURL: "https://api.venice.ai/api/v1", TimeoutMs: 120000, Concurrency: 1},
 		Translation: store.DefaultTranslationDefaults,
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)

@@ -171,6 +171,21 @@ func (s *Server) buildJobRunPlan(job *store.Job) (*jobRunPlan, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown job operation %q", job.Operation)
 	}
+	if job.ComicID != "" {
+		// Comic jobs never touch the AI config; they only need the comic
+		// exclusivity key and, for web jobs, the origin keys.
+		plan := &jobRunPlan{jobID: job.ID, class: class, keys: []string{"comic:" + job.ComicID}}
+		if class == webClass {
+			origins, err := webJobOrigins(job)
+			if err != nil {
+				return nil, err
+			}
+			for _, o := range origins {
+				plan.keys = append(plan.keys, "web:"+o)
+			}
+		}
+		return plan, nil
+	}
 	plan := &jobRunPlan{jobID: job.ID, class: class, keys: []string{"novel:" + job.NovelID}}
 	switch class {
 	case webClass:
@@ -531,6 +546,26 @@ func (s *Server) onJobCancelled(jobID string) {
 // under the per-novel lock; on success it returns the unlock func, which the
 // caller must hold until the job has been created and enqueued. On conflict
 // it returns errNovelBusy; on store failure the error from the check.
+// errComicBusy mirrors errNovelBusy for the comics tree.
+var errComicBusy = errors.New("comic has an active job")
+
+const comicBusyMessage = "Ya hay otro trabajo en curso para este cómic. Espera a que termine e inténtalo de nuevo."
+
+// acquireComicJobSlot is the comics flavour of acquireNovelJobSlot.
+func (s *Server) acquireComicJobSlot(comicID string) (func(), error) {
+	unlock := s.lockComic(comicID)
+	active, err := s.Store.HasActiveJobsForComic(comicID)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if active {
+		unlock()
+		return nil, errComicBusy
+	}
+	return unlock, nil
+}
+
 func (s *Server) acquireNovelJobSlot(novelID string) (func(), error) {
 	unlock := s.lockNovel(novelID)
 	active, err := s.Store.HasActiveJobsForNovel(novelID)

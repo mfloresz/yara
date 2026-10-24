@@ -210,13 +210,13 @@ func chapterRecords(chapters []store.Chapter) []map[string]any {
 // authenticated serve route; the frontend renders it directly in <img> tags.
 func imageRecord(novelID string, i store.NovelImage) map[string]any {
 	return map[string]any{
-		"id":       i.ID,
+		"id":        i.ID,
 		"chapterId": i.ChapterID,
-		"token":    i.ImageToken(),
-		"num":      i.Num,
-		"alt":      i.Alt,
-		"mime":     i.MimeType,
-		"url":      "/api/v1/novels/" + novelID + "/images/" + i.ID,
+		"token":     i.ImageToken(),
+		"num":       i.Num,
+		"alt":       i.Alt,
+		"mime":      i.MimeType,
+		"url":       "/api/v1/novels/" + novelID + "/images/" + i.ID,
 	}
 }
 
@@ -353,5 +353,109 @@ func epubRecord(e store.Epub) map[string]any {
 		"url":           e.URL,
 		"createdAt":     e.CreatedAt,
 		"updatedAt":     e.UpdatedAt,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Comics shapers (mirror the novel shapers for the comics media tree).
+// ---------------------------------------------------------------------------
+
+func (s *Server) comicResponse(c *store.Comic) map[string]any {
+	var tags any
+	if err := json.Unmarshal([]byte(c.Tags), &tags); err != nil {
+		tags = []any{}
+	}
+	var sourceDescription any
+	if strings.TrimSpace(c.SourceDescription) != "" {
+		sourceDescription = c.SourceDescription
+	}
+	var targetDescription any
+	if strings.TrimSpace(c.TargetDescription) != "" {
+		targetDescription = c.TargetDescription
+	}
+	m := map[string]any{
+		"id": c.ID, "ownerId": c.OwnerID,
+		"sourceLanguage": c.SourceLanguage, "targetLanguage": c.TargetLanguage,
+		"sourceTitle": c.SourceTitle, "sourceAuthor": c.SourceAuthor, "sourceDescription": sourceDescription,
+		"sourceSeries": c.SourceSeries, "sourceNumber": c.SourceNumber,
+		"targetTitle": c.TargetTitle, "targetAuthor": c.TargetAuthor, "targetDescription": targetDescription,
+		"targetSeries": c.TargetSeries, "targetNumber": c.TargetNumber,
+		"notes": c.Notes, "url": c.URL, "status": c.Status, "tags": tags,
+		"coverPath": c.CoverPath, "thumbnailPath": c.ThumbnailPath,
+		"isPublic":     c.IsPublic,
+		"chapterCount": c.ChapterCount, "downloadedCount": c.DownloadedCount,
+		"maxChapterOrder": c.MaxChapterOrder,
+		"lastCheckedAt":   c.LastCheckedAt, "lastCheckNewChapters": c.LastCheckNewChapters,
+		"lastReadAt": c.LastReadAt,
+		"createdAt":  c.CreatedAt, "updatedAt": c.UpdatedAt,
+	}
+	m["canUpdate"] = s.parserSupportsURL(c.OwnerID, c.URL)
+	m["requiresBrowser"] = s.parserURLRequiresBrowser(c.OwnerID, c.URL)
+	return m
+}
+
+// comicChapterSummaryRecord shapes one chapter list entry: no page bodies,
+// just the counters and status the list renders.
+func comicChapterSummaryRecord(ch store.ComicChapterSummary) map[string]any {
+	return map[string]any{
+		"id":           ch.ID,
+		"comicId":      ch.ComicID,
+		"chapterOrder": ch.ChapterOrder,
+		"position":     ch.Position,
+		"excluded":     ch.Excluded,
+		"title":        ch.Title,
+		"status":       ch.Status,
+		"errorMessage": ch.ErrorMessage,
+		"pageCount":    ch.PageCount,
+		"hasPages":     ch.HasPages,
+		"createdAt":    ch.CreatedAt,
+		"updatedAt":    ch.UpdatedAt,
+	}
+}
+
+func comicChapterSummaryRecords(chapters []store.ComicChapterSummary) []map[string]any {
+	out := make([]map[string]any, 0, len(chapters))
+	for _, ch := range chapters {
+		out = append(out, comicChapterSummaryRecord(ch))
+	}
+	return out
+}
+
+// comicChapterRecord shapes a full chapter with its pages (the comic analogue
+// of the novel chapter's content bodies).
+func comicChapterRecord(ch store.ComicChapter, pages []store.ComicPage) map[string]any {
+	m := comicChapterSummaryRecord(store.ComicChapterSummary{
+		ID: ch.ID, ComicID: ch.ComicID, ChapterOrder: ch.ChapterOrder,
+		Position: ch.Position, Excluded: ch.Excluded, Title: ch.Title,
+		Status: ch.Status, ErrorMessage: ch.ErrorMessage,
+		PageCount: ch.PageCount, HasPages: ch.HasPages,
+		CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+	})
+	m["sourceKey"] = ch.SourceKey
+	m["pages"] = comicPageRecords(pages)
+	return m
+}
+
+func comicPageRecords(pages []store.ComicPage) []map[string]any {
+	out := make([]map[string]any, 0, len(pages))
+	for _, p := range pages {
+		out = append(out, map[string]any{
+			"id":        p.ID,
+			"chapterId": p.ChapterID,
+			"comicId":   p.ComicID,
+			"pageOrder": p.PageOrder,
+			"sourceUrl": p.SourceURL,
+			"url":       p.URL,
+		})
+	}
+	return out
+}
+
+func comicChapterStatsRecord(stats *store.ComicChapterStats) map[string]any {
+	return map[string]any{
+		"totalChapters":      stats.TotalChapters,
+		"downloadedChapters": stats.DownloadedChapters,
+		"failedChapters":     stats.FailedChapters,
+		"maxChapterOrder":    stats.MaxChapterOrder,
 	}
 }

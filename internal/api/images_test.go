@@ -7,10 +7,10 @@ import (
 
 func TestValidateSegmentTokens(t *testing.T) {
 	cases := []struct {
-		name      string
-		original  string
+		name       string
+		original   string
 		translated string
-		wantErr   bool
+		wantErr    bool
 	}{
 		{
 			name:       "tokens preserved verbatim",

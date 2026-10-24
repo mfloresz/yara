@@ -70,15 +70,15 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job, novel *sto
 	baseSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, baseValues))
 	titleSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Title.SystemPrompt, baseValues))
 	return &jobContext{
-		jobID:            job.ID,
-		runCtx:           ctx,
-		novel:            novel,
-		chapters:         chapters,
-		cfg:              cfg,
-		provider:         provider,
-		titleProvider:    titleProvider,
-		glossaryText:     glossaryText,
-		baseSystemPrompt: baseSystemPrompt,
+		jobID:             job.ID,
+		runCtx:            ctx,
+		novel:             novel,
+		chapters:          chapters,
+		cfg:               cfg,
+		provider:          provider,
+		titleProvider:     titleProvider,
+		glossaryText:      glossaryText,
+		baseSystemPrompt:  baseSystemPrompt,
 		titleSystemPrompt: titleSystemPrompt,
 	}, nil
 }

@@ -119,9 +119,9 @@ func RunParserCheck(cfg *config.Config) int {
 		return 1
 	}
 	preview := map[string]any{
-		"url":    first.URL,
-		"title":  chapter.Title,
-		"media":  script.Media(),
+		"url":   first.URL,
+		"title": chapter.Title,
+		"media": script.Media(),
 	}
 	if script.Media() == parserhost.MediaComic {
 		preview["pageCount"] = len(chapter.Pages)

@@ -25,7 +25,7 @@ func TestDiffNovelSnapshotMatchesOnSourceKey(t *testing.T) {
 		map[string]bool{"https://site/a": true},
 		map[int]bool{1: true},
 		map[string]bool{"Chapter 3": true},
-			false,
+		false,
 	)
 	if len(newChapters) != 2 {
 		t.Fatalf("expected 2 new chapters, got %d (%+v)", len(newChapters), newChapters)
@@ -53,7 +53,7 @@ func TestDiffNovelSnapshotFallsBackToTitleAndOrder(t *testing.T) {
 		map[string]bool{},              // no keys stored at all
 		map[int]bool{1: true, 2: true}, // orders 1-2 already downloaded
 		map[string]bool{},              // and no stored titles to match
-			false,
+		false,
 	)
 	if len(newChapters) != 1 || newChapters[0].Title != "Chapter 3" {
 		t.Fatalf("expected only Chapter 3 to be new, got %+v", newChapters)

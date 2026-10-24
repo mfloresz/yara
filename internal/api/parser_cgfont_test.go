@@ -84,9 +84,9 @@ func buildTestWOFF2(t *testing.T, slots map[rune]rune) []byte {
 	// 0xFFFF terminator segment. Every array carries segCount entries.
 	segCount := len(glyphs) + 1
 	sub := []byte{}
-	sub = binary.BigEndian.AppendUint16(sub, 4)  // format
-	sub = binary.BigEndian.AppendUint16(sub, 0)  // length, patched below
-	sub = binary.BigEndian.AppendUint16(sub, 0)  // language
+	sub = binary.BigEndian.AppendUint16(sub, 4) // format
+	sub = binary.BigEndian.AppendUint16(sub, 0) // length, patched below
+	sub = binary.BigEndian.AppendUint16(sub, 0) // language
 	sub = binary.BigEndian.AppendUint16(sub, uint16(segCount*2))
 	sub = binary.BigEndian.AppendUint16(sub, 0) // searchRange
 	sub = binary.BigEndian.AppendUint16(sub, 0) // entrySelector
@@ -156,12 +156,12 @@ func buildTestWOFF2(t *testing.T, slots map[rune]rune) []byte {
 	for i := 0; i < nReal; i++ {
 		s0 = binary.BigEndian.AppendUint16(s0, 1)
 	}
-	s1 := bytes.Repeat([]byte{0x01}, nReal)               // nPoints: one per contour
-	s2 := bytes.Repeat([]byte{0x0B}, nReal)               // flags: flag 11 → 1 coord byte
-	s3 := bytes.Repeat([]byte{0x00, 0x00}, nReal)         // coords (0,0) + empty instructions
-	s4 := []byte{}                                        // composites: none
-	s5 := append(bboxBitmap, bboxes...)                   // explicit bboxes
-	s6 := bytes.Repeat([]byte{0x00}, nReal)               // instruction bytes
+	s1 := bytes.Repeat([]byte{0x01}, nReal)       // nPoints: one per contour
+	s2 := bytes.Repeat([]byte{0x0B}, nReal)       // flags: flag 11 → 1 coord byte
+	s3 := bytes.Repeat([]byte{0x00, 0x00}, nReal) // coords (0,0) + empty instructions
+	s4 := []byte{}                                // composites: none
+	s5 := append(bboxBitmap, bboxes...)           // explicit bboxes
+	s6 := bytes.Repeat([]byte{0x00}, nReal)       // instruction bytes
 	glyf := []byte{}
 	glyf = binary.BigEndian.AppendUint16(glyf, 0) // transformed version
 	glyf = binary.BigEndian.AppendUint16(glyf, 0) // optionFlags

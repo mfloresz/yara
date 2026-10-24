@@ -75,12 +75,12 @@ func (s *Server) saveRefinedChapter(jc *jobContext, chapter *store.Chapter, base
 func buildRefinePrompt(cfg resolvedJobConfig, novel *store.Novel, chapter *store.Chapter, current string) (systemPrompt, userPrompt string) {
 	glossaryText := formatGlossary(cfg.Glossary)
 	values := map[string]string{
-		"{SOURCE_LANG}": novel.SourceLanguage,
-		"{TARGET_LANG}": novel.TargetLanguage,
-		"{GLOSSARY}":    glossaryText,
-		"{ORIGINAL}":      chapter.OriginalContent,
-		"{ORIGINAL_TEXT}":  chapter.OriginalContent,
-		"{TRANSLATION}":   current,
+		"{SOURCE_LANG}":      novel.SourceLanguage,
+		"{TARGET_LANG}":      novel.TargetLanguage,
+		"{GLOSSARY}":         glossaryText,
+		"{ORIGINAL}":         chapter.OriginalContent,
+		"{ORIGINAL_TEXT}":    chapter.OriginalContent,
+		"{TRANSLATION}":      current,
 		"{TRANSLATION_TEXT}": current,
 	}
 	systemPrompt = strings.TrimSpace(fillPrompt(cfg.Prompts.Refine.SystemPrompt, values))
