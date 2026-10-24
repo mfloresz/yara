@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -91,14 +92,15 @@ func RunParserCheck(cfg *config.Config) int {
 
 	out := map[string]any{
 		"parser": script.Name(),
+		"media":  script.Media(),
 		"url":    cfg.CheckURL,
 		"novel": map[string]any{
-			"title":       toc.Novel.Title,
-			"author":      toc.Novel.Author,
-			"description": toc.Novel.Description,
-			"coverUrl":    toc.Novel.CoverURL,
-			"language":    toc.Novel.Language,
-			"tags":        toc.Novel.Tags,
+			"title":       toc.Series.Title,
+			"author":      toc.Series.Author,
+			"description": toc.Series.Description,
+			"coverUrl":    toc.Series.CoverURL,
+			"language":    toc.Series.Language,
+			"tags":        toc.Series.Tags,
 		},
 		"chapters": chapters,
 	}
@@ -116,12 +118,23 @@ func RunParserCheck(cfg *config.Config) int {
 		printCheckError("chapter", err)
 		return 1
 	}
-	out["chapterPreview"] = map[string]any{
-		"url":          first.URL,
-		"title":        chapter.Title,
-		"contentChars": len(chapter.ContentHTML),
-		"contentHtml":  truncateForDisplay(chapter.ContentHTML),
+	preview := map[string]any{
+		"url":    first.URL,
+		"title":  chapter.Title,
+		"media":  script.Media(),
 	}
+	if script.Media() == parserhost.MediaComic {
+		preview["pageCount"] = len(chapter.Pages)
+		pages := chapter.Pages
+		if len(pages) > 10 {
+			pages = pages[:10]
+		}
+		preview["pagesPreview"] = pages
+	} else {
+		preview["contentChars"] = len(chapter.ContentHTML)
+		preview["contentHtml"] = truncateForDisplay(chapter.ContentHTML)
+	}
+	out["chapterPreview"] = preview
 
 	encoded, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -203,6 +216,41 @@ func (f *checkFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.Fe
 		return nil, herr
 	}
 	return result, nil
+}
+
+// PostForm mirrors the server path's form POST for ctx.postForm in check
+// mode: direct HTTP, same headers, no worker relay.
+func (f *checkFetcher) PostForm(ctx context.Context, rawURL string, form map[string]string) (*parserhost.FetchResult, error) {
+	values := url.Values{}
+	for k, v := range form {
+		values.Set(k, v)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	applySiteHeaders(req)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("posting to %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rawURL, err)
+	}
+	body = decodeChineseCharset(body, resp.Header.Get("Content-Type"))
+	finalURL := rawURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d posting to %s", resp.StatusCode, rawURL)
+	}
+	return &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}, nil
 }
 
 // fetchSiteAsset backs the hybrid response helpers in check mode. Deliberately

@@ -355,12 +355,12 @@ func (s *Server) fetchSourceSnapshot(ctx context.Context, userID, rawURL string)
 		}
 	}
 	snapshot := &sourceSnapshot{
-		Title:       toc.Novel.Title,
-		Author:      toc.Novel.Author,
-		Description: toc.Novel.Description,
-		CoverURL:    toc.Novel.CoverURL,
-		Language:    toc.Novel.Language,
-		Tags:        toc.Novel.Tags,
+		Title:       toc.Series.Title,
+		Author:      toc.Series.Author,
+		Description: toc.Series.Description,
+		CoverURL:    toc.Series.CoverURL,
+		Language:    toc.Series.Language,
+		Tags:        toc.Series.Tags,
 		Chapters:    make([]sourceChapter, 0, len(toc.Chapters)),
 	}
 	for i, ref := range toc.Chapters {

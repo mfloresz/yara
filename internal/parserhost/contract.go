@@ -13,6 +13,8 @@ import (
 //	module.exports = {
 //	  name: "site",             // required, non-empty
 //	  apiVersion: 1,            // required, must equal 1 (else load error)
+//	  media: "novel",           // "novel" (default) | "comic"; selects the
+//	                             // chapter shape the host validates against
 //	  requiresBrowser: false,   // bool; true routes this script's fetches
 //	                             // through the user's browser worker
 //	  livewireCatalogPattern: "", // optional Go-regexp source; on the browser-worker
@@ -20,19 +22,39 @@ import (
 //	                             // worker's Livewire operation instead of fetch_page
 //	  probe: (url) => boolean,  // can this script handle the URL?
 //	  // "what exists": full snapshot; in-site pagination is the SCRIPT's job
-//	  // (multiple ctx.get calls allowed within the fetch budget)
+//	  // (multiple ctx.get calls allowed within the fetch budget). The metadata
+//	  // key matches the media: `novel` for novel scripts, `comic` for comic
+//	  // ones (either is accepted, so a draft keeps loading while it switches).
 //	  toc: (ctx, url) => ({
 //	    novel: { title, description, author, coverUrl, language, tags },
 //	    chapters: [{ title, url }],   // ordered; host computes the new/missing diff
 //	  }),
-//	  // "how to obtain one chapter"
-//	  chapter: (ctx, url) => ({ title, contentHtml }),
+//	  // "how to obtain one chapter". Novel scripts return the chapter body;
+//	  // comic scripts return the page image URLs in reading order.
+//	  chapter: (ctx, url) => ({ title, contentHtml }),   // media: "novel"
+//	  chapter: (ctx, url) => ({ title, pages: [...] }),  // media: "comic"
 //	  chapterKey: (ch) => string,     // optional; default identity = chapter URL
 //	}
 //
 // Module init runs once per invocation in a throwaway VM, so it must not
 // fetch: everything network-bound belongs in toc or chapter.
-type Novel struct {
+
+// Media kinds a script can declare. The value selects which chapter shape the
+// host validates and how callers store the result; it changes nothing about
+// how the engine fetches.
+const (
+	MediaNovel = "novel"
+	MediaComic = "comic"
+)
+
+func ValidMedia(media string) bool {
+	return media == MediaNovel || media == MediaComic
+}
+
+// Series is the work metadata a toc() returns, shared by every media kind
+// (novels today, comics via MediaComic; language is only meaningful for
+// text media but comics may set it too).
+type Series struct {
 	Title       string
 	Description string
 	Author      string
@@ -49,13 +71,16 @@ type ChapterRef struct {
 // TOC is a full snapshot of what a site currently has. The host diffs it
 // against its store to decide what to download.
 type TOC struct {
-	Novel    Novel
+	Series   Series
 	Chapters []ChapterRef
 }
 
+// Chapter is the result of chapter(). Exactly one payload is populated,
+// matching the script's media: ContentHTML for novels, Pages for comics.
 type Chapter struct {
 	Title       string
 	ContentHTML string
+	Pages       []string
 }
 
 // Error taxonomy. Scripts signal failure with ctx.fail(code, message); every
@@ -76,6 +101,10 @@ const (
 	CodeSiteLayoutChanged = "site_layout_changed"
 	// CodeBlocked means a Cloudflare/challenge page was not resolved.
 	CodeBlocked = "blocked"
+	// CodeLocked means the chapter is paywalled or otherwise locked on the
+	// site (e.g. a chapter-lock plugin) and cannot be downloaded anonymously.
+	// Unlike blocked, no browser worker or retry will unlock it.
+	CodeLocked = "locked"
 	// CodeParserTimeout means the CPU interrupt fired or the per-invocation
 	// fetch budget was exceeded.
 	CodeParserTimeout = "parser_timeout"
@@ -100,7 +129,7 @@ func (e *ScriptError) Error() string {
 
 func validCode(code string) bool {
 	switch code {
-	case CodeNotMySite, CodeSiteLayoutChanged, CodeBlocked, CodeParserTimeout, CodeScriptError:
+	case CodeNotMySite, CodeSiteLayoutChanged, CodeBlocked, CodeLocked, CodeParserTimeout, CodeScriptError:
 		return true
 	}
 	return false
@@ -126,4 +155,9 @@ type FetchResult struct {
 // propagates to the caller as a plain Go error, never as a ScriptError.
 type Fetcher interface {
 	Fetch(ctx context.Context, rawURL string) (*FetchResult, error)
+	// PostForm submits an application/x-www-form-urlencoded POST and returns
+	// the response the same way Fetch does. It always goes over direct HTTP:
+	// the browser worker only relays page navigations, so form posts to
+	// endpoints behind a browser challenge stay unsupported.
+	PostForm(ctx context.Context, rawURL string, form map[string]string) (*FetchResult, error)
 }

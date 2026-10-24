@@ -68,6 +68,10 @@ func (neverFetch) Fetch(context.Context, string) (*parserhost.FetchResult, error
 	return nil, fmt.Errorf("parser scripts must not fetch at load")
 }
 
+func (neverFetch) PostForm(context.Context, string, map[string]string) (*parserhost.FetchResult, error) {
+	return nil, fmt.Errorf("parser scripts must not fetch at load")
+}
+
 // An invalid livewireCatalogPattern is still a load error at LoadFile time —
 // tolerant directory loading skips the file, but the error itself must keep
 // naming the bad field (publish-time validation relies on it).
