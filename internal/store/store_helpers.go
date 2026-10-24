@@ -260,3 +260,84 @@ func normalizeTheme(theme string) string {
 		return "system"
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Comics helpers (mirror the novel set above for the comics media tree).
+// ---------------------------------------------------------------------------
+
+// comicCoverURL builds the authenticated cover URL for a comic. The file name
+// doubles as the cache-busting version: a cover swap invalidates the cache by
+// producing a different URL. Comics without a stored file get "" (the frontend
+// renders its bundled default).
+func comicCoverURL(comicID, fileName string) string {
+	if strings.TrimSpace(fileName) == "" {
+		return ""
+	}
+	return fmt.Sprintf("/api/v1/comics/%s/cover?v=%s", comicID, fileName)
+}
+
+func normalizeComicStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "completed":
+		return "completed"
+	case "hiatus":
+		return "hiatus"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return "ongoing"
+	}
+}
+
+func normalizeComicTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.Join(strings.Fields(strings.TrimSpace(tag)), " ")
+		if tag == "" {
+			continue
+		}
+		key := normalizeTagKey(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return normalizeTagKey(out[i]) < normalizeTagKey(out[j])
+	})
+	return out
+}
+
+func normalizeComicTagsValue(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return []string{}
+	case []string:
+		return normalizeComicTags(v)
+	case []any:
+		tags := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			tags = append(tags, s)
+		}
+		return normalizeComicTags(tags)
+	default:
+		return []string{}
+	}
+}
+
+func parseComicTagsJSON(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{}
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
+		return []string{}
+	}
+	return normalizeComicTags(tags)
+}

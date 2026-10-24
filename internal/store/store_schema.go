@@ -41,6 +41,16 @@ func enableNovelCascadeDelete(c *core.Collection) (bool, error) {
 	return true, nil
 }
 
+func enableComicCascadeDelete(c *core.Collection) (bool, error) {
+	rel, ok := c.Fields.GetByName("comic").(*core.RelationField)
+	if !ok || rel == nil || rel.CascadeDelete {
+		return false, nil
+	}
+	rel.CascadeDelete = true
+	c.Fields.Add(rel)
+	return true, nil
+}
+
 func (s *Store) ensureField(collection *core.Collection, field core.Field) error {
 	if existing := collection.Fields.GetByName(field.GetName()); existing != nil {
 		return nil
@@ -61,7 +71,24 @@ func (s *Store) migrateChapterCascadeDelete(c *core.Collection) error {
 }
 
 func (s *Store) migrateJobCascadeDelete(c *core.Collection) error {
-	changed, err := enableNovelCascadeDelete(c)
+	changedNovel, err := enableNovelCascadeDelete(c)
+	if err != nil {
+		return err
+	}
+	changedComic, err := enableComicCascadeDelete(c)
+	if err != nil {
+		return err
+	}
+	if !changedNovel && !changedComic {
+		return nil
+	}
+	return s.App.Save(c)
+}
+
+// migrateComicChapterCascadeDelete mirrors migrateChapterCascadeDelete for the
+// comics tree.
+func (s *Store) migrateComicChapterCascadeDelete(c *core.Collection) error {
+	changed, err := enableComicCascadeDelete(c)
 	if err != nil {
 		return err
 	}
@@ -491,8 +518,8 @@ func (s *Store) ensureChaptersIndexes(c *core.Collection) error {
 }
 
 // ensureJobIndexes backfills the query-supporting indexes on translation_jobs.
-// The owner index ships with the collection, but every novel-scoped query
-// (HasActiveJobsForNovel, ListActiveNovelJobs, ...) and the scheduler's
+// The owner index ships with the collection, but every novel/comic-scoped query
+// (HasActiveJobsForNovel, HasActiveJobsForComic, ...) and the scheduler's
 // runnable-jobs scan used to be full table scans; jobs are never pruned, so
 // the scans grew with the job history. Idempotent: existing installs gain the
 // indexes on the next boot.
@@ -503,6 +530,7 @@ func (s *Store) ensureJobIndexes(c *core.Collection) error {
 		columns string
 	}{
 		{"idx_jobs_novel_status", "novel,status"},
+		{"idx_jobs_comic_status", "comic,status"},
 		{"idx_jobs_status_created", "status,created"},
 	} {
 		exists := false
@@ -524,10 +552,23 @@ func (s *Store) ensureJobIndexes(c *core.Collection) error {
 	return s.App.Save(c)
 }
 
-func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Collection, error) {
+func (s *Store) ensureJobsCollection(users, novels, comics *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(JobsCollection); err == nil {
 		c, err := s.migrateSystemDateFields(existing)
 		if err != nil {
+			return nil, err
+		}
+		// Jobs carry exactly one of novel|comic (enforced by the store layer's
+		// CreateJob), so novel stops being required and comic joins as the
+		// comics-tree target with the same cascade semantics.
+		if f, ok := c.Fields.GetByName("novel").(*core.RelationField); ok && f.Required {
+			f.Required = false
+			c.Fields.Add(f)
+			if err := s.App.Save(c); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.ensureField(c, &core.RelationField{Name: "comic", CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true}); err != nil {
 			return nil, err
 		}
 		for _, field := range []core.Field{
@@ -597,7 +638,8 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	c.UpdateRule = types.Pointer(ownerOnly)
 	c.DeleteRule = nil
 	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
-	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.RelationField{Name: "novel", CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.RelationField{Name: "comic", CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"pending", "running", "done", "cancelled", "failed"}, MaxSelect: 1})
 	c.Fields.Add(&core.SelectField{Name: "operation", Values: []string{"translate", "refine", "download", "check", "generate-glossary"}, MaxSelect: 1})
 	c.Fields.Add(&core.TextField{Name: "provider", Max: 120})
@@ -619,6 +661,7 @@ func (s *Store) ensureJobsCollection(users, novels *core.Collection) (*core.Coll
 	addSystemDateFields(c)
 	c.AddIndex("idx_jobs_owner", false, "owner", "")
 	c.AddIndex("idx_jobs_novel_status", false, "novel,status", "")
+	c.AddIndex("idx_jobs_comic_status", false, "comic,status", "")
 	c.AddIndex("idx_jobs_status_created", false, "status,created", "")
 	if err := s.App.Save(c); err != nil {
 		return nil, err
@@ -926,4 +969,208 @@ func (s *Store) seedProviders() error {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Comics domain schema. A parallel media tree to novels/* — namespaced
+// collections so the two trees never share state (see
+// docs/scancore-ui-and-comics-plan.md, decision D1).
+// ---------------------------------------------------------------------------
+
+func (s *Store) ensureComicsCollection(users *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(ComicsCollection); err == nil {
+		return s.migrateComicsCollection(existing)
+	}
+	c := core.NewBaseCollection(ComicsCollection)
+	c.ListRule = types.Pointer("@request.auth.id != '' && (owner = @request.auth.id || is_public = true)")
+	c.ViewRule = types.Pointer("@request.auth.id != '' && (owner = @request.auth.id || is_public = true)")
+	c.CreateRule = types.Pointer("@request.auth.id != '' && owner = @request.auth.id")
+	c.UpdateRule = types.Pointer("@request.auth.id != '' && owner = @request.auth.id")
+	c.DeleteRule = types.Pointer("@request.auth.id != '' && owner = @request.auth.id")
+	c.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	c.Fields.Add(&core.TextField{Name: "source_language", Required: true, Max: 32})
+	c.Fields.Add(&core.TextField{Name: "target_language", Required: true, Max: 32})
+	c.Fields.Add(&core.TextField{Name: "source_title", Required: true, Max: 250})
+	c.Fields.Add(&core.TextField{Name: "source_author", Max: 250})
+	c.Fields.Add(&core.EditorField{Name: "source_description"})
+	c.Fields.Add(&core.TextField{Name: "source_series", Max: 250})
+	c.Fields.Add(&core.TextField{Name: "source_number", Max: 64})
+	c.Fields.Add(&core.TextField{Name: "target_title", Max: 250})
+	c.Fields.Add(&core.TextField{Name: "target_author", Max: 250})
+	c.Fields.Add(&core.EditorField{Name: "target_description"})
+	c.Fields.Add(&core.TextField{Name: "target_series", Max: 250})
+	c.Fields.Add(&core.TextField{Name: "target_number", Max: 64})
+	c.Fields.Add(&core.EditorField{Name: "notes"})
+	c.Fields.Add(&core.TextField{Name: "url", Max: 1000})
+	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{"ongoing", "completed", "hiatus", "cancelled"}, MaxSelect: 1})
+	c.Fields.Add(&core.TextField{Name: "tags"})
+	c.Fields.Add(&core.FileField{Name: "cover", MaxSelect: 1, Protected: true})
+	c.Fields.Add(&core.FileField{Name: "thumbnail", MaxSelect: 1, Protected: true})
+	c.Fields.Add(&core.BoolField{Name: "is_public"})
+	c.Fields.Add(&core.NumberField{Name: "chapter_count"})
+	c.Fields.Add(&core.NumberField{Name: "downloaded_count"})
+	c.Fields.Add(&core.NumberField{Name: "max_chapter_order"})
+	c.Fields.Add(&core.TextField{Name: "last_checked_at", Max: 30})
+	c.Fields.Add(&core.NumberField{Name: "last_check_new_chapters"})
+	addSystemDateFields(c)
+	c.AddIndex("idx_comics_owner", false, "owner", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) migrateComicsCollection(c *core.Collection) (*core.Collection, error) {
+	c, err := s.migrateSystemDateFields(c)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range []core.Field{
+		&core.TextField{Name: "source_series", Max: 250},
+		&core.TextField{Name: "source_number", Max: 64},
+		&core.TextField{Name: "target_title", Max: 250},
+		&core.TextField{Name: "target_author", Max: 250},
+		&core.EditorField{Name: "target_description"},
+		&core.TextField{Name: "target_series", Max: 250},
+		&core.TextField{Name: "target_number", Max: 64},
+		&core.EditorField{Name: "notes"},
+		&core.SelectField{Name: "status", Values: []string{"ongoing", "completed", "hiatus", "cancelled"}, MaxSelect: 1},
+		&core.TextField{Name: "tags"},
+		&core.NumberField{Name: "downloaded_count"},
+		&core.NumberField{Name: "max_chapter_order"},
+		&core.TextField{Name: "last_checked_at", Max: 30},
+		&core.NumberField{Name: "last_check_new_chapters"},
+	} {
+		if err := s.ensureField(c, f); err != nil {
+			return nil, err
+		}
+	}
+	// ensureField is a no-op for fields that already exist, so installs created
+	// before cover/thumbnail were protected need an explicit flip. Protected
+	// files are only reachable through the authenticated
+	// /api/v1/comics/{id}/cover handler.
+	changed := false
+	for _, name := range []string{"cover", "thumbnail"} {
+		if f, ok := c.Fields.GetByName(name).(*core.FileField); ok && !f.Protected {
+			f.Protected = true
+			changed = true
+		}
+	}
+	if changed {
+		if err := s.App.Save(c); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+func (s *Store) ensureComicChaptersCollection(comics *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(ComicChaptersCollection); err == nil {
+		c, err := s.migrateSystemDateFields(existing)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.ensureComicChaptersIndexes(c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	c := core.NewBaseCollection(ComicChaptersCollection)
+	visible := "@request.auth.id != '' && (comic.owner = @request.auth.id || comic.is_public = true)"
+	ownerOnly := "@request.auth.id != '' && comic.owner = @request.auth.id"
+	c.ListRule = types.Pointer(visible)
+	c.ViewRule = types.Pointer(visible)
+	c.CreateRule = types.Pointer(ownerOnly)
+	c.UpdateRule = types.Pointer(ownerOnly)
+	c.DeleteRule = types.Pointer(ownerOnly)
+	c.Fields.Add(&core.RelationField{Name: "comic", Required: true, CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.NumberField{Name: "chapter_order", Required: true})
+	// position is the user-controlled reading order; excluded is the logical
+	// delete. Both ship from day one on this collection (unlike the novel tree,
+	// which gained them through migrations).
+	c.Fields.Add(&core.NumberField{Name: "position"})
+	c.Fields.Add(&core.BoolField{Name: "excluded"})
+	c.Fields.Add(&core.TextField{Name: "title", Max: 500})
+	c.Fields.Add(&core.SelectField{Name: "status", Values: []string{ComicChapterPending, ComicChapterProcessing, ComicChapterDone, ComicChapterFailed, ComicChapterPartial}, MaxSelect: 1})
+	c.Fields.Add(&core.EditorField{Name: "error_message"})
+	// source_key is the parser script's stable identity for a chapter
+	// (chapterKey, defaulting to the chapter URL) and the primary input to the
+	// new/missing diff against a parser TOC snapshot.
+	c.Fields.Add(&core.TextField{Name: "source_key", Max: 1000})
+	c.Fields.Add(&core.NumberField{Name: "page_count"})
+	addSystemDateFields(c)
+	c.AddIndex("idx_comic_chapters_comic_order_unique", true, "comic,chapter_order", "")
+	c.AddIndex("idx_comic_chapters_comic_position_unique", true, "comic,position", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// ensureComicChaptersIndexes backfills the covering index that lets per-comic
+// chapter aggregates run as index-only scans, mirroring ensureChaptersIndexes
+// for the comics tree (metadata columns sit after no content columns here, but
+// the index still keeps the aggregate off the row bodies).
+func (s *Store) ensureComicChaptersIndexes(c *core.Collection) error {
+	const name = "idx_comic_chapters_comic_stats"
+	const columns = "comic,chapter_order,id,status,excluded,page_count,title,error_message,updated"
+	for _, raw := range c.Indexes {
+		if strings.EqualFold(dbutils.ParseIndex(raw).IndexName, name) {
+			return nil
+		}
+	}
+	c.AddIndex(name, false, columns, "")
+	return s.App.Save(c)
+}
+
+// comicPageMaxSize caps one page image (matches tira's downloader budget).
+const comicPageMaxSize int64 = 25 << 20 // 25MB
+
+func (s *Store) ensureComicPagesCollection(comics, chapters *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(ComicPagesCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(ComicPagesCollection)
+	visible := "@request.auth.id != '' && (comic.owner = @request.auth.id || comic.is_public = true)"
+	ownerOnly := "@request.auth.id != '' && comic.owner = @request.auth.id"
+	c.ListRule = types.Pointer(visible)
+	c.ViewRule = types.Pointer(visible)
+	c.CreateRule = types.Pointer(ownerOnly)
+	c.UpdateRule = types.Pointer(ownerOnly)
+	c.DeleteRule = types.Pointer(ownerOnly)
+	c.Fields.Add(&core.RelationField{Name: "comic", Required: true, CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.RelationField{Name: "chapter", Required: true, CollectionId: chapters.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.NumberField{Name: "page_order", Required: true})
+	c.Fields.Add(&core.TextField{Name: "source_url", Max: 1000})
+	c.Fields.Add(&core.FileField{Name: "image", Required: true, MaxSelect: 1, MaxSize: comicPageMaxSize, Protected: true})
+	addSystemDateFields(c)
+	c.AddIndex("idx_comic_pages_unique", true, "chapter,page_order", "")
+	c.AddIndex("idx_comic_pages_chapter", false, "chapter", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Store) ensureComicReadingProgressCollection(users, comics *core.Collection) (*core.Collection, error) {
+	if existing, err := s.App.FindCollectionByNameOrId(ComicReadingProgressCollection); err == nil {
+		return existing, nil
+	}
+	c := core.NewBaseCollection(ComicReadingProgressCollection)
+	ownerOnly := "@request.auth.id != '' && user = @request.auth.id"
+	c.ListRule = types.Pointer(ownerOnly)
+	c.ViewRule = types.Pointer(ownerOnly)
+	c.CreateRule = types.Pointer(ownerOnly)
+	c.UpdateRule = types.Pointer(ownerOnly)
+	c.DeleteRule = types.Pointer(ownerOnly)
+	c.Fields.Add(&core.RelationField{Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	c.Fields.Add(&core.RelationField{Name: "comic", Required: true, CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true})
+	c.Fields.Add(&core.TextField{Name: "chapter_id", Max: 64})
+	c.Fields.Add(&core.NumberField{Name: "scroll_percent"})
+	addSystemDateFields(c)
+	c.AddIndex("idx_comic_reading_progress_user_comic_unique", true, "user,comic", "")
+	if err := s.App.Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }

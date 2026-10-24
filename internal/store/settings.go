@@ -202,6 +202,7 @@ type Job struct {
 	ID                        string `json:"id,omitempty"`
 	OwnerID                   string `json:"ownerId,omitempty"`
 	NovelID                   string `json:"novelId,omitempty"`
+	ComicID                   string `json:"comicId,omitempty"`
 	Status                    string `json:"status,omitempty"`
 	Operation                 string `json:"operation,omitempty"`
 	Provider                  string `json:"provider,omitempty"`
@@ -223,6 +224,7 @@ type Job struct {
 	CreatedAt                 string `json:"createdAt,omitempty"`
 	UpdatedAt                 string `json:"updatedAt,omitempty"`
 	NovelTitle                string `json:"novelTitle,omitempty"`
+	ComicTitle                string `json:"comicTitle,omitempty"`
 }
 
 // JobOverview is the narrow projection the library assistant's job tools
@@ -517,4 +519,219 @@ var DefaultTranslationDefaults = TranslationDefaults{
 	EnableCheck:               false,
 	IncludePreviousTitleHints: false,
 	Concurrency:               1,
+}
+
+// ---------------------------------------------------------------------------
+// Comics domain (media: comic). Mirrors the novel types above with a page
+// payload instead of text: chapters carry page images, not content bodies.
+// Text-translation fields are deliberately absent until the comic translation
+// flow lands; adding them later is additive (ensureField).
+// ---------------------------------------------------------------------------
+
+// Comic is one comic/manhwa work in the library.
+type Comic struct {
+	ID                   string `json:"id,omitempty"`
+	OwnerID              string `json:"ownerId,omitempty"`
+	SourceLanguage       string `json:"sourceLanguage,omitempty"`
+	TargetLanguage       string `json:"targetLanguage,omitempty"`
+	SourceTitle          string `json:"sourceTitle,omitempty"`
+	SourceAuthor         string `json:"sourceAuthor,omitempty"`
+	SourceDescription    string `json:"sourceDescription,omitempty"`
+	SourceSeries         string `json:"sourceSeries,omitempty"`
+	SourceNumber         string `json:"sourceNumber,omitempty"`
+	TargetTitle          string `json:"targetTitle,omitempty"`
+	TargetAuthor         string `json:"targetAuthor,omitempty"`
+	TargetDescription    string `json:"targetDescription,omitempty"`
+	TargetSeries         string `json:"targetSeries,omitempty"`
+	TargetNumber         string `json:"targetNumber,omitempty"`
+	Notes                string `json:"notes,omitempty"`
+	URL                  string `json:"url,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Tags                 string `json:"tags,omitempty"`
+	CoverPath            string `json:"coverPath,omitempty"`
+	CoverFile            string `json:"coverFile,omitempty"`
+	ThumbnailPath        string `json:"thumbnailPath,omitempty"`
+	ThumbnailFile        string `json:"thumbnailFile,omitempty"`
+	IsPublic             bool   `json:"isPublic,omitempty"`
+	ChapterCount         int    `json:"chapterCount,omitempty"`
+	DownloadedCount      int    `json:"downloadedCount,omitempty"`
+	MaxChapterOrder      int    `json:"maxChapterOrder,omitempty"`
+	LastCheckedAt        string `json:"lastCheckedAt,omitempty"`
+	LastCheckNewChapters int    `json:"lastCheckNewChapters,omitempty"`
+	LastReadAt           string `json:"lastReadAt,omitempty"`
+	CreatedAt            string `json:"createdAt,omitempty"`
+	UpdatedAt            string `json:"updatedAt,omitempty"`
+}
+
+// ComicChapterStatus values. Download-oriented only; the translation
+// lifecycle statuses arrive with the comic translation flow.
+const (
+	ComicChapterPending    = "pending"
+	ComicChapterProcessing = "processing"
+	ComicChapterDone       = "done"
+	ComicChapterFailed     = "failed"
+	// ComicChapterPartial is reserved for partially downloaded chapters
+	// (some pages failed); the downloader marks it when pages are missing.
+	ComicChapterPartial = "partial"
+)
+
+// ComicChapter is one chapter of a comic: metadata plus the fact of its pages
+// (page bodies live in ComicPage rows).
+type ComicChapter struct {
+	ID           string `json:"id,omitempty"`
+	ComicID      string `json:"comicId,omitempty"`
+	ChapterOrder int    `json:"chapterOrder,omitempty"`
+	Position     int    `json:"position,omitempty"`
+	Excluded     bool   `json:"excluded,omitempty"`
+	Title        string `json:"title,omitempty"`
+	// SourceKey is the parser script's stable identity for this chapter
+	// (chapterKey export, defaulting to the source chapter URL). The
+	// source-sync diff matches on it before falling back to URL/title.
+	SourceKey    string `json:"sourceKey,omitempty"`
+	PageCount    int    `json:"pageCount,omitempty"`
+	HasPages     bool   `json:"hasPages,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
+	UpdatedAt    string `json:"updatedAt,omitempty"`
+}
+
+// ComicChapterSummary is the list-shaped projection of a comic chapter.
+type ComicChapterSummary struct {
+	ID           string `json:"id,omitempty"`
+	ComicID      string `json:"comicId,omitempty"`
+	ChapterOrder int    `json:"chapterOrder,omitempty"`
+	Position     int    `json:"position,omitempty"`
+	Excluded     bool   `json:"excluded,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+	PageCount    int    `json:"pageCount,omitempty"`
+	HasPages     bool   `json:"hasPages,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
+	UpdatedAt    string `json:"updatedAt,omitempty"`
+}
+
+// ComicChapterStats aggregates a comic's chapter download state.
+type ComicChapterStats struct {
+	TotalChapters      int `json:"totalChapters"`
+	DownloadedChapters int `json:"downloadedChapters"`
+	FailedChapters     int `json:"failedChapters"`
+	MaxChapterOrder    int `json:"maxChapterOrder"`
+}
+
+// ComicPage is one downloaded page image of a comic chapter, in reading order
+// (PageOrder is 1-based). The binary lives on disk as a PocketBase file; the
+// DB row only holds metadata + ordering.
+type ComicPage struct {
+	ID        string `json:"id,omitempty"`
+	ChapterID string `json:"chapterId,omitempty"`
+	ComicID   string `json:"comicId,omitempty"`
+	PageOrder int    `json:"pageOrder,omitempty"`
+	SourceURL string `json:"sourceUrl,omitempty"`
+	FileName  string `json:"fileName,omitempty"`
+	URL       string `json:"url,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+// ComicPageUpload is one image to persist for a chapter. Data is the raw
+// image bytes (never base64); Order is 1-based reading order.
+type ComicPageUpload struct {
+	Data      []byte
+	MimeType  string
+	SourceURL string
+	Order     int
+}
+
+// ComicReadingProgress is the per-user resume point of a comic.
+type ComicReadingProgress struct {
+	ID            string  `json:"id,omitempty"`
+	UserID        string  `json:"userId,omitempty"`
+	ComicID       string  `json:"comicId,omitempty"`
+	ChapterID     string  `json:"chapterId,omitempty"`
+	ScrollPercent float64 `json:"scrollPercent,omitempty"`
+	CreatedAt     string  `json:"createdAt,omitempty"`
+	UpdatedAt     string  `json:"updatedAt,omitempty"`
+}
+
+// DownloadComicChapterInfo describes one chapter to download, as produced by
+// the TOC snapshot diff.
+type DownloadComicChapterInfo struct {
+	URL       string `json:"url"`
+	Title     string `json:"title"`
+	Order     int    `json:"order"`
+	ChapterID string `json:"chapterId,omitempty"` // id of an existing chapter when re-downloading
+	// SourceKey is the parser script's chapter identity (chapterKey export,
+	// defaulting to the chapter URL). Persisted as comic_chapters.source_key.
+	SourceKey string `json:"sourceKey,omitempty"`
+}
+
+// BatchCheckComicResult is one comic's outcome of the batch update check.
+type BatchCheckComicResult struct {
+	ComicID         string                     `json:"comicId"`
+	SourceTitle     string                     `json:"sourceTitle"`
+	SourceAuthor    string                     `json:"sourceAuthor,omitempty"`
+	CoverURL        string                     `json:"coverUrl,omitempty"`
+	NewChapters     int                        `json:"newChapters"`
+	FirstNewChapter int                        `json:"firstNewChapter"`
+	LastNewChapter  int                        `json:"lastNewChapter"`
+	StartOrder      int                        `json:"startOrder"`
+	CurrentChapters int                        `json:"currentChapters"`
+	TotalChapters   int                        `json:"totalChapters"`
+	NewChapterInfo  []DownloadComicChapterInfo `json:"newChapterInfo"`
+	Error           string                     `json:"error,omitempty"`
+}
+
+// ImportedComicImage is one page image produced by a ZIP import, held in
+// memory until its chapter's pages are persisted.
+type ImportedComicImage struct {
+	Alt      string
+	MimeType string
+	FileName string
+	Blob     []byte
+}
+
+// ImportedComicZipChapter is one chapter of a ZIP import: images become the
+// chapter's pages, in array order.
+type ImportedComicZipChapter struct {
+	Order  int
+	Title  string
+	Images []ImportedComicImage
+}
+
+// ImportZipComicInput carries a whole ZIP-of-images comic import.
+type ImportZipComicInput struct {
+	OwnerID      string
+	FileName     string
+	FileBlob     []byte
+	MetadataJSON string
+	CoverBlob    []byte
+	CoverMime    string
+	Chapters     []ImportedComicZipChapter
+}
+
+// ImportZipComicResult reports the created comic.
+type ImportZipComicResult struct {
+	Comic            Comic
+	ChaptersImported int
+}
+
+// ImportUrlComicInput creates a comic from a source URL (parser TOC).
+type ImportUrlComicInput struct {
+	OwnerID           string
+	URL               string
+	SourceLanguage    string
+	TargetLanguage    string
+	SourceTitle       string
+	SourceAuthor      string
+	SourceDescription string
+	StartChapter      int
+	EndChapter        int
+}
+
+// ImportUrlComicResult reports the created comic.
+type ImportUrlComicResult struct {
+	Comic            Comic
+	ChaptersImported int
 }

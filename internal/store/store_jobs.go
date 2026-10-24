@@ -12,8 +12,8 @@ import (
 )
 
 func (s *Store) CreateJob(userID string, job *Job) error {
-	if _, err := s.GetOwnedNovel(userID, job.NovelID); err != nil {
-		return err
+	if (job.NovelID == "") == (job.ComicID == "") {
+		return fmt.Errorf("job must target exactly one of novel or comic")
 	}
 	collection, err := s.App.FindCollectionByNameOrId(JobsCollection)
 	if err != nil {
@@ -21,7 +21,17 @@ func (s *Store) CreateJob(userID string, job *Job) error {
 	}
 	record := core.NewRecord(collection)
 	record.Set("owner", userID)
-	record.Set("novel", job.NovelID)
+	if job.ComicID != "" {
+		if _, err := s.GetOwnedComic(userID, job.ComicID); err != nil {
+			return err
+		}
+		record.Set("comic", job.ComicID)
+	} else {
+		if _, err := s.GetOwnedNovel(userID, job.NovelID); err != nil {
+			return err
+		}
+		record.Set("novel", job.NovelID)
+	}
 	record.Set("status", defaultString(job.Status, "pending"))
 	record.Set("operation", defaultString(job.Operation, "translate"))
 	record.Set("provider", job.Provider)
@@ -108,9 +118,16 @@ func (s *Store) ListActiveJobs(userID string) ([]Job, error) {
 	out := make([]Job, 0, len(records))
 	for _, record := range records {
 		job := jobFromRecord(record)
-		novel, _ := s.App.FindRecordById(NovelsCollection, job.NovelID)
-		if novel != nil {
-			job.NovelTitle = defaultString(novel.GetString("target_title"), novel.GetString("source_title"))
+		if job.ComicID != "" {
+			comic, _ := s.App.FindRecordById(ComicsCollection, job.ComicID)
+			if comic != nil {
+				job.ComicTitle = defaultString(comic.GetString("target_title"), comic.GetString("source_title"))
+			}
+		} else {
+			novel, _ := s.App.FindRecordById(NovelsCollection, job.NovelID)
+			if novel != nil {
+				job.NovelTitle = defaultString(novel.GetString("target_title"), novel.GetString("source_title"))
+			}
 		}
 		out = append(out, job)
 	}
@@ -386,4 +403,88 @@ func (s *Store) ListOwnedJobOverviews(userID, novelID string, activeOnly, failed
 		})
 	}
 	return out, nil
+}
+
+// ListComicJobs lists the jobs of one comic the caller can read.
+func (s *Store) ListComicJobs(userID, comicID string, failedOnly bool) ([]Job, error) {
+	if _, err := s.GetComicAccessible(userID, comicID); err != nil {
+		return nil, err
+	}
+	filter := "owner = {:owner} && comic = {:comic}"
+	if failedOnly {
+		filter += " && (status = 'failed' || failed_chapters > 0)"
+	}
+	records, err := s.App.FindRecordsByFilter(JobsCollection, filter, "-created", 200, 0, dbx.Params{"owner": userID, "comic": comicID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(records))
+	for _, record := range records {
+		out = append(out, jobFromRecord(record))
+	}
+	return out, nil
+}
+
+// ListActiveComicJobs returns every pending or running job for a comic.
+func (s *Store) ListActiveComicJobs(comicID string) ([]Job, error) {
+	records, err := s.App.FindRecordsByFilter(JobsCollection,
+		"comic = {:comic} && (status = 'pending' || status = 'running')",
+		"", 200, 0, dbx.Params{"comic": comicID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(records))
+	for _, record := range records {
+		out = append(out, jobFromRecord(record))
+	}
+	return out, nil
+}
+
+// HasActiveJobsForComic reports whether the comic has any pending or running
+// job. Exclusion and reorder are rejected while such jobs exist so in-flight
+// chapter sets are never silently mutated.
+func (s *Store) HasActiveJobsForComic(comicID string) (bool, error) {
+	records, err := s.App.FindRecordsByFilter(JobsCollection, "comic = {:comic} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"comic": comicID})
+	if err != nil {
+		return false, err
+	}
+	return len(records) > 0, nil
+}
+
+// LoadComicJobChapters resolves the chapters a comic job should process: the
+// comic's visible chapters, optionally filtered by the job's chapter id list,
+// in reading order (position, then source order).
+func (s *Store) LoadComicJobChapters(job *Job) ([]ComicChapter, *Comic, error) {
+	comic, err := s.GetOwnedComic(job.OwnerID, job.ComicID)
+	if err != nil {
+		return nil, nil, err
+	}
+	chapters, err := s.ListComicChapters(job.OwnerID, job.ComicID)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected := chapters
+	if strings.TrimSpace(job.ChapterIDs) != "" && job.ChapterIDs != "[]" {
+		var ids []string
+		if err := json.Unmarshal([]byte(job.ChapterIDs), &ids); err != nil {
+			return nil, nil, fmt.Errorf("parse job chapter ids: %w", err)
+		}
+		allowed := map[string]bool{}
+		for _, id := range ids {
+			allowed[id] = true
+		}
+		selected = make([]ComicChapter, 0, len(ids))
+		for _, chapter := range chapters {
+			if allowed[chapter.ID] {
+				selected = append(selected, chapter)
+			}
+		}
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		if selected[i].Position != selected[j].Position {
+			return selected[i].Position < selected[j].Position
+		}
+		return selected[i].ChapterOrder < selected[j].ChapterOrder
+	})
+	return selected, comic, nil
 }

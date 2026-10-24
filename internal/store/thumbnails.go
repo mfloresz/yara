@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/jpeg"
 	stddraw "image/draw"
+	"image/jpeg"
 	"io"
 	"log/slog"
 
