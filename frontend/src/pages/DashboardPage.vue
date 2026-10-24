@@ -286,6 +286,8 @@
     <ImportUrlDialog
       :open="importUrlOpen"
       :initial-url="pendingImportUrl"
+      media="novels"
+      :preview-fn="previewNovelFromUrl"
       @update:open="importUrlOpen = $event"
       @preview="onUrlPreviewed"
     />
@@ -293,6 +295,8 @@
     <ImportUrlConfirmDialog
       :open="importUrlConfirmOpen"
       :preview="urlPreview"
+      media="novels"
+      :import-fn="importNovel"
       @update:open="importUrlConfirmOpen = $event"
       @back="onBackToUrlDialog"
     />
@@ -335,8 +339,8 @@ import { LANGUAGES } from "@/config/languages";
 import { getNovelDisplayTitle, getNovelDisplayAuthor, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 import { useAppServices } from "@/app/services";
 import { dashboardPrefsKey } from "@/app/storage-keys";
-import ImportUrlDialog from "@/features/novels/ImportUrlDialog.vue";
-import ImportUrlConfirmDialog from "@/features/novels/ImportUrlConfirmDialog.vue";
+import ImportUrlDialog from "@/features/import/ImportUrlDialog.vue";
+import ImportUrlConfirmDialog from "@/features/import/ImportUrlConfirmDialog.vue";
 import type { PreviewUrlResult } from "@/api/types";
 
 type SortField = "title" | "created" | "lastRead";
@@ -603,8 +607,19 @@ const {
   createNovel,
   importNovelFromEpub,
   importNovelFromZip,
+  importNovelFromUrl,
+  previewNovelFromUrl,
   hydrateCachedNovels,
 } = useNovels();
+// The shared confirm dialog consumes a media-neutral outcome.
+async function importNovel(input: Parameters<typeof importNovelFromUrl>[0]) {
+  const result = await importNovelFromUrl(input);
+  return {
+    id: result.novel.id,
+    chaptersImported: result.chaptersImported,
+    downloadJob: result.downloadJob,
+  };
+}
 const offlineCache = useOfflineCache(ref(""));
 
 const createOpen = ref(false);

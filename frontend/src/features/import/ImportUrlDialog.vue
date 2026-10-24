@@ -1,16 +1,16 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" title="Importar novela desde URL" :style="{ width: 'min(520px, 96vw)' }" @after-leave="reset">
+  <n-modal v-model:show="visible" preset="card" :title="mediaCfg.dialogTitle" :style="{ width: 'min(520px, 96vw)' }" @after-leave="reset">
     <div class="stack-md">
       <div>
-        <label class="small muted">URL de la novela</label>
+        <label class="small muted">URL de la {{ mediaCfg.itemLabel }}</label>
         <n-input
           v-model:value="url"
-          placeholder="https://novelphoenix.com/novel/..."
+          :placeholder="mediaCfg.urlPlaceholder"
           :disabled="loading"
           @keydown.enter="handleSearch"
         />
         <div class="small muted" style="margin-top: 0.35rem">
-          Sitios soportados: {{ supportedSites.join(", ") }}
+          Sitios soportados: {{ mediaCfg.sites.join(", ") }}
         </div>
       </div>
 
@@ -35,23 +35,27 @@
 import { computed, ref, watch } from "vue";
 import { NModal, NInput, NAlert, NButton, NIcon } from "naive-ui";
 import { SearchOutline } from "@vicons/ionicons5";
-import { useNovels } from "@/composables/useNovels";
+import { IMPORT_MEDIA, type ImportMedia } from "@/features/import/media";
 import type { PreviewUrlResult } from "@/api/types";
 
-const props = defineProps<{ open: boolean; initialUrl?: string }>();
+const props = defineProps<{
+  open: boolean;
+  initialUrl?: string;
+  media: ImportMedia;
+  /** Fetches the source snapshot; injected so novels can go through useNovels. */
+  previewFn: (url: string) => Promise<PreviewUrlResult>;
+}>();
 const emit = defineEmits<{
   "update:open": [value: boolean];
   "preview": [preview: PreviewUrlResult];
 }>();
-
-const { previewNovelFromUrl } = useNovels();
 
 const visible = computed({
   get: () => props.open,
   set: (value) => emit("update:open", value),
 });
 
-const supportedSites = ["novelfire.net", "novelphoenix.com", "fenrirealm.com", "floraegarden.com", "cherrymist.cafe", "empirenovel.com", "69shuba.com", "skynovels.net", "skydemonorder.com", "literotica.com", "novelarrow.com", "wattpad.com", "webnovel.com", "inkitt.com", "gaydemon.com", "chrysanthemumgarden.com", "getinkspired.com"];
+const mediaCfg = computed(() => IMPORT_MEDIA[props.media]);
 
 const url = ref("");
 const loading = ref(false);
@@ -79,7 +83,7 @@ async function handleSearch() {
   loading.value = true;
   error.value = null;
   try {
-    const preview = await previewNovelFromUrl(url.value.trim());
+    const preview = await props.previewFn(url.value.trim());
     emit("preview", preview);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);

@@ -110,13 +110,17 @@ import { useMessage, NModal, NSelect, NAlert, NButton, NRadio, NIcon } from "nai
 import { ImageOutline, PersonOutline, ListOutline, LinkOutline, DownloadOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { LANGUAGES } from "@/config/languages";
-import { useNovels } from "@/composables/useNovels";
+import { IMPORT_MEDIA, type ImportMedia, type ImportOutcome, type ImportUrlInput } from "@/features/import/media";
 import { emitJobChanged } from "@/utils/job-events";
 import type { PreviewUrlResult } from "@/api/types";
 
 const props = defineProps<{
   open: boolean;
   preview: PreviewUrlResult | null;
+  media: ImportMedia;
+  /** Runs the import and returns the normalized outcome; injected so each
+   * media goes through its own store-aware path. */
+  importFn: (input: ImportUrlInput) => Promise<ImportOutcome>;
 }>();
 const emit = defineEmits<{
   "update:open": [value: boolean];
@@ -126,12 +130,14 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const message = useMessage();
-const { importNovelFromUrl } = useNovels();
 
 const visible = computed({
   get: () => props.open,
   set: (value) => emit("update:open", value),
 });
+
+const mediaCfg = computed(() => IMPORT_MEDIA[props.media]);
+const itemLabel = computed(() => mediaCfg.value.itemLabel);
 
 const languageOptions = LANGUAGES.map((l) => ({ label: l.name, value: l.code }));
 const languageOptionsNoAuto = LANGUAGES.filter((l) => l.code !== "auto").map((l) => ({ label: l.name, value: l.code }));
@@ -182,13 +188,7 @@ async function handleImport() {
   loading.value = true;
   error.value = null;
   try {
-    const input: {
-      url: string;
-      sourceLanguage?: string;
-      targetLanguage?: string;
-      startChapter?: number;
-      endChapter?: number;
-    } = {
+    const input: ImportUrlInput = {
       url: props.preview.sourceURL,
       sourceLanguage: sourceLanguage.value,
       targetLanguage: targetLanguage.value,
@@ -197,17 +197,17 @@ async function handleImport() {
       input.startChapter = startChapter.value;
       input.endChapter = endChapter.value;
     }
-    const result = await importNovelFromUrl(input);
+    const result = await props.importFn(input);
     message.success(
       result.downloadJob
-        ? `Novela importada. Descargando ${result.downloadJob.totalChapters} capítulos restantes en segundo plano...`
+        ? `${itemLabel.value.charAt(0).toUpperCase()}${itemLabel.value.slice(1)} importada. Descargando ${result.downloadJob.totalChapters} capítulos restantes en segundo plano...`
         : `${result.chaptersImported} capítulos importados.`,
       { duration: 4000 },
     );
     emit("imported");
     emitJobChanged();
     visible.value = false;
-    await router.push(`/novels/${result.novel.id}`);
+    await router.push(mediaCfg.value.detailPath(result.id));
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {

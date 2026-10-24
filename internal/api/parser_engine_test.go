@@ -95,16 +95,20 @@ func TestDiffNovelSnapshotDeduplicatesRepeatedKey(t *testing.T) {
 func TestParserErrorMessageTaxonomy(t *testing.T) {
 	cases := []struct {
 		code     string
+		message  string
 		contains string
 	}{
-		{parserhost.CodeNotMySite, "no installed parser script"},
-		{parserhost.CodeSiteLayoutChanged, "--check-parser"},
-		{parserhost.CodeBlocked, "browser worker"},
-		{parserhost.CodeParserTimeout, "--check-parser"},
-		{parserhost.CodeScriptError, "Parser script error"},
+		{parserhost.CodeNotMySite, msgNoParserSelected + " https://x", "no installed parser script"},
+		// A script that claimed the URL but rejected its shape keeps its own
+		// guidance instead of the generic "unsupported site" wording.
+		{parserhost.CodeNotMySite, "expected series URL like /manga/{slug}", "not a series page"},
+		{parserhost.CodeSiteLayoutChanged, "boom", "--check-parser"},
+		{parserhost.CodeBlocked, "boom", "browser worker"},
+		{parserhost.CodeParserTimeout, "boom", "--check-parser"},
+		{parserhost.CodeScriptError, "boom", "Parser script error"},
 	}
 	for _, tc := range cases {
-		msg := parserErrorMessage(&parserhost.ScriptError{Code: tc.code, Message: "boom"})
+		msg := parserErrorMessage(&parserhost.ScriptError{Code: tc.code, Message: tc.message})
 		if !strings.Contains(msg, tc.contains) {
 			t.Errorf("code %s: got %q, want it to mention %q", tc.code, msg, tc.contains)
 		}
