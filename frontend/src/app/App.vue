@@ -7,7 +7,12 @@
     <n-message-provider>
       <n-dialog-provider>
         <n-notification-provider>
-          <RouterView />
+          <RouterView v-slot="{ Component, route }">
+            <AppShell v-if="!route.meta.immersive">
+              <Component :is="Component" />
+            </AppShell>
+            <Component :is="Component" v-else />
+          </RouterView>
         </n-notification-provider>
       </n-dialog-provider>
     </n-message-provider>
@@ -23,6 +28,7 @@ import {
   NDialogProvider,
   NNotificationProvider,
 } from "naive-ui";
+import AppShell from "@/components/AppShell.vue";
 import {
   currentNaiveTheme,
   currentThemeOverrides,

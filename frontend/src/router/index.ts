@@ -4,7 +4,12 @@ import { setDocumentTitle } from "@/composables/useDocumentTitle";
 
 const LoginPage = () => import("@/pages/LoginPage.vue");
 const InvitePage = () => import("@/pages/InvitePage.vue");
+const HomePage = () => import("@/pages/HomePage.vue");
 const DashboardPage = () => import("@/pages/DashboardPage.vue");
+const ComicsLibraryPage = () => import("@/pages/ComicsLibraryPage.vue");
+const ComicDetailPage = () => import("@/pages/ComicDetailPage.vue");
+const ComicChapterPage = () => import("@/pages/ComicChapterPage.vue");
+const ComicReaderPage = () => import("@/pages/ComicReaderPage.vue");
 const SettingsPage = () => import("@/pages/SettingsPage.vue");
 const OperationsPage = () => import("@/pages/OperationsPage.vue");
 const NovelDetailPage = () => import("@/pages/NovelDetailPage.vue");
@@ -47,9 +52,21 @@ export const router = createRouter({
     },
     {
       path: "/",
+      name: "home",
+      component: HomePage,
+      meta: { requiresAuth: true, title: "Inicio" },
+    },
+    {
+      path: "/library",
       name: "dashboard",
       component: DashboardPage,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: "Biblioteca · Novelas" },
+    },
+    {
+      path: "/library/comics",
+      name: "comics-library",
+      component: ComicsLibraryPage,
+      meta: { requiresAuth: true, title: "Biblioteca · Cómics" },
     },
     {
       path: "/settings",
@@ -85,7 +102,25 @@ export const router = createRouter({
       path: "/novels/:novelId/read",
       name: "reader",
       component: ReaderPage,
+      meta: { requiresAuth: true, immersive: true },
+    },
+    {
+      path: "/comics/:comicId",
+      name: "comic-detail",
+      component: ComicDetailPage,
       meta: { requiresAuth: true },
+    },
+    {
+      path: "/comics/:comicId/chapters/:chapterId",
+      name: "comic-chapter-detail",
+      component: ComicChapterPage,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/comics/:comicId/read",
+      name: "comic-reader",
+      component: ComicReaderPage,
+      meta: { requiresAuth: true, immersive: true },
     },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
@@ -150,7 +185,7 @@ router.onError((err) => {
 
 // Static titles live here; novel-scoped routes (detail, chapter edition,
 // reader) set `Yara - <novel title>` from their own page once the novel loads.
-const DYNAMIC_TITLE_ROUTES = new Set(["novel-detail", "chapter-detail", "reader"]);
+const DYNAMIC_TITLE_ROUTES = new Set(["novel-detail", "chapter-detail", "reader", "comic-detail", "comic-chapter-detail", "comic-reader"]);
 
 router.afterEach((to) => {
   sessionStorage.removeItem(CHUNK_RELOAD_KEY);

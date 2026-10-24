@@ -218,3 +218,110 @@ export function getNovelDisplayNumber(
 export function chapterPosition(ch: { position?: number; chapterOrder: number }): number {
   return ch.position && ch.position > 0 ? ch.position : ch.chapterOrder;
 }
+
+// ---------------------------------------------------------------------------
+// Comics domain (media: comic — page-image chapters).
+// ---------------------------------------------------------------------------
+
+export type ComicStatus = "ongoing" | "completed" | "hiatus" | "cancelled";
+
+export type Comic = {
+  id: string;
+  ownerId: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  sourceTitle: string;
+  sourceAuthor: string;
+  sourceDescription: string;
+  sourceSeries: string;
+  sourceNumber: string;
+  targetTitle: string;
+  targetAuthor: string;
+  targetDescription: string;
+  targetSeries: string;
+  targetNumber: string;
+  notes: string;
+  url: string;
+  status: ComicStatus;
+  canUpdate: boolean;
+  requiresBrowser: boolean;
+  tags: string[];
+  coverPath?: string;
+  isPublic: boolean;
+  chapterCount: number;
+  downloadedCount: number;
+  maxChapterOrder: number;
+  lastCheckedAt?: string;
+  lastCheckNewChapters?: number;
+  lastReadAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ComicChapterStatus =
+  | "pending"
+  | "processing"
+  | "done"
+  | "failed"
+  | "partial";
+
+export type ComicChapterSummary = {
+  id: string;
+  comicId: string;
+  chapterOrder: number;
+  position: number;
+  excluded: boolean;
+  title: string;
+  status: ComicChapterStatus;
+  errorMessage: string;
+  pageCount: number;
+  hasPages: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ComicPage = {
+  id: string;
+  chapterId: string;
+  comicId: string;
+  pageOrder: number;
+  sourceUrl: string;
+  url: string;
+};
+
+export type ComicChapter = ComicChapterSummary & {
+  sourceKey: string;
+  pages: ComicPage[];
+};
+
+export type ComicChapterStats = {
+  totalChapters: number;
+  downloadedChapters: number;
+  failedChapters: number;
+  maxChapterOrder: number;
+};
+
+export type ComicReadingProgress = {
+  comicId: string;
+  chapterId: string;
+  scrollPercent: number;
+  updatedAt?: string;
+};
+
+export function getComicDisplayTitle(
+  comic: Pick<Comic, "targetTitle" | "sourceTitle">,
+): string {
+  return comic.targetTitle || comic.sourceTitle;
+}
+
+export function getComicDisplayAuthor(
+  comic: Pick<Comic, "targetAuthor" | "sourceAuthor">,
+): string {
+  return comic.targetAuthor || comic.sourceAuthor;
+}
+
+export function getComicDisplaySeries(
+  comic: Pick<Comic, "targetSeries" | "sourceSeries">,
+): string {
+  return comic.targetSeries || comic.sourceSeries;
+}
