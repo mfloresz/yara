@@ -5,7 +5,7 @@
 
   <div v-else-if="!comic" class="reader-error">
     <p>Cómic no encontrado.</p>
-    <n-button @click="router.push('/library/comics')">Volver</n-button>
+    <n-button @click="router.push('/comics')">Volver</n-button>
   </div>
 
   <div v-else class="comic-reader" :style="{ '--reader-width': `${contentWidth}px` }">
@@ -253,7 +253,7 @@ function goChapter(chapterId?: string) {
 
 function goToComic() {
   if (!comic.value) {
-    router.push("/library/comics");
+    router.push("/comics");
     return;
   }
   router.push(`/comics/${comic.value.id}`);

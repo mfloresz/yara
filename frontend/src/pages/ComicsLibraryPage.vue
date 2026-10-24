@@ -1,13 +1,8 @@
 <template>
   <AppLayout>
-    <section class="cl-page" aria-label="Biblioteca de cómics">
+    <section class="cl-page" aria-label="Cómics">
       <header class="cl-header">
-        <div class="cl-media-switch" role="tablist" aria-label="Tipo de biblioteca">
-          <RouterLink to="/library" class="cl-media-tab" role="tab">Novelas</RouterLink>
-          <RouterLink to="/library/comics" class="cl-media-tab cl-media-tab--active" role="tab" aria-selected="true">
-            Cómics
-          </RouterLink>
-        </div>
+        <h1 class="cl-title">Cómics</h1>
 
         <div class="cl-toolbar">
           <n-input
@@ -128,7 +123,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import {
   NAlert,
   NButton,
@@ -188,7 +183,9 @@ async function reload() {
     const page = await api.comics.list({
       q: query.value.trim() || undefined,
       sort: sortField.value,
-      order: sortField.value === "created" || sortField.value === "lastRead" ? "desc" : "asc",
+      // Convención de la API: para created/lastRead, "asc" ordena lo más
+      // reciente primero.
+      order: "asc",
       limit: 500,
     });
     comics.value = page.items;
@@ -274,31 +271,11 @@ onMounted(reload);
   gap: 0.75rem;
 }
 
-.cl-media-switch {
-  display: inline-flex;
-  border: 1px solid var(--divide);
-  border-radius: var(--radius-pill);
-  padding: 0.1875rem;
-  gap: 0.1875rem;
-  background: var(--surface-elevated);
-}
-
-.cl-media-tab {
-  padding: 0.3125rem 1rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  text-decoration: none;
-}
-
-.cl-media-tab:hover {
-  color: var(--foreground);
-}
-
-.cl-media-tab--active {
-  background: var(--btn-primary-bg);
-  color: var(--btn-primary-fg);
-  font-weight: 600;
+.cl-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
 }
 
 .cl-toolbar {

@@ -12,10 +12,25 @@
 
       <nav class="shell-nav">
         <RouterLink
-          v-for="section in sections"
+          v-for="section in topSections"
           :key="section.to"
           :to="section.to"
           class="shell-nav-item"
+          :class="{ 'is-active': isActive(section) }"
+          :title="section.label"
+        >
+          <n-icon :size="21"><component :is="section.icon" /></n-icon>
+          <span v-if="!rail" class="shell-nav-label">{{ section.label }}</span>
+        </RouterLink>
+
+        <span class="shell-nav-divider" aria-hidden="true" />
+
+        <RouterLink
+          v-for="section in bottomSections"
+          :key="section.to"
+          :to="section.to"
+          class="shell-nav-item"
+          :class="{ 'is-active': isActive(section) }"
           :title="section.label"
         >
           <n-icon :size="21"><component :is="section.icon" /></n-icon>
@@ -52,6 +67,7 @@
         :key="section.to"
         :to="section.to"
         class="shell-tab touch-target"
+        :class="{ 'is-active': isActive(section) }"
         :aria-label="section.label"
       >
         <n-icon :size="22"><component :is="section.icon" /></n-icon>
@@ -63,12 +79,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type Component } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { NIcon, NScrollbar } from "naive-ui";
 import {
   HomeOutline,
-  LibraryOutline,
+  ImagesOutline,
+  BookOutline,
   FlashOutline,
   ChatbubbleEllipsesOutline,
   SettingsOutline,
@@ -95,10 +112,23 @@ function toggleRail() {
   sessionStorage.setItem(RAIL_KEY, rail.value ? "1" : "0");
 }
 
-const sections = computed(() => {
-  const list = [
-    { to: "/", label: "Inicio", short: "Inicio", icon: HomeOutline },
-    { to: "/library", label: "Biblioteca", short: "Biblio.", icon: LibraryOutline },
+interface ShellSection {
+  to: string;
+  label: string;
+  short?: string;
+  icon: Component;
+}
+
+// Secciones a lo scancore: cada medio con su propia entrada, y un divisor
+// antes de las utilidades.
+const topSections = computed<ShellSection[]>(() => [
+  { to: "/", label: "Inicio", short: "Inicio", icon: HomeOutline },
+  { to: "/comics", label: "Cómics", short: "Cómics", icon: ImagesOutline },
+  { to: "/novels", label: "Novelas", short: "Novelas", icon: BookOutline },
+]);
+
+const bottomSections = computed<ShellSection[]>(() => {
+  const list: ShellSection[] = [
     { to: "/operations", label: "Operaciones", short: "Oper.", icon: FlashOutline },
     { to: "/chat", label: "Asistente", short: "Chat", icon: ChatbubbleEllipsesOutline },
     { to: "/settings", label: "Ajustes", short: "Ajustes", icon: SettingsOutline },
@@ -108,6 +138,15 @@ const sections = computed(() => {
   }
   return list;
 });
+
+const sections = computed(() => [...topSections.value, ...bottomSections.value]);
+
+// Resalta la sección dueña de la ruta actual: /novels/abc enciende "Novelas".
+// La raíz se compara exacta para no marcar siempre Inicio.
+function isActive(section: ShellSection) {
+  if (section.to === "/") return route.path === "/";
+  return route.path === section.to || route.path.startsWith(`${section.to}/`);
+}
 
 // Cada navegación arranca el scroll del área de contenido en 0 (antes lo
 // hacía el AppLayout por página).
@@ -236,9 +275,15 @@ watch(
   background: var(--mock-row);
 }
 
-.shell-nav-item.router-link-active {
+.shell-nav-item.is-active {
   background: var(--surface-strong);
   font-weight: 600;
+}
+
+.shell-nav-divider {
+  height: 1px;
+  margin: 0.5rem 0.625rem;
+  background: var(--divide);
 }
 
 .shell-nav-dot {
@@ -355,7 +400,7 @@ watch(
     opacity: 0.75;
   }
 
-  .shell-tab.router-link-active {
+  .shell-tab.is-active {
     opacity: 1;
     font-weight: 600;
   }

@@ -155,7 +155,7 @@ function normalizeNovel(
 // descriptions, notes) so the list payload stays small. The detail page
 // fetches a full novel via `GET /api/v1/novels/{id}` (no fields filter).
 const NOVEL_LIST_FIELDS =
-  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags";
+  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags,lastReadAt";
 
 // Sparse fieldset for the operations page. It only reads counters, languages,
 // the origin-URL check fields and status; the library/detail fields above

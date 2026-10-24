@@ -135,7 +135,7 @@ async function load() {
 
 function backToComic() {
   if (!comic.value) {
-    router.push("/library/comics");
+    router.push("/comics");
     return;
   }
   router.push(`/comics/${comic.value.id}`);

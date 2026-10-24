@@ -57,17 +57,20 @@ export const router = createRouter({
       meta: { requiresAuth: true, title: "Inicio" },
     },
     {
-      path: "/library",
+      path: "/novels",
       name: "dashboard",
       component: DashboardPage,
-      meta: { requiresAuth: true, title: "Biblioteca · Novelas" },
+      meta: { requiresAuth: true, title: "Novelas" },
     },
     {
-      path: "/library/comics",
+      path: "/comics",
       name: "comics-library",
       component: ComicsLibraryPage,
-      meta: { requiresAuth: true, title: "Biblioteca · Cómics" },
+      meta: { requiresAuth: true, title: "Cómics" },
     },
+    // Compat: la navegación anterior vivía bajo /library.
+    { path: "/library", redirect: "/novels" },
+    { path: "/library/comics", redirect: "/comics" },
     {
       path: "/settings",
       name: "settings",

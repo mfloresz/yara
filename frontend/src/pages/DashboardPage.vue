@@ -1,14 +1,10 @@
 <template>
   <AppLayout>
-    <div class="lib-media-switch" role="tablist" aria-label="Tipo de biblioteca">
-      <RouterLink to="/library" class="lib-media-tab lib-media-tab--active" role="tab" aria-selected="true">Novelas</RouterLink>
-      <RouterLink to="/library/comics" class="lib-media-tab" role="tab">Cómics</RouterLink>
-    </div>
     <div class="stack-lg">
       <header class="page-header">
         <div class="page-context">
           <div class="page-title-row">
-            <h1 class="page-title">Biblioteca</h1>
+            <h1 class="page-title">Novelas</h1>
             <div v-if="activeFilters.length" class="active-filters">
               <n-tag
                 v-for="filter in activeFilters"
@@ -1288,33 +1284,3 @@ function onBackToUrlDialog() {
 }
 </style>
 
-<style>
-.lib-media-switch {
-  display: inline-flex;
-  border: 1px solid var(--divide);
-  border-radius: var(--radius-pill);
-  padding: 0.1875rem;
-  gap: 0.1875rem;
-  background: var(--surface-elevated);
-  margin: 1.25rem 0 0;
-  width: fit-content;
-}
-
-.lib-media-tab {
-  padding: 0.3125rem 1rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  text-decoration: none;
-}
-
-.lib-media-tab:hover {
-  color: var(--foreground);
-}
-
-.lib-media-tab--active {
-  background: var(--btn-primary-bg);
-  color: var(--btn-primary-fg);
-  font-weight: 600;
-}
-</style>

@@ -11,7 +11,7 @@
 
     <div v-else-if="!comic" class="stack-md">
       <n-alert type="warning">Cómic no encontrado.</n-alert>
-      <n-button secondary @click="router.push('/library/comics')">Volver</n-button>
+      <n-button secondary @click="router.push('/comics')">Volver</n-button>
     </div>
 
     <div v-else class="comic-detail">
@@ -91,7 +91,7 @@
 
       <div class="comic-main">
         <header class="comic-main-header">
-          <RouterLink to="/library/comics" class="comic-back">
+          <RouterLink to="/comics" class="comic-back">
             <n-icon :size="14"><ArrowBackOutline /></n-icon>
             Cómics
           </RouterLink>
@@ -451,7 +451,7 @@ function confirmDelete() {
       if (!comic.value) return;
       await api.comics.delete(comic.value.id);
       message.success("Cómic eliminado.");
-      router.push("/library/comics");
+      router.push("/comics");
     },
   });
 }
