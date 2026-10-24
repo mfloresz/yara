@@ -25,6 +25,18 @@ export const SUPPORTED_SITE_HOSTS = [
   'asianovel.net',
   'dmxs.org',
   'pearlandreef.com',
+
+  // Comic sites (media: comic parsers).
+  'manhwaweb.com',
+  'zonatmo.to',
+  'samurai.j5z.xyz',
+  'onfmangas.com',
+  'lector-mangas.lat',
+  'toonkotsu.com',
+  'manhuaus.com',
+  'manhwashot.lat',
+  'mhscans.com',
+  'manhuahot.com',
 ];
 
 // Match patterns for chrome.contextMenus documentUrlPatterns. Both the bare
