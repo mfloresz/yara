@@ -747,3 +747,30 @@ expand and a raw-length budget undercounts.
 | Path | Auth | Description |
 |---|---|---|
 | `ws://host/ws/browser-worker` | in-band (worker sends a `register` message with its token after connect) | Persistent connection for the browser-worker extension. The server dispatches `fetch_page` jobs over this socket. Unauthenticated workers never receive jobs (the `register` message is validated against `ValidateWorkerToken`). |
+
+## Comics (`/api/v1/comics`)
+
+A parallel media tree to novels, structured by content kind so more media
+(e.g. anime) can follow the same shape. Comic chapters carry **page images**
+instead of text bodies; the comic text-translation flow is deferred, so there
+are no translate/refine surfaces yet.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET/POST /comics` | List (filters `q`, `sort`, `shared`, `progress=downloaded|completed|ongoing`) / create |
+| `GET/PATCH/DELETE /comics/{id}` | Read (owner or public) / patch / delete |
+| `GET/POST /comics/{id}/cover` | Serve/upload cover |
+| `GET /comics/{id}/chapters` | Summaries; `?includeContent=true` adds each chapter's page list |
+| `GET/POST/DELETE /comics/{id}/chapters/{chapterId}` | Chapter with pages / manual create / exclude |
+| `GET /comics/{id}/chapters/{chapterId}/pages` | Page records with authenticated image URLs |
+| `GET /comics/{id}/chapters/{chapterId}/pages/{pageId}/image` | Page image bytes (immutable cache) |
+| `GET /comics/{id}/chapters/{chapterId}/neighbors` | Reader prev/next |
+| `GET /comics/{id}/chapter-summaries`, `/chapter-stats` | Paginated list / download aggregates |
+| `GET/PUT /comics/{id}/reading-progress` | Per-user resume point |
+| `POST /comics/preview-from-url`, `/comics/import-from-url` | Parser TOC preview / import + download job |
+| `POST /comics/import-zip` | ZIP of images (one folder per chapter) |
+| `POST /comics/{id}/check-preview`, `/update-from-url`, `/redownload-from-url` | Update checks and downloads |
+| `GET /comics/{id}/jobs` | The comic's jobs |
+
+Jobs live in the same `translation_jobs` collection as novels, carrying
+exactly one of `novel`/`comic`; the operations page and drawer show both.

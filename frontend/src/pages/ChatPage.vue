@@ -313,6 +313,14 @@
               @keydown.enter.exact.prevent="send"
             />
             <div class="chat-input-actions">
+              <n-select
+                v-model:value="mediaScope"
+                size="small"
+                :options="mediaOptions"
+                class="chat-media-select"
+                aria-label="Tipo de contenido del asistente"
+                @update:value="onMediaChange"
+              />
               <!-- Keep provider/model selection attached to the text field. -->
               <n-dropdown
                 trigger="click"
@@ -401,6 +409,7 @@ import {
   NDropdown,
   NIcon,
   NInput,
+  NSelect,
   NModal,
   NPopover,
   NProgress,
@@ -508,6 +517,25 @@ const { providers, byId, loading: providersLoading, reload: reloadProviders } = 
 
 const items = ref<ChatItem[]>([]);
 const draft = ref("");
+
+// Media scoping of the assistant toolset (default: novels). Persisted so the
+// choice survives navigation; "both" loads every tool schema into the system
+// prompt, which is why it is opt-in.
+const mediaOptions = [
+  { label: "Novelas", value: "novels" },
+  { label: "Cómics", value: "comics" },
+  { label: "Ambos", value: "both" },
+];
+const mediaScope = ref<"novels" | "comics" | "both">(
+  ((): "novels" | "comics" | "both" => {
+    const saved = localStorage.getItem("yara-chat-media");
+    return saved === "comics" || saved === "both" ? saved : "novels";
+  })(),
+);
+function onMediaChange(value: string) {
+  mediaScope.value = (value as typeof mediaScope.value);
+  localStorage.setItem("yara-chat-media", mediaScope.value);
+}
 const streaming = ref(false);
 const sessionId = ref("");
 const lastUsage = ref<AgentChatUsage | null>(null);
@@ -1680,6 +1708,7 @@ async function sendMessage(
       {
         sessionId: sessionId.value || undefined,
         novelId: selectedNovel.value?.id,
+        media: mediaScope.value,
         message,
         regenerate: regenerate || undefined,
       },
@@ -2586,5 +2615,11 @@ function chooseNovel(novel: PickerNovel): void {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+</style>
+
+<style>
+.chat-media-select {
+  width: 6.5rem;
 }
 </style>

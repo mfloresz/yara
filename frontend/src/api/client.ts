@@ -1241,6 +1241,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         payload: {
           sessionId?: string;
           novelId?: string;
+          // Media scopes the assistant's toolset: "novels" (default),
+          // "comics" or "both".
+          media?: "novels" | "comics" | "both";
           message: string;
           // Regenerate re-runs the last turn: the server drops the stored
           // answer (and its tool trail) and re-asks with `message`, which the

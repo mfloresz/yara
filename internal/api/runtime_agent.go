@@ -136,7 +136,32 @@ func (s *Server) resolveAgentRunner(userID string) (ai.AgentProvider, store.AISe
 // agentTools builds the model-callable tool catalog for one user. Every tool
 // is a thin wrapper over the store scoped to userID, so the model can never
 // see or touch another user's library.
-func (s *Server) agentTools(userID string) []ai.AgentTool {
+// agentMediaScope validates the request's media selector.
+func agentMediaScope(media string) string {
+	switch media {
+	case "comics", "both":
+		return media
+	default:
+		return "novels"
+	}
+}
+
+// agentTools resolves the toolset for one chat turn. The media selector keeps
+// the system prompt small: novels-only (the default) or comics-only carries
+// one media's schemas; "both" carries everything.
+func (s *Server) agentTools(userID, media string) []ai.AgentTool {
+	novelTools := s.agentNovelTools(userID)
+	switch agentMediaScope(media) {
+	case "comics":
+		return append(s.agentComicTools(userID), agentToolAskUser())
+	case "both":
+		return append(append(novelTools, s.agentComicTools(userID)...), agentToolAskUser())
+	default:
+		return append(novelTools, agentToolAskUser())
+	}
+}
+
+func (s *Server) agentNovelTools(userID string) []ai.AgentTool {
 	return []ai.AgentTool{
 		// Catalog questions
 		s.agentToolListNovels(userID),
@@ -181,7 +206,6 @@ func (s *Server) agentTools(userID string) []ai.AgentTool {
 		s.agentToolSetChapterExcluded(userID),
 		s.agentToolBulkSetChapterStatus(userID),
 		s.agentToolBulkSetChapterExcluded(userID),
-		agentToolAskUser(),
 	}
 }
 
@@ -1005,7 +1029,7 @@ func agentHistoryEncodedSize(messages []ai.AgentMessage) (int, error) {
 // runAgentTurn executes one chat turn: replay history, stream events through
 // onEvent, then persist the extended trail. Callers must serialize turns per
 // user (agentTurnLocks) and pass an already-resolved runner.
-func (s *Server) runAgentTurn(ctx context.Context, runner ai.AgentProvider, userID string, session *store.AgentSession, selectedNovel *store.Novel, message string, onEvent func(ai.AgentEvent)) (ai.AgentChatOutput, *store.AgentSession, error) {
+func (s *Server) runAgentTurn(ctx context.Context, runner ai.AgentProvider, userID string, session *store.AgentSession, selectedNovel *store.Novel, media, message string, onEvent func(ai.AgentEvent)) (ai.AgentChatOutput, *store.AgentSession, error) {
 	history := agentHistoryFromSession(session)
 	history = append(history, ai.AgentMessage{Role: "user", Content: message})
 
@@ -1017,7 +1041,7 @@ func (s *Server) runAgentTurn(ctx context.Context, runner ai.AgentProvider, user
 	output, err := runner.AgentChat(ctx, ai.AgentChatInput{
 		System:   system,
 		Messages: history,
-		Tools:    s.agentTools(userID),
+		Tools:    s.agentTools(userID, media),
 		OnEvent:  onEvent,
 	})
 	if err != nil {
