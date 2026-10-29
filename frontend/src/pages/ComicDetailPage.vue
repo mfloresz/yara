@@ -1,11 +1,39 @@
 <template>
   <AppLayout>
-    <div v-if="!comic && loading" class="comic-detail-loading">
-      <n-skeleton width="220px" height="330px" style="border-radius: 12px" />
-      <div style="flex: 1; min-width: 0">
-        <n-skeleton width="60%" height="2rem" style="margin-bottom: 0.75rem" />
-        <n-skeleton width="30%" height="1rem" style="margin-bottom: 1rem" />
-        <n-skeleton v-for="i in 5" :key="i" width="85%" height="0.875rem" style="margin-bottom: 0.5rem" />
+    <div v-if="!comic && loading" class="comic-detail-layout">
+      <aside class="comic-sidebar">
+        <n-skeleton width="100%" height="320px" style="border-radius: 12px" />
+        <div class="comic-sidebar-actions">
+          <n-skeleton width="100%" height="2.5rem" style="border-radius: 8px" />
+          <n-skeleton width="100%" height="2.5rem" style="border-radius: 8px" />
+        </div>
+        <div class="comic-sidebar-tags">
+          <n-skeleton width="5rem" height="1.5rem" round />
+          <n-skeleton width="6rem" height="1.5rem" round />
+          <n-skeleton width="7rem" height="1.5rem" round />
+        </div>
+      </aside>
+
+      <div class="comic-main">
+        <header class="comic-main-header">
+          <n-skeleton width="60%" height="2rem" style="margin-bottom: 0.5rem" />
+          <n-skeleton width="30%" height="1rem" style="margin-bottom: 0.75rem" />
+          <n-skeleton width="20%" height="0.875rem" />
+          <n-skeleton width="90%" height="0.875rem" style="margin-top: 1rem" />
+          <n-skeleton width="75%" height="0.875rem" style="margin-top: 0.5rem" />
+        </header>
+        <n-skeleton width="20rem" height="2rem" style="border-radius: 8px" />
+        <div class="stack-sm">
+          <div
+            v-for="i in 6"
+            :key="i"
+            style="display: flex; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--divide)"
+          >
+            <n-skeleton width="2rem" height="1rem" />
+            <n-skeleton width="45%" height="1.1rem" />
+            <n-skeleton width="6rem" height="1.4rem" />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -14,18 +42,15 @@
       <n-button secondary @click="router.push('/comics')">Volver</n-button>
     </div>
 
-    <div v-else class="comic-detail">
+    <div v-else class="comic-detail-layout">
       <aside class="comic-sidebar">
-        <div class="comic-cover">
+        <div class="comic-cover-large">
           <img
-            v-if="comic.coverPath"
             :src="coverSrc(comic.coverPath)"
             :alt="`Portada de ${getComicDisplayTitle(comic)}`"
+            loading="lazy"
             @error="onCoverError"
           />
-          <div v-else class="comic-cover-empty" aria-hidden="true">
-            <n-icon :size="40"><ImageOutline /></n-icon>
-          </div>
         </div>
 
         <div class="comic-sidebar-actions">
@@ -43,143 +68,149 @@
             <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
             Buscar nuevos capítulos
           </n-button>
-          <n-button
-            v-if="hasFailedChapters"
-            secondary
-            block
-            :loading="redownloading"
-            @click="redownloadFailed"
-          >
-            <template #icon><n-icon><RefreshOutline /></n-icon></template>
-            Re-descargar fallidos
-          </n-button>
-          <n-button quaternary block @click="toggleVisibility">
-            <template #icon><n-icon><ShareSocialOutline /></n-icon></template>
-            {{ comic.isPublic ? "Dejar de compartir" : "Compartir" }}
-          </n-button>
-          <n-button quaternary block type="error" @click="confirmDelete">
-            <template #icon><n-icon><TrashOutline /></n-icon></template>
-            Eliminar
-          </n-button>
+          <span class="sidebar-actions-group" role="group" aria-label="Acciones del cómic">
+            <n-button class="sidebar-actions-main" secondary @click="toggleVisibility">
+              <template #icon><n-icon><ShareSocialOutline /></n-icon></template>
+              {{ comic.isPublic ? "Dejar de compartir" : "Compartir" }}
+            </n-button>
+            <n-dropdown
+              trigger="click"
+              placement="bottom-end"
+              :options="sidebarMenuOptions"
+              @select="handleSidebarMenuSelect"
+            >
+              <n-button
+                class="sidebar-actions-arrow"
+                secondary
+                aria-label="Más acciones"
+                aria-haspopup="menu"
+              >
+                <template #icon><n-icon :size="14"><ChevronDownOutline /></n-icon></template>
+              </n-button>
+            </n-dropdown>
+          </span>
         </div>
 
-        <dl class="comic-sidebar-meta">
-          <div class="meta-row">
-            <dt>Capítulos</dt>
-            <dd>{{ stats.totalChapters }}</dd>
-          </div>
-          <div class="meta-row">
-            <dt>Descargados</dt>
-            <dd>{{ stats.downloadedChapters }}</dd>
-          </div>
-          <div v-if="stats.failedChapters" class="meta-row">
-            <dt>Fallidos</dt>
-            <dd>{{ stats.failedChapters }}</dd>
-          </div>
-          <div v-if="comic.status" class="meta-row">
-            <dt>Estado</dt>
-            <dd>{{ statusLabels[comic.status] || comic.status }}</dd>
-          </div>
-        </dl>
-
-        <div v-if="comic.tags?.length" class="comic-sidebar-tags">
-          <n-tag v-for="tag in comic.tags" :key="tag" size="small" :bordered="false">
-            {{ tag }}
+        <div class="comic-sidebar-tags">
+          <n-tag :type="comicStatusType(comic.status)" size="small" round>
+            {{ statusLabels[comic.status] || comic.status }}
+          </n-tag>
+          <n-tag size="small" round>{{ stats.totalChapters }} capítulos</n-tag>
+          <n-tag size="small" round>{{ stats.downloadedChapters }} descargados</n-tag>
+          <n-tag v-if="stats.failedChapters" type="error" size="small" round>
+            {{ stats.failedChapters }} fallidos
+          </n-tag>
+          <n-tag type="success" size="small" round>
+            {{ comic.sourceLanguage }} → {{ comic.targetLanguage }}
           </n-tag>
         </div>
       </aside>
 
       <div class="comic-main">
         <header class="comic-main-header">
-          <RouterLink to="/comics" class="comic-back">
-            <n-icon :size="14"><ArrowBackOutline /></n-icon>
-            Cómics
-          </RouterLink>
           <h1 class="comic-title">{{ getComicDisplayTitle(comic) }}</h1>
           <div class="comic-meta">
             <span v-if="getComicDisplayAuthor(comic)" class="muted">{{ getComicDisplayAuthor(comic) }}</span>
+            <span
+              v-if="getComicDisplaySeries(comic) || getComicDisplayNumber(comic)"
+              class="comic-series muted small"
+            >
+              <n-icon :size="14"><BookmarkOutline /></n-icon>
+              <span v-if="getComicDisplaySeries(comic)">{{ getComicDisplaySeries(comic) }}</span>
+              <span v-if="getComicDisplaySeries(comic) && getComicDisplayNumber(comic)">·</span>
+              <span v-if="getComicDisplayNumber(comic)">#{{ getComicDisplayNumber(comic) }}</span>
+            </span>
             <span v-if="comic.url" class="muted small">{{ hostOf(comic.url) }}</span>
             <n-tag v-if="comic.isPublic" size="small" :bordered="false">Compartido</n-tag>
           </div>
-          <p v-if="descriptionText" class="comic-description">
-            {{ descriptionText }}
-          </p>
+          <DescriptionBlock
+            :description="descriptionText"
+            :reset-key="comic.id"
+          />
+          <div v-if="comic.tags?.length" class="comic-description-tags">
+            <n-tag v-for="tag in comic.tags" :key="tag" size="small" :bordered="false">
+              {{ tag }}
+            </n-tag>
+          </div>
         </header>
 
-        <n-tabs v-model:value="activeTab" type="line" animated>
-          <n-tab name="chapters" tab="Capítulos">
-            <div class="comic-chapters-toolbar">
-              <n-input
-                v-model:value="chapterQuery"
-                size="small"
-                clearable
-                placeholder="Buscar capítulo…"
-                style="max-width: 18rem"
-              />
-              <n-button
-                v-if="excludedChapters.length"
-                size="small"
-                quaternary
-                @click="showExcluded = !showExcluded"
-              >
-                {{ showExcluded ? "Ocultar" : "Ver" }} excluidos ({{ excludedChapters.length }})
-              </n-button>
-            </div>
-
-            <ul class="comic-chapter-list">
-              <li v-for="ch in visibleChapters" :key="ch.id" class="comic-chapter-row">
-                <span class="comic-chapter-order muted">{{ ch.chapterOrder }}</span>
-                <RouterLink
-                  :to="`/comics/${comic.id}/chapters/${ch.id}`"
-                  class="comic-chapter-title"
-                  :class="{ 'comic-chapter-title--excluded': ch.excluded }"
-                >
-                  {{ ch.title || `Capítulo ${ch.chapterOrder}` }}
-                </RouterLink>
-                <span class="comic-chapter-pages muted small">{{ ch.pageCount }} pág.</span>
-                <n-tag :type="statusTagType(ch.status)" size="small" :bordered="false">
-                  {{ statusLabels[ch.status] || ch.status }}
-                </n-tag>
-                <n-button
-                  v-if="ch.excluded"
-                  size="tiny"
-                  quaternary
-                  aria-label="Restaurar capítulo"
-                  @click="restoreChapter(ch)"
-                >
-                  Restaurar
-                </n-button>
-                <n-button
-                  v-else
-                  size="tiny"
-                  quaternary
-                  type="error"
-                  aria-label="Excluir capítulo"
-                  @click="excludeChapter(ch)"
-                >
-                  Excluir
-                </n-button>
-              </li>
-            </ul>
-          </n-tab>
-
-          <n-tab name="jobs" tab="Trabajos">
-            <ul class="comic-jobs-list">
-              <li v-for="job in jobs" :key="job.id" class="comic-job-row">
-                <n-tag size="small" :bordered="false">{{ jobLabel(job) }}</n-tag>
-                <n-tag :type="jobStatusType(job.status)" size="small" :bordered="false">
-                  {{ job.status }}
-                </n-tag>
-                <span class="muted small">
-                  {{ job.completedChapters ?? 0 }}/{{ job.totalChapters ?? 0 }}
-                  <template v-if="job.errorMessage"> · {{ job.errorMessage }}</template>
-                </span>
-                <span class="muted small">{{ formatTime(job.createdAt) }}</span>
-              </li>
-              <li v-if="!jobs.length" class="muted small">Sin trabajos todavía.</li>
-            </ul>
-          </n-tab>
+        <n-tabs v-model:value="activeTab" type="bar" animated>
+          <n-tab name="chapters">Capítulos</n-tab>
+          <n-tab name="jobs">Trabajos</n-tab>
         </n-tabs>
+
+        <div v-show="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
+          <div class="comic-chapters-toolbar">
+            <n-input
+              v-model:value="chapterQuery"
+              size="small"
+              clearable
+              placeholder="Buscar capítulo…"
+              style="max-width: 18rem"
+            />
+            <n-button
+              v-if="excludedChapters.length"
+              size="small"
+              quaternary
+              @click="showExcluded = !showExcluded"
+            >
+              {{ showExcluded ? "Ocultar" : "Ver" }} excluidos ({{ excludedChapters.length }})
+            </n-button>
+          </div>
+
+          <ul class="comic-chapter-list">
+            <li v-for="ch in visibleChapters" :key="ch.id" class="comic-chapter-row">
+              <span class="comic-chapter-order muted">{{ chapterPosition(ch) }}</span>
+              <RouterLink
+                :to="`/comics/${comic.id}/chapters/${ch.id}`"
+                class="comic-chapter-title"
+                :class="{ 'comic-chapter-title--excluded': ch.excluded }"
+              >
+                {{ ch.title || `Capítulo ${ch.chapterOrder}` }}
+              </RouterLink>
+              <span class="comic-chapter-pages muted small">{{ ch.pageCount }} pág.</span>
+              <n-tag :type="chapterStatusType(ch.status)" size="small" :bordered="false">
+                {{ statusLabels[ch.status] || ch.status }}
+              </n-tag>
+              <n-button
+                v-if="ch.excluded"
+                size="tiny"
+                quaternary
+                aria-label="Restaurar capítulo"
+                @click="restoreChapter(ch)"
+              >
+                Restaurar
+              </n-button>
+              <n-button
+                v-else
+                size="tiny"
+                quaternary
+                type="error"
+                aria-label="Excluir capítulo"
+                @click="excludeChapter(ch)"
+              >
+                Excluir
+              </n-button>
+            </li>
+          </ul>
+        </div>
+
+        <div v-show="activeTab === 'jobs'" class="tab-panel" aria-labelledby="tab-jobs">
+          <ul class="comic-jobs-list">
+            <li v-for="job in jobs" :key="job.id" class="comic-job-row">
+              <n-tag size="small" :bordered="false">{{ jobLabel(job) }}</n-tag>
+              <n-tag :type="jobStatusType(job.status)" size="small" :bordered="false">
+                {{ job.status }}
+              </n-tag>
+              <span class="muted small">
+                {{ job.completedChapters ?? 0 }}/{{ job.totalChapters ?? 0 }}
+                <template v-if="job.errorMessage"> · {{ job.errorMessage }}</template>
+              </span>
+              <span class="muted small">{{ formatTime(job.createdAt) }}</span>
+            </li>
+            <li v-if="!jobs.length" class="muted small">Sin trabajos todavía.</li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -195,7 +226,7 @@
           {{ updatePreview.title }} — {{ updatePreview.newChapters }} capítulo(s) nuevo(s)
           ({{ updatePreview.currentChapters }} → {{ updatePreview.totalChapters }}).
         </p>
-        <div class="row-end gap-sm">
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem">
           <n-button quaternary @click="updatePreviewOpen = false">Cancelar</n-button>
           <n-button type="primary" :loading="updating" @click="confirmUpdate">
             Descargar novedades
@@ -212,6 +243,7 @@ import { useRoute, useRouter, RouterLink } from "vue-router";
 import {
   NAlert,
   NButton,
+  NDropdown,
   NIcon,
   NInput,
   NModal,
@@ -223,24 +255,25 @@ import {
   useMessage,
 } from "naive-ui";
 import {
-  ArrowBackOutline,
   BookOutline,
+  BookmarkOutline,
+  ChevronDownOutline,
   CloudDownloadOutline,
-  ImageOutline,
-  RefreshOutline,
   ShareSocialOutline,
-  TrashOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import DescriptionBlock from "@/features/novels/DescriptionBlock.vue";
 import { useAppServices } from "@/app/services";
 import { setDocumentTitle } from "@/composables/useDocumentTitle";
 import {
+  chapterPosition,
   getComicDisplayAuthor,
+  getComicDisplayNumber,
+  getComicDisplaySeries,
   getComicDisplayTitle,
   type Comic,
   type ComicChapterStats,
   type ComicChapterSummary,
-  type TranslationJob,
 } from "@/domain";
 import { coverSrc, onCoverError } from "@/utils/cover";
 
@@ -260,7 +293,6 @@ const activeTab = ref("chapters");
 const chapterQuery = ref("");
 const showExcluded = ref(false);
 const checking = ref(false);
-const redownloading = ref(false);
 const updating = ref(false);
 const updatePreviewOpen = ref(false);
 const updatePreview = ref<{
@@ -282,10 +314,22 @@ const statusLabels: Record<string, string> = {
   cancelled: "Abandonado",
 };
 
-function statusTagType(status: string): "default" | "success" | "error" | "warning" | "info" {
+function comicStatusType(status: string): "success" | "info" | "warning" | "error" {
+  switch (status) {
+    case "completed":
+      return "info";
+    case "hiatus":
+      return "warning";
+    case "cancelled":
+      return "error";
+    default:
+      return "success";
+  }
+}
+
+function chapterStatusType(status: string): "default" | "success" | "error" | "warning" {
   switch (status) {
     case "done":
-    case "completed":
       return "success";
     case "failed":
       return "error";
@@ -347,6 +391,22 @@ const descriptionText = computed(() => {
   const text = comic.value?.targetDescription || comic.value?.sourceDescription || "";
   return text.trim();
 });
+
+const sidebarMenuOptions = computed(() => [
+  { label: "Re-descargar fallidos", key: "redownload", disabled: !hasFailedChapters.value },
+  { label: "Eliminar", key: "delete" },
+]);
+
+function handleSidebarMenuSelect(key: string) {
+  switch (key) {
+    case "redownload":
+      void redownloadFailed();
+      break;
+    case "delete":
+      confirmDelete();
+      break;
+  }
+}
 
 function hostOf(url: string): string {
   try {
@@ -420,14 +480,11 @@ async function confirmUpdate() {
 
 async function redownloadFailed() {
   if (!comic.value) return;
-  redownloading.value = true;
   try {
     const result = await api.comics.redownloadFromUrl(comic.value.id);
     message.success(`Re-descarga encolada: ${result.chaptersQueued} capítulo(s).`);
   } catch (err) {
     message.error(err instanceof Error ? err.message : "No se pudo encolar la re-descarga.");
-  } finally {
-    redownloading.value = false;
   }
 }
 
@@ -478,50 +535,85 @@ watch(
 </script>
 
 <style scoped>
-.comic-detail-loading {
-  display: flex;
-  gap: 2rem;
-  padding-top: 1.5rem;
+.comic-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
 }
 
-.comic-detail {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 2rem;
-  padding: 1.5rem 0 3rem;
-  align-items: start;
+.comic-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.comic-main-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.comic-title {
+  margin: 0;
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.comic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.875rem;
+  font-size: 0.875rem;
+}
+
+.comic-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-secondary);
+}
+
+.comic-series i {
+  font-size: 0.8rem;
+  color: var(--accent-link);
+}
+
+.comic-description-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+}
+
+.tab-panel {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
 }
 
 .comic-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  position: sticky;
-  top: 1rem;
+  gap: 0.875rem;
 }
 
-.comic-cover {
-  aspect-ratio: 2 / 3;
+.comic-cover-large {
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--divide);
   background: var(--surface-muted);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
 }
 
-.comic-cover img {
+.comic-cover-large img {
   width: 100%;
-  height: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
   object-fit: cover;
   display: block;
-}
-
-.comic-cover-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-secondary);
 }
 
 .comic-sidebar-actions {
@@ -530,82 +622,31 @@ watch(
   gap: 0.5rem;
 }
 
-.comic-sidebar-meta {
+.sidebar-actions-group {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin: 0;
-  font-size: 0.8125rem;
+  width: 100%;
 }
 
-.meta-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+.sidebar-actions-main {
+  flex: 1;
+  border-radius: 999px 0 0 999px;
 }
 
-.meta-row dt {
-  color: var(--text-secondary);
-}
-
-.meta-row dd {
-  margin: 0;
-  font-weight: 600;
+.sidebar-actions-arrow {
+  flex-shrink: 0;
+  border-radius: 0 999px 999px 0;
 }
 
 .comic-sidebar-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
-}
-
-.comic-main {
-  min-width: 0;
-}
-
-.comic-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.8125rem;
-  color: var(--accent-link);
-  margin-bottom: 0.75rem;
-}
-
-.comic-main-header {
-  margin-bottom: 1.25rem;
-}
-
-.comic-title {
-  font-size: 1.75rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 0.375rem;
-}
-
-.comic-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.625rem;
-  font-size: 0.875rem;
-  margin-bottom: 0.75rem;
-}
-
-.comic-description {
-  font-size: 0.9375rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  white-space: pre-line;
-  margin: 0;
-  max-width: 60ch;
+  gap: 0.5rem;
 }
 
 .comic-chapters-toolbar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin: 0.75rem 0;
 }
 
 .comic-chapter-list {
@@ -657,7 +698,7 @@ watch(
 
 .comic-jobs-list {
   list-style: none;
-  margin: 0.75rem 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -671,26 +712,33 @@ watch(
   border-bottom: 1px solid var(--divide);
 }
 
-@media (max-width: 760px) {
-  .comic-detail {
+@media (max-width: 768px) {
+  .comic-detail-layout {
     grid-template-columns: 1fr;
+    gap: 1rem;
   }
 
   .comic-sidebar {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 0.75rem;
+    align-items: start;
   }
 
-  .comic-cover {
-    width: 132px;
-    flex-shrink: 0;
+  .comic-cover-large {
+    max-width: 100px;
   }
 
   .comic-sidebar-actions {
-    flex: 1;
-    min-width: 200px;
+    gap: 0.375rem;
+  }
+
+  .comic-sidebar-tags {
+    grid-column: 1 / -1;
+  }
+
+  .comic-title {
+    font-size: 1.375rem;
   }
 }
 </style>

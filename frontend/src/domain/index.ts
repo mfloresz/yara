@@ -323,5 +323,11 @@ export function getComicDisplayAuthor(
 export function getComicDisplaySeries(
   comic: Pick<Comic, "targetSeries" | "sourceSeries">,
 ): string {
-  return comic.targetSeries || comic.sourceSeries;
+  return (comic.targetSeries || comic.sourceSeries || "").trim();
+}
+
+export function getComicDisplayNumber(
+  comic: Pick<Comic, "targetNumber" | "sourceNumber">,
+): string {
+  return (comic.targetNumber || comic.sourceNumber || "").trim();
 }
