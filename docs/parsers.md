@@ -106,6 +106,7 @@ context.
 | `ctx.resolveUrl(base, rel)` | string | Absolute-URL resolution (goja has no WHATWG `URL`). |
 | `ctx.fail(code, msg)` | throws | Raise a taxonomy error; see below. |
 | `ctx.log(msg)` | — | Appears in the server log tagged with the parser name. |
+| `ctx.sleep(ms)` | — | Pauses the script (0–30000 ms per call) so paginated crawls can pace themselves below a site's rate limit; counts against the invocation's wall-clock timeout. |
 
 Node handles expose `text`, `html`, `href`, `src`, `nodeName` as live
 properties, plus `attr(name)` and `remove()`. `href`/`src` are resolved against

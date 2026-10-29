@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dop251/goja"
@@ -134,6 +135,7 @@ func (inv *invocation) ctxObject() *goja.Object {
 	_ = obj.Set("resolveUrl", inv.resolveURL)
 	_ = obj.Set("fail", inv.fail)
 	_ = obj.Set("log", inv.log)
+	_ = obj.Set("sleep", inv.sleep)
 	inv.ctxObj = obj
 	return obj
 }
@@ -229,6 +231,26 @@ func (inv *invocation) fail(call goja.FunctionCall) goja.Value {
 func (inv *invocation) log(call goja.FunctionCall) goja.Value {
 	slog.Info(call.Argument(0).String(), "parser", inv.script.name)
 	return goja.Undefined()
+}
+
+// sleep pauses the script so a paginated TOC crawl can pace itself below a
+// site's rate limit. The cap bounds the damage a broken script can do to one
+// job; the invocation's wall-clock timer and fetch budget still apply after
+// the wait, and a canceled context cuts the wait short.
+func (inv *invocation) sleep(call goja.FunctionCall) goja.Value {
+	ms := call.Argument(0).ToInteger()
+	if ms < 0 {
+		ms = 0
+	}
+	if ms > 30000 {
+		ms = 30000
+	}
+	select {
+	case <-inv.ctx.Done():
+		return inv.throw(inv.ctx.Err())
+	case <-time.After(time.Duration(ms) * time.Millisecond):
+		return goja.Undefined()
+	}
 }
 
 func absoluteURL(base, ref string) string {

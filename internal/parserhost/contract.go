@@ -20,7 +20,8 @@ import (
 //	                             // worker's Livewire operation instead of fetch_page
 //	  probe: (url) => boolean,  // can this script handle the URL?
 //	  // "what exists": full snapshot; in-site pagination is the SCRIPT's job
-//	  // (multiple ctx.get calls allowed within the fetch budget)
+//	  // (multiple ctx.get calls allowed within the fetch budget; ctx.sleep(ms)
+//	  // paces the crawl below a site's rate limit)
 //	  toc: (ctx, url) => ({
 //	    novel: { title, description, author, coverUrl, language, tags },
 //	    chapters: [{ title, url }],   // ordered; host computes the new/missing diff

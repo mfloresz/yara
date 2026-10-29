@@ -106,7 +106,7 @@
     {
       "name": "novelfire",
       "file": "novelfire.js",
-      "sha256": "b2107cca6074278569a64c2fc2ada49f500d3c6d0e756e315ab5abbe2ac22d8c",
+      "sha256": "88c690565c016fb43c23556531e7c29ed103bfb23118d47f0790896b2f754a5f",
       "requiresBrowser": false
     },
     {
@@ -152,5 +152,5 @@
       "requiresBrowser": false
     }
   ],
-  "signature": "e0cc55d36b3f238f051e17b4402342760d2a673cc5e271a4bf683c6109566c0fc077862a76dcea999bdd0eb8b7b757bc799b924536869c43c8ecf9b56a59b20b"
+  "signature": "be832dcd377e0c93937b83ca63798ef066c413d9c24100f0c17dc1238b62bf4929f3bce33f82a284464ac08b531213015be0879f160ffbc8cc397d4637835a0c"
 }
