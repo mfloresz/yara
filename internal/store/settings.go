@@ -25,12 +25,16 @@ type AISettings struct {
 }
 
 type AppSettings struct {
-	AI            AISettings          `json:"ai"`
-	TitleProvider string              `json:"titleProvider,omitempty"`
-	TitleModel    string              `json:"titleModel,omitempty"`
-	AgentProvider string              `json:"agentProvider,omitempty"`
-	AgentModel    string              `json:"agentModel,omitempty"`
-	Translation   TranslationDefaults `json:"translation"`
+	AI            AISettings `json:"ai"`
+	TitleProvider string     `json:"titleProvider,omitempty"`
+	TitleModel    string     `json:"titleModel,omitempty"`
+	AgentProvider string     `json:"agentProvider,omitempty"`
+	AgentModel    string     `json:"agentModel,omitempty"`
+	// CheckModel selects a decision model served by OpenRouter's decisions
+	// endpoint (e.g. perplexity/pplx-decider-v1.2). Empty keeps the legacy
+	// chat-model check.
+	CheckModel  string              `json:"checkModel,omitempty"`
+	Translation TranslationDefaults `json:"translation"`
 }
 
 type User struct {

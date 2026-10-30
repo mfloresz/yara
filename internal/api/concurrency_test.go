@@ -61,7 +61,7 @@ func (m *mockConcurrentProvider) Refine(ctx context.Context, in ai.RefineInput) 
 	return ai.RefineOutput{}, nil
 }
 func (m *mockConcurrentProvider) Check(ctx context.Context, in ai.CheckInput) (ai.CheckOutput, error) {
-	return ai.CheckOutput{OK: true}, nil
+	return ai.CheckOutput{Decision: ai.CheckDecisionAccept}, nil
 }
 func (m *mockConcurrentProvider) GenerateGlossary(ctx context.Context, in ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {
 	return ai.GenerateGlossaryOutput{}, nil

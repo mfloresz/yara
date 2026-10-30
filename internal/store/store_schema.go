@@ -131,6 +131,7 @@ func (s *Store) ensureUsersCollection() (*core.Collection, error) {
 	c.Fields.Add(&core.TextField{Name: "title_model", Max: 200})
 	c.Fields.Add(&core.TextField{Name: "agent_provider", Max: 120})
 	c.Fields.Add(&core.TextField{Name: "agent_model", Max: 200})
+	c.Fields.Add(&core.TextField{Name: "check_model", Max: 200})
 	c.Fields.Add(&core.BoolField{Name: "blocked", Hidden: true})
 	if err := s.App.Save(c); err != nil {
 		return nil, err
@@ -161,6 +162,9 @@ func (s *Store) migrateUsersCollection(c *core.Collection) (*core.Collection, er
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.TextField{Name: "agent_model", Max: 200}); err != nil {
+		return nil, err
+	}
+	if err := s.ensureField(c, &core.TextField{Name: "check_model", Max: 200}); err != nil {
 		return nil, err
 	}
 	if err := s.ensureField(c, &core.BoolField{Name: "blocked", Hidden: true}); err != nil {

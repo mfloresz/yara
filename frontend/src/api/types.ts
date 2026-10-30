@@ -209,6 +209,7 @@ export type ServerSettings = {
   titleModel: string;
   agentProvider?: string;
   agentModel?: string;
+  checkModel?: string;
   translation: {
     autoSegment: boolean;
     thresholdChars: number;

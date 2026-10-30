@@ -3733,6 +3733,9 @@ components:
         titleModel: { type: string }
         agentProvider: { type: string }
         agentModel: { type: string }
+        checkModel:
+          type: string
+          description: OpenRouter decision model used for the post-translation check (e.g. perplexity/pplx-decider-v1.2). Empty keeps the chat-model check.
         translation: { $ref: '#/components/schemas/TranslationDefaults' }
 
     TranslationDefaults:

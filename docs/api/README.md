@@ -419,7 +419,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/defaults` | Global default translation values. |
-| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `agentProvider`, `agentModel`, `translation`). |
+| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `agentProvider`, `agentModel`, `checkModel`, `translation`). |
 | `PUT` | `/api/v1/settings` | Update settings (same body shape). |
 
 ```json
@@ -432,6 +432,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
     "titleModel": "kimi-k2",
     "agentProvider": "opencode-go",
     "agentModel": "kimi-k2",
+    "checkModel": "perplexity/pplx-decider-v1.2",
     "translation": { "includePreviousTitleHints": false, "includePreviousContentHints": true, "autoSegment": false }
   }
 }

@@ -16,19 +16,43 @@ func (s *Server) runRefineChapter(jc *jobContext, idx int, chapter *store.Chapte
 	baseline := chapter.TranslatedContent
 	current := chapter.TranslatedContent
 
-	attempts := 1
+	refinesLeft := 1
 	if jc.cfg.Translation.EnableCheck {
-		attempts = max(1, jc.cfg.Translation.MaxRetries)
+		refinesLeft = max(1, jc.cfg.Translation.MaxRetries)
 	}
+	retranslatesLeft := 1
 
-	for attempt := 1; attempt <= attempts; attempt++ {
+	for {
 		if jc.cfg.Translation.EnableCheck {
-			checkPrompt := buildCheckPrompt(jc.cfg, jc.novel, chapter, current)
-			checkOut, err := jc.provider.Check(jc.runCtx, checkPrompt)
-			if err == nil && checkOut.OK {
-				return s.saveRefinedChapter(jc, chapter, baseline, current)
+			checkOut, err := s.checkChapter(jc.runCtx, jc, chapter, current)
+			if err != nil {
+				slog.Warn("chapter check failed, continuing without it", "chapterId", chapter.ID, "err", err)
+			} else {
+				switch resolveCheckAction(checkOut) {
+				case ai.CheckDecisionAccept:
+					return s.saveRefinedChapter(jc, chapter, baseline, current)
+				case ai.CheckDecisionRetranslate:
+					if retranslatesLeft > 0 && strings.TrimSpace(chapter.OriginalContent) != "" {
+						retranslatesLeft--
+						if strings.TrimSpace(chapter.RefinedContent) != "" {
+							slog.Warn("retranslation discards the chapter's existing refined content", "chapterId", chapter.ID)
+						}
+						slog.Info("chapter check chose retranslation", "chapterId", chapter.ID, "confidence", checkOut.Confidence)
+						if _, err := s.runTranslateChapterDetailed(jc, idx, chapter); err != nil {
+							return fmt.Errorf("retranslate chapter: %w", err)
+						}
+						baseline = chapter.TranslatedContent
+						current = chapter.TranslatedContent
+						jc.resetSegmentProgress()
+						continue
+					}
+				}
 			}
 		}
+		if refinesLeft <= 0 {
+			break
+		}
+		refinesLeft--
 		if err := jc.runCtx.Err(); err != nil {
 			return fmt.Errorf("refine context cancelled: %w", err)
 		}

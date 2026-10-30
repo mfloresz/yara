@@ -2716,7 +2716,7 @@ func (p *stubTranslateProvider) Refine(ctx context.Context, in ai.RefineInput) (
 }
 
 func (p *stubTranslateProvider) Check(ctx context.Context, in ai.CheckInput) (ai.CheckOutput, error) {
-	return ai.CheckOutput{OK: true}, nil
+	return ai.CheckOutput{Decision: ai.CheckDecisionAccept}, nil
 }
 
 func (p *stubTranslateProvider) GenerateGlossary(ctx context.Context, in ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {

@@ -200,6 +200,43 @@
                 <n-switch v-model:value="settings.translation.enableCheck" aria-label="Activar verificación posterior" />
               </SettingsRow>
               <SettingsRow
+                title="Servicio de decisión"
+                description="Un modelo pequeño decide si la traducción está bien, necesita refinarse o debe retraducirse. Requiere activar la verificación posterior."
+              >
+                <n-switch
+                  v-model:value="decisionCheckEnabled"
+                  :disabled="!settings.translation.enableCheck"
+                  aria-label="Usar servicio de decisión"
+                />
+              </SettingsRow>
+              <n-collapse-transition :show="decisionCheckEnabled">
+                <div class="row-wrap" :class="{ 'settings-disabled': !settings.translation.enableCheck }">
+                  <div style="flex: 1; min-width: 260px">
+                    <label class="small muted" for="check-model">Modelo de decisión</label>
+                    <n-select
+                      id="check-model"
+                      v-model:value="settings.checkModel"
+                      :options="checkModelOptions"
+                      :disabled="!settings.translation.enableCheck || !openRouterReady"
+                      filterable
+                      tag
+                      placeholder="perplexity/pplx-decider-v1.2"
+                    />
+                    <div class="small muted" style="margin-top: 0.25rem">
+                      Se ejecuta en OpenRouter; si falta la key, se usa el modelo de contenido.
+                    </div>
+                  </div>
+                </div>
+              </n-collapse-transition>
+              <n-alert
+                v-if="settings.translation.enableCheck && decisionCheckEnabled && !openRouterReady"
+                type="warning"
+                :bordered="false"
+                style="margin-top: 0.5rem"
+              >
+                Configura una API key de OpenRouter para usar el servicio de decisión.
+              </n-alert>
+              <SettingsRow
                 title="Incluir títulos previos"
                 description="Añade títulos anteriores como contexto adicional."
               >
@@ -461,6 +498,16 @@ const themeOptions = [
   { label: "Oscuro", value: "dark" },
 ];
 
+const defaultCheckModel = "perplexity/pplx-decider-v1.2";
+const checkModelOptions = [{ label: defaultCheckModel, value: defaultCheckModel }];
+const decisionCheckEnabled = computed({
+  get: () => Boolean(settings.value?.checkModel?.trim()),
+  set: (enabled: boolean) => {
+    if (!settings.value) return;
+    settings.value.checkModel = enabled ? settings.value.checkModel?.trim() || defaultCheckModel : "";
+  },
+});
+
 onMounted(() => {
   void load();
   void loadWorkerTokens();
@@ -528,6 +575,7 @@ async function load() {
       reloadProviders(),
     ]);
     settings.value = settingsResponse;
+    settings.value.checkModel = settingsResponse.checkModel ?? "";
     prompts.value = promptsResponse;
     providerApiKey.value = "";
     timeoutSec.value = settingsResponse.ai.timeoutMs
@@ -562,6 +610,10 @@ const titleModelOptions = computed(() => {
   if (!settings.value) return [];
   const info = byId.value.get(settings.value.titleProvider);
   return (info?.models ?? []).map((m) => ({ label: m, value: m }));
+});
+const openRouterReady = computed(() => {
+  const info = byId.value.get("openrouter");
+  return Boolean(info && (info.apiKeyConfigured || info.sharedKeyAvailable));
 });
 
 function onProviderChange() {
@@ -634,6 +686,7 @@ async function save() {
       settings.value.titleProvider = "";
       settings.value.titleModel = "";
     }
+    settings.value.checkModel = (settings.value.checkModel ?? "").trim();
     settings.value = await api.settings.update(settings.value);
     applyTheme(settings.value.theme);
     await Promise.all([

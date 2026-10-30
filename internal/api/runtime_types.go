@@ -48,6 +48,7 @@ type novelTranslationOptions struct {
 type resolvedJobConfig struct {
 	AI               store.AISettings
 	TitleAI          *store.AISettings
+	CheckAI          *store.AISettings
 	Translation      store.TranslationDefaults
 	Glossary         []glossaryEntry
 	Prompts          promptSettings

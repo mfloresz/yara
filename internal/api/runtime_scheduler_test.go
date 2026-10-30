@@ -168,7 +168,7 @@ func (p *gatedProvider) Refine(ctx context.Context, in ai.RefineInput) (ai.Refin
 }
 
 func (p *gatedProvider) Check(ctx context.Context, in ai.CheckInput) (ai.CheckOutput, error) {
-	return ai.CheckOutput{OK: true}, nil
+	return ai.CheckOutput{Decision: ai.CheckDecisionAccept}, nil
 }
 
 func (p *gatedProvider) GenerateGlossary(ctx context.Context, in ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {
