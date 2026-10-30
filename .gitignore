@@ -18,3 +18,4 @@ debug-proxy
 
 .zcode/
 .parsers-signing.key
+text_test/
