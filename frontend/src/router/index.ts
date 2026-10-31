@@ -133,6 +133,11 @@ export const router = createRouter({
 });
 
 router.beforeEach((to) => {
+  // Deep-link de la extensión (?importUrl=...&into=1): la extensión abre "/",
+  // pero quien consume el parámetro es la biblioteca de novelas.
+  if (to.query.importUrl && to.path !== "/novels") {
+    return { path: "/novels", query: to.query };
+  }
   // Fail closed while the session is still loading: never render protected
   // content (in particular /admin) on an unverified role. The router is
   // attached after restoreSession in main.ts, so this branch only covers

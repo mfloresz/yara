@@ -442,7 +442,7 @@ function syncFiltersToUrl() {
   }
   if (!showShared.value) query.shared = "own";
   if (progressFilter.value !== "all") query.progress = progressFilter.value;
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
 }
 
 function restorePreferences(userId?: string) {
@@ -751,7 +751,7 @@ function handleViewMenuSelect(key: string) {
 function clearFilter(param: string) {
   const query = { ...route.query };
   delete query[param];
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
 }
 
 // "Limpiar filtros" from the no-results state: drops every filter that can
@@ -766,7 +766,7 @@ function clearAllFilters() {
   savePreferences();
   const query = { ...route.query };
   for (const param of ["tag", "author", "series", "q", "shared", "progress"]) delete query[param];
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
   void reloadLibrary();
 }
 
@@ -809,7 +809,7 @@ function consumeImportUrlQuery() {
   const query = { ...route.query };
   delete query.importUrl;
   delete query.into;
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
 }
 
 watch(
