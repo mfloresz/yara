@@ -154,9 +154,14 @@ function chaptersFromHTML(ctx, doc, pageURL) {
   for (let i = 0; i < pages.length; i++) {
     let d = doc;
     if (pages[i] !== pageURL) {
+      // The site rate-limits bursts of ~10 rapid requests, which truncated a
+      // 14-page TOC to 8 pages; pace the crawl. Guarded so older hosts without
+      // the ctx.sleep binding keep working (unpaced, as before).
+      if (typeof ctx.sleep === "function") ctx.sleep(1500);
       try {
         d = ctx.get(pages[i]);
       } catch (e) {
+        ctx.log("toc: chapter list page failed, skipping " + pages[i] + " (" + e + ")");
         continue;
       }
     }
