@@ -1,5 +1,5 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" title="Confirmar importación" :style="{ width: 'min(820px, 96vw)' }" @after-leave="reset">
+  <n-modal v-model:show="visible" preset="card" :title="dialogTitle" :style="{ width: 'min(820px, 96vw)' }" @after-leave="reset">
     <div class="import-columns">
       <div class="col-metadata">
         <div v-if="preview" class="preview-card">
@@ -39,48 +39,69 @@
       </div>
 
       <div class="col-config">
-        <div class="config-section">
-          <label class="small muted">Idioma origen</label>
-          <n-select v-model:value="sourceLanguage" :options="languageOptions" :disabled="loading" />
-        </div>
-
-        <div class="config-section">
-          <label class="small muted">Idioma destino</label>
-          <n-select v-model:value="targetLanguage" :options="languageOptionsNoAuto" :disabled="loading" />
-        </div>
-
-        <div class="config-divider" />
-
-        <label class="small muted">Capítulos a descargar</label>
-        <div class="stack-sm" style="margin-top: 0.375rem">
-          <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-            <n-radio :checked="mode === 'all'" />
-            <label>Todos ({{ preview?.totalChapters ?? 0 }})</label>
+        <template v-if="!into">
+          <div class="config-section">
+            <label class="small muted">Idioma origen</label>
+            <n-select v-model:value="sourceLanguage" :options="languageOptions" :disabled="loading" />
           </div>
-          <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-            <n-radio :checked="mode === 'range'" />
-            <label>Rango específico</label>
-          </div>
-        </div>
 
-        <div v-if="mode === 'range'" class="range-fields">
-          <FieldNumber
-            v-model="startChapter"
-            label="Desde"
-            :min="1"
-            :max="preview?.totalChapters ?? 1"
-            :disabled="loading"
-            wrapper-style="min-width: 0"
-          />
-          <FieldNumber
-            v-model="endChapter"
-            label="Hasta"
-            :min="startChapter"
-            :max="preview?.totalChapters ?? 1"
-            :disabled="loading"
-            wrapper-style="min-width: 0"
-          />
-        </div>
+          <div class="config-section">
+            <label class="small muted">Idioma destino</label>
+            <n-select v-model:value="targetLanguage" :options="languageOptionsNoAuto" :disabled="loading" />
+          </div>
+
+          <div class="config-divider" />
+
+          <label class="small muted">Capítulos a descargar</label>
+          <div class="stack-sm" style="margin-top: 0.375rem">
+            <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
+              <n-radio :checked="mode === 'all'" />
+              <label>Todos ({{ preview?.totalChapters ?? 0 }})</label>
+            </div>
+            <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
+              <n-radio :checked="mode === 'range'" />
+              <label>Rango específico</label>
+            </div>
+          </div>
+
+          <div v-if="mode === 'range'" class="range-fields">
+            <FieldNumber
+              v-model="startChapter"
+              label="Desde"
+              :min="1"
+              :max="preview?.totalChapters ?? 1"
+              :disabled="loading"
+              wrapper-style="min-width: 0"
+            />
+            <FieldNumber
+              v-model="endChapter"
+              label="Hasta"
+              :min="startChapter"
+              :max="preview?.totalChapters ?? 1"
+              :disabled="loading"
+              wrapper-style="min-width: 0"
+            />
+          </div>
+        </template>
+        <template v-else>
+          <div class="config-section">
+            <label class="small muted">Añadir a</label>
+            <n-select
+              v-model:value="targetId"
+              :options="targetOptions"
+              filterable
+              remote
+              clearable
+              placeholder="Busca la historia por título..."
+              :loading="searchingTargets"
+              :disabled="loading"
+              @search="handleTargetSearch"
+            />
+            <p class="small muted" style="margin-top: 0.35rem">
+              Los {{ preview?.totalChapters ?? 0 }} capítulos encontrados se añadirán al final de la historia seleccionada.
+            </p>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -92,7 +113,7 @@
         <n-button
           type="primary"
           :loading="loading"
-          :disabled="!targetLanguage || (mode === 'range' && (!startChapter || !endChapter || startChapter > endChapter))"
+          :disabled="importDisabled"
           @click="handleImport"
         >
           <template #icon><n-icon><DownloadOutline /></n-icon></template>
@@ -110,7 +131,7 @@ import { useMessage, NModal, NSelect, NAlert, NButton, NRadio, NIcon } from "nai
 import { ImageOutline, PersonOutline, ListOutline, LinkOutline, DownloadOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { LANGUAGES } from "@/config/languages";
-import { IMPORT_MEDIA, type ImportMedia, type ImportOutcome, type ImportUrlInput } from "@/features/import/media";
+import { IMPORT_MEDIA, type ImportMedia, type ImportOutcome, type ImportUrlInput, type IntoImportOutcome } from "@/features/import/media";
 import { emitJobChanged } from "@/utils/job-events";
 import type { PreviewUrlResult } from "@/api/types";
 
@@ -121,6 +142,14 @@ const props = defineProps<{
   /** Runs the import and returns the normalized outcome; injected so each
    * media goes through its own store-aware path. */
   importFn: (input: ImportUrlInput) => Promise<ImportOutcome>;
+  /** Add-to-existing mode: pick a target from the library and append the
+   * chapters at the end (one-shots/extras) instead of creating a new item. */
+  into?: boolean;
+  /** Appends the chapters to the picked target; injected per media, mirroring
+   * importFn. */
+  intoFn?: (targetId: string, url: string) => Promise<IntoImportOutcome>;
+  /** Feeds the target picker; returns ready-to-render label/value options. */
+  searchFn?: (query: string) => Promise<Array<{ label: string; value: string }>>;
 }>();
 const emit = defineEmits<{
   "update:open": [value: boolean];
@@ -151,6 +180,39 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const coverFailed = ref(false);
 
+// Add-to-existing mode: the target picker is fed by the injected search so the
+// dialog stays media-agnostic.
+const targetId = ref<string | null>(null);
+const targetOptions = ref<Array<{ label: string; value: string }>>([]);
+const searchingTargets = ref(false);
+
+const dialogTitle = computed(() =>
+  props.into ? "Añadir a historia existente" : "Confirmar importación",
+);
+
+const importDisabled = computed(() => {
+  if (props.into) return !targetId.value || !props.intoFn;
+  return (
+    !targetLanguage.value ||
+    (mode.value === "range" &&
+      (!startChapter.value || !endChapter.value || startChapter.value > endChapter.value))
+  );
+});
+
+async function loadTargetOptions(query: string) {
+  if (!props.searchFn) return;
+  searchingTargets.value = true;
+  try {
+    targetOptions.value = await props.searchFn(query);
+  } finally {
+    searchingTargets.value = false;
+  }
+}
+
+function handleTargetSearch(query: string) {
+  void loadTargetOptions(query);
+}
+
 function reset() {
   mode.value = "all";
   sourceLanguage.value = "en";
@@ -160,12 +222,14 @@ function reset() {
   loading.value = false;
   error.value = null;
   coverFailed.value = false;
+  targetId.value = null;
+  targetOptions.value = [];
 }
 
 watch(visible, (open) => {
-  if (open) {
-    reset();
-  }
+  if (!open) return;
+  reset();
+  if (props.into) void loadTargetOptions("");
 });
 
 watch(
@@ -184,7 +248,27 @@ function handleBack() {
 }
 
 async function handleImport() {
-  if (!props.preview || !targetLanguage.value) return;
+  if (!props.preview) return;
+  if (props.into) {
+    if (!props.intoFn || !targetId.value) return;
+    loading.value = true;
+    error.value = null;
+    try {
+      const result = await props.intoFn(targetId.value, props.preview.sourceURL);
+      message.success(result.message || `${result.pendingChapters} capítulos se están descargando en segundo plano.`, {
+        duration: 4000,
+      });
+      emit("imported");
+      emitJobChanged();
+      visible.value = false;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading.value = false;
+    }
+    return;
+  }
+  if (!targetLanguage.value) return;
   loading.value = true;
   error.value = null;
   try {

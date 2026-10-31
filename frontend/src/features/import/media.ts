@@ -74,3 +74,9 @@ export type ImportUrlInput = {
   startChapter?: number;
   endChapter?: number;
 };
+
+/** Outcome of appending chapters to an existing item ("add to existing"). */
+export type IntoImportOutcome = {
+  pendingChapters: number;
+  message?: string;
+};

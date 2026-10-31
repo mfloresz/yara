@@ -1934,6 +1934,47 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /novels/{id}/import-url:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Imports]
+      summary: "Append chapters from an arbitrary supported URL to an existing novel (one-shots/extras), ordered after the stored ones. Never creates a novel."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+      responses:
+        '200':
+          description: Nothing to import — every chapter of that URL is already stored in the novel.
+        '202':
+          description: Download job enqueued; the chapters land in the background.
+        '400':
+          description: 'Missing url, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: The novel belongs to another user.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The novel already has an active (pending or running) job — only one job per novel is allowed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Download queue full; the job is marked failed and can be retried.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /novels/batch-check:
     post:
       tags: [Imports]

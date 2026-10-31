@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"translator-server/internal/store"
 )
 
 const testNovelfireHTML = `<!doctype html><html><head>
@@ -877,6 +879,208 @@ func settleNovelJobs(t *testing.T, env *apiTestEnv, userID, novelID string) {
 		if err := env.store.UpdateJob(j.ID, map[string]any{"status": "done"}); err != nil {
 			t.Fatalf("settle job %s: %v", j.ID, err)
 		}
+	}
+}
+
+// TestImportUrlIntoNovelAppendsChapters covers POST /novels/{id}/import-url:
+// chapters from an arbitrary supported URL are queued as a download job whose
+// orders continue after everything the novel already stores, regardless of the
+// site's own numbering.
+func TestImportUrlIntoNovelAppendsChapters(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/cover.jpg"):
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("fake-jpeg"))
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
+		case strings.Contains(r.URL.Path, "/chapter-"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
+		}
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"novelfire.net": mock.URL}
+	env := newAPITestEnv(t)
+	// Park download jobs in the dispatch queue without executing them: the
+	// mock fixtures only serve planning-time responses and a running job
+	// would retry failed chapter fetches for minutes during cleanup.
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, rewrites)
+
+	alice := registerUser(t, env, "alice-into-url@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Anthology", "en", "es")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "Existing One")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 2, "Existing Two")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/import-url", alice.Token, map[string]any{
+		"url": "https://novelfire.net/book/test-novel",
+	})
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var result struct {
+		PendingChapters int `json:"pendingChapters"`
+		DownloadJobID   string `json:"downloadJobId"`
+		TotalChapters   int    `json:"totalChapters"`
+		Message         string `json:"message"`
+	}
+	decodeData(t, resp, &result)
+	if result.PendingChapters != 2 {
+		t.Errorf("pendingChapters: got %d, want 2", result.PendingChapters)
+	}
+	if result.DownloadJobID == "" {
+		t.Errorf("expected a downloadJobId")
+	}
+	if result.TotalChapters != 2 {
+		t.Errorf("totalChapters: got %d, want 2", result.TotalChapters)
+	}
+
+	jobs, err := env.store.ListJobs(alice.User.ID, novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected one job, got %d", len(jobs))
+	}
+	var opts struct {
+		URL            string `json:"url"`
+		StartOrder     int    `json:"startOrder"`
+		SourceLanguage string `json:"sourceLanguage"`
+		TargetLanguage string `json:"targetLanguage"`
+		Chapters       []struct {
+			URL    string `json:"url"`
+			Order  int    `json:"order"`
+			Title  string `json:"title"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(jobs[0].OptionsJSON), &opts); err != nil {
+		t.Fatalf("decode job options: %v", err)
+	}
+	// The job fetches from the imported URL, not the novel's (empty) source,
+	// and carries the novel's languages.
+	if opts.URL != "https://novelfire.net/book/test-novel" {
+		t.Errorf("job url: got %q, want the imported URL", opts.URL)
+	}
+	if opts.SourceLanguage != "en" || opts.TargetLanguage != "es" {
+		t.Errorf("job languages: got %q/%q, want en/es", opts.SourceLanguage, opts.TargetLanguage)
+	}
+	// Append at the end: the snapshot's site numbering (1, 2) must map to
+	// stored orders 3 and 4.
+	if len(opts.Chapters) != 2 || opts.Chapters[0].Order != 3 || opts.Chapters[1].Order != 4 {
+		t.Errorf("expected appended orders [3 4], got %+v", opts.Chapters)
+	}
+	if opts.StartOrder != 3 {
+		t.Errorf("startOrder: got %d, want 3", opts.StartOrder)
+	}
+	if opts.Chapters[0].Title != "Chapter 1: First Steps" || opts.Chapters[1].Title != "Chapter 2: The Journey" {
+		t.Errorf("unexpected chapter titles: %+v", opts.Chapters)
+	}
+}
+
+// Importing a URL whose chapters partially exist (the novel was created from
+// the same source) must skip the stored ones by source key and append only
+// the missing remainder.
+func TestImportUrlIntoNovelSkipsStoredChapters(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/chapters"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
+		case strings.Contains(r.URL.Path, "/chapter-"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireChapterHTML)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, testNovelfireHTML)
+		}
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"novelfire.net": mock.URL}
+	env := newAPITestEnv(t)
+	env.server.dispatchDisabled = true
+	useRewritingClient(env, rewrites)
+
+	alice := registerUser(t, env, "alice-into-dedup@example.com", "secret123", "Alice")
+
+	// Create the novel from the same source: chapter 1 is stored synchronously
+	// with its source key; chapter 2 stays queued (parked) without a key.
+	importResp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/import-from-url", alice.Token, map[string]any{
+		"url":            "https://novelfire.net/book/test-novel",
+		"sourceLanguage": "en",
+		"targetLanguage": "es",
+	})
+	if importResp.Code != http.StatusCreated {
+		t.Fatalf("import: expected 201, got %d: %s", importResp.Code, importResp.Body.String())
+	}
+	var imported struct {
+		Novel struct {
+			ID string `json:"id"`
+		} `json:"novel"`
+	}
+	decodeData(t, importResp, &imported)
+	settleNovelJobs(t, env, alice.User.ID, imported.Novel.ID)
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+imported.Novel.ID+"/import-url", alice.Token, map[string]any{
+		"url": "https://novelfire.net/book/test-novel",
+	})
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var result struct {
+		PendingChapters int `json:"pendingChapters"`
+	}
+	decodeData(t, resp, &result)
+	if result.PendingChapters != 1 {
+		t.Fatalf("pendingChapters: got %d, want 1 (chapter 1 is stored, only chapter 2 is new)", result.PendingChapters)
+	}
+
+	jobs, err := env.store.ListJobs(alice.User.ID, imported.Novel.ID, false)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	var lastJob *store.Job
+	for i := range jobs {
+		if jobs[i].Operation == "download" && jobs[i].Status == "pending" {
+			lastJob = &jobs[i]
+		}
+	}
+	if lastJob == nil {
+		t.Fatalf("expected a pending download job, got %+v", jobs)
+	}
+	var opts struct {
+		Chapters []struct {
+			Order int `json:"order"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(lastJob.OptionsJSON), &opts); err != nil {
+		t.Fatalf("decode job options: %v", err)
+	}
+	if len(opts.Chapters) != 1 || opts.Chapters[0].Order != 2 {
+		t.Errorf("expected the new chapter appended at order 2, got %+v", opts.Chapters)
+	}
+}
+
+// A user must not append chapters to someone else's novel.
+func TestImportUrlIntoNovelRejectsForeignNovel(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-into-owner@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-into-foreign@example.com", "secret123", "Bob")
+
+	novel := createNovel(t, env.handler, alice.Token, "Anthology", "en", "es")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/import-url", bob.Token, map[string]any{
+		"url": "https://novelfire.net/book/test-novel",
+	})
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", resp.Code, resp.Body.String())
 	}
 }
 

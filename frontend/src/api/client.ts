@@ -27,6 +27,7 @@ import type {
   GeneralPromptKey,
   GeneralPromptRecord,
   ImportEpubResult,
+  ImportIntoNovelResult,
   ImportUrlResult,
   ImportZipResult,
   NovelEpubRecord,
@@ -409,6 +410,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       ): Promise<RedownloadFromUrlResult> {
         return http.post<RedownloadFromUrlResult>(
           `/api/v1/novels/${novelId}/redownload-from-url`,
+          input,
+        );
+      },
+      async importIntoNovel(
+        novelId: string,
+        input: { url: string },
+      ): Promise<ImportIntoNovelResult> {
+        return http.post<ImportIntoNovelResult>(
+          `/api/v1/novels/${novelId}/import-url`,
           input,
         );
       },

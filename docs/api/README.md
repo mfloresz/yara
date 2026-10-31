@@ -456,6 +456,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | `POST` | `/api/v1/novels/{id}/check-preview` | Re-fetch the source, count new chapters, update `lastCheckedAt`. |
 | `POST` | `/api/v1/novels/{id}/update-from-url` | Body `{ "startChapter": 0, "endChapter": 0 }` — enqueue a download for new chapters. Returns 202. |
 | `POST` | `/api/v1/novels/{id}/redownload-from-url` | Body `{ "startChapter", "endChapter", "confirm": false\|true }`. First call returns the plan; second call (with `confirm: true`) re-queues. Returns 202 on accept. |
+| `POST` | `/api/v1/novels/{id}/import-url` | Body `{ "url" }` — append chapters from an arbitrary supported URL to an existing novel (one-shots/extras), ordered after the stored ones. Skips chapters already stored by source key. Returns 202 (`{pendingChapters, downloadJobId}`) or 200 when there is nothing new. |
 | `POST` | `/api/v1/novels/batch-check` | Body `{ "novelIds": ["..."] }` — enqueue one check job per novel. Returns 202. |
 | `POST` | `/api/v1/novels/batch-update` | Body `{ "selections": [...] }` — same as `redownload-from-url` for many novels. Returns 202. |
 | `POST` | `/api/v1/novels/batch-translate-preview` | Pre-flight: returns the per-novel pending chapter count. |

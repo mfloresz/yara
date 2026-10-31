@@ -297,8 +297,12 @@
       :preview="urlPreview"
       media="novels"
       :import-fn="importNovel"
+      :into="importIntoMode"
+      :into-fn="importIntoNovel"
+      :search-fn="searchNovelPickerOptions"
       @update:open="importUrlConfirmOpen = $event"
       @back="onBackToUrlDialog"
+      @imported="void reloadLibrary()"
     />
   </AppLayout>
 </template>
@@ -608,6 +612,8 @@ const {
   importNovelFromEpub,
   importNovelFromZip,
   importNovelFromUrl,
+  importUrlIntoNovel,
+  searchNovelOptions,
   previewNovelFromUrl,
   hydrateCachedNovels,
 } = useNovels();
@@ -620,6 +626,25 @@ async function importNovel(input: Parameters<typeof importNovelFromUrl>[0]) {
     downloadJob: result.downloadJob,
   };
 }
+
+// Add-to-existing mode: append the chapters to the picked novel; the library
+// card totals refresh via the dialog's imported event.
+async function importIntoNovel(novelId: string, url: string) {
+  const result = await importUrlIntoNovel(novelId, url);
+  return { pendingChapters: result.pendingChapters, message: result.message };
+}
+
+function searchNovelPickerOptions(query: string) {
+  return searchNovelOptions(query).then((items) =>
+    items.map((n) => ({ label: novelLabel(n), value: n.id })),
+  );
+}
+
+function novelLabel(n: Novel): string {
+  const author = getNovelDisplayAuthor(n);
+  const title = getNovelDisplayTitle(n);
+  return author ? `${title} — ${author}` : title;
+}
 const offlineCache = useOfflineCache(ref(""));
 
 const createOpen = ref(false);
@@ -630,6 +655,9 @@ const importZipOpen = ref(false);
 const importUrlOpen = ref(false);
 const importUrlConfirmOpen = ref(false);
 const pendingImportUrl = ref<string | undefined>(undefined);
+// Add-to-existing import mode (?importUrl=...&into=1 from the browser
+// extension): append the chapters to a novel picked in the confirm dialog.
+const importIntoMode = ref(false);
 const urlPreview = ref<PreviewUrlResult | null>(null);
 const importing = ref(false);
 const importPreviewLoading = ref(false);
@@ -746,7 +774,10 @@ function handleNovelCreationSelect(key: string) {
   if (key === "create") createOpen.value = true;
   else if (key === "import-epub") importOpen.value = true;
   else if (key === "import-zip") importZipOpen.value = true;
-  else if (key === "import-url") importUrlOpen.value = true;
+  else if (key === "import-url") {
+    importIntoMode.value = false;
+    importUrlOpen.value = true;
+  }
 }
 
 function isSharedNovel(novel: Novel) {
@@ -763,16 +794,21 @@ onMounted(() => {
 // Deep-link from the browser extension context menu (?importUrl=...).
 // Opens the import dialog prefilled and auto-starts the preview fetch,
 // then strips the param so back/forward navigation doesn't reopen it.
+// &into=1 selects the add-to-existing mode (append to a picked novel).
 function consumeImportUrlQuery() {
   const raw = route.query.importUrl;
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== "string" || !value.trim()) return;
+  const intoRaw = route.query.into;
+  const intoValue = Array.isArray(intoRaw) ? intoRaw[0] : intoRaw;
   pendingImportUrl.value = value.trim();
+  importIntoMode.value = intoValue === "1" || intoValue === "true";
   importUrlConfirmOpen.value = false;
   urlPreview.value = null;
   importUrlOpen.value = true;
   const query = { ...route.query };
   delete query.importUrl;
+  delete query.into;
   void router.replace({ path: "/", query });
 }
 

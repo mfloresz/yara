@@ -504,6 +504,130 @@ func (sharedImportHandlers) importFromURL(s *Server) func(*core.RequestEvent) er
 	}
 }
 
+// importIntoExisting: POST /novels/{id}/import-url — append chapters fetched
+// from an arbitrary supported URL to an existing novel, ordered after
+// everything the novel already stores. The novel's own source URL is left
+// untouched: the appended chapters are one-shot additions that update-from-url
+// will not re-discover, and update checks keep diffing the canonical source.
+func (sharedImportHandlers) importIntoExisting(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		body := struct {
+			URL string `json:"url"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return e.BadRequestError("invalid body", err)
+		}
+		if strings.TrimSpace(body.URL) == "" {
+			return e.BadRequestError("url is required", nil)
+		}
+		novelID := e.Request.PathValue("id")
+		novel, err := s.Store.GetOwnedNovel(e.Auth.Id, novelID)
+		if err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		info, err := s.fetchSourceSnapshot(e.Request.Context(), e.Auth.Id, body.URL)
+		if err != nil {
+			return writeV1Error(e, http.StatusBadRequest, "bad_request", parserErrorMessage(err))
+		}
+		existingOrders, err := s.Store.GetExistingChapterOrders(e.Auth.Id, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to get existing chapter orders", err)
+		}
+		existingKeys, err := s.Store.GetExistingChapterKeys(e.Auth.Id, novelID)
+		if err != nil {
+			return e.InternalServerError("failed to get existing chapter keys", err)
+		}
+		// Keyed identity only: diffNovelSnapshot's legacy title/order heuristic
+		// pairs a snapshot against the novel's own source listing, and this
+		// snapshot may come from a different site entirely — a TOC-position
+		// order of 1 would then be dropped as a false duplicate of the novel's
+		// first chapter. Chapters already stored under the same key (re-import
+		// of the same story, or a chapter page of the novel's own source) are
+		// skipped; everything else is appended.
+		newChapters := make([]sourceChapter, 0, len(info.Chapters))
+		seen := make(map[string]bool, len(info.Chapters))
+		for _, ch := range info.Chapters {
+			key := ch.Key
+			if key == "" {
+				key = ch.URL
+			}
+			if key != "" && (existingKeys[key] || seen[key]) {
+				continue
+			}
+			if key != "" {
+				seen[key] = true
+			}
+			newChapters = append(newChapters, ch)
+		}
+		if len(newChapters) == 0 {
+			resp := map[string]any{
+				"pendingChapters": 0,
+				"totalChapters":   len(info.Chapters),
+				"message":         "No hay capítulos nuevos: esa URL ya está guardada en esta novela.",
+			}
+			return v1Respond(e, http.StatusOK, resp, nil, nil)
+		}
+		// Append at the end: the stored orders are the truth for position and
+		// the imported story reads after everything the novel already has, so
+		// the site's own numbering never collides with the novel's.
+		maxOrder := 0
+		for order := range existingOrders {
+			if order > maxOrder {
+				maxOrder = order
+			}
+		}
+		downloadChapters := make([]store.DownloadChapterInfo, 0, len(newChapters))
+		for _, ch := range newChapters {
+			maxOrder++
+			title := ch.Title
+			if title == "" {
+				title = fmt.Sprintf("Capítulo %d", maxOrder)
+			}
+			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
+				URL:       ch.URL,
+				Title:     title,
+				Order:     maxOrder,
+				SourceKey: ch.Key,
+			})
+		}
+		// opts.URL is the imported page, not the novel's source: the download
+		// job resolves the parser script and the inter-fetch throttle from it.
+		optionsJSON, _ := json.Marshal(map[string]any{
+			"url":            body.URL,
+			"chapters":       downloadChapters,
+			"startOrder":     downloadChapters[0].Order,
+			"sourceLanguage": novel.SourceLanguage,
+			"targetLanguage": novel.TargetLanguage,
+		})
+		unlock, slotErr := s.admitNovelJob(e, novelID)
+		if slotErr != nil {
+			return slotErr
+		}
+		defer unlock()
+		job := &store.Job{
+			NovelID:       novelID,
+			Status:        "pending",
+			Operation:     "download",
+			ChapterIDs:    "[]",
+			OptionsJSON:   string(optionsJSON),
+			TotalChapters: len(downloadChapters),
+		}
+		if err := s.Store.CreateJob(e.Auth.Id, job); err != nil {
+			return e.InternalServerError("failed to create download job", err)
+		}
+		if !s.enqueueJob(job.ID) {
+			return e.Error(http.StatusServiceUnavailable, jobQueueFullMessage, nil)
+		}
+		resp := map[string]any{
+			"pendingChapters": len(downloadChapters),
+			"downloadJobId":   job.ID,
+			"totalChapters":   len(info.Chapters),
+			"message":         fmt.Sprintf("Descarga iniciada. %d capítulos se añadirán al final de la novela en segundo plano.", len(downloadChapters)),
+		}
+		return v1Respond(e, http.StatusAccepted, resp, nil, nil)
+	}
+}
+
 // novelCheckSummary is the projection the assistant's check tool consumes; the
 // HTTP handler adds the snapshot fields (description, coverURL) on top.
 type novelCheckSummary struct {
@@ -1420,6 +1544,10 @@ func registerV1ImportRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *Se
 	api.POST("/novels/{id}/check-preview", sharedImports.checkPreview(s))
 	api.POST("/novels/{id}/update-from-url", sharedImports.updateFromURL(s))
 	api.POST("/novels/{id}/redownload-from-url", sharedImports.redownloadFromURL(s))
+	// Appends chapters from an arbitrary supported URL to an existing novel
+	// (one-shots/extras), ordered after the stored ones; unlike
+	// /novels/import-from-url it never creates a novel.
+	api.POST("/novels/{id}/import-url", sharedImports.importIntoExisting(s))
 	// Batch operations: a list of novels is the input, and the response is a
 	// job list. Grouped under /novels/batch/* to make the relationship to
 	// the novel collection explicit.

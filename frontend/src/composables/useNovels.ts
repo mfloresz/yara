@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import type { CreateNovelInput, Novel, UpdateNovelInput } from "@/domain";
 import type {
   ImportEpubResult,
+  ImportIntoNovelResult,
   ImportUrlResult,
   ImportZipResult,
   PreviewUrlResult,
@@ -237,6 +238,28 @@ export function useNovels() {
     return result;
   }
 
+  // Appends chapters from an arbitrary supported URL to an existing novel
+  // (one-shots/extras). The chapters land via the download job; refresh the
+  // novel so the library card reflects the totals as they progress.
+  async function importUrlIntoNovel(
+    novelId: string,
+    url: string,
+  ): Promise<ImportIntoNovelResult> {
+    const result = await api.novels.importIntoNovel(novelId, { url });
+    await getNovel(novelId, true);
+    return result;
+  }
+
+  // Non-mutating novel search for pickers (e.g. "add to existing novel"):
+  // unlike searchNovels it never touches the library list state.
+  async function searchNovelOptions(
+    query = "",
+    limit = 20,
+  ): Promise<Novel[]> {
+    const result = await api.novels.list({ q: query.trim(), limit });
+    return result.items;
+  }
+
   async function previewNovelFromUrl(url: string): Promise<PreviewUrlResult> {
     return api.novels.previewFromUrl(url);
   }
@@ -309,6 +332,8 @@ export function useNovels() {
     importNovelFromEpub,
     importNovelFromZip,
     importNovelFromUrl,
+    importUrlIntoNovel,
+    searchNovelOptions,
     previewNovelFromUrl,
     getNovel,
     createNovel,

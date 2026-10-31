@@ -269,6 +269,15 @@ export type PreviewUrlResult = {
   sourceURL: string;
 };
 
+// POST /api/v1/novels/{id}/import-url — append chapters from an arbitrary
+// supported URL to an existing novel (always a background download job).
+export type ImportIntoNovelResult = {
+  pendingChapters: number;
+  downloadJobId?: string;
+  totalChapters: number;
+  message?: string;
+};
+
 export type UpdateUrlResult = {
   chaptersAdded: number;
   chapters: Chapter[];
