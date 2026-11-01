@@ -583,6 +583,13 @@ func (sharedImportHandlers) importIntoExisting(s *Server) func(*core.RequestEven
 			if title == "" {
 				title = fmt.Sprintf("Capítulo %d", maxOrder)
 			}
+			// Inside an existing novel the chapter must name its own story, or
+			// every appended one-shot would read "Chapter 1: ..." and blend
+			// into the rest. Prefix with the source title unless the TOC entry
+			// already carries it (some sites prefix every chapter).
+			if info.Title != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(title)), strings.ToLower(info.Title)) {
+				title = info.Title + ": " + title
+			}
 			downloadChapters = append(downloadChapters, store.DownloadChapterInfo{
 				URL:       ch.URL,
 				Title:     title,
@@ -592,12 +599,16 @@ func (sharedImportHandlers) importIntoExisting(s *Server) func(*core.RequestEven
 		}
 		// opts.URL is the imported page, not the novel's source: the download
 		// job resolves the parser script and the inter-fetch throttle from it.
+		// titlePrefix makes the worker keep the story name on the persisted
+		// titles — the page title normally wins over the TOC title, and the
+		// page never carries the target novel's context.
 		optionsJSON, _ := json.Marshal(map[string]any{
 			"url":            body.URL,
 			"chapters":       downloadChapters,
 			"startOrder":     downloadChapters[0].Order,
 			"sourceLanguage": novel.SourceLanguage,
 			"targetLanguage": novel.TargetLanguage,
+			"titlePrefix":    info.Title,
 		})
 		unlock, slotErr := s.admitNovelJob(e, novelID)
 		if slotErr != nil {

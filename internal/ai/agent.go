@@ -128,7 +128,7 @@ type AgentProvider interface {
 	AgentChat(ctx context.Context, in AgentChatInput) (AgentChatOutput, error)
 }
 
-const defaultAgentMaxSteps = 8
+const defaultAgentMaxSteps = 15
 
 // maxToolResultChars bounds each tool result fed back to the model; larger
 // results are truncated with a marker so the model knows it is partial.

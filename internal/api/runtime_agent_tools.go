@@ -1245,7 +1245,7 @@ func (s *Server) agentToolSetReadingProgress(userID string) ai.AgentTool {
 			if err != nil {
 				return "", err
 			}
-			rp, err := s.Store.UpsertReadingProgress(userID, novelID, brief.ID, a.ScrollPercent)
+			rp, err := s.Store.UpsertReadingProgress(userID, novelID, brief.ID, a.ScrollPercent, "")
 			if err != nil {
 				return "", err
 			}

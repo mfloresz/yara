@@ -180,6 +180,7 @@ func (sharedNovelHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		s.Store.PopulateReadingStatus(novel, e.Auth.Id)
 		q := e.Request.URL.Query()
 		fieldsParam := firstQuery(q, "fields")
 		if fieldsParam == "" {
@@ -335,6 +336,7 @@ func (sharedNovelHandlers) full(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		s.Store.PopulateReadingStatus(novel, e.Auth.Id)
 		chapters, err := s.Store.ListChaptersAccessible(e.Auth.Id, e.Request.PathValue("id"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)

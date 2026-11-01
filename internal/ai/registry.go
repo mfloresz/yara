@@ -124,6 +124,7 @@ var knownProviders = []ProviderInfo{
 		BaseURL: "https://model.inferx.net/endpoints/v1",
 		Models: []string{
 			"deepseek-v4-flash-0731",
+			"deepseek-v4.1-flash-1017-basic",
 			"glm-5.3-flash",
 			"gemma-4-31B-it-fp8",
 			"Qwen3.6-35B-A3B-FP8",
@@ -131,10 +132,11 @@ var knownProviders = []ProviderInfo{
 		DefaultModel: "deepseek-v4-flash-0731",
 		OpenAICompat: true,
 		ContextWindow: map[string]int{
-			"deepseek-v4-flash-0731": 262144,
-			"glm-5.3-flash":          262144,
-			"gemma-4-31B-it-fp8":     262144,
-			"Qwen3.6-35B-A3B-FP8":    262000,
+			"deepseek-v4-flash-0731":         262144,
+			"deepseek-v4.1-flash-1017-basic": 262144,
+			"glm-5.3-flash":                  262144,
+			"gemma-4-31B-it-fp8":             262144,
+			"Qwen3.6-35B-A3B-FP8":            262000,
 		},
 		GoAIOptions: map[string]any{
 			"strictJsonSchema": true,

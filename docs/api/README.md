@@ -443,7 +443,10 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/novels/{id}/reading-progress` | Get the user's last-read chapter and scroll position. |
-| `PUT` | `/api/v1/novels/{id}/reading-progress` | Body `{ "chapterId": "...", "scrollPercent": 0.42 }`. |
+| `PUT` | `/api/v1/novels/{id}/reading-progress` | Body `{ "chapterId": "...", "scrollPercent": 0.42 }` saves the resume point and marks the novel as actively reading. Body `{ "status": "reading" \| "paused" \| "finished" }` sets only the per-user reading mark (resume point untouched). One of `chapterId`/`status` is required. |
+| `DELETE` | `/api/v1/novels/{id}/reading-progress` | Clear the user's progress slot (resume point plus mark). Idempotent; returns 204. |
+
+Novel and comic records expose the derived `readingStatus` field (`reading`/`paused`/`finished`, empty when the user has no progress) next to `lastReadAt`.
 
 ### Imports / downloads
 
@@ -768,7 +771,7 @@ are no translate/refine surfaces yet.
 | `GET /comics/{id}/chapters/{chapterId}/pages/{pageId}/image` | Page image bytes (immutable cache) |
 | `GET /comics/{id}/chapters/{chapterId}/neighbors` | Reader prev/next |
 | `GET /comics/{id}/chapter-summaries`, `/chapter-stats` | Paginated list / download aggregates |
-| `GET/PUT /comics/{id}/reading-progress` | Per-user resume point |
+| `GET/PUT/DELETE /comics/{id}/reading-progress` | Per-user resume point + reading mark (`status`) / clear the slot |
 | `POST /comics/preview-from-url`, `/comics/import-from-url` | Parser TOC preview / import + download job |
 | `POST /comics/import-zip` | ZIP of images (one folder per chapter) |
 | `POST /comics/{id}/check-preview`, `/update-from-url`, `/redownload-from-url` | Update checks and downloads |

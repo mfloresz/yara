@@ -44,6 +44,12 @@
       "requiresBrowser": true
     },
     {
+      "name": "epub-pub",
+      "file": "epub_pub.js",
+      "sha256": "77d3d5270972df9b01932071c01a28a195054ce71096531501d5e0e5db5efacc",
+      "requiresBrowser": true
+    },
+    {
       "name": "fenrirealm",
       "file": "fenrirealm.js",
       "sha256": "2b45bab9a4778213fa20eda7e2f8877dd4f05a8e488c196ccd6429a324d5c375",
@@ -212,5 +218,5 @@
       "requiresBrowser": true
     }
   ],
-  "signature": "59da5fd980fce7a3b528a138c1da9a017d74b826c0335d92f903b7af42de57fe20d1c7db9b71a7fac8eef442f52d766a42299e63e3e949b30f05be786e29e009"
+  "signature": "c47736cb7523b343cad5ff7de6c6bd779dddd51551029cbbd0263a686e0861fd2320eb6ab4155ea7a0b5a799353d1ed381713ee7b7f860256088f7f24d564600"
 }

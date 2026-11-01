@@ -145,6 +145,9 @@ type Novel struct {
 	LastCheckedAt           string `json:"lastCheckedAt,omitempty"`
 	LastCheckNewChapters    int    `json:"lastCheckNewChapters,omitempty"`
 	LastReadAt              string `json:"lastReadAt,omitempty"`
+	// ReadingStatus is the per-user reading mark derived from the progress
+	// row: "" (no progress), "reading", "paused" or "finished".
+	ReadingStatus           string `json:"readingStatus,omitempty"`
 	CreatedAt               string `json:"createdAt,omitempty"`
 	UpdatedAt               string `json:"updatedAt,omitempty"`
 }
@@ -377,8 +380,11 @@ type ReadingProgress struct {
 	NovelID       string  `json:"novelId,omitempty"`
 	ChapterID     string  `json:"chapterId,omitempty"`
 	ScrollPercent float64 `json:"scrollPercent,omitempty"`
-	CreatedAt     string  `json:"createdAt,omitempty"`
-	UpdatedAt     string  `json:"updatedAt,omitempty"`
+	// Status is the reader's explicit mark: "" (implicit reading), "reading",
+	// "paused" or "finished". Position saves flip it to "reading".
+	Status string `json:"status,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 type DownloadChapterInfo struct {
@@ -563,6 +569,9 @@ type Comic struct {
 	LastCheckedAt        string `json:"lastCheckedAt,omitempty"`
 	LastCheckNewChapters int    `json:"lastCheckNewChapters,omitempty"`
 	LastReadAt           string `json:"lastReadAt,omitempty"`
+	// ReadingStatus mirrors Novel.ReadingStatus for comics: per-user mark
+	// derived from the comic progress row.
+	ReadingStatus        string `json:"readingStatus,omitempty"`
 	CreatedAt            string `json:"createdAt,omitempty"`
 	UpdatedAt            string `json:"updatedAt,omitempty"`
 }
@@ -655,8 +664,11 @@ type ComicReadingProgress struct {
 	ComicID       string  `json:"comicId,omitempty"`
 	ChapterID     string  `json:"chapterId,omitempty"`
 	ScrollPercent float64 `json:"scrollPercent,omitempty"`
-	CreatedAt     string  `json:"createdAt,omitempty"`
-	UpdatedAt     string  `json:"updatedAt,omitempty"`
+	// Status mirrors ReadingProgress.Status: "" implicit reading, "reading",
+	// "paused" or "finished".
+	Status     string `json:"status,omitempty"`
+	CreatedAt  string `json:"createdAt,omitempty"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
 }
 
 // DownloadComicChapterInfo describes one chapter to download, as produced by

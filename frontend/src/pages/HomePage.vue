@@ -28,14 +28,18 @@
 
       <!-- Continuar leyendo: novelas y cómics con progreso registrado,
            ordenados por lo más recientemente leído. -->
-      <section v-if="entries.length" class="home-section" aria-label="Continuar leyendo">
+      <section v-if="visibleEntries.length" class="home-section" aria-label="Continuar leyendo">
         <div class="home-section-head">
           <h2 class="home-section-title">Continuar leyendo</h2>
         </div>
         <div class="home-shelf">
-          <div v-for="entry in entries" :key="entry.kind + entry.id" class="home-shelf-item">
-            <NovelCard v-if="entry.kind === 'novel'" :novel="entry.novel" />
-            <ComicCard v-else :comic="entry.comic" />
+          <div v-for="entry in visibleEntries" :key="entry.kind + entry.id" class="home-shelf-item">
+            <NovelCard
+              v-if="entry.kind === 'novel'"
+              :novel="entry.novel"
+              @cleared="removeEntry(entry)"
+            />
+            <ComicCard v-else :comic="entry.comic" @cleared="removeEntry(entry)" />
             <span class="home-shelf-kind muted small">
               {{ entry.kind === "novel" ? "Novela" : "Cómic" }}
             </span>
@@ -44,7 +48,7 @@
       </section>
 
       <n-empty
-        v-if="loaded && !entries.length"
+        v-if="loaded && !visibleEntries.length"
         class="home-empty"
         :description="
           loadError ??
@@ -67,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { NButton, NEmpty, NIcon } from "naive-ui";
 import { BookOutline, FlashOutline, ImagesOutline } from "@vicons/ionicons5";
@@ -76,7 +80,7 @@ import NovelCard from "@/components/NovelCard.vue";
 import ComicCard from "@/components/ComicCard.vue";
 import { useAppServices } from "@/app/services";
 import { useActiveJobStatus } from "@/composables/useActiveJobStatus";
-import type { Novel, Comic } from "@/domain";
+import { isActivelyReading, type Novel, type Comic } from "@/domain";
 
 const { api } = useAppServices();
 const { hasActive } = useActiveJobStatus();
@@ -88,6 +92,14 @@ type ContinueEntry =
 const entries = ref<ContinueEntry[]>([]);
 const loaded = ref(false);
 const loadError = ref<string | null>(null);
+
+// Filtrado reactivo: marcar "Leída"/"En pausa" desde una tarjeta saca la
+// entrada del estante al instante, sin esperar a recargar.
+const visibleEntries = computed(() =>
+  entries.value.filter((entry) =>
+    isActivelyReading(entry.kind === "novel" ? entry.novel.readingStatus : entry.comic.readingStatus),
+  ),
+);
 
 const today = new Intl.DateTimeFormat("es", {
   weekday: "long",
@@ -115,12 +127,18 @@ onMounted(async () => {
   const merged: ContinueEntry[] = [];
   if (novelsRes.status === "fulfilled") {
     for (const n of novelsRes.value.items) {
-      if (n.lastReadAt) merged.push({ kind: "novel", id: n.id, lastReadAt: n.lastReadAt, novel: n });
+      // El filtro por estado de lectura vive en visibleEntries; aquí solo se
+      // exige que exista actividad de lectura.
+      if (n.lastReadAt) {
+        merged.push({ kind: "novel", id: n.id, lastReadAt: n.lastReadAt, novel: n });
+      }
     }
   }
   if (comicsRes.status === "fulfilled") {
     for (const c of comicsRes.value.items) {
-      if (c.lastReadAt) merged.push({ kind: "comic", id: c.id, lastReadAt: c.lastReadAt, comic: c });
+      if (c.lastReadAt) {
+        merged.push({ kind: "comic", id: c.id, lastReadAt: c.lastReadAt, comic: c });
+      }
     }
   }
   if (novelsRes.status === "rejected" && comicsRes.status === "rejected") {
@@ -130,6 +148,10 @@ onMounted(async () => {
   entries.value = merged.slice(0, 12);
   loaded.value = true;
 });
+
+function removeEntry(entry: ContinueEntry) {
+  entries.value = entries.value.filter((e) => e !== entry);
+}
 </script>
 
 <style scoped>

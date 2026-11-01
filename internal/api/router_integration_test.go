@@ -2870,3 +2870,125 @@ func TestNativePocketBaseRecordAPIBlocked(t *testing.T) {
 		assertStatus(t, resp, http.StatusNotFound)
 	}
 }
+
+type readingProgressPayload struct {
+	ID            string  `json:"id"`
+	ChapterID     string  `json:"chapterId"`
+	ScrollPercent float64 `json:"scrollPercent"`
+	Status        string  `json:"status"`
+}
+
+func TestReadingProgressStatusAndClear(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-reading-status@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Progreso", "es", "en")
+	chapter := createChapter(t, env.handler, alice.Token, novel.ID, 1)
+	progressPath := "/api/v1/novels/" + novel.ID + "/reading-progress"
+
+	// A position save marks the novel as actively reading.
+	resp := doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{
+		"chapterId":     chapter.ID,
+		"scrollPercent": 0.42,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	var rp readingProgressPayload
+	decodeResponse(t, resp, &rp)
+	if rp.ChapterID != chapter.ID || rp.Status != "reading" {
+		t.Fatalf("expected chapter %q with implicit reading status, got %+v", chapter.ID, rp)
+	}
+
+	// A status-only update keeps the resume point untouched.
+	resp = doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{
+		"status": "finished",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	decodeResponse(t, resp, &rp)
+	if rp.Status != "finished" || rp.ChapterID != chapter.ID {
+		t.Fatalf("expected finished status with preserved chapter, got %+v", rp)
+	}
+
+	// The novel record exposes the derived mark next to lastReadAt.
+	novelResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID, alice.Token, nil)
+	assertStatus(t, novelResp, http.StatusOK)
+	var novelFields struct {
+		ReadingStatus string `json:"readingStatus"`
+		LastReadAt    string `json:"lastReadAt"`
+	}
+	decodeResponse(t, novelResp, &novelFields)
+	if novelFields.ReadingStatus != "finished" {
+		t.Fatalf("expected readingStatus finished on novel record, got %q", novelFields.ReadingStatus)
+	}
+	if novelFields.LastReadAt == "" {
+		t.Fatalf("expected lastReadAt set on novel record")
+	}
+
+	// DELETE clears the slot and is idempotent.
+	for i := 0; i < 2; i++ {
+		delResp := doJSONRequest(t, env.handler, http.MethodDelete, progressPath, alice.Token, nil)
+		assertStatus(t, delResp, http.StatusNoContent)
+	}
+
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, progressPath, alice.Token, nil)
+	assertStatus(t, getResp, http.StatusOK)
+	var cleared struct {
+		ChapterID     string  `json:"chapterId"`
+		ScrollPercent float64 `json:"scrollPercent"`
+	}
+	decodeResponse(t, getResp, &cleared)
+	if cleared.ChapterID != "" || cleared.ScrollPercent != 0 {
+		t.Fatalf("expected empty progress after delete, got %+v", cleared)
+	}
+
+	novelResp = doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID, alice.Token, nil)
+	assertStatus(t, novelResp, http.StatusOK)
+	decodeResponse(t, novelResp, &novelFields)
+	if novelFields.ReadingStatus != "" || novelFields.LastReadAt != "" {
+		t.Fatalf("expected no reading mark after delete, got %+v", novelFields)
+	}
+}
+
+func TestReadingProgressValidation(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-reading-validation@example.com", "secret123", "Alice")
+	novel := createNovel(t, env.handler, alice.Token, "Validación", "es", "en")
+	progressPath := "/api/v1/novels/" + novel.ID + "/reading-progress"
+
+	resp := doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	resp = doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{"status": "bogus"})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	resp = doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{"status": "paused"})
+	assertStatus(t, resp, http.StatusOK)
+}
+
+func TestReadingProgressAllowedOnSharedNovel(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-shared-progress@example.com", "secret123", "Alice")
+	bob := registerUser(t, env, "bob-shared-progress@example.com", "secret123", "Bob")
+	novel := createNovel(t, env.handler, alice.Token, "Compartida", "es", "en")
+	visResp := doJSONRequest(t, env.handler, http.MethodPatch, "/api/v1/novels/"+novel.ID+"/visibility", alice.Token, map[string]any{"isPublic": true})
+	assertStatus(t, visResp, http.StatusOK)
+
+	// Reading progress is per-user and reading is not ownership-restricted
+	// (same rule as the comics tree), so a reader can mark a shared novel.
+	resp := doJSONRequest(t, env.handler, http.MethodPut, "/api/v1/novels/"+novel.ID+"/reading-progress", bob.Token, map[string]any{
+		"status": "finished",
+	})
+	assertStatus(t, resp, http.StatusOK)
+
+	// Alice's own slot stays untouched.
+	ownerResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/novels/"+novel.ID, alice.Token, nil)
+	assertStatus(t, ownerResp, http.StatusOK)
+	var ownerFields struct {
+		ReadingStatus string `json:"readingStatus"`
+	}
+	decodeResponse(t, ownerResp, &ownerFields)
+	if ownerFields.ReadingStatus != "" {
+		t.Fatalf("expected owner slot untouched, got %q", ownerFields.ReadingStatus)
+	}
+
+	clearResp := doJSONRequest(t, env.handler, http.MethodDelete, "/api/v1/novels/"+novel.ID+"/reading-progress", bob.Token, nil)
+	assertStatus(t, clearResp, http.StatusNoContent)
+}

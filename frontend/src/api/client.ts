@@ -46,6 +46,7 @@ import type {
   ChapterUpsertInput,
   CreateNovelInput,
   Novel,
+  ReadingStatus,
   TranslationJob,
   TranslationJobOptions,
   UpdateNovelInput,
@@ -156,7 +157,7 @@ function normalizeNovel(
 // descriptions, notes) so the list payload stays small. The detail page
 // fetches a full novel via `GET /api/v1/novels/{id}` (no fields filter).
 const NOVEL_LIST_FIELDS =
-  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags,lastReadAt";
+  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags,lastReadAt,readingStatus";
 
 // Sparse fieldset for the operations page. It only reads counters, languages,
 // the origin-URL check fields and status; the library/detail fields above
@@ -1089,12 +1090,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         },
         async update(
           comicId: string,
-          data: { chapterId: string; scrollPercent: number },
+          data: { chapterId?: string; scrollPercent?: number; status?: ReadingStatus },
         ): Promise<ComicReadingProgress> {
           return http.put<ComicReadingProgress>(
             `/api/v1/comics/${comicId}/reading-progress`,
             data,
           );
+        },
+        async remove(comicId: string): Promise<void> {
+          await http.delete(`/api/v1/comics/${comicId}/reading-progress`);
         },
       },
       async previewFromUrl(url: string): Promise<PreviewUrlResult> {
@@ -1172,12 +1176,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       },
       async update(
         novelId: string,
-        data: { chapterId: string; scrollPercent: number },
+        data: { chapterId?: string; scrollPercent?: number; status?: ReadingStatus },
       ): Promise<ReadingProgress> {
         return http.put<ReadingProgress>(
           `/api/v1/novels/${novelId}/reading-progress`,
           data,
         );
+      },
+      async remove(novelId: string): Promise<void> {
+        await http.delete(`/api/v1/novels/${novelId}/reading-progress`);
       },
     },
     epubs: {

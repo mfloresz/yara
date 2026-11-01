@@ -275,6 +275,10 @@ type downloadJobOptions struct {
 	SourceLanguage string                      `json:"sourceLanguage"`
 	TargetLanguage string                      `json:"targetLanguage"`
 	ReDownload     bool                        `json:"reDownload"`
+	// TitlePrefix marks into-imports (chapters appended to an existing
+	// novel): the saved title must name the imported story, or every
+	// one-shot would read "Chapter 1: ..." and blend into the anthology.
+	TitlePrefix string `json:"titlePrefix"`
 }
 
 func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
@@ -427,6 +431,13 @@ func (s *Server) processDownloadJob(ctx context.Context, job *store.Job) error {
 		}
 		if chTitle == "" {
 			chTitle = fmt.Sprintf("Capítulo %d", chOrder)
+		}
+		// Into-imports tag the job with the story title: the page title alone
+		// ("Chapter 5") cannot identify the story inside the target novel, so
+		// the prefix rides on top of whichever title won. Chapters whose title
+		// already carries it (some sites prefix every page) are left alone.
+		if opts.TitlePrefix != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(chTitle)), strings.ToLower(opts.TitlePrefix)) {
+			chTitle = opts.TitlePrefix + ": " + chTitle
 		}
 		if opts.ReDownload {
 			// Re-download mode: update only the original content of an

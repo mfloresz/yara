@@ -295,3 +295,72 @@ func TestComicImportZip(t *testing.T) {
 		t.Fatalf("imported chapters should be done: %+v", chapters[0])
 	}
 }
+
+func TestComicReadingProgressStatusAndClear(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-comic-progress@example.com", "secret123", "Alice")
+	comic := createComicFor(t, env, alice.Token, "Progreso Cómic")
+	progressPath := "/api/v1/comics/" + comic.ID + "/reading-progress"
+
+	// Status-only update creates the slot without a resume point.
+	resp := doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{
+		"status": "paused",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	var rp struct {
+		ComicID   string `json:"comicId"`
+		ChapterID string `json:"chapterId"`
+		Status    string `json:"status"`
+	}
+	decodeResponse(t, resp, &rp)
+	if rp.Status != "paused" || rp.ChapterID != "" {
+		t.Fatalf("expected paused with no resume point, got %+v", rp)
+	}
+
+	// The comic record exposes the derived mark.
+	comicResp := doJSONRequest(t, env.handler, http.MethodGet, "/api/v1/comics/"+comic.ID, alice.Token, nil)
+	assertStatus(t, comicResp, http.StatusOK)
+	var comicFields struct {
+		ReadingStatus string `json:"readingStatus"`
+		LastReadAt    string `json:"lastReadAt"`
+	}
+	decodeResponse(t, comicResp, &comicFields)
+	if comicFields.ReadingStatus != "paused" {
+		t.Fatalf("expected readingStatus paused on comic record, got %q", comicFields.ReadingStatus)
+	}
+	if comicFields.LastReadAt == "" {
+		t.Fatalf("expected lastReadAt set on comic record")
+	}
+
+	// A position save flips the mark back to actively reading.
+	resp = doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{
+		"chapterId":     "dummy-chapter",
+		"scrollPercent": 0.5,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	decodeResponse(t, resp, &rp)
+	if rp.Status != "reading" || rp.ChapterID != "dummy-chapter" {
+		t.Fatalf("expected reading status after position save, got %+v", rp)
+	}
+
+	// DELETE clears the slot; afterwards GET reports not found again.
+	for i := 0; i < 2; i++ {
+		delResp := doJSONRequest(t, env.handler, http.MethodDelete, progressPath, alice.Token, nil)
+		assertStatus(t, delResp, http.StatusNoContent)
+	}
+	getResp := doJSONRequest(t, env.handler, http.MethodGet, progressPath, alice.Token, nil)
+	assertStatus(t, getResp, http.StatusNotFound)
+}
+
+func TestComicReadingProgressValidation(t *testing.T) {
+	env := newAPITestEnv(t)
+	alice := registerUser(t, env, "alice-comic-validation@example.com", "secret123", "Alice")
+	comic := createComicFor(t, env, alice.Token, "Validación Cómic")
+	progressPath := "/api/v1/comics/" + comic.ID + "/reading-progress"
+
+	resp := doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	resp = doJSONRequest(t, env.handler, http.MethodPut, progressPath, alice.Token, map[string]any{"status": "bogus"})
+	assertStatus(t, resp, http.StatusBadRequest)
+}

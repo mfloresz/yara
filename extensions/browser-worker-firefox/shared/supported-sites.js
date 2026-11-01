@@ -24,6 +24,7 @@ export const SUPPORTED_SITE_HOSTS = [
   'getinkspired.com',
   'asianovel.net',
   'dmxs.org',
+  'epub.pub',
   'pearlandreef.com',
 
   // Comic sites (media: comic parsers).

@@ -765,6 +765,9 @@ func (s *Store) migrateEpubFileMaxSize(c *core.Collection) (*core.Collection, er
 
 func (s *Store) ensureReadingProgressCollection(users, novels *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(ReadingProgressCollection); err == nil {
+		if err := s.ensureField(existing, &core.TextField{Name: "status", Max: 16}); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(ReadingProgressCollection)
@@ -778,6 +781,7 @@ func (s *Store) ensureReadingProgressCollection(users, novels *core.Collection) 
 	c.Fields.Add(&core.RelationField{Name: "novel", Required: true, CollectionId: novels.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.TextField{Name: "chapter_id", Max: 64})
 	c.Fields.Add(&core.NumberField{Name: "scroll_percent"})
+	c.Fields.Add(&core.TextField{Name: "status", Max: 16})
 	addSystemDateFields(c)
 	c.AddIndex("idx_reading_progress_user_novel_unique", true, "user,novel", "")
 	if err := s.App.Save(c); err != nil {
@@ -1158,6 +1162,9 @@ func (s *Store) ensureComicPagesCollection(comics, chapters *core.Collection) (*
 
 func (s *Store) ensureComicReadingProgressCollection(users, comics *core.Collection) (*core.Collection, error) {
 	if existing, err := s.App.FindCollectionByNameOrId(ComicReadingProgressCollection); err == nil {
+		if err := s.ensureField(existing, &core.TextField{Name: "status", Max: 16}); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	c := core.NewBaseCollection(ComicReadingProgressCollection)
@@ -1171,6 +1178,7 @@ func (s *Store) ensureComicReadingProgressCollection(users, comics *core.Collect
 	c.Fields.Add(&core.RelationField{Name: "comic", Required: true, CollectionId: comics.Id, MaxSelect: 1, CascadeDelete: true})
 	c.Fields.Add(&core.TextField{Name: "chapter_id", Max: 64})
 	c.Fields.Add(&core.NumberField{Name: "scroll_percent"})
+	c.Fields.Add(&core.TextField{Name: "status", Max: 16})
 	addSystemDateFields(c)
 	c.AddIndex("idx_comic_reading_progress_user_comic_unique", true, "user,comic", "")
 	if err := s.App.Save(c); err != nil {

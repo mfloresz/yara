@@ -464,9 +464,10 @@ func comicDisplayTitle(n Comic) string {
 	return n.SourceTitle
 }
 
-// populateLastReadAt fetches reading progress for all comics and fills LastReadAt.
-// Narrow projection (comic, updated): the previous version hydrated every
-// progress record of the user on every library listing.
+// populateComicLastReadAt fetches reading progress for all comics and fills
+// LastReadAt plus the per-user ReadingStatus mark.
+// Narrow projection (comic, updated, status): the previous version hydrated
+// every progress record of the user on every library listing.
 func (s *Store) populateComicLastReadAt(comics []Comic, userID string) {
 	if len(comics) == 0 {
 		return
@@ -474,8 +475,9 @@ func (s *Store) populateComicLastReadAt(comics []Comic, userID string) {
 	rows := []struct {
 		Comic   string `db:"comic"`
 		Updated string `db:"updated"`
+		Status  string `db:"status"`
 	}{}
-	err := s.App.DB().Select("comic", "updated").From(ComicReadingProgressCollection).
+	err := s.App.DB().Select("comic", "updated", "status").From(ComicReadingProgressCollection).
 		Where(dbx.NewExp("user = {:user}", dbx.Params{"user": userID})).
 		OrderBy("updated DESC").
 		All(&rows)
@@ -483,13 +485,16 @@ func (s *Store) populateComicLastReadAt(comics []Comic, userID string) {
 		return
 	}
 	lastReadMap := make(map[string]string, len(rows))
+	statusMap := make(map[string]string, len(rows))
 	for _, row := range rows {
 		if _, exists := lastReadMap[row.Comic]; !exists {
 			lastReadMap[row.Comic] = row.Updated
+			statusMap[row.Comic] = row.Status
 		}
 	}
 	for i := range comics {
 		comics[i].LastReadAt = lastReadMap[comics[i].ID]
+		comics[i].ReadingStatus = statusMap[comics[i].ID]
 	}
 }
 
@@ -541,6 +546,23 @@ func (s *Store) GetComicAccessible(userID, comicID string) (*Comic, error) {
 	}
 	comic := s.comicFromRecord(record)
 	return &comic, nil
+}
+
+// PopulateComicReadingStatus fills LastReadAt and ReadingStatus on a single
+// comic from the user's progress row (fields stay empty when there is no row).
+func (s *Store) PopulateComicReadingStatus(comic *Comic, userID string) {
+	var row struct {
+		Updated string `db:"updated"`
+		Status  string `db:"status"`
+	}
+	err := s.App.DB().Select("updated", "status").From(ComicReadingProgressCollection).
+		Where(dbx.NewExp("user = {:user} AND comic = {:comic}", dbx.Params{"user": userID, "comic": comic.ID})).
+		One(&row)
+	if err != nil {
+		return
+	}
+	comic.LastReadAt = row.Updated
+	comic.ReadingStatus = row.Status
 }
 
 // GetComicCoverFile returns the comic record plus the file name to serve as

@@ -23,7 +23,11 @@ func (s *Store) GetComicReadingProgress(userID, comicID string) (*ComicReadingPr
 	return &progress, nil
 }
 
-func (s *Store) UpsertComicReadingProgress(userID, comicID, chapterID string, scrollPercent float64) (*ComicReadingProgress, error) {
+// UpsertComicReadingProgress persists the full desired state of the user's
+// per-comic progress slot. A position save (chapterID set) marks the comic as
+// actively reading; a status-only update (chapterID empty) leaves the resume
+// point untouched.
+func (s *Store) UpsertComicReadingProgress(userID, comicID, chapterID string, scrollPercent float64, status string) (*ComicReadingProgress, error) {
 	if _, err := s.GetComicAccessible(userID, comicID); err != nil {
 		return nil, err
 	}
@@ -40,13 +44,34 @@ func (s *Store) UpsertComicReadingProgress(userID, comicID, chapterID string, sc
 		record.Set("user", userID)
 		record.Set("comic", comicID)
 	}
-	record.Set("chapter_id", chapterID)
-	record.Set("scroll_percent", scrollPercent)
+	if chapterID != "" {
+		record.Set("chapter_id", chapterID)
+		record.Set("scroll_percent", scrollPercent)
+		if status == "" {
+			status = ReadingStatusReading
+		}
+	}
+	if status != "" {
+		record.Set("status", status)
+	}
 	if err := s.App.Save(record); err != nil {
 		return nil, err
 	}
 	progress := comicReadingProgressFromRecord(record)
 	return &progress, nil
+}
+
+// DeleteComicReadingProgress removes the user's per-comic progress slot
+// entirely (resume point plus reading mark). Idempotent: no error when absent.
+func (s *Store) DeleteComicReadingProgress(userID, comicID string) error {
+	record, err := s.App.FindFirstRecordByFilter(ComicReadingProgressCollection,
+		"user = {:user} && comic = {:comic}",
+		dbx.Params{"user": userID, "comic": comicID},
+	)
+	if err != nil {
+		return nil
+	}
+	return s.App.Delete(record)
 }
 
 func comicReadingProgressFromRecord(record *core.Record) ComicReadingProgress {
@@ -56,6 +81,7 @@ func comicReadingProgressFromRecord(record *core.Record) ComicReadingProgress {
 		ComicID:       record.GetString("comic"),
 		ChapterID:     record.GetString("chapter_id"),
 		ScrollPercent: record.GetFloat("scroll_percent"),
+		Status:        record.GetString("status"),
 		CreatedAt:     record.GetString("created"),
 		UpdatedAt:     record.GetString("updated"),
 	}

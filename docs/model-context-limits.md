@@ -49,6 +49,7 @@ Formato: número entero en tokens. Ejemplos: `128000`, `200000`, `1000000`. Si u
 | Modelo | Max context (tokens) |
 |---|---|
 | deepseek-v4-flash-0731 | 262144 |
+| deepseek-v4.1-flash-1017-basic | 262144 |
 | glm-5.3-flash | 262144 |
 | gemma-4-31B-it-fp8 | 262144 |
 | Qwen3.6-35B-A3B-FP8 | 262000 |

@@ -58,6 +58,22 @@
             <template #icon><n-icon><BookOutline /></n-icon></template>
             Leer
           </n-button>
+          <n-dropdown
+            trigger="click"
+            placement="bottom-end"
+            :options="readingMenuOptions"
+            @select="handleReadingMenuSelect"
+          >
+            <n-button
+              secondary
+              block
+              :aria-label="`Estado de lectura: ${readingStatusLabel}`"
+              aria-haspopup="menu"
+            >
+              <template #icon><n-icon><BookmarkOutline /></n-icon></template>
+              {{ readingStatusLabel }}
+            </n-button>
+          </n-dropdown>
           <n-button
             v-if="comic.canUpdate"
             secondary
@@ -265,6 +281,7 @@ import AppLayout from "@/components/AppLayout.vue";
 import DescriptionBlock from "@/features/novels/DescriptionBlock.vue";
 import { useAppServices } from "@/app/services";
 import { setDocumentTitle } from "@/composables/useDocumentTitle";
+import { readingStatusMenuOptions, useReadingStatus } from "@/composables/useReadingStatus";
 import {
   chapterPosition,
   getComicDisplayAuthor,
@@ -274,6 +291,7 @@ import {
   type Comic,
   type ComicChapterStats,
   type ComicChapterSummary,
+  type ReadingStatus,
 } from "@/domain";
 import { coverSrc, onCoverError } from "@/utils/cover";
 
@@ -396,6 +414,58 @@ const sidebarMenuOptions = computed(() => [
   { label: "Re-descargar fallidos", key: "redownload", disabled: !hasFailedChapters.value },
   { label: "Eliminar", key: "delete" },
 ]);
+
+const { setStatus: setReadingStatus, clearProgress: clearReadingProgress } = useReadingStatus();
+
+const readingMenuOptions = computed(() =>
+  comic.value ? readingStatusMenuOptions("comic", comic.value) : [],
+);
+
+const readingStatusLabel = computed(() => {
+  switch (comic.value?.readingStatus) {
+    case "finished":
+      return "Leído";
+    case "paused":
+      return "En pausa";
+    case "reading":
+      return "Leyendo";
+    default:
+      return "Estado de lectura";
+  }
+});
+
+function handleReadingMenuSelect(key: string) {
+  if (!comic.value) return;
+  const comicId = comic.value.id;
+  if (key === "clear") {
+    dialog.warning({
+      title: "Quitar progreso",
+      content: `¿Quitar el progreso de lectura de "${getComicDisplayTitle(comic.value)}"? Se olvidará tu posición y sus marcas.`,
+      positiveText: "Quitar",
+      negativeText: "Cancelar",
+      onPositiveClick: async () => {
+        try {
+          await clearReadingProgress("comic", comicId);
+          if (comic.value) {
+            comic.value.readingStatus = undefined;
+            comic.value.lastReadAt = undefined;
+          }
+        } catch {
+          message.error("No se pudo quitar el progreso.");
+        }
+      },
+    });
+    return;
+  }
+  const status = key as ReadingStatus;
+  void setReadingStatus("comic", comicId, status)
+    .then(() => {
+      if (comic.value) comic.value.readingStatus = status;
+    })
+    .catch(() => {
+      message.error("No se pudo actualizar el estado de lectura.");
+    });
+}
 
 function handleSidebarMenuSelect(key: string) {
   switch (key) {

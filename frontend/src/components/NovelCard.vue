@@ -20,17 +20,37 @@
     </RouterLink>
 
     <div class="library-meta">
-      <RouterLink
-        :to="`/novels/${novel.id}/read`"
-        class="library-title line-clamp-2"
-        :title="getNovelDisplayTitle(novel)"
-      >
-        {{ getNovelDisplayTitle(novel) }}
-      </RouterLink>
+      <div class="library-meta-row">
+        <RouterLink
+          :to="`/novels/${novel.id}/read`"
+          class="library-title line-clamp-2"
+          :title="getNovelDisplayTitle(novel)"
+        >
+          {{ getNovelDisplayTitle(novel) }}
+        </RouterLink>
+        <n-dropdown
+          trigger="click"
+          placement="bottom-end"
+          :options="menuOptions"
+          @select="handleMenuSelect"
+        >
+          <n-button
+            class="card-menu-button"
+            quaternary
+            circle
+            size="tiny"
+            :aria-label="`Acciones de lectura de ${getNovelDisplayTitle(novel)}`"
+            aria-haspopup="menu"
+          >
+            <template #icon><n-icon :size="14"><OptionsOutline /></n-icon></template>
+          </n-button>
+        </n-dropdown>
+      </div>
       <div class="library-subtitle small muted">
         <span v-if="getNovelDisplaySeries(novel)" class="novel-series-badge">
           {{ getNovelDisplaySeries(novel) }}<template v-if="getNovelDisplayNumber(novel)"> #{{ getNovelDisplayNumber(novel) }}</template>
         </span>
+        <span v-if="statusBadge" class="reading-status-badge">{{ statusBadge }}</span>
       </div>
     </div>
 
@@ -38,16 +58,70 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { NIcon } from "naive-ui";
-import { ShareSocialOutline } from "@vicons/ionicons5";
-import { getNovelDisplayTitle, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
+import { NButton, NDropdown, NIcon, useDialog, useMessage } from "naive-ui";
+import { OptionsOutline, ShareSocialOutline } from "@vicons/ionicons5";
+import {
+  getNovelDisplayTitle,
+  getNovelDisplaySeries,
+  getNovelDisplayNumber,
+  type Novel,
+  type ReadingStatus,
+} from "@/domain";
 import { coverSrc, onCoverError } from "@/utils/cover";
+import {
+  readingStatusBadgeLabel,
+  readingStatusMenuOptions,
+  useReadingStatus,
+} from "@/composables/useReadingStatus";
 
-defineProps<{
+const props = defineProps<{
   novel: Novel;
   shared?: boolean;
 }>();
+
+const emit = defineEmits<{
+  (e: "cleared"): void;
+}>();
+
+const { setStatus, clearProgress } = useReadingStatus();
+const message = useMessage();
+const dialog = useDialog();
+
+const menuOptions = computed(() => readingStatusMenuOptions("novel", props.novel));
+const statusBadge = computed(() => readingStatusBadgeLabel("novel", props.novel.readingStatus));
+
+function handleMenuSelect(key: string) {
+  const novelId = props.novel.id;
+  if (key === "clear") {
+    dialog.warning({
+      title: "Quitar progreso",
+      content: `¿Quitar el progreso de lectura de "${getNovelDisplayTitle(props.novel)}"? Se olvidará tu posición y sus marcas.`,
+      positiveText: "Quitar",
+      negativeText: "Cancelar",
+      onPositiveClick: async () => {
+        try {
+          await clearProgress("novel", novelId);
+          props.novel.readingStatus = undefined;
+          props.novel.lastReadAt = undefined;
+          emit("cleared");
+        } catch {
+          message.error("No se pudo quitar el progreso.");
+        }
+      },
+    });
+    return;
+  }
+  const status = key as ReadingStatus;
+  void setStatus("novel", novelId, status)
+    .then(() => {
+      props.novel.readingStatus = status;
+    })
+    .catch(() => {
+      message.error("No se pudo actualizar el estado de lectura.");
+    });
+}
 </script>
 
 <style scoped>
@@ -121,7 +195,21 @@ defineProps<{
   min-width: 0;
 }
 
+.library-meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.card-menu-button {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
 .library-title {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   font-size: 0.8125rem;
   line-height: 1.3;
@@ -140,6 +228,19 @@ defineProps<{
 .library-subtitle {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.reading-status-badge {
+  display: inline-block;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--divide);
+  background: var(--surface-elevated);
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .novel-series-badge {

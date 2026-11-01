@@ -150,6 +150,7 @@ func readingProgressFromRecord(record *core.Record) ReadingProgress {
 		NovelID:       record.GetString("novel"),
 		ChapterID:     record.GetString("chapter_id"),
 		ScrollPercent: record.GetFloat("scroll_percent"),
+		Status:        record.GetString("status"),
 		CreatedAt:     record.GetString("created"),
 		UpdatedAt:     record.GetString("updated"),
 	}

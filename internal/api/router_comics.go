@@ -70,6 +70,8 @@ func comicFieldsSubset(c *store.Comic, fields []string) map[string]any {
 			m["lastCheckNewChapters"] = c.LastCheckNewChapters
 		case "lastReadAt":
 			m["lastReadAt"] = c.LastReadAt
+		case "readingStatus":
+			m["readingStatus"] = c.ReadingStatus
 		case "createdAt":
 			m["createdAt"] = c.CreatedAt
 		case "updatedAt":
@@ -194,6 +196,7 @@ func (sharedComicHandlers) get(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		s.Store.PopulateComicReadingStatus(comic, e.Auth.Id)
 		return v1Respond(e, http.StatusOK, s.comicResponse(comic), nil, nil)
 	}
 }
@@ -319,6 +322,7 @@ func (sharedComicHandlers) full(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
+		s.Store.PopulateComicReadingStatus(comic, e.Auth.Id)
 		chapters, err := s.Store.ListAllComicChapterSummaries(e.Auth.Id, e.Request.PathValue("id"))
 		if err != nil {
 			return notFoundOrForbidden(e, err)

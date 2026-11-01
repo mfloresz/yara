@@ -1681,17 +1681,24 @@ paths:
                       data: { $ref: '#/components/schemas/ReadingProgress' }
     put:
       tags: [Reading progress]
-      summary: Save reading progress.
+      summary: >
+        Save reading progress or the reading mark. A body with `chapterId`
+        records the resume point and marks the novel as actively reading; a
+        body with only `status` just sets the mark and leaves the resume
+        point untouched.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [chapterId, scrollPercent]
+              description: chapterId or status is required.
               properties:
                 chapterId: { type: string }
                 scrollPercent: { type: number, format: float, minimum: 0, maximum: 1 }
+                status:
+                  type: string
+                  enum: [reading, paused, finished]
       responses:
         '200':
           description: OK
@@ -1703,6 +1710,14 @@ paths:
                   - type: object
                     properties:
                       data: { $ref: '#/components/schemas/ReadingProgress' }
+    delete:
+      tags: [Reading progress]
+      summary: >
+        Clear the user's progress slot for the novel (resume point plus
+        reading mark). Idempotent: returns 204 even when nothing was stored.
+      responses:
+        '204':
+          description: No Content
 
   # ---------------------------------------------------------------------------
   # Imports / downloads
@@ -2950,9 +2965,18 @@ paths:
         "200": { $ref: '#/components/responses/Envelope' }
     put:
       tags: [Comics]
-      summary: Upsert the resume point (chapterId + scrollPercent).
+      summary: >
+        Upsert the resume point (chapterId + scrollPercent) or just the reading
+        mark (status). A chapterId save marks the comic as actively reading.
       responses:
         "200": { $ref: '#/components/responses/Envelope' }
+    delete:
+      tags: [Comics]
+      summary: >
+        Clear the user's progress slot for the comic (resume point plus reading
+        mark). Idempotent: returns 204 even when nothing was stored.
+      responses:
+        "204": { description: No Content }
 
   /comics/preview-from-url:
     post:
@@ -3446,6 +3470,10 @@ components:
         lastCheckedAt: { type: [string, 'null'], format: date-time }
         lastCheckNewChapters: { type: integer }
         lastReadAt: { type: [string, 'null'], format: date-time }
+        readingStatus:
+          type: string
+          enum: [reading, paused, finished]
+          description: Per-user reading mark derived from the progress row. Empty when the user has no progress for the novel.
         createdAt: { type: string }
         updatedAt: { type: string }
         glossary:
@@ -3796,6 +3824,10 @@ components:
         novelId: { type: string }
         chapterId: { type: string }
         scrollPercent: { type: number, format: float, minimum: 0, maximum: 1 }
+        status:
+          type: string
+          enum: [reading, paused, finished]
+          description: Empty string means implicit reading (rows without an explicit mark).
         createdAt: { type: string }
         updatedAt: { type: string }
 

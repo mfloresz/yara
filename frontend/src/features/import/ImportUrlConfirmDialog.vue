@@ -98,7 +98,7 @@
               @search="handleTargetSearch"
             />
             <p class="small muted" style="margin-top: 0.35rem">
-              Los {{ preview?.totalChapters ?? 0 }} capítulos encontrados se añadirán al final de la historia seleccionada.
+              Los {{ preview?.totalChapters ?? 0 }} capítulos encontrados se añadirán al final de la historia seleccionada, con el título de la historia como prefijo para distinguirlos.
             </p>
           </div>
         </template>

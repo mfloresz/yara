@@ -295,6 +295,7 @@ func getComicReadingProgress(s *Server) func(*core.RequestEvent) error {
 			"comicId":       progress.ComicID,
 			"chapterId":     progress.ChapterID,
 			"scrollPercent": progress.ScrollPercent,
+			"status":        progress.Status,
 			"updatedAt":     progress.UpdatedAt,
 		}, nil, nil)
 	}
@@ -305,11 +306,18 @@ func putComicReadingProgress(s *Server) func(*core.RequestEvent) error {
 		body := struct {
 			ChapterID     string  `json:"chapterId"`
 			ScrollPercent float64 `json:"scrollPercent"`
+			Status        string  `json:"status"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
 			return e.BadRequestError("invalid body", err)
 		}
-		progress, err := s.Store.UpsertComicReadingProgress(e.Auth.Id, e.Request.PathValue("id"), body.ChapterID, body.ScrollPercent)
+		if body.ChapterID == "" && body.Status == "" {
+			return e.BadRequestError("chapterId or status is required", nil)
+		}
+		if body.Status != "" && !isValidReadingStatus(body.Status) {
+			return e.BadRequestError("invalid status; expected reading, paused or finished", nil)
+		}
+		progress, err := s.Store.UpsertComicReadingProgress(e.Auth.Id, e.Request.PathValue("id"), body.ChapterID, body.ScrollPercent, body.Status)
 		if err != nil {
 			return notFoundOrForbidden(e, err)
 		}
@@ -317,8 +325,18 @@ func putComicReadingProgress(s *Server) func(*core.RequestEvent) error {
 			"comicId":       progress.ComicID,
 			"chapterId":     progress.ChapterID,
 			"scrollPercent": progress.ScrollPercent,
+			"status":        progress.Status,
 			"updatedAt":     progress.UpdatedAt,
 		}, nil, nil)
+	}
+}
+
+func deleteComicReadingProgress(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if err := s.Store.DeleteComicReadingProgress(e.Auth.Id, e.Request.PathValue("id")); err != nil {
+			return notFoundOrForbidden(e, err)
+		}
+		return e.NoContent(http.StatusNoContent)
 	}
 }
 
@@ -411,6 +429,7 @@ func registerV1ComicChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent],
 	api.PATCH("/comics/{id}/chapters/{chapterId}/visibility", sharedComicChapters.visibility(s))
 	api.GET("/comics/{id}/reading-progress", getComicReadingProgress(s))
 	api.PUT("/comics/{id}/reading-progress", putComicReadingProgress(s))
+	api.DELETE("/comics/{id}/reading-progress", deleteComicReadingProgress(s))
 	api.GET("/comics/{id}/jobs", sharedComicChapters.jobs(s))
 }
 

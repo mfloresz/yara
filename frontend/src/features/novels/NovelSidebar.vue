@@ -9,6 +9,22 @@
         <template #icon><n-icon><BookOutline /></n-icon></template>
         Leer
       </n-button>
+      <n-dropdown
+        trigger="click"
+        placement="bottom-end"
+        :options="readingMenuOptions"
+        @select="handleReadingMenuSelect"
+      >
+        <n-button
+          secondary
+          block
+          :aria-label="`Estado de lectura: ${readingStatusLabel}`"
+          aria-haspopup="menu"
+        >
+          <template #icon><n-icon><BookmarkOutline /></n-icon></template>
+          {{ readingStatusLabel }}
+        </n-button>
+      </n-dropdown>
       <span v-if="isOwner" class="sidebar-actions-group" role="group" aria-label="Acciones de la novela">
         <n-button
           class="sidebar-actions-main"
@@ -51,9 +67,11 @@
 </template>
 
 <script setup lang="ts">
-import { NButton, NDropdown, NIcon, NTag } from "naive-ui";
+import { computed } from "vue";
+import { NButton, NDropdown, NIcon, NTag, useDialog, useMessage } from "naive-ui";
 import {
   BookOutline,
+  BookmarkOutline,
   ChevronDownOutline,
   CloudDoneOutline,
   CloudDownloadOutline,
@@ -62,10 +80,19 @@ import {
   RefreshOutline,
   SettingsOutline,
 } from "@vicons/ionicons5";
-import { getNovelDisplayTitle, type Novel, type NovelStatus } from "@/domain";
+import {
+  getNovelDisplayTitle,
+  type Novel,
+  type NovelStatus,
+  type ReadingStatus,
+} from "@/domain";
 import { coverSrc, onCoverError } from "@/utils/cover";
+import {
+  readingStatusMenuOptions,
+  useReadingStatus,
+} from "@/composables/useReadingStatus";
 
-defineProps<{
+const props = defineProps<{
   novel: Novel;
   isOwner: boolean;
   isNovelCached: boolean;
@@ -82,6 +109,55 @@ const emit = defineEmits<{
   (e: "open-update-url"): void;
   (e: "toggle-offline"): void;
 }>();
+
+const { setStatus, clearProgress } = useReadingStatus();
+const message = useMessage();
+const dialog = useDialog();
+
+const readingMenuOptions = computed(() => readingStatusMenuOptions("novel", props.novel));
+
+const readingStatusLabel = computed(() => {
+  switch (props.novel.readingStatus) {
+    case "finished":
+      return "Leída";
+    case "paused":
+      return "En pausa";
+    case "reading":
+      return "Leyendo";
+    default:
+      return "Estado de lectura";
+  }
+});
+
+function handleReadingMenuSelect(key: string) {
+  const novelId = props.novel.id;
+  if (key === "clear") {
+    dialog.warning({
+      title: "Quitar progreso",
+      content: `¿Quitar el progreso de lectura de "${getNovelDisplayTitle(props.novel)}"? Se olvidará tu posición y sus marcas.`,
+      positiveText: "Quitar",
+      negativeText: "Cancelar",
+      onPositiveClick: async () => {
+        try {
+          await clearProgress("novel", novelId);
+          props.novel.readingStatus = undefined;
+          props.novel.lastReadAt = undefined;
+        } catch {
+          message.error("No se pudo quitar el progreso.");
+        }
+      },
+    });
+    return;
+  }
+  const status = key as ReadingStatus;
+  void setStatus("novel", novelId, status)
+    .then(() => {
+      props.novel.readingStatus = status;
+    })
+    .catch(() => {
+      message.error("No se pudo actualizar el estado de lectura.");
+    });
+}
 
 const sidebarMenuOptions = [
   { label: "Compartir", key: "share" },

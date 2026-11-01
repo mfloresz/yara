@@ -18,6 +18,14 @@ export type {
 
 export type NovelStatus = "ongoing" | "completed" | "hiatus" | "cancelled";
 
+/** Explicit per-user reading mark stored in the progress row. */
+export type ReadingStatus = "reading" | "paused" | "finished";
+
+/** True when the work should show up in "continue reading" (has progress and is not paused/finished). */
+export function isActivelyReading(readingStatus?: ReadingStatus): boolean {
+  return readingStatus !== "paused" && readingStatus !== "finished";
+}
+
 export type Novel = {
   id: string;
   ownerId: string;
@@ -60,6 +68,8 @@ export type Novel = {
   lastCheckedAt?: string;
   lastCheckNewChapters?: number;
   lastReadAt?: string;
+  /** Per-user reading mark from the progress row: "reading" | "paused" | "finished". Absent = no progress. */
+  readingStatus?: ReadingStatus;
   createdAt: string;
   updatedAt: string;
 };
@@ -254,6 +264,8 @@ export type Comic = {
   lastCheckedAt?: string;
   lastCheckNewChapters?: number;
   lastReadAt?: string;
+  /** Per-user reading mark from the progress row: "reading" | "paused" | "finished". Absent = no progress. */
+  readingStatus?: ReadingStatus;
   createdAt?: string;
   updatedAt?: string;
 };

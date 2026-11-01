@@ -478,6 +478,7 @@ export type ReadingProgress = {
   novelId: string;
   chapterId: string;
   scrollPercent: number;
+  status?: "reading" | "paused" | "finished";
   createdAt: string;
   updatedAt: string;
 };

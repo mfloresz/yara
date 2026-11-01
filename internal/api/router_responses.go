@@ -29,6 +29,7 @@ func parseJSONFields(n *store.Novel) map[string]any {
 		"refinedCharCount": n.RefinedCharCount, "totalCharCount": n.TotalCharCount,
 		"maxChapterOrder": n.MaxChapterOrder, "lastCheckedAt": n.LastCheckedAt,
 		"lastCheckNewChapters": n.LastCheckNewChapters, "lastReadAt": n.LastReadAt,
+		"readingStatus": n.ReadingStatus,
 		"createdAt": n.CreatedAt, "updatedAt": n.UpdatedAt,
 	}
 	var gl, tags, aio, tro, cr any
@@ -123,6 +124,8 @@ func parseJSONFieldsSubset(n *store.Novel, fields []string) map[string]any {
 			m["lastCheckNewChapters"] = n.LastCheckNewChapters
 		case "lastReadAt":
 			m["lastReadAt"] = n.LastReadAt
+		case "readingStatus":
+			m["readingStatus"] = n.ReadingStatus
 		case "createdAt":
 			m["createdAt"] = n.CreatedAt
 		case "updatedAt":
@@ -337,6 +340,7 @@ func readingProgressRecord(rp store.ReadingProgress) map[string]any {
 		"novelId":       rp.NovelID,
 		"chapterId":     rp.ChapterID,
 		"scrollPercent": rp.ScrollPercent,
+		"status":        rp.Status,
 		"createdAt":     rp.CreatedAt,
 		"updatedAt":     rp.UpdatedAt,
 	}
@@ -386,7 +390,7 @@ func (s *Server) comicResponse(c *store.Comic) map[string]any {
 		"chapterCount": c.ChapterCount, "downloadedCount": c.DownloadedCount,
 		"maxChapterOrder": c.MaxChapterOrder,
 		"lastCheckedAt":   c.LastCheckedAt, "lastCheckNewChapters": c.LastCheckNewChapters,
-		"lastReadAt": c.LastReadAt,
+		"lastReadAt": c.LastReadAt, "readingStatus": c.ReadingStatus,
 		"createdAt":  c.CreatedAt, "updatedAt": c.UpdatedAt,
 	}
 	m["canUpdate"] = s.parserSupportsURL(c.OwnerID, c.URL)

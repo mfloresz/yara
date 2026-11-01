@@ -954,6 +954,7 @@ func TestImportUrlIntoNovelAppendsChapters(t *testing.T) {
 		StartOrder     int    `json:"startOrder"`
 		SourceLanguage string `json:"sourceLanguage"`
 		TargetLanguage string `json:"targetLanguage"`
+		TitlePrefix    string `json:"titlePrefix"`
 		Chapters       []struct {
 			URL    string `json:"url"`
 			Order  int    `json:"order"`
@@ -971,15 +972,19 @@ func TestImportUrlIntoNovelAppendsChapters(t *testing.T) {
 	if opts.SourceLanguage != "en" || opts.TargetLanguage != "es" {
 		t.Errorf("job languages: got %q/%q, want en/es", opts.SourceLanguage, opts.TargetLanguage)
 	}
+	if opts.TitlePrefix != "Mock Test Novel" {
+		t.Errorf("titlePrefix: got %q, want the story title", opts.TitlePrefix)
+	}
 	// Append at the end: the snapshot's site numbering (1, 2) must map to
-	// stored orders 3 and 4.
-	if len(opts.Chapters) != 2 || opts.Chapters[0].Order != 3 || opts.Chapters[1].Order != 4 {
+	// stored orders 3 and 4, and each title carries the story name so the
+	// chapters stay identifiable inside the anthology.
+	if opts.Chapters[0].Order != 3 || opts.Chapters[1].Order != 4 {
 		t.Errorf("expected appended orders [3 4], got %+v", opts.Chapters)
 	}
 	if opts.StartOrder != 3 {
 		t.Errorf("startOrder: got %d, want 3", opts.StartOrder)
 	}
-	if opts.Chapters[0].Title != "Chapter 1: First Steps" || opts.Chapters[1].Title != "Chapter 2: The Journey" {
+	if opts.Chapters[0].Title != "Mock Test Novel: Chapter 1: First Steps" || opts.Chapters[1].Title != "Mock Test Novel: Chapter 2: The Journey" {
 		t.Errorf("unexpected chapter titles: %+v", opts.Chapters)
 	}
 }
@@ -1081,6 +1086,86 @@ func TestImportUrlIntoNovelRejectsForeignNovel(t *testing.T) {
 	})
 	if resp.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", resp.Code, resp.Body.String())
+	}
+}
+
+// The persisted chapter titles must carry the story name. This exercises the
+// worker, not just the planning: the download path prefers the chapter page's
+// own title over the planned TOC title, and without the job's titlePrefix that
+// page title ("Chapter 1: Story Page") used to land in the database unprefixed,
+// losing the story identity inside the target novel.
+func TestImportUrlIntoNovelPrefixesStoredTitles(t *testing.T) {
+	// Each chapter page reports its own title so the stored titles prove the
+	// prefix rode on the page title, not on the planned TOC title.
+	chapterPage := func(num string) string {
+		return `<!doctype html><html><head></head><body>
+<span class="chapter-title">Chapter ` + num + `: Story Page</span>
+<div class="chapter-content"><p>It was a dark and stormy night.</p></div>
+</body></html>`
+	}
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if strings.Contains(r.URL.Path, "/chapter-") {
+			num := "1"
+			if m := chapterOrderRegex.FindStringSubmatch(r.URL.Path); m != nil {
+				num = m[1]
+			}
+			_, _ = fmt.Fprint(w, chapterPage(num))
+			return
+		}
+		_, _ = fmt.Fprint(w, testNovelfireHTML)
+	}))
+	defer mock.Close()
+
+	rewrites := map[string]string{"novelfire.net": mock.URL}
+	env := newAPITestEnv(t)
+	// This test lets the worker run for real, so the chapters are actually
+	// fetched and saved; the tiny throttle keeps the inter-chapter waits off
+	// the clock.
+	setParserThrottle(env, 1, 1)
+	useRewritingClient(env, rewrites)
+
+	alice := registerUser(t, env, "alice-into-titles@example.com", "secret123", "Alice")
+
+	novel := createNovel(t, env.handler, alice.Token, "Anthology", "en", "es")
+	createChapterWithTitle(t, env.handler, alice.Token, novel.ID, 1, "Existing One")
+
+	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/novels/"+novel.ID+"/import-url", alice.Token, map[string]any{
+		"url": "https://novelfire.net/book/test-novel",
+	})
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var result struct {
+		DownloadJobID string `json:"downloadJobId"`
+	}
+	decodeData(t, resp, &result)
+	if result.DownloadJobID == "" {
+		t.Fatalf("expected a downloadJobId: %s", resp.Body.String())
+	}
+
+	waitForCondition(t, 20*time.Second, "the download job to finish", func() bool {
+		job, err := env.store.GetJob(result.DownloadJobID)
+		return err == nil && job.Status == "done"
+	})
+
+	chapters, err := env.store.ListChaptersAccessible(alice.User.ID, novel.ID)
+	if err != nil {
+		t.Fatalf("list chapters: %v", err)
+	}
+	byOrder := make(map[int]string, len(chapters))
+	for _, ch := range chapters {
+		byOrder[ch.ChapterOrder] = ch.Title
+	}
+	want := map[int]string{
+		1: "Existing One",
+		2: "Mock Test Novel: Chapter 1: Story Page",
+		3: "Mock Test Novel: Chapter 2: Story Page",
+	}
+	for order, title := range want {
+		if byOrder[order] != title {
+			t.Errorf("chapter order %d: got title %q, want %q", order, byOrder[order], title)
+		}
 	}
 }
 

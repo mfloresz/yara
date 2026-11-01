@@ -570,9 +570,10 @@ func compareTitleStrings(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// populateLastReadAt fetches reading progress for all novels and fills LastReadAt.
-// Narrow projection (novel, updated): the previous version hydrated every
-// progress record of the user on every library listing.
+// populateLastReadAt fetches reading progress for all novels and fills
+// LastReadAt plus the per-user ReadingStatus mark.
+// Narrow projection (novel, updated, status): the previous version hydrated
+// every progress record of the user on every library listing.
 func (s *Store) populateLastReadAt(novels []Novel, userID string) {
 	if len(novels) == 0 {
 		return
@@ -580,8 +581,9 @@ func (s *Store) populateLastReadAt(novels []Novel, userID string) {
 	rows := []struct {
 		Novel   string `db:"novel"`
 		Updated string `db:"updated"`
+		Status  string `db:"status"`
 	}{}
-	err := s.App.DB().Select("novel", "updated").From(ReadingProgressCollection).
+	err := s.App.DB().Select("novel", "updated", "status").From(ReadingProgressCollection).
 		Where(dbx.NewExp("user = {:user}", dbx.Params{"user": userID})).
 		OrderBy("updated DESC").
 		All(&rows)
@@ -589,13 +591,16 @@ func (s *Store) populateLastReadAt(novels []Novel, userID string) {
 		return
 	}
 	lastReadMap := make(map[string]string, len(rows))
+	statusMap := make(map[string]string, len(rows))
 	for _, row := range rows {
 		if _, exists := lastReadMap[row.Novel]; !exists {
 			lastReadMap[row.Novel] = row.Updated
+			statusMap[row.Novel] = row.Status
 		}
 	}
 	for i := range novels {
 		novels[i].LastReadAt = lastReadMap[novels[i].ID]
+		novels[i].ReadingStatus = statusMap[novels[i].ID]
 	}
 }
 
@@ -670,6 +675,23 @@ func (s *Store) GetNovelAccessible(userID, novelID string) (*Novel, error) {
 	}
 	novel := s.novelFromRecord(record)
 	return &novel, nil
+}
+
+// PopulateReadingStatus fills LastReadAt and ReadingStatus on a single novel
+// from the user's progress row (fields stay empty when there is no row).
+func (s *Store) PopulateReadingStatus(novel *Novel, userID string) {
+	var row struct {
+		Updated string `db:"updated"`
+		Status  string `db:"status"`
+	}
+	err := s.App.DB().Select("updated", "status").From(ReadingProgressCollection).
+		Where(dbx.NewExp("user = {:user} AND novel = {:novel}", dbx.Params{"user": userID, "novel": novel.ID})).
+		One(&row)
+	if err != nil {
+		return
+	}
+	novel.LastReadAt = row.Updated
+	novel.ReadingStatus = row.Status
 }
 
 // GetNovelCoverFile returns the novel record plus the file name to serve as
