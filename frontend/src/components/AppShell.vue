@@ -10,7 +10,7 @@
         <span v-if="!rail" class="shell-brand-text">Yara</span>
       </RouterLink>
 
-      <!-- A lo scancore: la búsqueda vive en el sidebar y abre el palette;
+      <!-- La búsqueda vive en el sidebar y abre el palette;
            es un botón, no un input. El medio lo da la sección activa. -->
       <button
         type="button"
@@ -208,7 +208,7 @@ interface ShellSection {
   icon: Component;
 }
 
-// Secciones a lo scancore: cada medio con su propia entrada, y un divisor
+// Secciones: cada medio con su propia entrada, y un divisor
 // antes de las utilidades.
 const topSections = computed<ShellSection[]>(() => [
   { to: "/", label: "Inicio", short: "Inicio", icon: HomeOutline },
@@ -298,7 +298,7 @@ watch(
 
 /* --- Sidebar (desktop) --- */
 /* Chrome = --surface-strong: el paso que en claro queda por debajo del
-   contenido y en oscuro por encima (relación scancore en ambos temas). */
+   contenido y en oscuro por encima (la misma relación en ambos temas). */
 .shell-sidebar {
   display: flex;
   flex-direction: column;
@@ -350,7 +350,7 @@ watch(
   height: 100%;
 }
 
-/* Botón-buscador a lo scancore: parece un input, abre el palette. La
+/* Botón-buscador: parece un input, abre el palette. La
    superficie del campo contrasta con el chrome que lo rodea. */
 .shell-search {
   display: flex;
@@ -609,7 +609,7 @@ watch(
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  /* Pill deslizante a lo scancore: una sola pieza que viaja al slot activo
+  /* Pill deslizante: una sola pieza que viaja al slot activo
      (transform, no width). 5 slots = 5 pestañas. */
   .shell-tab-pill {
     position: absolute;

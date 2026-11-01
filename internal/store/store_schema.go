@@ -978,7 +978,7 @@ func (s *Store) seedProviders() error {
 // ---------------------------------------------------------------------------
 // Comics domain schema. A parallel media tree to novels/* — namespaced
 // collections so the two trees never share state (see
-// docs/scancore-ui-and-comics-plan.md, decision D1).
+// docs/ui-shell-and-comics-plan.md, decision D1).
 // ---------------------------------------------------------------------------
 
 func (s *Store) ensureComicsCollection(users *core.Collection) (*core.Collection, error) {

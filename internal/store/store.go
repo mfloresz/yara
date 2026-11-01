@@ -18,7 +18,7 @@ const (
 	NovelsCollection               = "novels"
 	ChaptersCollection             = "chapters"
 	// Comics domain — a parallel media tree to novels/*, namespaced so the
-	// two never share a collection (see docs/scancore-ui-and-comics-plan.md).
+	// two never share a collection (see docs/ui-shell-and-comics-plan.md).
 	ComicsCollection               = "comics"
 	ComicChaptersCollection        = "comic_chapters"
 	ComicPagesCollection           = "comic_pages"

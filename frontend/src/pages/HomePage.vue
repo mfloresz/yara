@@ -232,7 +232,7 @@ onMounted(async () => {
   margin: 0;
 }
 
-/* Estante horizontal (a lo scancore): el último lo leído primero, sin
+/* Estante horizontal: el último lo leído primero, sin
    ocupar la página entera. */
 .home-shelf {
   display: flex;

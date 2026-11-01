@@ -9,7 +9,7 @@ import (
 // reading_progress: both are (user, work) rows, but a shared table would need
 // two nullable unique keys and per-media branches on every read. A parallel
 // collection keeps each tree self-contained (same rationale as D1 in
-// docs/scancore-ui-and-comics-plan.md).
+// docs/ui-shell-and-comics-plan.md).
 
 func (s *Store) GetComicReadingProgress(userID, comicID string) (*ComicReadingProgress, error) {
 	record, err := s.App.FindFirstRecordByFilter(ComicReadingProgressCollection,
