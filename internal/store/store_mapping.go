@@ -104,6 +104,7 @@ func jobFromRecord(record *core.Record) Job {
 		ID:                        record.Id,
 		OwnerID:                   record.GetString("owner"),
 		NovelID:                   record.GetString("novel"),
+		ComicID:                   record.GetString("comic"),
 		Status:                    defaultString(record.GetString("status"), "pending"),
 		Operation:                 defaultString(record.GetString("operation"), "translate"),
 		Provider:                  record.GetString("provider"),
@@ -207,4 +208,84 @@ func applyNovelToRecord(record *core.Record, novel *Novel) {
 	record.Set("max_chapter_order", novel.MaxChapterOrder)
 	record.Set("last_checked_at", novel.LastCheckedAt)
 	record.Set("last_check_new_chapters", novel.LastCheckNewChapters)
+}
+
+// ---------------------------------------------------------------------------
+// Comics mapping (mirror of the novel mapping for the comics media tree).
+// ---------------------------------------------------------------------------
+
+func (s *Store) comicFromRecord(record *core.Record) Comic {
+	coverFile := firstString(record.GetStringSlice("cover"))
+	thumbFile := firstString(record.GetStringSlice("thumbnail"))
+	return Comic{
+		ID:                   record.Id,
+		OwnerID:              record.GetString("owner"),
+		SourceLanguage:       record.GetString("source_language"),
+		TargetLanguage:       record.GetString("target_language"),
+		SourceTitle:          record.GetString("source_title"),
+		SourceAuthor:         record.GetString("source_author"),
+		SourceDescription:    record.GetString("source_description"),
+		SourceSeries:         record.GetString("source_series"),
+		SourceNumber:         record.GetString("source_number"),
+		TargetTitle:          record.GetString("target_title"),
+		TargetAuthor:         record.GetString("target_author"),
+		TargetDescription:    record.GetString("target_description"),
+		TargetSeries:         record.GetString("target_series"),
+		TargetNumber:         record.GetString("target_number"),
+		Notes:                record.GetString("notes"),
+		URL:                  record.GetString("url"),
+		Status:               normalizeComicStatus(record.GetString("status")),
+		Tags:                 jsonString(parseComicTagsJSON(record.GetString("tags")), "[]"),
+		CoverFile:            coverFile,
+		CoverPath:            comicCoverURL(record.Id, coverFile),
+		ThumbnailFile:        thumbFile,
+		ThumbnailPath:        comicCoverURL(record.Id, thumbFile),
+		IsPublic:             record.GetBool("is_public"),
+		ChapterCount:         asInt(record.GetFloat("chapter_count"), 0),
+		DownloadedCount:      asInt(record.GetFloat("downloaded_count"), 0),
+		MaxChapterOrder:      asInt(record.GetFloat("max_chapter_order"), 0),
+		LastCheckedAt:        record.GetString("last_checked_at"),
+		LastCheckNewChapters: asInt(record.GetFloat("last_check_new_chapters"), 0),
+		CreatedAt:            record.GetString("created"),
+		UpdatedAt:            record.GetString("updated"),
+	}
+}
+
+func applyComicToRecord(record *core.Record, comic *Comic) {
+	record.Set("source_language", comic.SourceLanguage)
+	record.Set("target_language", comic.TargetLanguage)
+	record.Set("source_title", comic.SourceTitle)
+	record.Set("source_author", comic.SourceAuthor)
+	record.Set("source_description", comic.SourceDescription)
+	record.Set("source_series", comic.SourceSeries)
+	record.Set("source_number", comic.SourceNumber)
+	record.Set("target_title", comic.TargetTitle)
+	record.Set("target_author", comic.TargetAuthor)
+	record.Set("target_description", comic.TargetDescription)
+	record.Set("target_series", comic.TargetSeries)
+	record.Set("target_number", comic.TargetNumber)
+	record.Set("notes", comic.Notes)
+	record.Set("url", comic.URL)
+	record.Set("status", normalizeComicStatus(comic.Status))
+	record.Set("tags", jsonString(parseComicTagsJSON(comic.Tags), "[]"))
+	record.Set("is_public", comic.IsPublic)
+}
+
+func comicChapterFromRecord(record *core.Record) ComicChapter {
+	pageCount := asInt(record.GetFloat("page_count"), 0)
+	return ComicChapter{
+		ID:           record.Id,
+		ComicID:      record.GetString("comic"),
+		ChapterOrder: asInt(record.GetFloat("chapter_order"), 0),
+		Position:     asInt(record.GetFloat("position"), 0),
+		Excluded:     record.GetBool("excluded"),
+		Title:        record.GetString("title"),
+		SourceKey:    record.GetString("source_key"),
+		PageCount:    pageCount,
+		HasPages:     pageCount > 0,
+		Status:       defaultString(record.GetString("status"), ComicChapterPending),
+		ErrorMessage: record.GetString("error_message"),
+		CreatedAt:    record.GetString("created"),
+		UpdatedAt:    record.GetString("updated"),
+	}
 }

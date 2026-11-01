@@ -8,6 +8,7 @@ const serverAddrInput = document.getElementById('server-addr');
 const autoConnectCheckbox = document.getElementById('auto-connect');
 const btnToggle = document.getElementById('btn-toggle');
 const btnImport = document.getElementById('btn-import');
+const btnImportInto = document.getElementById('btn-import-into');
 const btnRefresh = document.getElementById('btn-refresh');
 const importPanel = document.getElementById('import-panel');
 const importHost = document.getElementById('import-host');
@@ -85,21 +86,27 @@ function clearError() {
   errorPanel.classList.add('hidden');
 }
 
-btnImport.addEventListener('click', async () => {
+// Both import buttons share the same path: send IMPORT_URL to the service
+// worker, which opens the Yara tab with ?importUrl=<page> (&into=1 selects
+// the add-to-existing mode).
+async function importCurrentTab(button, into) {
   const tab = await activeTab();
   if (!tab || !isSupportedUrl(tab.url)) {
     importPanel.classList.add('hidden');
     return;
   }
-  btnImport.disabled = true;
-  const res = await chrome.runtime.sendMessage({ type: 'IMPORT_URL', url: tab.url });
-  btnImport.disabled = false;
+  button.disabled = true;
+  const res = await chrome.runtime.sendMessage({ type: 'IMPORT_URL', url: tab.url, into });
+  button.disabled = false;
   if (res && res.ok) {
     window.close();
   } else {
     showError((res && res.error) || 'No se pudo abrir Yara con esta página');
   }
-});
+}
+
+btnImport.addEventListener('click', () => importCurrentTab(btnImport, false));
+btnImportInto.addEventListener('click', () => importCurrentTab(btnImportInto, true));
 
 btnToggle.addEventListener('click', async () => {
   if (isActive || btnToggle.textContent === 'Cancelar') {

@@ -77,6 +77,16 @@ func (s *Server) runJob(plan *jobRunPlan) error {
 		return nil
 	}
 
+	if job.ComicID != "" {
+		switch job.Operation {
+		case "download":
+			return s.processComicDownloadJob(runCtx, job)
+		case "check":
+			return s.processComicCheckJob(runCtx, job)
+		default:
+			return fmt.Errorf("comic job %s has unsupported operation %q", job.ID, job.Operation)
+		}
+	}
 	switch job.Operation {
 	case "download":
 		return s.processDownloadJob(runCtx, job)

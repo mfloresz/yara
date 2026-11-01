@@ -27,6 +27,7 @@ import type {
   GeneralPromptKey,
   GeneralPromptRecord,
   ImportEpubResult,
+  ImportIntoNovelResult,
   ImportUrlResult,
   ImportZipResult,
   NovelEpubRecord,
@@ -48,6 +49,13 @@ import type {
   TranslationJob,
   TranslationJobOptions,
   UpdateNovelInput,
+  Comic,
+  ComicChapter,
+  ComicChapterStats,
+  ComicChapterStatus,
+  ComicChapterSummary,
+  ComicPage,
+  ComicReadingProgress,
 } from "@/domain";
 import {
   normalizePromptSettings,
@@ -148,7 +156,7 @@ function normalizeNovel(
 // descriptions, notes) so the list payload stays small. The detail page
 // fetches a full novel via `GET /api/v1/novels/{id}` (no fields filter).
 const NOVEL_LIST_FIELDS =
-  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags";
+  "id,sourceTitle,sourceAuthor,targetTitle,targetAuthor,status,chapterCount,translatedCount,completedCount,coverPath,createdAt,updatedAt,canUpdate,requiresBrowser,lastCheckedAt,lastCheckNewChapters,ownerId,isPublic,sourceLanguage,targetLanguage,url,glossaryCount,tags,lastReadAt";
 
 // Sparse fieldset for the operations page. It only reads counters, languages,
 // the origin-URL check fields and status; the library/detail fields above
@@ -402,6 +410,15 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       ): Promise<RedownloadFromUrlResult> {
         return http.post<RedownloadFromUrlResult>(
           `/api/v1/novels/${novelId}/redownload-from-url`,
+          input,
+        );
+      },
+      async importIntoNovel(
+        novelId: string,
+        input: { url: string },
+      ): Promise<ImportIntoNovelResult> {
+        return http.post<ImportIntoNovelResult>(
+          `/api/v1/novels/${novelId}/import-url`,
           input,
         );
       },
@@ -897,6 +914,252 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         return http.delete<GeneralPromptRecord>(`/api/v1/prompts/${key}`);
       },
     },
+
+    comics: {
+      async list(
+        params: {
+          limit?: number;
+          offset?: number;
+          page?: number;
+          perPage?: number;
+          fields?: string;
+          q?: string;
+          field?: "all" | "title" | "author" | "series";
+          sort?: "title" | "created" | "lastRead";
+          order?: "asc" | "desc";
+          tag?: string;
+          author?: string;
+          series?: string;
+          shared?: "all" | "own" | "shared";
+          progress?: "all" | "downloaded" | "completed" | "ongoing";
+        } = {},
+      ): Promise<PaginatedResult<Comic>> {
+        const query = buildQuery({
+          limit: params.limit,
+          offset: params.offset,
+          page: params.page,
+          per_page: params.perPage,
+          fields: params.fields,
+          q: params.q,
+          field: params.field === "all" ? undefined : params.field,
+          sort: params.sort,
+          order: params.order,
+          tag: params.tag,
+          author: params.author,
+          series: params.series,
+          shared: params.shared === "all" ? undefined : params.shared,
+          progress: params.progress === "all" ? undefined : params.progress,
+        });
+        const result = await http.get<unknown>(`/api/v1/comics${query}`);
+        const { data, meta } = unwrapCollection<Comic[]>(result);
+        return {
+          items: Array.isArray(data) ? data : [],
+          hasMore: meta?.has_more,
+          total: meta?.total,
+          page: meta?.page,
+          perPage: meta?.per_page,
+        };
+      },
+      async create(data: Partial<Comic>): Promise<Comic> {
+        return http.post<Comic>("/api/v1/comics", data);
+      },
+      async get(comicId: string): Promise<Comic | null> {
+        try {
+          return await http.get<Comic | null>(`/api/v1/comics/${comicId}`);
+        } catch {
+          return null;
+        }
+      },
+      async patch(comicId: string, patch: Partial<Comic>): Promise<Comic> {
+        return http.patch<Comic>(`/api/v1/comics/${comicId}`, patch);
+      },
+      async delete(comicId: string): Promise<void> {
+        await http.delete(`/api/v1/comics/${comicId}`);
+      },
+      async setVisibility(comicId: string, isPublic: boolean): Promise<Comic> {
+        return http.patch<Comic>(`/api/v1/comics/${comicId}/visibility`, { isPublic });
+      },
+      async uploadCover(comicId: string, file: File): Promise<Comic> {
+        const form = new FormData();
+        form.set("cover", file);
+        return http.post<Comic>(`/api/v1/comics/${comicId}/cover`, form);
+      },
+      async getFull(
+        comicId: string,
+      ): Promise<{ comic: Comic; chapters: ComicChapterSummary[] } | null> {
+        try {
+          return await http.get<{ comic: Comic; chapters: ComicChapterSummary[] } | null>(
+            `/api/v1/comics/${comicId}/full`,
+          );
+        } catch {
+          return null;
+        }
+      },
+      async chapters(
+        comicId: string,
+        params: { includeContent?: boolean } = {},
+      ): Promise<ComicChapterSummary[] | ComicChapter[]> {
+        const query = buildQuery({
+          includeContent: params.includeContent ? "true" : undefined,
+        });
+        return http.get<ComicChapterSummary[] | ComicChapter[]>(
+          `/api/v1/comics/${comicId}/chapters${query}`,
+        );
+      },
+      async chapter(comicId: string, chapterId: string): Promise<ComicChapter> {
+        return http.get<ComicChapter>(
+          `/api/v1/comics/${comicId}/chapters/${chapterId}`,
+        );
+      },
+      async chapterNeighbors(
+        comicId: string,
+        chapterId: string,
+      ): Promise<{ prev?: ComicChapterSummary; next?: ComicChapterSummary }> {
+        return http.get<{ prev?: ComicChapterSummary; next?: ComicChapterSummary }>(
+          `/api/v1/comics/${comicId}/chapters/${chapterId}/neighbors`,
+        );
+      },
+      async createChapter(
+        comicId: string,
+        data: { title: string; chapterOrder?: number; position?: number },
+      ): Promise<ComicChapterSummary> {
+        return http.post<ComicChapterSummary>(
+          `/api/v1/comics/${comicId}/chapters`,
+          data,
+        );
+      },
+      async excludeChapter(comicId: string, chapterId: string): Promise<void> {
+        await http.delete(`/api/v1/comics/${comicId}/chapters/${chapterId}`);
+      },
+      async bulkExcludeChapters(
+        comicId: string,
+        chapterIds: string[],
+      ): Promise<{ excluded: number }> {
+        return http.post<{ excluded: number }>(
+          `/api/v1/comics/${comicId}/chapters/bulk-delete`,
+          { chapterIds },
+        );
+      },
+      async setChapterExcluded(
+        comicId: string,
+        chapterId: string,
+        excluded: boolean,
+      ): Promise<void> {
+        await http.patch(
+          `/api/v1/comics/${comicId}/chapters/${chapterId}/visibility`,
+          { excluded },
+        );
+      },
+      async setChapterStatus(
+        comicId: string,
+        chapterId: string,
+        status: ComicChapterStatus,
+        errorMessage = "",
+      ): Promise<void> {
+        await http.patch(
+          `/api/v1/comics/${comicId}/chapters/${chapterId}/status`,
+          { status, errorMessage },
+        );
+      },
+      async reorderChapters(comicId: string, chapterIds: string[]): Promise<void> {
+        await http.patch(`/api/v1/comics/${comicId}/chapters/order`, { chapterIds });
+      },
+      async searchChapters(
+        comicId: string,
+        q: string,
+        limit = 10,
+      ): Promise<{ chapter: ComicChapterSummary; matchedFields: string[] }[]> {
+        const query = buildQuery({ q, limit });
+        return http.get(`/api/v1/comics/${comicId}/chapters/search${query}`);
+      },
+      async chapterStats(comicId: string): Promise<ComicChapterStats> {
+        return http.get<ComicChapterStats>(
+          `/api/v1/comics/${comicId}/chapter-stats`,
+        );
+      },
+      readingProgress: {
+        async get(comicId: string): Promise<ComicReadingProgress | null> {
+          try {
+            return await http.get<ComicReadingProgress>(
+              `/api/v1/comics/${comicId}/reading-progress`,
+            );
+          } catch {
+            return null;
+          }
+        },
+        async update(
+          comicId: string,
+          data: { chapterId: string; scrollPercent: number },
+        ): Promise<ComicReadingProgress> {
+          return http.put<ComicReadingProgress>(
+            `/api/v1/comics/${comicId}/reading-progress`,
+            data,
+          );
+        },
+      },
+      async previewFromUrl(url: string): Promise<PreviewUrlResult> {
+        return http.post<PreviewUrlResult>("/api/v1/comics/preview-from-url", {
+          url,
+        });
+      },
+      async importFromUrl(data: {
+        url: string;
+        sourceLanguage: string;
+        targetLanguage: string;
+        startChapter: number;
+        endChapter: number;
+      }): Promise<{
+        comic: Comic;
+        chaptersImported: number;
+        totalChapters: number;
+        downloadJob?: { id: string; totalChapters: number };
+      }> {
+        return http.post("/api/v1/comics/import-from-url", data);
+      },
+      async importZip(file: File): Promise<{ comic: Comic; chaptersImported: number }> {
+        const form = new FormData();
+        form.set("file", file);
+        return http.post("/api/v1/comics/import-zip", form);
+      },
+      async checkPreview(
+        comicId: string,
+      ): Promise<{
+        title: string;
+        author: string;
+        currentChapters: number;
+        totalChapters: number;
+        newChapters: number;
+        firstNewChapter: number;
+        lastNewChapter: number;
+      }> {
+        return http.post(`/api/v1/comics/${comicId}/check-preview`, {});
+      },
+      async updateFromUrl(
+        comicId: string,
+        data: { startChapter?: number; endChapter?: number } = {},
+      ): Promise<{
+        jobId: string;
+        chaptersQueued: number;
+        totalChapters: number;
+      }> {
+        return http.post(`/api/v1/comics/${comicId}/update-from-url`, data);
+      },
+      async redownloadFromUrl(
+        comicId: string,
+        chapterIds: string[] = [],
+      ): Promise<{ jobId: string; chaptersQueued: number }> {
+        return http.post(`/api/v1/comics/${comicId}/redownload-from-url`, {
+          chapterIds,
+        });
+      },
+      async jobs(
+        comicId: string,
+        params: { failed?: boolean } = {},
+      ): Promise<TranslationJob[]> {
+        const query = buildQuery({ failed: params.failed ? "true" : undefined });
+        return http.get(`/api/v1/comics/${comicId}/jobs${query}`);
+      },
+    },
     readingProgress: {
       async get(novelId: string): Promise<ReadingProgress | null> {
         try {
@@ -988,6 +1251,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         payload: {
           sessionId?: string;
           novelId?: string;
+          // Media scopes the assistant's toolset: "novels" (default),
+          // "comics" or "both".
+          media?: "novels" | "comics" | "both";
           message: string;
           // Regenerate re-runs the last turn: the server drops the stored
           // answer (and its tool trail) and re-asks with `message`, which the

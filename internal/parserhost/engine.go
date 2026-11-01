@@ -23,6 +23,10 @@ const (
 	DefaultTOCTimeout   = 300 * time.Second
 	DefaultMaxFetches   = 200
 	DefaultMaxBodyBytes = 5 << 20
+	// MaxChapterPages caps the pages array a comic chapter script may return.
+	// Page URLs come from scraped HTML, so an unbounded array would let a
+	// hostile page OOM the worker downstream.
+	MaxChapterPages = 500
 )
 
 // DefaultTOCTimeout covers the slowest legitimate TOC. Two things can make one
@@ -80,6 +84,7 @@ func NewEngine(f Fetcher, opts Options) *Engine {
 // concurrent use: every invocation runs in its own VM.
 type Script struct {
 	name            string
+	media           string
 	requiresBrowser bool
 	livewirePattern *regexp.Regexp
 	hasChapterKey   bool
@@ -88,6 +93,16 @@ type Script struct {
 }
 
 func (s *Script) Name() string { return s.name }
+
+// Media reports the media kind the script declared (MediaNovel when it did
+// not declare one). Callers use it to pick the storage pipeline for the
+// chapter payload; the engine uses it to validate the chapter shape.
+func (s *Script) Media() string {
+	if s.media == "" {
+		return MediaNovel
+	}
+	return s.media
+}
 
 // RequiresBrowser reports whether fetching from this site only works reliably
 // through the browser worker proxy. The engine itself never acts on it: the
@@ -127,6 +142,12 @@ func (e *Engine) LoadFile(path string) (*Script, error) {
 	}
 	if b, ok := inv.exportProp("requiresBrowser").Export().(bool); ok {
 		s.requiresBrowser = b
+	}
+	if raw, ok := inv.exportProp("media").Export().(string); ok && strings.TrimSpace(raw) != "" {
+		if !ValidMedia(raw) {
+			return nil, fmt.Errorf("%s: %w", path, shapeError("module.exports.media must be %q or %q, got %q", MediaNovel, MediaComic, raw))
+		}
+		s.media = raw
 	}
 	if raw, ok := inv.exportProp("livewireCatalogPattern").Export().(string); ok && strings.TrimSpace(raw) != "" {
 		re, reErr := regexp.Compile(raw)
@@ -211,7 +232,7 @@ func (s *Script) Chapter(ctx context.Context, rawURL string) (*Chapter, error) {
 	if err != nil {
 		return nil, inv.wrap(err)
 	}
-	return chapterFromValue(v)
+	return chapterFromValue(v, s.Media())
 }
 
 // ChapterKey returns the script's stable identity for a chapter, defaulting to
@@ -375,23 +396,32 @@ func tocFromValue(v goja.Value) (*TOC, error) {
 	if !ok {
 		return nil, shapeError("toc must return an object, got %s", v.String())
 	}
-	rawNovel, ok := root["novel"].(map[string]any)
+	// The metadata key matches the media: `novel` for novel scripts, `comic`
+	// for comic ones. Either is accepted so a draft keeps loading while it
+	// switches kinds; the host maps both onto the same Series.
+	rawSeries, ok := root["novel"].(map[string]any)
 	if !ok {
-		return nil, shapeError("toc must return a novel object")
+		rawSeries, ok = root["comic"].(map[string]any)
 	}
-	title, _ := rawNovel["title"].(string)
+	if !ok {
+		return nil, shapeError("toc must return a novel (or comic) object")
+	}
+	title, _ := rawSeries["title"].(string)
 	if strings.TrimSpace(title) == "" {
 		return nil, shapeError("toc novel.title is required")
 	}
-	novel := Novel{Title: title}
-	novel.Description, _ = rawNovel["description"].(string)
-	novel.Author, _ = rawNovel["author"].(string)
-	novel.CoverURL, _ = rawNovel["coverUrl"].(string)
-	novel.Language, _ = rawNovel["language"].(string)
-	if tags, ok := rawNovel["tags"].([]any); ok {
+	series := Series{Title: title}
+	series.Description, _ = rawSeries["description"].(string)
+	series.Author, _ = rawSeries["author"].(string)
+	series.CoverURL, _ = rawSeries["coverUrl"].(string)
+	if series.CoverURL == "" {
+		series.CoverURL, _ = rawSeries["coverURL"].(string)
+	}
+	series.Language, _ = rawSeries["language"].(string)
+	if tags, ok := rawSeries["tags"].([]any); ok {
 		for _, tag := range tags {
 			if s, ok := tag.(string); ok {
-				novel.Tags = append(novel.Tags, s)
+				series.Tags = append(series.Tags, s)
 			}
 		}
 	}
@@ -416,18 +446,46 @@ func tocFromValue(v goja.Value) (*TOC, error) {
 		}
 		chapters = append(chapters, ChapterRef{Title: chapterTitle, URL: chapterURL})
 	}
-	return &TOC{Novel: novel, Chapters: chapters}, nil
+	return &TOC{Series: series, Chapters: chapters}, nil
 }
 
-func chapterFromValue(v goja.Value) (*Chapter, error) {
+// chapterFromValue validates the chapter payload against the script's media:
+// novels must return a non-empty contentHtml, comics a bounded array of
+// absolute page URLs in reading order.
+func chapterFromValue(v goja.Value, media string) (*Chapter, error) {
 	root, ok := v.Export().(map[string]any)
 	if !ok {
 		return nil, shapeError("chapter must return an object, got %s", v.String())
+	}
+	title, _ := root["title"].(string)
+	if media == MediaComic {
+		rawPages, ok := root["pages"].([]any)
+		if !ok {
+			return nil, shapeError("chapter must return a pages array")
+		}
+		if len(rawPages) == 0 {
+			return nil, shapeError("chapter must return a non-empty pages array")
+		}
+		if len(rawPages) > MaxChapterPages {
+			return nil, shapeError("chapter pages exceed limit (%d)", MaxChapterPages)
+		}
+		pages := make([]string, 0, len(rawPages))
+		for i, raw := range rawPages {
+			s, ok := raw.(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				return nil, shapeError("chapter pages[%d] must be a non-empty string", i)
+			}
+			s = strings.TrimSpace(s)
+			if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
+				return nil, shapeError("chapter pages[%d] must be an absolute URL", i)
+			}
+			pages = append(pages, s)
+		}
+		return &Chapter{Title: title, Pages: pages}, nil
 	}
 	content, ok := root["contentHtml"].(string)
 	if !ok || strings.TrimSpace(content) == "" {
 		return nil, shapeError("chapter must return a non-empty contentHtml")
 	}
-	title, _ := root["title"].(string)
 	return &Chapter{Title: title, ContentHTML: content}, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 	pbrouter "github.com/pocketbase/pocketbase/tools/router"
 	"translator-server/internal/ai"
+	"translator-server/internal/comicdownloader"
 	"translator-server/internal/config"
 	"translator-server/internal/store"
 )
@@ -71,6 +72,10 @@ type Server struct {
 	// fetch through. Tests set it to rewrite site hosts onto an httptest
 	// server; production leaves it nil and gets a plain client.
 	ParserHTTPClientFactory func(userID string) *http.Client
+	// ComicDownloaderFactory builds the per-user comic image downloader:
+	// direct HTTP with a lazy browser-worker fallback scoped to the owning
+	// user (see proxy_http_client.go).
+	ComicDownloaderFactory func(userID string) *comicdownloader.Downloader
 	// BrowserJobEnqueuer overrides EnqueueBrowserJob for the parser fetcher's
 	// worker relay. Tests set it to stub the connected browser worker;
 	// production leaves it nil and jobs go through the real queue.
@@ -173,6 +178,15 @@ func New(st *store.Store, cfg *config.Config) *Server {
 		globalLimiter:      newRateLimiter(600, 600), // global backstop: 600 requests per minute per IP
 		agentLimiter:       newRateLimiter(10, 20),   // agent chat: burst 10, 20 turns per minute per IP
 	}
+	// Comic image downloader: direct HTTP with a lazy browser-worker fallback
+	// scoped to the owning user (checks per-request, so it picks up a worker
+	// the moment one connects — even mid-job).
+	s.ComicDownloaderFactory = func(userID string) *comicdownloader.Downloader {
+		direct := comicdownloader.NewHTTPClient()
+		checker := NewBrowserWorkerChecker(s, userID)
+		client := comicdownloader.NewLazyFallbackClient(direct, checker)
+		return comicdownloader.NewDownloaderWithClient(client)
+	}
 	s.startJobWorker()
 	go s.processBrowserJobs()
 	return s
@@ -202,6 +216,16 @@ func (s *Server) cancelJob(jobID string) {
 // lockNovel returns an unlock function holding the per-novel redownload lock.
 func (s *Server) lockNovel(novelID string) func() {
 	mu, _ := s.redownloadLocks.LoadOrStore(novelID, &sync.Mutex{})
+	lock := mu.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
+// lockComic returns an unlock function holding the per-comic job lock. It
+// shares redownloadLocks with novels under a namespaced key, so a novel and a
+// comic can never collide and the map stays single.
+func (s *Server) lockComic(comicID string) func() {
+	mu, _ := s.redownloadLocks.LoadOrStore("comic:"+comicID, &sync.Mutex{})
 	lock := mu.(*sync.Mutex)
 	lock.Lock()
 	return lock.Unlock

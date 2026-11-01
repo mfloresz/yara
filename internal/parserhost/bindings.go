@@ -130,6 +130,7 @@ func (inv *invocation) ctxObject() *goja.Object {
 	}
 	obj := inv.vm.NewObject()
 	_ = obj.Set("get", inv.get)
+	_ = obj.Set("postForm", inv.postForm)
 	_ = obj.Set("css", inv.css)
 	_ = obj.Set("css1", inv.css1)
 	_ = obj.Set("resolveUrl", inv.resolveURL)
@@ -153,11 +154,42 @@ func (inv *invocation) get(call goja.FunctionCall) goja.Value {
 	if err != nil {
 		return inv.throw(fmt.Errorf("fetching %s: %w", rawURL, err))
 	}
+	return inv.storeResult(rawURL, result)
+}
+
+// postForm submits a form-encoded POST for sites whose metadata lives behind
+// an AJAX endpoint (e.g. a chapter-lock status action). It shares the fetch
+// budget and body limit with get and, like get, surfaces transport failures
+// as plain errors rather than taxonomy codes.
+func (inv *invocation) postForm(call goja.FunctionCall) goja.Value {
+	rawURL := call.Argument(0).String()
+	form := map[string]string{}
+	if exported, ok := call.Argument(1).Export().(map[string]any); ok {
+		for k, v := range exported {
+			form[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	inv.fetches++
+	if inv.fetches > inv.script.engine.opts.MaxFetches {
+		return inv.limitExceeded(&ScriptError{
+			Code:    CodeParserTimeout,
+			Message: fmt.Sprintf("fetch budget of %d exceeded", inv.script.engine.opts.MaxFetches),
+		})
+	}
+	result, err := inv.script.engine.fetcher.PostForm(inv.ctx, rawURL, form)
+	if err != nil {
+		return inv.throw(fmt.Errorf("posting to %s: %w", rawURL, err))
+	}
+	return inv.storeResult(rawURL, result)
+}
+
+// storeResult enforces the response-body ceiling and wraps the payload in the
+// doc handle scripts see. A fetcher that leaves FinalURL empty would silently
+// break relative link resolution, so it falls back to the requested URL.
+func (inv *invocation) storeResult(rawURL string, result *FetchResult) goja.Value {
 	if int64(len(result.Body)) > inv.script.engine.opts.MaxBodyBytes {
 		return inv.limitExceeded(shapeError("response body exceeds limit (%d bytes)", inv.script.engine.opts.MaxBodyBytes))
 	}
-	// A fetcher that leaves FinalURL empty would silently break relative link
-	// resolution, so fall back to the requested URL.
 	base := result.FinalURL
 	if base == "" {
 		base = rawURL

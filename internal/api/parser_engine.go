@@ -267,6 +267,11 @@ func (s *Server) loadParserScripts(userID string) ([]parserScript, error) {
 	return loaded, nil
 }
 
+// msgNoParserSelected prefixes the selection error built when no installed
+// script claims a URL. parserErrorMessage keys off it to tell "site not
+// supported" apart from a script that claimed the URL but rejected its shape.
+const msgNoParserSelected = "no parser script handles"
+
 // selectParserScript runs each script's probe in order and returns the first
 // that claims the URL. No match is a taxonomy not_my_site failure so callers
 // can word it for users.
@@ -285,7 +290,7 @@ func selectParserScript(scripts []parserScript, rawURL string) (parserScript, er
 	}
 	return parserScript{}, &parserhost.ScriptError{
 		Code:    parserhost.CodeNotMySite,
-		Message: fmt.Sprintf("no parser script handles %s", rawURL),
+		Message: fmt.Sprintf("%s %s", msgNoParserSelected, rawURL),
 	}
 }
 
@@ -355,12 +360,12 @@ func (s *Server) fetchSourceSnapshot(ctx context.Context, userID, rawURL string)
 		}
 	}
 	snapshot := &sourceSnapshot{
-		Title:       toc.Novel.Title,
-		Author:      toc.Novel.Author,
-		Description: toc.Novel.Description,
-		CoverURL:    toc.Novel.CoverURL,
-		Language:    toc.Novel.Language,
-		Tags:        toc.Novel.Tags,
+		Title:       toc.Series.Title,
+		Author:      toc.Series.Author,
+		Description: toc.Series.Description,
+		CoverURL:    toc.Series.CoverURL,
+		Language:    toc.Series.Language,
+		Tags:        toc.Series.Tags,
 		Chapters:    make([]sourceChapter, 0, len(toc.Chapters)),
 	}
 	for i, ref := range toc.Chapters {
@@ -625,7 +630,15 @@ func parserErrorMessage(err error) string {
 	if errors.As(err, &scriptErr) {
 		switch scriptErr.Code {
 		case parserhost.CodeNotMySite:
-			return "Unsupported URL: no installed parser script handles this site. Add one to the parsers directory (see docs/parsers.md)."
+			// Selection failing (nothing claimed the URL) means the site is
+			// unsupported. But a script that DID claim the URL and then failed
+			// not_my_site carries its own guidance ("expected ... series URL
+			// like /manga/{slug}") — surfacing the generic wording there would
+			// tell the user a supported site is not.
+			if strings.HasPrefix(scriptErr.Message, msgNoParserSelected) {
+				return "Unsupported URL: no installed parser script handles this site. Add one to the parsers directory (see docs/parsers.md)."
+			}
+			return "The URL is not a series page for this site (" + scriptErr.Message + "). Check the URL and retry."
 		case parserhost.CodeSiteLayoutChanged:
 			return "The site layout changed and the parser no longer matches it (" + scriptErr.Message +
 				"). Update the script and verify it with --check-parser <script.js> -check-url <url>."

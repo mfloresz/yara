@@ -419,7 +419,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/defaults` | Global default translation values. |
-| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `agentProvider`, `agentModel`, `translation`). |
+| `GET` | `/api/v1/settings` | Get the user's app settings (`theme`, `ai`, `titleProvider`, `titleModel`, `agentProvider`, `agentModel`, `checkModel`, `translation`). |
 | `PUT` | `/api/v1/settings` | Update settings (same body shape). |
 
 ```json
@@ -432,6 +432,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
     "titleModel": "kimi-k2",
     "agentProvider": "opencode-go",
     "agentModel": "kimi-k2",
+    "checkModel": "perplexity/pplx-decider-v1.2",
     "translation": { "includePreviousTitleHints": false, "includePreviousContentHints": true, "autoSegment": false }
   }
 }
@@ -455,6 +456,7 @@ Jobs are scheduled by an in-process dispatcher with exclusive resource keys: at 
 | `POST` | `/api/v1/novels/{id}/check-preview` | Re-fetch the source, count new chapters, update `lastCheckedAt`. |
 | `POST` | `/api/v1/novels/{id}/update-from-url` | Body `{ "startChapter": 0, "endChapter": 0 }` — enqueue a download for new chapters. Returns 202. |
 | `POST` | `/api/v1/novels/{id}/redownload-from-url` | Body `{ "startChapter", "endChapter", "confirm": false\|true }`. First call returns the plan; second call (with `confirm: true`) re-queues. Returns 202 on accept. |
+| `POST` | `/api/v1/novels/{id}/import-url` | Body `{ "url" }` — append chapters from an arbitrary supported URL to an existing novel (one-shots/extras), ordered after the stored ones. Skips chapters already stored by source key. Returns 202 (`{pendingChapters, downloadJobId}`) or 200 when there is nothing new. |
 | `POST` | `/api/v1/novels/batch-check` | Body `{ "novelIds": ["..."] }` — enqueue one check job per novel. Returns 202. |
 | `POST` | `/api/v1/novels/batch-update` | Body `{ "selections": [...] }` — same as `redownload-from-url` for many novels. Returns 202. |
 | `POST` | `/api/v1/novels/batch-translate-preview` | Pre-flight: returns the per-novel pending chapter count. |
@@ -747,3 +749,30 @@ expand and a raw-length budget undercounts.
 | Path | Auth | Description |
 |---|---|---|
 | `ws://host/ws/browser-worker` | in-band (worker sends a `register` message with its token after connect) | Persistent connection for the browser-worker extension. The server dispatches `fetch_page` jobs over this socket. Unauthenticated workers never receive jobs (the `register` message is validated against `ValidateWorkerToken`). |
+
+## Comics (`/api/v1/comics`)
+
+A parallel media tree to novels, structured by content kind so more media
+(e.g. anime) can follow the same shape. Comic chapters carry **page images**
+instead of text bodies; the comic text-translation flow is deferred, so there
+are no translate/refine surfaces yet.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET/POST /comics` | List (filters `q`, `sort`, `shared`, `progress=downloaded|completed|ongoing`) / create |
+| `GET/PATCH/DELETE /comics/{id}` | Read (owner or public) / patch / delete |
+| `GET/POST /comics/{id}/cover` | Serve/upload cover |
+| `GET /comics/{id}/chapters` | Summaries; `?includeContent=true` adds each chapter's page list |
+| `GET/POST/DELETE /comics/{id}/chapters/{chapterId}` | Chapter with pages / manual create / exclude |
+| `GET /comics/{id}/chapters/{chapterId}/pages` | Page records with authenticated image URLs |
+| `GET /comics/{id}/chapters/{chapterId}/pages/{pageId}/image` | Page image bytes (immutable cache) |
+| `GET /comics/{id}/chapters/{chapterId}/neighbors` | Reader prev/next |
+| `GET /comics/{id}/chapter-summaries`, `/chapter-stats` | Paginated list / download aggregates |
+| `GET/PUT /comics/{id}/reading-progress` | Per-user resume point |
+| `POST /comics/preview-from-url`, `/comics/import-from-url` | Parser TOC preview / import + download job |
+| `POST /comics/import-zip` | ZIP of images (one folder per chapter) |
+| `POST /comics/{id}/check-preview`, `/update-from-url`, `/redownload-from-url` | Update checks and downloads |
+| `GET /comics/{id}/jobs` | The comic's jobs |
+
+Jobs live in the same `translation_jobs` collection as novels, carrying
+exactly one of `novel`/`comic`; the operations page and drawer show both.

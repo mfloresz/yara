@@ -43,6 +43,10 @@ func (noFetch) Fetch(context.Context, string) (*parserhost.FetchResult, error) {
 	return nil, fmt.Errorf("parser scripts must not fetch at module init")
 }
 
+func (noFetch) PostForm(context.Context, string, map[string]string) (*parserhost.FetchResult, error) {
+	return nil, fmt.Errorf("parser scripts must not fetch at module init")
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("failed to generate parser manifest", "error", err)

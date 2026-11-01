@@ -46,6 +46,9 @@ func getSettings(s *Server) func(*core.RequestEvent) error {
 		if settings.AgentModel != "" {
 			resp["agentModel"] = settings.AgentModel
 		}
+		if settings.CheckModel != "" {
+			resp["checkModel"] = settings.CheckModel
+		}
 		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}
 }
@@ -59,6 +62,7 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 			TitleModel    string                    `json:"titleModel"`
 			AgentProvider string                    `json:"agentProvider"`
 			AgentModel    string                    `json:"agentModel"`
+			CheckModel    string                    `json:"checkModel"`
 			Translation   store.TranslationDefaults `json:"translation"`
 		}{}
 		if err := e.BindBody(&body); err != nil {
@@ -75,6 +79,7 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 			TitleModel:    body.TitleModel,
 			AgentProvider: body.AgentProvider,
 			AgentModel:    body.AgentModel,
+			CheckModel:    body.CheckModel,
 			Translation:   body.Translation,
 		})
 		if err != nil {
@@ -97,6 +102,9 @@ func putSettings(s *Server) func(*core.RequestEvent) error {
 		}
 		if settings.AgentModel != "" {
 			resp["agentModel"] = settings.AgentModel
+		}
+		if settings.CheckModel != "" {
+			resp["checkModel"] = settings.CheckModel
 		}
 		return v1Respond(e, http.StatusOK, resp, nil, nil)
 	}

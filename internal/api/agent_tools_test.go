@@ -72,7 +72,7 @@ func TestAgentToolCatalogIncludesNewTools(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-catalog@example.com", "secret123", "Alice")
 	names := map[string]bool{}
-	for _, tool := range env.server.agentTools(alice.User.ID) {
+	for _, tool := range env.server.agentTools(alice.User.ID, "novels") {
 		names[tool.Name] = true
 	}
 	for _, want := range []string{
@@ -96,7 +96,7 @@ func TestAgentToolCatalogIncludesNewTools(t *testing.T) {
 	if names["apply_chapter_cleanup"] {
 		t.Error("agent tool catalog must not expose apply_chapter_cleanup")
 	}
-	for _, tool := range env.server.agentTools(alice.User.ID) {
+	for _, tool := range env.server.agentTools(alice.User.ID, "novels") {
 		if tool.Name == "propose_cleanup" && !tool.Terminal {
 			t.Error("propose_cleanup must be terminal so its proposal card ends the turn")
 		}

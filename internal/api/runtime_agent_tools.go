@@ -29,8 +29,8 @@ const (
 	agentGlossaryMaxLimit        = 200
 	agentGlossaryContextMaxChars = 200
 	agentGlossaryBatchMax        = 100
-	agentCleanupPreviewMax  = 25
-	agentCleanupSampleHunks = 5
+	agentCleanupPreviewMax       = 25
+	agentCleanupSampleHunks      = 5
 	agentCleanupSampleLineMax    = 200
 	agentEpubListMax             = 20
 	// agentEpubMaxSourceChars caps the text the assistant may feed to the EPUB

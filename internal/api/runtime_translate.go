@@ -22,6 +22,7 @@ type jobContext struct {
 	cfg               resolvedJobConfig
 	provider          ai.Provider
 	titleProvider     ai.Provider
+	decision          ai.DecisionChecker
 	glossaryText      string
 	baseSystemPrompt  string
 	titleSystemPrompt string
@@ -60,6 +61,18 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job, novel *sto
 			titleProvider = tp
 		}
 	}
+	var decision ai.DecisionChecker
+	if cfg.CheckAI != nil {
+		if strings.TrimSpace(cfg.CheckAI.APIKey) == "" {
+			slog.Warn("decision check model configured without an OpenRouter API key, using content provider check", "model", cfg.CheckAI.Model)
+		} else {
+			decision = &ai.DecisionClient{
+				APIKey:  cfg.CheckAI.APIKey,
+				BaseURL: cfg.CheckAI.BaseURL,
+				Timeout: time.Duration(cfg.CheckAI.TimeoutMs) * time.Millisecond,
+			}
+		}
+	}
 	glossaryText := formatGlossary(cfg.Glossary)
 	baseValues := map[string]string{
 		"{SOURCE_LANG}": novel.SourceLanguage,
@@ -70,15 +83,16 @@ func (s *Server) buildJobContext(ctx context.Context, job *store.Job, novel *sto
 	baseSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Translation.SystemPrompt, baseValues))
 	titleSystemPrompt := strings.TrimSpace(fillPrompt(cfg.Prompts.Title.SystemPrompt, baseValues))
 	return &jobContext{
-		jobID:            job.ID,
-		runCtx:           ctx,
-		novel:            novel,
-		chapters:         chapters,
-		cfg:              cfg,
-		provider:         provider,
-		titleProvider:    titleProvider,
-		glossaryText:     glossaryText,
-		baseSystemPrompt: baseSystemPrompt,
+		jobID:             job.ID,
+		runCtx:            ctx,
+		novel:             novel,
+		chapters:          chapters,
+		cfg:               cfg,
+		provider:          provider,
+		titleProvider:     titleProvider,
+		decision:          decision,
+		glossaryText:      glossaryText,
+		baseSystemPrompt:  baseSystemPrompt,
 		titleSystemPrompt: titleSystemPrompt,
 	}, nil
 }

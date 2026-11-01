@@ -1934,6 +1934,47 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /novels/{id}/import-url:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Imports]
+      summary: "Append chapters from an arbitrary supported URL to an existing novel (one-shots/extras), ordered after the stored ones. Never creates a novel."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+      responses:
+        '200':
+          description: Nothing to import — every chapter of that URL is already stored in the novel.
+        '202':
+          description: Download job enqueued; the chapters land in the background.
+        '400':
+          description: 'Missing url, or the parser failed (unsupported URL, site layout changed, blocked, timeout).'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: The novel belongs to another user.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The novel already has an active (pending or running) job — only one job per novel is allowed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Download queue full; the job is marked failed and can be retried.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /novels/batch-check:
     post:
       tags: [Imports]
@@ -2686,6 +2727,310 @@ paths:
         '204':
           description: No Content
 
+  /comics:
+    get:
+      tags: [Comics]
+      summary: List the user's comics (own plus shared), envelope-wrapped.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [title, created, lastRead], default: title }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: asc }
+        - name: shared
+          in: query
+          schema: { type: string, enum: [all, own, shared], default: all }
+        - name: progress
+          in: query
+          description: "`downloaded` selects comics whose chapters are all downloaded."
+          schema: { type: string, enum: [all, downloaded, completed, ongoing], default: all }
+      responses:
+        "200": { $ref: '#/components/responses/EnvelopeList' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Comics]
+      summary: Create a comic manually.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceTitle]
+              properties:
+                sourceLanguage: { type: string }
+                targetLanguage: { type: string }
+                sourceTitle: { type: string }
+                sourceAuthor: { type: string }
+                sourceDescription: { type: string }
+                targetTitle: { type: string }
+                url: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        "201": { $ref: '#/components/responses/Envelope' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+
+  /comics/{comicId}:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Get one comic (owner or public).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Comics]
+      summary: Patch comic metadata (owner only).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Comics]
+      summary: Delete the comic and its pages (owner only).
+      responses:
+        "204": { description: No Content }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /comics/{comicId}/cover:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Serve the stored cover/thumbnail image (owner or public).
+      responses:
+        "200": { description: Image bytes, immutable caching }
+    post:
+      tags: [Comics]
+      summary: Upload a cover image (multipart field `cover`, owner only).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/chapters:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Chapter summaries; `includeContent=true` returns each chapter with its page list.
+      parameters:
+        - name: includeContent
+          in: query
+          schema: { type: string, enum: ["true"] }
+      responses:
+        "200": { $ref: '#/components/responses/EnvelopeList' }
+    post:
+      tags: [Comics]
+      summary: Create a manual chapter (pages arrive via downloads or the ZIP import).
+      responses:
+        "201": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/chapters/{chapterId}:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: chapterId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: One chapter with its pages in reading order.
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+    delete:
+      tags: [Comics]
+      summary: Logically delete (exclude) the chapter.
+      responses:
+        "204": { description: No Content }
+
+  /comics/{comicId}/chapters/{chapterId}/pages:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: chapterId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: The chapter's page records (metadata + authenticated image URLs).
+      responses:
+        "200": { $ref: '#/components/responses/EnvelopeList' }
+
+  /comics/{comicId}/chapters/{chapterId}/pages/{pageId}/image:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: chapterId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: pageId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Serve one page image (owner or public; immutable caching).
+      responses:
+        "200": { description: Image bytes }
+
+  /comics/{comicId}/chapters/{chapterId}/neighbors:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: chapterId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Previous/next visible chapters in reading order.
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/chapter-summaries:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Paginated lightweight chapter summaries.
+      responses:
+        "200": { $ref: '#/components/responses/EnvelopeList' }
+
+  /comics/{comicId}/chapter-stats:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: Aggregate download stats (total, downloaded, failed).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/reading-progress:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: The user's resume point for the comic.
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+    put:
+      tags: [Comics]
+      summary: Upsert the resume point (chapterId + scrollPercent).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/preview-from-url:
+    post:
+      tags: [Comics]
+      summary: Fetch a comic site's TOC without creating anything (parser, media=comic).
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/import-from-url:
+    post:
+      tags: [Comics]
+      summary: >
+        Create the comic from a source URL, download the first chapter's pages
+        synchronously and enqueue a download job for the rest (202-style job in
+        the 201 response body).
+      responses:
+        "201": { $ref: '#/components/responses/Envelope' }
+        "503": { description: Job queue full (Retry-After: 30) }
+
+  /comics/import-zip:
+    post:
+      tags: [Comics]
+      summary: >
+        Import a ZIP of page images — one folder per chapter
+        ("Capitulo 001/001.jpg"), optional root metadata.json and cover.*.
+      responses:
+        "201": { $ref: '#/components/responses/Envelope' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+
+  /comics/{comicId}/check-preview:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Comics]
+      summary: Diff the source TOC against stored chapters; records lastCheckedAt.
+      responses:
+        "200": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/update-from-url:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Comics]
+      summary: Enqueue a download job for the new chapters (202 when queued).
+      responses:
+        "202": { $ref: '#/components/responses/Envelope' }
+        "409": { description: Another job is active for this comic }
+
+  /comics/{comicId}/redownload-from-url:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Comics]
+      summary: Re-download the pages of pending/failed (or explicit) chapters.
+      responses:
+        "202": { $ref: '#/components/responses/Envelope' }
+
+  /comics/{comicId}/jobs:
+    parameters:
+      - name: comicId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Comics]
+      summary: The comic's jobs (?failed=true filters).
+      responses:
+        "200": { $ref: '#/components/responses/EnvelopeList' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -3429,6 +3774,9 @@ components:
         titleModel: { type: string }
         agentProvider: { type: string }
         agentModel: { type: string }
+        checkModel:
+          type: string
+          description: OpenRouter decision model used for the post-translation check (e.g. perplexity/pplx-decider-v1.2). Empty keeps the chat-model check.
         translation: { $ref: '#/components/schemas/TranslationDefaults' }
 
     TranslationDefaults:

@@ -34,6 +34,7 @@ func (s *Store) GetAppSettings(userID string) (AppSettings, error) {
 		TitleModel:    defaultString(user.GetString("title_model"), ""),
 		AgentProvider: defaultString(user.GetString("agent_provider"), ""),
 		AgentModel:    defaultString(user.GetString("agent_model"), ""),
+		CheckModel:    defaultString(user.GetString("check_model"), ""),
 		Translation:   translation,
 	}, nil
 }
@@ -80,6 +81,7 @@ func (s *Store) SaveAppSettings(userID string, cfg AppSettings) (AppSettings, er
 	user.Set("title_model", strings.TrimSpace(cfg.TitleModel))
 	user.Set("agent_provider", strings.TrimSpace(cfg.AgentProvider))
 	user.Set("agent_model", strings.TrimSpace(cfg.AgentModel))
+	user.Set("check_model", strings.TrimSpace(cfg.CheckModel))
 	if err := s.App.Save(user); err != nil {
 		return AppSettings{}, err
 	}

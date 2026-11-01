@@ -17,6 +17,13 @@ const (
 	UserTranslationCollection      = "user_translation_settings"
 	NovelsCollection               = "novels"
 	ChaptersCollection             = "chapters"
+	// Comics domain — a parallel media tree to novels/*, namespaced so the
+	// two never share a collection (see docs/ui-shell-and-comics-plan.md).
+	ComicsCollection               = "comics"
+	ComicChaptersCollection        = "comic_chapters"
+	ComicPagesCollection           = "comic_pages"
+	ComicImagesCollection          = "comic_images"
+	ComicReadingProgressCollection = "comic_reading_progress"
 	JobsCollection                 = "translation_jobs"
 	EpubsCollection                = "epubs"
 	NovelImagesCollection          = "novel_images"
@@ -46,12 +53,12 @@ var ErrNotFound = errors.New("not found")
 var ErrForbidden = errors.New("forbidden")
 
 // ErrActiveJobs is returned when an operation (excluding or reordering
-// chapters) is rejected because the novel has pending/running jobs that are
-// actively downloading or processing chapters.
-var ErrActiveJobs = errors.New("active jobs on novel")
+// chapters) is rejected because the novel or comic has pending/running jobs
+// that are actively downloading or processing chapters.
+var ErrActiveJobs = errors.New("active jobs on novel or comic")
 
 // ErrInvalidReorder is returned when a chapter reorder payload is rejected:
-// empty, duplicate, foreign, or partial (missing chapters of the novel).
+// empty, duplicate, foreign, or partial (missing chapters of the work).
 var ErrInvalidReorder = errors.New("invalid chapter order list")
 
 type Store struct {
@@ -92,7 +99,24 @@ func (s *Store) EnsureSchema() error {
 	if err := s.migrateChapterCascadeDelete(chapters); err != nil {
 		return err
 	}
-	jobs, err := s.ensureJobsCollection(users, novels)
+	comics, err := s.ensureComicsCollection(users)
+	if err != nil {
+		return err
+	}
+	comicChapters, err := s.ensureComicChaptersCollection(comics)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateComicChapterCascadeDelete(comicChapters); err != nil {
+		return err
+	}
+	if _, err := s.ensureComicPagesCollection(comics, comicChapters); err != nil {
+		return err
+	}
+	if _, err := s.ensureComicReadingProgressCollection(users, comics); err != nil {
+		return err
+	}
+	jobs, err := s.ensureJobsCollection(users, novels, comics)
 	if err != nil {
 		return err
 	}
@@ -141,7 +165,7 @@ func (s *Store) ListPrompts(userID string) ([]Prompt, error) {
 		{Key: "translation", Label: "Traducción", Description: "Prompt global para traducción de capítulos.", SystemPrompt: DefaultTranslationSystemPrompt, UserPrompt: DefaultTranslationUserPrompt, Active: 1},
 		{Key: "title", Label: "Traducción de Título", Description: "Prompt global para traducción de títulos de capítulo.", SystemPrompt: DefaultTitleTranslationSystemPrompt, UserPrompt: DefaultTitleTranslationUserPrompt, Active: 1},
 		{Key: "refine", Label: "Refinamiento", Description: "Prompt global para mejorar traducciones generadas.", SystemPrompt: DefaultRefineSystemPrompt, UserPrompt: DefaultRefineUserPrompt, Active: 1},
-		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt, Active: 1},
+		{Key: "check", Label: "Verificación", Description: "Prompt del check con modelo de chat (se omite si hay un modelo de decisión).", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt, Active: 1},
 		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: "", Active: 1},
 	}
 	// Admin global overrides form the layer between the embedded defaults and

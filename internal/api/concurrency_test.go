@@ -61,7 +61,7 @@ func (m *mockConcurrentProvider) Refine(ctx context.Context, in ai.RefineInput) 
 	return ai.RefineOutput{}, nil
 }
 func (m *mockConcurrentProvider) Check(ctx context.Context, in ai.CheckInput) (ai.CheckOutput, error) {
-	return ai.CheckOutput{OK: true}, nil
+	return ai.CheckOutput{Decision: ai.CheckDecisionAccept}, nil
 }
 func (m *mockConcurrentProvider) GenerateGlossary(ctx context.Context, in ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {
 	return ai.GenerateGlossaryOutput{}, nil
@@ -196,7 +196,7 @@ func TestSequentialWhenConcurrencyDisabled(t *testing.T) {
 		t.Fatalf("set key: %v", err)
 	}
 	if _, err := env.store.SaveAppSettings(alice.User.ID, store.AppSettings{
-		AI: store.AISettings{Provider: "venice", Model: "deepseek-v4-flash", BaseURL: "https://api.venice.ai/api/v1", TimeoutMs: 120000, Concurrency: 1},
+		AI:          store.AISettings{Provider: "venice", Model: "deepseek-v4-flash", BaseURL: "https://api.venice.ai/api/v1", TimeoutMs: 120000, Concurrency: 1},
 		Translation: store.DefaultTranslationDefaults,
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)

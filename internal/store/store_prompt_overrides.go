@@ -106,7 +106,7 @@ func (s *Store) ListEffectiveAdminPrompts() ([]AdminPrompt, error) {
 		{Key: "translation", Label: "Traducción", Description: "Prompt global para traducción de capítulos.", SystemPrompt: DefaultTranslationSystemPrompt, UserPrompt: DefaultTranslationUserPrompt},
 		{Key: "title", Label: "Traducción de Título", Description: "Prompt global para traducción de títulos de capítulo.", SystemPrompt: DefaultTitleTranslationSystemPrompt, UserPrompt: DefaultTitleTranslationUserPrompt},
 		{Key: "refine", Label: "Refinamiento", Description: "Prompt global para mejorar traducciones generadas.", SystemPrompt: DefaultRefineSystemPrompt, UserPrompt: DefaultRefineUserPrompt},
-		{Key: "check", Label: "Verificación", Description: "Prompt global para revisar calidad de traducción.", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt},
+		{Key: "check", Label: "Verificación", Description: "Prompt del check con modelo de chat (se omite si hay un modelo de decisión).", SystemPrompt: DefaultCheckSystemPrompt, UserPrompt: DefaultCheckUserPrompt},
 		{Key: "glossary", Label: "Glosario", Description: "Prompt global para generar glosario de traducción.", SystemPrompt: DefaultGlossaryPrompt, UserPrompt: ""},
 	}
 	overrides, err := s.ListPromptOverrides()

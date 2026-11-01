@@ -17,9 +17,9 @@ import (
 // than rateLimiterIdle are swept once the map grows, so memory stays bounded
 // behind an internet-facing deployment.
 type rateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*rateBucket
-	capacity float64 // burst size
+	mu        sync.Mutex
+	buckets   map[string]*rateBucket
+	capacity  float64 // burst size
 	perMinute float64 // sustained refill rate, tokens per minute
 }
 

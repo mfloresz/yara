@@ -140,6 +140,16 @@ func (s *Server) resolveNovelConfig(userID string, novel *store.Novel, providerO
 			cfg.TitleAI = &titleAI
 		}
 	}
+	if checkModel := strings.TrimSpace(appSettings.CheckModel); checkModel != "" {
+		checkAI, err := s.Store.ResolveProviderAISettings(userID, "openrouter")
+		if err != nil {
+			slog.Warn("failed to resolve decision check provider, will use content provider check", "model", checkModel, "err", err)
+		} else {
+			checkAI.Model = checkModel
+			checkAI.CustomModel = checkModel
+			cfg.CheckAI = &checkAI
+		}
+	}
 	return cfg, nil
 }
 

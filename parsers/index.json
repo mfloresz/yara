@@ -86,9 +86,45 @@
       "requiresBrowser": true
     },
     {
+      "name": "lector-mangas",
+      "file": "lector-mangas.js",
+      "sha256": "f6764fbdaa9ef5e83d8e0840c3babf29f6840fe2969dd677358b6a9d47c23d2e",
+      "requiresBrowser": false
+    },
+    {
       "name": "literotica",
       "file": "literotica.js",
       "sha256": "3871db825fc461bb405323395e929d275ef2587c2e31453bb8afe77560e44912",
+      "requiresBrowser": false
+    },
+    {
+      "name": "manhuahot",
+      "file": "manhuahot.js",
+      "sha256": "acb3ca075b4a6c9ad048f97f03afb0e5f3bb28bee513e4c3c5dac36a66b2a6e0",
+      "requiresBrowser": false
+    },
+    {
+      "name": "manhuaus",
+      "file": "manhuaus.js",
+      "sha256": "837ea8a40b7e9b5b91449ab6971fd9fb9ba91bfc04b27819f2564f81b5fb3521",
+      "requiresBrowser": true
+    },
+    {
+      "name": "manhwashot",
+      "file": "manhwashot.js",
+      "sha256": "12c04ac139a280938a7d55e944d97124b4e47b3ba167b1dba7fc8ae863474037",
+      "requiresBrowser": false
+    },
+    {
+      "name": "manhwaweb",
+      "file": "manhwaweb.js",
+      "sha256": "89bb142dc76d26d3a98180aab8e2202c799af9de5e632b5b187b983168165a1b",
+      "requiresBrowser": false
+    },
+    {
+      "name": "mhscans",
+      "file": "mhscans.js",
+      "sha256": "f3867b6616fd451a3680e569fe9e98f88fd2243d2033595197e044715fa51fa5",
       "requiresBrowser": false
     },
     {
@@ -116,10 +152,22 @@
       "requiresBrowser": false
     },
     {
+      "name": "onfmangas",
+      "file": "onfmangas.js",
+      "sha256": "622b209d98adb38ddea2911864dd3813d207074f5a8567762b518dc2076decb1",
+      "requiresBrowser": true
+    },
+    {
       "name": "pearlandreef",
       "file": "pearlandreef.js",
       "sha256": "976e29d904670f88b073e114eb38bc04f6b54c9fd93e37857b73af94d9cf02ad",
       "requiresBrowser": true
+    },
+    {
+      "name": "samuraiscan",
+      "file": "samuraiscan.js",
+      "sha256": "d094b737aef3e11aa33a1235dfe2f2721cc99d7ede426c153dcec4e5ad4e7075",
+      "requiresBrowser": false
     },
     {
       "name": "skydemonorder",
@@ -132,6 +180,12 @@
       "file": "skynovels.js",
       "sha256": "24372dd08ec9a6fb7e2e0cf991c7223056e8d9d1a273b19b6a82aeb5439d4eb5",
       "requiresBrowser": false
+    },
+    {
+      "name": "toonkotsu",
+      "file": "toonkotsu.js",
+      "sha256": "5267185cd56a677a7864662976ef079bc3d9cd5716f59dca000eaf08521ee0ed",
+      "requiresBrowser": true
     },
     {
       "name": "vritrascans",
@@ -150,7 +204,13 @@
       "file": "webnovel.js",
       "sha256": "c0c4afd06f47f93bce0b36cf99173cd3c7a0257506cb15649b100ab2da974ebf",
       "requiresBrowser": false
+    },
+    {
+      "name": "zonatmo",
+      "file": "zonatmo.js",
+      "sha256": "0eb00c7293d431b615661cebbc44dbfc21dcce9f0cb30d8f157017c4687ec3da",
+      "requiresBrowser": true
     }
   ],
-  "signature": "be832dcd377e0c93937b83ca63798ef066c413d9c24100f0c17dc1238b62bf4929f3bce33f82a284464ac08b531213015be0879f160ffbc8cc397d4637835a0c"
+  "signature": "59da5fd980fce7a3b528a138c1da9a017d74b826c0335d92f903b7af42de57fe20d1c7db9b71a7fac8eef442f52d766a42299e63e3e949b30f05be786e29e009"
 }

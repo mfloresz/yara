@@ -38,7 +38,7 @@ func buildImageEpub(t *testing.T, bodyHTML string) []byte {
     <itemref idref="ch1"/>
   </spine>
 </package>`,
-		"OEBPS/img1.jpg":  "\xFF\xD8\xFFfake-jpeg-bytes",
+		"OEBPS/img1.jpg": "\xFF\xD8\xFFfake-jpeg-bytes",
 		"OEBPS/chap1.xhtml": `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter 1</title></head>
 <body><h1>Chapter 1</h1>` + bodyHTML + `</body></html>`,

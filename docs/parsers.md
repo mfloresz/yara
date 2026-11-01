@@ -27,6 +27,8 @@ download or check** without restarting the server.
 module.exports = {
   name: 'my-site',            // required, non-empty
   apiVersion: 1,              // required, must be exactly 1
+  media: 'novel',             // 'novel' (default) | 'comic'; selects the
+                               // chapter shape the host validates against
   requiresBrowser: false,     // bool; metadata, see "Browser worker" below
   livewireCatalogPattern: '', // optional Go-regexp source; see "Browser worker"
   probe: (url) => boolean,    // can this script handle the URL?
@@ -34,7 +36,8 @@ module.exports = {
     novel: { title, description, author, coverUrl, language, tags },
     chapters: [{ title, url }],   // in reading order
   }),
-  chapter: (ctx, url) => ({ title, contentHtml }),
+  chapter: (ctx, url) => ({ title, contentHtml }), // media: 'novel'
+  chapter: (ctx, url) => ({ title, pages: [...] }), // media: 'comic'
   chapterKey: (ch) => string, // optional; default identity is the chapter URL
 };
 ```
@@ -51,8 +54,17 @@ Rules that matter:
   gets distinct, correct orders. Do not re-sort the array.
 - **Module init must not fetch.** The module body runs once per invocation in a
   throwaway VM. Everything network-bound belongs in `toc` or `chapter`.
-- **`chapter`** must return non-empty `contentHtml`. The host converts it to
-  markdown and strips a leading line that merely repeats the title.
+- **`media`** declares what the site publishes: `'novel'` (default) or
+  `'comic'`. It changes the `chapter` shape the host validates and nothing
+  else — probe/toc/chapterKey work identically for both.
+- **`chapter`** must return non-empty `contentHtml` for `media: 'novel'`. The
+  host converts it to markdown and strips a leading line that merely repeats
+  the title. For `media: 'comic'` it must return a non-empty `pages` array of
+  **absolute** image URLs in reading order (max 500); the host downloads each
+  page itself, so the script never fetches images.
+- **The toc metadata key follows the media**: `novel: {...}` for novel
+  scripts, `comic: {...}` for comic scripts (either key is accepted, so a
+  draft keeps loading while it switches). Comic scripts may omit `language`.
 - **`chapterKey`** is the stable identity used to match chapters across syncs.
   Omit it and the chapter URL is the identity. Supply it when the URL is
   unstable (rotating tokens, session-scoped ids) but the chapter has a durable
@@ -101,6 +113,7 @@ context.
 | Binding | Returns | Notes |
 | --- | --- | --- |
 | `ctx.get(url)` | `{status, url, body}` | `body` is the **raw** response body, so `JSON.parse(doc.body)` works for JSON-driven sites. `url` is the post-redirect URL. |
+| `ctx.postForm(url, form)` | `{status, url, body}` | Form-encoded POST (`form` is a plain object). Direct HTTP only — the browser worker never relays it. Shares the fetch budget with `ctx.get`. |
 | `ctx.css(target, sel)` | array of nodes | `target` is a `doc`, another node, or a raw HTML string. |
 | `ctx.css1(target, sel)` | node or `null` | First match only. |
 | `ctx.resolveUrl(base, rel)` | string | Absolute-URL resolution (goja has no WHATWG `URL`). |
@@ -169,6 +182,7 @@ site stays distinguishable from a broken script.
 | `not_my_site` | `probe` returned false, or no script claims the URL | "Unsupported URL: no installed parser script handles this site." |
 | `site_layout_changed` | Expected elements are gone | "The site layout changed… verify it with `--check-parser`." |
 | `blocked` | Challenge page that was not resolved | "The site blocked the request… connect the browser worker." |
+| `locked` | The chapter is paywalled / chapter-locked on the site | No browser worker or retry will unlock it; the user must unlock the chapter on the site first. |
 | `parser_timeout` | CPU interrupt or fetch budget exceeded | "The parser took too long… verify it with `--check-parser`." |
 | `script_error` | Any other script or host error | "Parser script error: …" |
 

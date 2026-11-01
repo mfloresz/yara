@@ -86,10 +86,27 @@ type CheckInput struct {
 	UserPrompt   string
 }
 
+// Remediation values a check can return. Every check answers with exactly one
+// of these; the API maps it to the action the refine loop runs.
+const (
+	CheckDecisionAccept      = "accept"
+	CheckDecisionRefine      = "refine"
+	CheckDecisionRetranslate = "retranslate"
+)
+
 type CheckOutput struct {
-	OK       bool     `json:"ok"`
-	Issues   []string `json:"issues"`
-	Severity string   `json:"severity"`
+	// Decision is the remediation the check chose. It is the only value the
+	// automated flow consumes: accept means the translation is ready, refine a
+	// surgical edit pass, retranslate a fresh translation. Both check sources
+	// return it — the decision model through recommended_action, the chat model
+	// through its JSON contract.
+	Decision string `json:"decision,omitempty"`
+	// Confidence is the decision model's confidence in Decision.
+	Confidence float64 `json:"confidence,omitempty"`
+	// Signals holds the raw probabilities behind a decision-model check,
+	// keyed by question name (structurally_intact, untranslated_content_present,
+	// has_meaning_error). Always empty for the chat-model check.
+	Signals map[string]float64 `json:"signals,omitempty"`
 }
 
 type GenerateGlossaryInput struct {

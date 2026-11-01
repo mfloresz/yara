@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 )
+
 // Logout must clear the session cookie with the same Secure attribute it was
 // set with: behind HTTPS (tunnel / reverse proxy) a non-Secure clear leaves
 // the Secure session cookie alive in the browser.

@@ -26,6 +26,15 @@ func (f *stubFetcher) Fetch(_ context.Context, rawURL string) (*FetchResult, err
 	return &FetchResult{FinalURL: rawURL, Status: 200, Body: []byte(body)}, nil
 }
 
+func (f *stubFetcher) PostForm(_ context.Context, rawURL string, _ map[string]string) (*FetchResult, error) {
+	f.calls++
+	body, ok := f.pages[rawURL]
+	if !ok {
+		return nil, fmt.Errorf("network unreachable: %s", rawURL)
+	}
+	return &FetchResult{FinalURL: rawURL, Status: 200, Body: []byte(body)}, nil
+}
+
 func loadScript(t *testing.T, src string, opts Options) (*Script, *stubFetcher) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "parser.js")
@@ -124,7 +133,7 @@ func TestTOCAndChapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TOC: %v", err)
 	}
-	wantNovel := Novel{
+	wantSeries := Series{
 		Title:       "The Silent Shelf",
 		Description: "A novel about shelves.",
 		Author:      "Ada Lovelace",
@@ -132,8 +141,8 @@ func TestTOCAndChapter(t *testing.T) {
 		Language:    "en",
 		Tags:        []string{"fantasy", "adventure"},
 	}
-	if !reflect.DeepEqual(toc.Novel, wantNovel) {
-		t.Errorf("novel:\n got %+v\nwant %+v", toc.Novel, wantNovel)
+	if !reflect.DeepEqual(toc.Series, wantSeries) {
+		t.Errorf("series:\n got %+v\nwant %+v", toc.Series, wantSeries)
 	}
 	// "chapter-1" resolves against the base directory of the page URL, while
 	// "/novel/slug/chapter-2" is already root-absolute.
@@ -246,6 +255,101 @@ module.exports = {
 	}
 }
 
+func TestComicMediaContract(t *testing.T) {
+	src := `
+module.exports = {
+  name: "comicsite", apiVersion: 1, media: "comic",
+  probe: () => true,
+  toc: (ctx, url) => ({ comic: { title: "T", coverURL: "/c.jpg" }, chapters: [{ title: "C1", url: url + "/c/1" }] }),
+  chapter: (ctx, url) => ({ title: "C1", pages: ["https://img.example/1.jpg", "https://img.example/2.jpg"] }),
+};`
+	path := filepath.Join(t.TempDir(), "comic.js")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("writing script: %v", err)
+	}
+	script, err := NewEngine(&stubFetcher{}, Options{}).LoadFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if script.Media() != MediaComic {
+		t.Errorf("media: got %q want %q", script.Media(), MediaComic)
+	}
+	toc, err := script.TOC(context.Background(), "https://x.example/comic/1")
+	if err != nil {
+		t.Fatalf("TOC: %v", err)
+	}
+	if toc.Series.Title != "T" || toc.Series.CoverURL != "/c.jpg" {
+		t.Errorf("series: got %+v", toc.Series)
+	}
+	chapter, err := script.Chapter(context.Background(), "https://x.example/comic/1/c/1")
+	if err != nil {
+		t.Fatalf("Chapter: %v", err)
+	}
+	want := []string{"https://img.example/1.jpg", "https://img.example/2.jpg"}
+	if !reflect.DeepEqual(chapter.Pages, want) {
+		t.Errorf("pages:\n got %+v\nwant %+v", chapter.Pages, want)
+	}
+	if chapter.ContentHTML != "" {
+		t.Errorf("comic chapter must not carry contentHtml, got %q", chapter.ContentHTML)
+	}
+}
+
+func TestComicChapterShapeValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		chapter string
+	}{
+		{"missing pages", `return { title: "t" };`},
+		{"empty pages", `return { title: "t", pages: [] };`},
+		{"relative page url", `return { title: "t", pages: ["/img/1.jpg"] };`},
+		{"non-string page", `return { title: "t", pages: [42] };`},
+		{"not an object", `return "nope";`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			script, _ := loadScript(t, fmt.Sprintf(`
+module.exports = {
+  name: "shape", apiVersion: 1, media: "comic",
+  probe: () => true,
+  toc: (ctx, url) => ({ comic: { title: "t" }, chapters: [] }),
+  chapter: (ctx, url) => { %s }
+};`, tc.chapter), Options{})
+
+			_, err := script.Chapter(context.Background(), "https://x.example/c/1")
+			assertCode(t, err, CodeScriptError)
+		})
+	}
+}
+
+func TestLoadRejectsUnknownMedia(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad-media.js")
+	src := `
+module.exports = {
+  name: "badmedia", apiVersion: 1, media: "anime",
+  probe: () => true,
+  toc: (ctx, url) => ({ novel: { title: "t" }, chapters: [] }),
+  chapter: (ctx, url) => ({ title: "t", contentHtml: "x" }),
+};`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("writing script: %v", err)
+	}
+	if _, err := NewEngine(&stubFetcher{}, Options{}).LoadFile(path); err == nil {
+		t.Fatal("expected load error for unknown media")
+	}
+}
+
+func TestLockedCodeIsFailValid(t *testing.T) {
+	script, _ := loadScript(t, `
+module.exports = {
+  name: "locked", apiVersion: 1,
+  probe: () => true,
+  toc: (ctx, url) => ({ novel: { title: "t" }, chapters: [] }),
+  chapter: (ctx, url) => { ctx.fail("locked", "chapter is paywalled"); },
+};`, Options{})
+	_, err := script.Chapter(context.Background(), "https://x.example/c/1")
+	assertCode(t, err, CodeLocked)
+}
+
 func TestFetcherErrorStaysPlainGoError(t *testing.T) {
 	script, _ := loadScript(t, happyScript, Options{})
 
@@ -341,8 +445,8 @@ module.exports = {
 		if err != nil {
 			t.Fatalf("TOC run %d: %v", i, err)
 		}
-		if toc.Novel.Title != "run-1" {
-			t.Fatalf("run %d saw module state from a previous invocation: %q", i, toc.Novel.Title)
+		if toc.Series.Title != "run-1" {
+			t.Fatalf("run %d saw module state from a previous invocation: %q", i, toc.Series.Title)
 		}
 	}
 	chapter, err := script.Chapter(context.Background(), "https://x.example/c/1")
@@ -486,8 +590,8 @@ module.exports = {
 		t.Fatalf("TOC: %v", err)
 	}
 	// ctx.css returns matches in document order, not grouped by selector.
-	if want := "h4,p,hr,p|hr"; toc.Novel.Description != want {
-		t.Errorf("got %q, want %q", toc.Novel.Description, want)
+	if want := "h4,p,hr,p|hr"; toc.Series.Description != want {
+		t.Errorf("got %q, want %q", toc.Series.Description, want)
 	}
 }
 
@@ -515,8 +619,8 @@ module.exports = {
 	if err != nil {
 		t.Fatalf("TOC: %v", err)
 	}
-	if want := "2|C|/c|true"; toc.Novel.Description != want {
-		t.Errorf("got %q, want %q", toc.Novel.Description, want)
+	if want := "2|C|/c|true"; toc.Series.Description != want {
+		t.Errorf("got %q, want %q", toc.Series.Description, want)
 	}
 }
 

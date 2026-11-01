@@ -94,6 +94,10 @@ type agentChatRequest struct {
 	NovelID    string `json:"novelId"`
 	Message    string `json:"message"`
 	Regenerate bool   `json:"regenerate"`
+	// Media scopes the toolset the model sees: "novels" (default), "comics"
+	// or "both". Keeps the system prompt lean — one media's schemas at a
+	// time — unless the user explicitly asks for both.
+	Media string `json:"media"`
 }
 
 // agentChatOption is one clickable choice of a "question" event.
@@ -298,7 +302,7 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 		// emits nothing; the model reads the error and may call the tool again
 		// within the same turn, because a failed terminal tool does not end it.
 		var pendingProposalArgs string
-		output, session, err := s.runAgentTurn(ctx, runner, userID, session, selectedNovel, message, func(ev ai.AgentEvent) {
+		output, session, err := s.runAgentTurn(ctx, runner, userID, session, selectedNovel, agentMediaScope(in.Media), message, func(ev ai.AgentEvent) {
 			switch ev.Type {
 			case "text_delta":
 				writeEvent(agentChatEvent{Type: "text_delta", Step: ev.Step, Text: ev.Text})

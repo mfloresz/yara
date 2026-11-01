@@ -31,24 +31,53 @@ const log = (msg, ...args) => console.log(`[BrowserWorker] ${msg}`, ...args);
 const warn = (msg, ...args) => console.warn(`[BrowserWorker] ${msg}`, ...args);
 const err = (msg, ...args) => console.error(`[BrowserWorker] ${msg}`, ...args);
 
-// ── "Añadir historia a Yara" context menu ────────────────────────────
+// ── "Añadir a Yara" context menu ─────────────────────────────────────
 // Hardcoded supported-site list (see ../shared/supported-sites.js) so no
 // backend changes are needed. The menu only appears on those sites via
 // documentUrlPatterns; clicking opens the Yara tab with ?importUrl=<page>
 // so the frontend runs the same preview/import flow as a manual click.
+// "Añadir a una historia existente…" adds &into=1 so the SPA's import dialog
+// appends the chapters to a picked novel instead of creating a new one.
+const YARA_CONTEXT_MENU_PARENT = 'yara-add-parent';
 const YARA_CONTEXT_MENU_ID = 'yara-add-story';
+const YARA_CONTEXT_MENU_INTO_ID = 'yara-add-story-into';
+
+function createContextMenuEntry(options, done) {
+  chrome.contextMenus.create(options, () => {
+    if (chrome.runtime.lastError) {
+      warn('Context menu creation failed:', chrome.runtime.lastError.message);
+      return;
+    }
+    if (done) done();
+  });
+}
 
 function setupContextMenu() {
   try {
     if (!chrome.contextMenus) return;
     chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({
-        id: YARA_CONTEXT_MENU_ID,
-        title: 'Añadir historia a Yara',
+      // Children are created inside the parent's callback: create() is
+      // asynchronous and a child referencing a not-yet-created parent fails.
+      createContextMenuEntry({
+        id: YARA_CONTEXT_MENU_PARENT,
+        title: 'Añadir a Yara',
         contexts: ['page'],
         documentUrlPatterns: SUPPORTED_SITE_PATTERNS,
       }, () => {
-        if (chrome.runtime.lastError) warn('Context menu creation failed:', chrome.runtime.lastError.message);
+        createContextMenuEntry({
+          id: YARA_CONTEXT_MENU_ID,
+          parentId: YARA_CONTEXT_MENU_PARENT,
+          title: 'Nueva historia…',
+          contexts: ['page'],
+          documentUrlPatterns: SUPPORTED_SITE_PATTERNS,
+        });
+        createContextMenuEntry({
+          id: YARA_CONTEXT_MENU_INTO_ID,
+          parentId: YARA_CONTEXT_MENU_PARENT,
+          title: 'Añadir a una historia existente…',
+          contexts: ['page'],
+          documentUrlPatterns: SUPPORTED_SITE_PATTERNS,
+        });
       });
     });
   } catch (e) {
@@ -56,10 +85,10 @@ function setupContextMenu() {
   }
 }
 
-async function openYaraWithUrl(pageUrl) {
+async function openYaraWithUrl(pageUrl, into = false) {
   const config = await getConfig();
   const base = yaraBaseUrl(config.serverAddr);
-  const target = `${base}/?importUrl=${encodeURIComponent(pageUrl)}`;
+  const target = `${base}/?importUrl=${encodeURIComponent(pageUrl)}${into ? '&into=1' : ''}`;
   try {
     const tabs = await chrome.tabs.query({});
     const existing = tabs.find((t) => t.url && t.url.startsWith(base));
@@ -77,9 +106,10 @@ async function openYaraWithUrl(pageUrl) {
 try {
   if (chrome.contextMenus && chrome.contextMenus.onClicked) {
     chrome.contextMenus.onClicked.addListener((info, tab) => {
-      if (info.menuItemId !== YARA_CONTEXT_MENU_ID) return;
+      const into = info.menuItemId === YARA_CONTEXT_MENU_INTO_ID;
+      if (info.menuItemId !== YARA_CONTEXT_MENU_ID && !into) return;
       const pageUrl = info.pageUrl || tab?.url;
-      if (pageUrl) openYaraWithUrl(pageUrl).catch((e) => err('Open Yara failed:', e));
+      if (pageUrl) openYaraWithUrl(pageUrl, into).catch((e) => err('Open Yara failed:', e));
     });
   }
 } catch (e) {
@@ -201,7 +231,7 @@ function handleInternalMessage(msg, sender, sendResponse) {
       sendResponse({ ok: false, error: 'sitio no soportado' });
       return false;
     }
-    openYaraWithUrl(msg.url)
+    openYaraWithUrl(msg.url, Boolean(msg.into))
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
     return true;

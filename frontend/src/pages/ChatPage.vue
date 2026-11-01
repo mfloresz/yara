@@ -313,6 +313,14 @@
               @keydown.enter.exact.prevent="send"
             />
             <div class="chat-input-actions">
+              <n-select
+                v-model:value="mediaScope"
+                size="small"
+                :options="mediaOptions"
+                class="chat-media-select"
+                aria-label="Tipo de contenido del asistente"
+                @update:value="onMediaChange"
+              />
               <!-- Keep provider/model selection attached to the text field. -->
               <n-dropdown
                 trigger="click"
@@ -401,6 +409,7 @@ import {
   NDropdown,
   NIcon,
   NInput,
+  NSelect,
   NModal,
   NPopover,
   NProgress,
@@ -508,6 +517,25 @@ const { providers, byId, loading: providersLoading, reload: reloadProviders } = 
 
 const items = ref<ChatItem[]>([]);
 const draft = ref("");
+
+// Media scoping of the assistant toolset (default: novels). Persisted so the
+// choice survives navigation; "both" loads every tool schema into the system
+// prompt, which is why it is opt-in.
+const mediaOptions = [
+  { label: "Novelas", value: "novels" },
+  { label: "Cómics", value: "comics" },
+  { label: "Ambos", value: "both" },
+];
+const mediaScope = ref<"novels" | "comics" | "both">(
+  ((): "novels" | "comics" | "both" => {
+    const saved = localStorage.getItem("yara-chat-media");
+    return saved === "comics" || saved === "both" ? saved : "novels";
+  })(),
+);
+function onMediaChange(value: string) {
+  mediaScope.value = (value as typeof mediaScope.value);
+  localStorage.setItem("yara-chat-media", mediaScope.value);
+}
 const streaming = ref(false);
 const sessionId = ref("");
 const lastUsage = ref<AgentChatUsage | null>(null);
@@ -1680,6 +1708,7 @@ async function sendMessage(
       {
         sessionId: sessionId.value || undefined,
         novelId: selectedNovel.value?.id,
+        media: mediaScope.value,
         message,
         regenerate: regenerate || undefined,
       },
@@ -2521,9 +2550,31 @@ function chooseNovel(novel: PickerNovel): void {
     height: 2.75rem;
   }
 
+  /* Two-row shell on phones: the field takes the whole first row and the
+     media/model selectors drop to a second one, so writing keeps full width. */
   .chat-input-shell {
-    gap: 0.25rem;
-    padding-left: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    padding: 0.375rem 0.625rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .chat-input {
+    flex-basis: 100%;
+  }
+
+  /* The long placeholder wraps to two lines inside a one-row field: keep the
+     field tall enough for both lines plus its block padding. */
+  .chat-input :deep(.n-input__textarea-el) {
+    min-height: calc(1.45em * 2 + 1.25em);
+  }
+
+  /* Selectors must shrink inside the shell, not push past it (desktop makes
+     this row content-sized); "Sin API key" wraps to its own line if needed. */
+  .chat-input-actions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    row-gap: 0.375rem;
   }
 
   .chat-model-trigger {
@@ -2586,5 +2637,11 @@ function chooseNovel(novel: PickerNovel): void {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+</style>
+
+<style>
+.chat-media-select {
+  width: 6.5rem;
 }
 </style>

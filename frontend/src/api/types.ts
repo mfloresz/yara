@@ -209,6 +209,7 @@ export type ServerSettings = {
   titleModel: string;
   agentProvider?: string;
   agentModel?: string;
+  checkModel?: string;
   translation: {
     autoSegment: boolean;
     thresholdChars: number;
@@ -266,6 +267,15 @@ export type PreviewUrlResult = {
   coverURL?: string;
   totalChapters: number;
   sourceURL: string;
+};
+
+// POST /api/v1/novels/{id}/import-url — append chapters from an arbitrary
+// supported URL to an existing novel (always a background download job).
+export type ImportIntoNovelResult = {
+  pendingChapters: number;
+  downloadJobId?: string;
+  totalChapters: number;
+  message?: string;
 };
 
 export type UpdateUrlResult = {

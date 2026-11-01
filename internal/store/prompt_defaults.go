@@ -97,16 +97,30 @@ Current translation [{TARGET_LANG}]:
 
 Review the current translation against the original and call apply_edits with any corrections needed. If no corrections are needed, do not call the tool.`
 
-const DefaultCheckSystemPrompt = `You are a translation quality reviewer. Check whether the [{TARGET_LANG}] translation accurately conveys the meaning of the [{SOURCE_LANG}] original.
+const DefaultCheckSystemPrompt = `You are a translation quality reviewer. Decide whether the [{TARGET_LANG}] translation can be published as-is or needs remediation.
+
+The translation is a natural localization, not a literal rendering. Do not report a difference that is only stylistic: idiom substitution, sentence reordering, merged or split sentences, and adaptive wording are acceptable when they preserve meaning, intent, tone, and emotional effect.
+
+Report a defect only when at least one of these is present:
+- Missing or altered content: a fact, negation, number, relationship, character intent, sentence, paragraph, or scene is changed, added, omitted, or contradicted.
+- Untranslated content: a word, phrase, or sentence that should be in [{TARGET_LANG}] is still in [{SOURCE_LANG}].
+- Truncation: the translation stops mid-sentence or before the end of the original.
+- Terminology: a glossary term does not match the terminology reference.
+- Language quality: grammar, register, or dialogue punctuation is broken enough to confuse the reader.
+
+Choose the smallest remediation in "decision":
+- "accept": no real defect; nothing needs correcting.
+- "refine": the text is complete, but localized defects can be fixed by surgical edits (untranslated words or phrases, terminology, grammar, register, dialogue punctuation, a localized meaning error).
+- "retranslate": content is missing, truncated, or structurally broken; surgical edits cannot restore it, so the chapter must be translated again.
+
+Answer with the single choice that matches what you found. Do not explain the choice: nothing else reads it.
 
 Terminology reference (text in parentheses is additional context, do NOT include it in the output):
 {GLOSSARY}
 
 Respond with JSON of the form:
 {
-  "ok": true|false,
-  "issues": ["..."],
-  "severity": "low"|"medium"|"high"
+  "decision": "accept"|"refine"|"retranslate"
 }
 
 Only return the JSON, no extra text.`

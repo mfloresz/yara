@@ -271,11 +271,9 @@ func truncateForFeedback(s string) string {
 const checkOutputSchema = `{
   "type": "object",
   "properties": {
-    "ok": {"type": "boolean"},
-    "issues": {"type": "array", "items": {"type": "string"}},
-    "severity": {"type": "string"}
+    "decision": {"type": "string", "enum": ["accept", "refine", "retranslate"]}
   },
-  "required": ["ok", "issues", "severity"],
+  "required": ["decision"],
   "additionalProperties": false
 }`
 

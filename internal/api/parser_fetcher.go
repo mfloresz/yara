@@ -288,6 +288,50 @@ func (f *parserFetcher) Fetch(ctx context.Context, rawURL string) (*parserhost.F
 	return result, nil
 }
 
+// PostForm implements parserhost.Fetcher for ctx.postForm: a form-encoded
+// POST for sites whose metadata lives behind an AJAX endpoint. It only ever
+// goes over direct HTTP (the browser worker relays page navigations, not form
+// posts), and pays the same body ceiling and charset handling as Fetch.
+func (f *parserFetcher) PostForm(ctx context.Context, rawURL string, form map[string]string) (*parserhost.FetchResult, error) {
+	if err := f.validateURL(ctx, rawURL, false); err != nil {
+		return nil, err
+	}
+	values := url.Values{}
+	for k, v := range form {
+		values.Set(k, v)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	applySiteHeaders(req)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+	f.throttle.markFetched(rawURL)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDirectBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rawURL, err)
+	}
+	if int64(len(body)) > maxDirectBodyBytes {
+		return nil, fmt.Errorf("response from %s exceeds %d bytes", rawURL, maxDirectBodyBytes)
+	}
+	body = decodeChineseCharset(body, resp.Header.Get("Content-Type"))
+	finalURL := rawURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d posting to %s", resp.StatusCode, rawURL)
+	}
+	return &parserhost.FetchResult{FinalURL: finalURL, Status: resp.StatusCode, Body: body}, nil
+}
+
 // validateURL runs the literal SSRF checks on every path, and the DNS-resolving
 // guard when the fetch will actually leave from this machine. It types the
 // refusal so callers can tell a deliberate one from a transport failure. A nil

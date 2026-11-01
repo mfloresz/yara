@@ -4,7 +4,7 @@
       <header class="page-header">
         <div class="page-context">
           <div class="page-title-row">
-            <h1 class="page-title">Biblioteca</h1>
+            <h1 class="page-title">Novelas</h1>
             <div v-if="activeFilters.length" class="active-filters">
               <n-tag
                 v-for="filter in activeFilters"
@@ -16,7 +16,6 @@
                 {{ filter.label }}: {{ filter.value }}
               </n-tag>
             </div>
-            <span class="muted small result-count" aria-live="polite">{{ resultSummary }}</span>
           </div>
         </div>
         <div class="page-actions">
@@ -286,6 +285,8 @@
     <ImportUrlDialog
       :open="importUrlOpen"
       :initial-url="pendingImportUrl"
+      media="novels"
+      :preview-fn="previewNovelFromUrl"
       @update:open="importUrlOpen = $event"
       @preview="onUrlPreviewed"
     />
@@ -293,8 +294,14 @@
     <ImportUrlConfirmDialog
       :open="importUrlConfirmOpen"
       :preview="urlPreview"
+      media="novels"
+      :import-fn="importNovel"
+      :into="importIntoMode"
+      :into-fn="importIntoNovel"
+      :search-fn="searchNovelPickerOptions"
       @update:open="importUrlConfirmOpen = $event"
       @back="onBackToUrlDialog"
+      @imported="void reloadLibrary()"
     />
   </AppLayout>
 </template>
@@ -335,8 +342,8 @@ import { LANGUAGES } from "@/config/languages";
 import { getNovelDisplayTitle, getNovelDisplayAuthor, getNovelDisplaySeries, getNovelDisplayNumber, type Novel } from "@/domain";
 import { useAppServices } from "@/app/services";
 import { dashboardPrefsKey } from "@/app/storage-keys";
-import ImportUrlDialog from "@/features/novels/ImportUrlDialog.vue";
-import ImportUrlConfirmDialog from "@/features/novels/ImportUrlConfirmDialog.vue";
+import ImportUrlDialog from "@/features/import/ImportUrlDialog.vue";
+import ImportUrlConfirmDialog from "@/features/import/ImportUrlConfirmDialog.vue";
 import type { PreviewUrlResult } from "@/api/types";
 
 type SortField = "title" | "created" | "lastRead";
@@ -392,13 +399,6 @@ const isFiltered = computed(
   () => activeFilters.value.length > 0 || progressFilter.value !== "all" || !showShared.value,
 );
 
-// Header summary: the library size at rest, the result count while filtered.
-const resultSummary = computed(() => {
-  const n = sortedNovels.value.length;
-  if (isFiltered.value) return `${n} resultado${n === 1 ? "" : "s"}`;
-  return `${n} novela${n === 1 ? "" : "s"}`;
-});
-
 // Effective filters sent to the backend on every list call.
 function currentFilters(): NovelListFilters {
   return {
@@ -434,7 +434,7 @@ function syncFiltersToUrl() {
   }
   if (!showShared.value) query.shared = "own";
   if (progressFilter.value !== "all") query.progress = progressFilter.value;
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
 }
 
 function restorePreferences(userId?: string) {
@@ -603,8 +603,40 @@ const {
   createNovel,
   importNovelFromEpub,
   importNovelFromZip,
+  importNovelFromUrl,
+  importUrlIntoNovel,
+  searchNovelOptions,
+  previewNovelFromUrl,
   hydrateCachedNovels,
 } = useNovels();
+// The shared confirm dialog consumes a media-neutral outcome.
+async function importNovel(input: Parameters<typeof importNovelFromUrl>[0]) {
+  const result = await importNovelFromUrl(input);
+  return {
+    id: result.novel.id,
+    chaptersImported: result.chaptersImported,
+    downloadJob: result.downloadJob,
+  };
+}
+
+// Add-to-existing mode: append the chapters to the picked novel; the library
+// card totals refresh via the dialog's imported event.
+async function importIntoNovel(novelId: string, url: string) {
+  const result = await importUrlIntoNovel(novelId, url);
+  return { pendingChapters: result.pendingChapters, message: result.message };
+}
+
+function searchNovelPickerOptions(query: string) {
+  return searchNovelOptions(query).then((items) =>
+    items.map((n) => ({ label: novelLabel(n), value: n.id })),
+  );
+}
+
+function novelLabel(n: Novel): string {
+  const author = getNovelDisplayAuthor(n);
+  const title = getNovelDisplayTitle(n);
+  return author ? `${title} — ${author}` : title;
+}
 const offlineCache = useOfflineCache(ref(""));
 
 const createOpen = ref(false);
@@ -615,6 +647,9 @@ const importZipOpen = ref(false);
 const importUrlOpen = ref(false);
 const importUrlConfirmOpen = ref(false);
 const pendingImportUrl = ref<string | undefined>(undefined);
+// Add-to-existing import mode (?importUrl=...&into=1 from the browser
+// extension): append the chapters to a novel picked in the confirm dialog.
+const importIntoMode = ref(false);
 const urlPreview = ref<PreviewUrlResult | null>(null);
 const importing = ref(false);
 const importPreviewLoading = ref(false);
@@ -708,7 +743,7 @@ function handleViewMenuSelect(key: string) {
 function clearFilter(param: string) {
   const query = { ...route.query };
   delete query[param];
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
 }
 
 // "Limpiar filtros" from the no-results state: drops every filter that can
@@ -723,7 +758,7 @@ function clearAllFilters() {
   savePreferences();
   const query = { ...route.query };
   for (const param of ["tag", "author", "series", "q", "shared", "progress"]) delete query[param];
-  void router.replace({ path: "/", query });
+  void router.replace({ path: route.path, query });
   void reloadLibrary();
 }
 
@@ -731,7 +766,10 @@ function handleNovelCreationSelect(key: string) {
   if (key === "create") createOpen.value = true;
   else if (key === "import-epub") importOpen.value = true;
   else if (key === "import-zip") importZipOpen.value = true;
-  else if (key === "import-url") importUrlOpen.value = true;
+  else if (key === "import-url") {
+    importIntoMode.value = false;
+    importUrlOpen.value = true;
+  }
 }
 
 function isSharedNovel(novel: Novel) {
@@ -748,17 +786,22 @@ onMounted(() => {
 // Deep-link from the browser extension context menu (?importUrl=...).
 // Opens the import dialog prefilled and auto-starts the preview fetch,
 // then strips the param so back/forward navigation doesn't reopen it.
+// &into=1 selects the add-to-existing mode (append to a picked novel).
 function consumeImportUrlQuery() {
   const raw = route.query.importUrl;
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== "string" || !value.trim()) return;
+  const intoRaw = route.query.into;
+  const intoValue = Array.isArray(intoRaw) ? intoRaw[0] : intoRaw;
   pendingImportUrl.value = value.trim();
+  importIntoMode.value = intoValue === "1" || intoValue === "true";
   importUrlConfirmOpen.value = false;
   urlPreview.value = null;
   importUrlOpen.value = true;
   const query = { ...route.query };
   delete query.importUrl;
-  void router.replace({ path: "/", query });
+  delete query.into;
+  void router.replace({ path: route.path, query });
 }
 
 watch(
@@ -1081,10 +1124,6 @@ function onBackToUrlDialog() {
   min-width: 0;
 }
 
-.result-count {
-  white-space: nowrap;
-}
-
 .page-actions {
   display: flex;
   align-items: center;
@@ -1283,3 +1322,4 @@ function onBackToUrlDialog() {
   }
 }
 </style>
+
