@@ -116,9 +116,18 @@
       </main>
     </div>
 
+    <!-- Móvil: 5 pestañas planas. Buscar vive en la barra superior y
+         Ajustes/Administración en el menú de la cuenta, así que la barra no
+         necesita un "Más" que duplique entradas. -->
     <nav class="shell-tabs" aria-label="Navegación principal">
+      <span
+        v-if="mobilePillIndex >= 0"
+        class="shell-tab-pill"
+        aria-hidden="true"
+        :style="{ '--pill-index': mobilePillIndex }"
+      />
       <RouterLink
-        v-for="section in sections"
+        v-for="section in mobileSections"
         :key="section.to"
         :to="section.to"
         class="shell-tab touch-target"
@@ -219,7 +228,21 @@ const bottomSections = computed<ShellSection[]>(() => {
   return list;
 });
 
-const sections = computed(() => [...topSections.value, ...bottomSections.value]);
+// Barra móvil: las tres secciones principales + Operaciones y Asistente
+// (5 en total). Buscar vive en la barra superior y Ajustes/Administración
+// en el menú de la cuenta: sin "Más" que duplique entradas.
+const mobileSections = computed<ShellSection[]>(() => [
+  ...topSections.value,
+  ...bottomSections.value.filter(
+    (s) => s.to === "/operations" || s.to === "/chat",
+  ),
+]);
+
+// Slot del pill (0..4); en rutas sin pestaña propia (ajustes, admin) el
+// pill se oculta: su entrada vive en el menú de la cuenta.
+const mobilePillIndex = computed(() =>
+  mobileSections.value.findIndex((s) => isActive(s)),
+);
 
 // Resalta la sección dueña de la ruta actual: /novels/abc enciende "Novelas".
 // La raíz se compara exacta para no marcar siempre Inicio.
@@ -580,21 +603,39 @@ watch(
     bottom: 0;
     z-index: 60;
     display: flex;
-    justify-content: space-around;
     height: 60px;
     background: var(--surface-strong);
     border-top: 1px solid var(--divide);
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* Pill deslizante a lo scancore: una sola pieza que viaja al slot activo
+     (transform, no width). 5 slots = 5 pestañas. */
+  .shell-tab-pill {
+    position: absolute;
+    top: 5px;
+    width: calc(100% / 5);
+    height: 46px;
+    border-radius: 999px;
+    background: var(--mock-row-strong);
+    transform: translateX(calc(var(--pill-index, 0) * 100%));
+    transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+    pointer-events: none;
+  }
+
   .shell-tab {
     position: relative;
+    z-index: 1;
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 0.125rem;
+    border: none;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
     color: var(--foreground);
     text-decoration: none;
     font-size: 0.6875rem;
