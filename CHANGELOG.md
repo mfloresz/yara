@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.51.0] - 2026-10-31
+
+### What's new
+
+- **Comics.** Yara now manages comics alongside novels as a parallel media tree: import by URL or ZIP, chapter downloads through site parsers (page images with Referer rotation, magic-byte validation, retry with backoff, and AES-CTR decryption for encrypted image CDNs), a vertical-strip web reader with persisted width and offline-first reading progress, and per-comic glossary, prompts and download/check jobs sharing the existing operations surface. The API gains the `/api/v1/comics/*` tree (CRUD, chapters, authenticated page-image serving, reading progress, import, check/update/redownload), documented in `docs/api/`.
+- **Ten new comic site parsers:** manhwaweb, zonatmo, manhuahot, manhuaus, manhwashot, mhscans, onfmangas, samuraiscan, toonkotsu and lector-mangas, declared `media: 'comic'` in the parser contract. Existing novel parsers are untouched.
+- **New app shell.** Persistent section-based navigation replaces the per-page header: collapsible sidebar (rail) on desktop and a 5-tab bottom bar with a sliding indicator on mobile, rendered only for signed-in users — guest routes render bare. New Home page with "continue reading" shelves for both media and active jobs. Header search moved into the sidebar as a media-aware Ctrl-K palette, and Novelas and Cómics are separate sections.
+- **Media-aware assistant.** The chat assistant's toolset is now scoped by media (`novels` | `comics` | `both`, default `novels`) with tools for comics, and the search and import modals work across both media.
+- **Import chapters from any URL into an existing novel** ("into" mode): paste an arbitrary chapter URL and the fetched chapters are appended to the novel you choose. The URL import dialogs are now shared between novels and comics.
+- **Decision-model check flow.** Added a decision-model check flow with an OpenRouter decisions endpoint, a `checkModel` setting, and three-way remediation.
+
+### Fixes
+
+- **URL-import deep links work on the new shell routes.** The `?importUrl=` deep link used by the browser-worker extensions' context menu no longer lands on an empty import dialog.
+
+### Housekeeping
+
+- Removed the internal "Scancore" codename from docs and comments, and renamed the planning doc to `docs/ui-shell-and-comics-plan.md`.
+- Regenerated and re-signed the parsers manifest for the new comic parsers (novelfire's entry keeps matching the v0.50.2 paced script).
+
 ## [v0.50.2] - 2026-10-29
 
 ### Fixes
@@ -771,4 +791,5 @@
 [v0.50.0]: https://github.com/mfloresz/yara/compare/v0.49.0...v0.50.0
 [v0.50.1]: https://github.com/mfloresz/yara/compare/v0.50.0...v0.50.1
 [v0.50.2]: https://github.com/mfloresz/yara/compare/v0.50.1...v0.50.2
+[v0.51.0]: https://github.com/mfloresz/yara/compare/v0.50.2...v0.51.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
