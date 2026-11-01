@@ -194,11 +194,12 @@ onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
 
 const RAIL_KEY = "yara-shell-rail";
-const rail = ref(sessionStorage.getItem(RAIL_KEY) === "1");
+// localStorage, no sessionStorage: la preferencia sobrevive cerrar la ventana.
+const rail = ref(localStorage.getItem(RAIL_KEY) === "1");
 
 function toggleRail() {
   rail.value = !rail.value;
-  sessionStorage.setItem(RAIL_KEY, rail.value ? "1" : "0");
+  localStorage.setItem(RAIL_KEY, rail.value ? "1" : "0");
 }
 
 interface ShellSection {
