@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.50.2] - 2026-10-29
+
+### Fixes
+
+- **novelfire parser: update checks no longer silently truncate the chapter list.** The site now rate-limits bursts of rapid requests and removed its all-chapters AJAX endpoint, so the TOC crawl walked its paginated chapter list unpaced — the site started refusing requests partway through and the parser skipped the failed pages without a trace (about 600 of 1353 chapters went missing from every check). The crawl is now paced below the site's limit through a new `ctx.sleep(ms)` parser binding, and a failed list page is logged instead of skipped silently.
+
+### Housekeeping
+
+- Documented the new `ctx.sleep` binding in the parser contract docs.
+
 ## [v0.50.1] - 2026-10-22
 
 ### Fixes
@@ -760,4 +770,5 @@
 [v0.49.0]: https://github.com/mfloresz/yara/compare/v0.48.0...v0.49.0
 [v0.50.0]: https://github.com/mfloresz/yara/compare/v0.49.0...v0.50.0
 [v0.50.1]: https://github.com/mfloresz/yara/compare/v0.50.0...v0.50.1
+[v0.50.2]: https://github.com/mfloresz/yara/compare/v0.50.1...v0.50.2
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0

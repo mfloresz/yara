@@ -22,9 +22,10 @@ import (
 //	                             // worker's Livewire operation instead of fetch_page
 //	  probe: (url) => boolean,  // can this script handle the URL?
 //	  // "what exists": full snapshot; in-site pagination is the SCRIPT's job
-//	  // (multiple ctx.get calls allowed within the fetch budget). The metadata
-//	  // key matches the media: `novel` for novel scripts, `comic` for comic
-//	  // ones (either is accepted, so a draft keeps loading while it switches).
+//	  // (multiple ctx.get calls allowed within the fetch budget; ctx.sleep(ms)
+//	  // paces the crawl below a site's rate limit). The metadata key matches
+//	  // the media: `novel` for novel scripts, `comic` for comic ones (either
+//	  // is accepted, so a draft keeps loading while it switches).
 //	  toc: (ctx, url) => ({
 //	    novel: { title, description, author, coverUrl, language, tags },
 //	    chapters: [{ title, url }],   // ordered; host computes the new/missing diff
