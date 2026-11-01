@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.52.0] - 2026-11-01
+
+### What's new
+
+- **Reading-status marks.** You can now mark any novel or comic as *reading*, *paused* or *finished*. Marks are per user, live on the reading-progress row, and show on library cards, the sidebar and detail pages. Paused and finished works drop out of the "continue reading" shelves, and saving a position again flips the mark back to *reading*. New `DELETE /api/v1/novels/{id}/reading-progress` and `DELETE /api/v1/comics/{id}/reading-progress` endpoints clear the progress slot along with its mark.
+- **New site parser: epub.pub.** Novel parser declared `requiresBrowser` (its fetches go through your browser worker) and registered in all four browser extensions' supported-sites lists.
+- **URL imports keep the story title.** Chapters appended to a novel via URL import are now prefixed with the imported story's name instead of keeping the bare title of the page they were scraped from.
+- **New AI model:** `deepseek-v4.1-flash-1017-basic` is now available in the provider registry.
+
+### Fixes
+
+- **Sidebar collapse now survives closing the window.** The rail preference was saved in `sessionStorage`, so every new window opened with the sidebar expanded again; it now persists in `localStorage` like the other UI preferences.
+
+### Housekeeping
+
+- Regenerated and re-signed the parsers manifest for the epub.pub script.
+- Documented the reading-progress status field and the clear-progress endpoints in `docs/api/`, and added integration tests covering reading-progress status, clearing, validation and shared-novel access.
+
 ## [v0.51.0] - 2026-10-31
 
 ### What's new
@@ -792,4 +810,5 @@
 [v0.50.1]: https://github.com/mfloresz/yara/compare/v0.50.0...v0.50.1
 [v0.50.2]: https://github.com/mfloresz/yara/compare/v0.50.1...v0.50.2
 [v0.51.0]: https://github.com/mfloresz/yara/compare/v0.50.2...v0.51.0
+[v0.52.0]: https://github.com/mfloresz/yara/compare/v0.51.0...v0.52.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
