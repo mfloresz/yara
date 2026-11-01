@@ -8,6 +8,25 @@
           <p class="muted small ops-subtitle" aria-live="polite">{{ subtitle }}</p>
         </div>
         <div class="page-actions">
+          <!-- Drawer de trabajos activos: comunica en vivo (progreso por job)
+               lo que la tabla de abajo no muestra. -->
+          <n-button
+            :secondary="hasActive"
+            :quaternary="!hasActive"
+            circle
+            size="small"
+            class="touch-target"
+            :aria-label="hasActive ? 'Hay trabajos activos' : 'No hay trabajos activos'"
+            :aria-expanded="jobsOpen"
+            aria-controls="jobs-drawer"
+            @click="jobsOpen = true"
+          >
+            <template #icon>
+              <n-badge dot :show="hasActive" :offset="[-4, 4]">
+                <n-icon><TimeOutline /></n-icon>
+              </n-badge>
+            </template>
+          </n-button>
           <n-input
             v-model:value="searchQuery"
             clearable
@@ -163,6 +182,8 @@
         />
       </template>
     </div>
+
+    <JobsDrawer id="jobs-drawer" v-model:visible="jobsOpen" />
   </AppLayout>
 </template>
 
@@ -171,6 +192,7 @@ import { computed, defineComponent, h, onMounted, reactive, ref, watch } from "v
 import { RouterLink } from "vue-router";
 import {
   NAlert,
+  NBadge,
   NButton,
   NCard,
   NDataTable,
@@ -190,8 +212,9 @@ import {
   type DataTableColumns,
   type DropdownOption,
 } from "naive-ui";
-import { CheckmarkOutline, ChevronDownOutline, GlobeOutline, SearchOutline } from "@vicons/ionicons5";
+import { CheckmarkOutline, ChevronDownOutline, GlobeOutline, SearchOutline, TimeOutline } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import JobsDrawer from "@/components/JobsDrawer.vue";
 import OperationsActionBar from "@/components/operations/OperationsActionBar.vue";
 import OperationsCard from "@/components/operations/OperationsCard.vue";
 import OperationsOriginTag from "@/components/operations/OperationsOriginTag.vue";
@@ -223,6 +246,9 @@ const message = useMessage();
 const dialog = useDialog();
 const { api } = useAppServices();
 const { jobs: activeJobs } = useActiveJobs();
+// Punto y estado del drawer: la misma lista activa que ya sondea la página.
+const hasActive = computed(() => activeJobs.value.length > 0);
+const jobsOpen = ref(false);
 
 const isMobile = useMediaQuery("(max-width: 768px)");
 

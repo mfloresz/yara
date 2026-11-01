@@ -5,15 +5,8 @@
         <h1 class="cl-title">Cómics</h1>
 
         <div class="cl-toolbar">
-          <n-input
-            v-model:value="query"
-            size="small"
-            clearable
-            placeholder="Buscar por título, autor o serie…"
-            style="max-width: 22rem"
-            @keydown.enter="reload"
-            @clear="reload"
-          />
+          <!-- El buscador del medio vive en el sidebar (palette con Ctrl+K);
+               aquí queda solo el orden y la importación. -->
           <n-select
             v-model:value="sortField"
             size="small"
@@ -99,7 +92,6 @@ import {
   NButton,
   NEmpty,
   NIcon,
-  NInput,
   NModal,
   NProgress,
   NSelect,
@@ -122,7 +114,6 @@ const message = useMessage();
 
 const comics = ref<Comic[]>([]);
 const loading = ref(true);
-const query = ref("");
 const sortField = ref<"title" | "created" | "lastRead">("title");
 
 const sortOptions = [
@@ -169,7 +160,6 @@ async function reload() {
   loading.value = true;
   try {
     const page = await api.comics.list({
-      q: query.value.trim() || undefined,
       sort: sortField.value,
       // Convención de la API: para created/lastRead, "asc" ordena lo más
       // reciente primero.

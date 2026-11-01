@@ -1,4 +1,4 @@
-import { ref, watch } from "vue";
+import { ref, watch, type Ref } from "vue";
 import type { Novel } from "@/domain";
 import { useAppServices } from "@/app/services";
 
@@ -45,7 +45,11 @@ export function facetParam(criterion: GlobalSearchCriterion): "tag" | "author" |
   return "tag";
 }
 
-export function useGlobalNovelSearch() {
+// `enabled` lets media-scoped mounts (the search palette) silence novel
+// queries while the palette is in comics mode.
+export function useGlobalNovelSearch(
+  options: { enabled?: Ref<boolean> } = {},
+) {
   const { api } = useAppServices();
 
   const criterion = ref<GlobalSearchCriterion>("title");
@@ -167,6 +171,13 @@ export function useGlobalNovelSearch() {
   }
 
   watch([query, criterion], () => {
+    if (options.enabled && !options.enabled.value) {
+      // The reset path (clear/close) armed suppressNextWatch for this very
+      // run: consume it here too so a disabled watcher can't leak the flag
+      // into the next enabled session and swallow a legit keystroke.
+      suppressNextWatch = false;
+      return;
+    }
     if (suppressNextWatch) {
       suppressNextWatch = false;
       return;

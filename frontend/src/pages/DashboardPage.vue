@@ -16,7 +16,6 @@
                 {{ filter.label }}: {{ filter.value }}
               </n-tag>
             </div>
-            <span class="muted small result-count" aria-live="polite">{{ resultSummary }}</span>
           </div>
         </div>
         <div class="page-actions">
@@ -399,13 +398,6 @@ const activeFilters = computed(() => {
 const isFiltered = computed(
   () => activeFilters.value.length > 0 || progressFilter.value !== "all" || !showShared.value,
 );
-
-// Header summary: the library size at rest, the result count while filtered.
-const resultSummary = computed(() => {
-  const n = sortedNovels.value.length;
-  if (isFiltered.value) return `${n} resultado${n === 1 ? "" : "s"}`;
-  return `${n} novela${n === 1 ? "" : "s"}`;
-});
 
 // Effective filters sent to the backend on every list call.
 function currentFilters(): NovelListFilters {
@@ -1130,10 +1122,6 @@ function onBackToUrlDialog() {
   flex-wrap: wrap;
   gap: 0.5rem 0.75rem;
   min-width: 0;
-}
-
-.result-count {
-  white-space: nowrap;
 }
 
 .page-actions {
