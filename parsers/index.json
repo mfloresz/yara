@@ -100,7 +100,7 @@
     {
       "name": "literotica",
       "file": "literotica.js",
-      "sha256": "3871db825fc461bb405323395e929d275ef2587c2e31453bb8afe77560e44912",
+      "sha256": "6f0adf333764ab20f10e69e23a6b78daa652011543d03c91f55da36b003f2695",
       "requiresBrowser": false
     },
     {
@@ -218,5 +218,5 @@
       "requiresBrowser": true
     }
   ],
-  "signature": "c47736cb7523b343cad5ff7de6c6bd779dddd51551029cbbd0263a686e0861fd2320eb6ab4155ea7a0b5a799353d1ed381713ee7b7f860256088f7f24d564600"
+  "signature": "23f6852b06d53ff9e64987051142f973e7ab0c7406465a98ed4059099146b8f89a90c70e3c116d6fa30b7056b91c1985ef4e374838395abc0c012d4960ab0605"
 }

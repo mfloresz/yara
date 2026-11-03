@@ -30,10 +30,16 @@ function pageTitle(ctx, doc) {
 }
 
 function authorName(ctx, doc) {
-  const a = ctx.css1(doc, "a._author__title_1wp51_48");
-  if (a && a.text) return a.text;
-  // Fallback: parse "by <Author>" out of the meta description
-  // ("A 8-part Story Series by RickyWrites.").
+  // Match any link whose href points to /authors/ and whose class
+  // contains the partial name "_author__title_".
+  const nodes = ctx.css(doc, 'a[href*="/authors/"]');
+  for (const n of nodes) {
+    const cls = (n.attr("class") || "");
+    if (cls.indexOf("_author__title_") >= 0 && n.text) {
+      return clean(n.text);
+    }
+  }
+  // Fallback to meta description parsing.
   const desc = metaContent(ctx, doc, "meta[name='description']");
   const i = desc.lastIndexOf(" by ");
   if (i >= 0) {
@@ -62,20 +68,54 @@ function seriesDescription(ctx, doc) {
 function extractChapters(ctx, doc, pageURL) {
   const chapters = [];
   const seen = new Set();
-  for (const a of ctx.css(doc, "ul._list_qr6sx_43 li._item_qr6sx_49 a._link_qr6sx_55")) {
-    const href = a.attr("href");
-    if (href === null || href === "") continue;
-    const url = ctx.resolveUrl(pageURL, href);
-    if (seen.has(url)) continue;
-    seen.add(url);
-    chapters.push({ title: a.text, url: url });
+  // Find all list containers whose class contains "_list_" and
+  // list items whose class contains "_item_", then gather links.
+  const listContainers = ctx.css(doc, 'ul');
+  for (const ul of listContainers) {
+    const ulCls = (ul.attr("class") || "");
+    if (ulCls.indexOf("_list_") < 0) continue;
+    const items = ctx.css(ul, 'li');
+    for (const li of items) {
+      const liCls = (li.attr("class") || "");
+      if (liCls.indexOf("_item_") < 0) continue;
+      const links = ctx.css(li, 'a');
+      for (const a of links) {
+        const href = a.attr("href");
+        if (href === null || href === "") continue;
+        const url = ctx.resolveUrl(pageURL, href);
+        if (seen.has(url)) continue;
+        // Only accept links whose href points to a story page.
+        if (!/\/s\//.test(url)) continue;
+        seen.add(url);
+        chapters.push({ title: clean(a.text) || url, url: url });
+      }
+    }
   }
   return chapters;
 }
 
 function storyContent(ctx, doc) {
-  const sel = ctx.css1(doc, "div._article__content_138fn_99");
-  if (!sel) return "";
+  // The article body container uses a hashed class name that changes
+  // with every site build; target by the stable itemprop attribute.
+  const sel = ctx.css1(doc, 'div[itemprop="articleBody"]');
+  if (!sel) {
+    // Fallback: any div whose class contains "_article__content_"
+    const nodes = ctx.css(doc, 'div');
+    for (const n of nodes) {
+      const cls = (n.attr("class") || "");
+      if (cls.indexOf("_article__content_") >= 0) {
+        // Use this node as the content container
+        const temp = n;
+        for (const child of ctx.css(temp, "script, style, noscript, iframe, nav, header, footer")) child.remove();
+        const parts = [];
+        for (const p of ctx.css(temp, "p")) {
+          if (p.text) parts.push("<p>" + p.text + "</p>");
+        }
+        return parts.join("\n");
+      }
+    }
+    return "";
+  }
   for (const n of ctx.css(sel, "script, style, noscript, iframe, nav, header, footer")) n.remove();
   const parts = [];
   for (const p of ctx.css(sel, "p")) {
