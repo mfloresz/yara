@@ -751,3 +751,68 @@ func TestWrapToolResultDelimitsUntrustedContent(t *testing.T) {
 		t.Fatalf("payload lost: %q", wrapped)
 	}
 }
+
+// TestAgentChatEmitsReasoningDelta pins the reasoning pipeline end to end:
+// the model emits reasoning_content chunks before any answer text, the
+// stream must surface them as reasoning_delta events with empty answer
+// text, and the persisted trail must carry ReasoningContent so replays keep
+// the thinking timeline.
+func TestAgentChatEmitsReasoningDelta(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseWrite(t, w, sseChunk(map[string]any{"role": "assistant", "content": ""}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{"reasoning_content": "Pienso en la novela"}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{"reasoning_content": " y busco capítulos"}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{"content": "Hola"}, nil))
+		sseWrite(t, w, sseChunk(map[string]any{}, "stop"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	provider := &OpenAIProvider{APIKey: "test-key", BaseURL: ts.URL, Model: "test-model"}
+	var events []AgentEvent
+	out, err := provider.AgentChat(context.Background(), AgentChatInput{
+		System:   "sys",
+		Messages: []AgentMessage{{Role: "user", Content: "hola"}},
+		Tools:    []AgentTool{},
+		OnEvent:  func(ev AgentEvent) { events = append(events, ev) },
+	})
+	if err != nil {
+		t.Fatalf("AgentChat returned error: %v", err)
+	}
+	if out.Text != "Hola" {
+		t.Fatalf("expected final text Hola, got %q", out.Text)
+	}
+	var reasoningEvents []AgentEvent
+	var textEvents []AgentEvent
+	for _, ev := range events {
+		switch ev.Type {
+		case "reasoning_delta":
+			reasoningEvents = append(reasoningEvents, ev)
+		case "text_delta":
+			textEvents = append(textEvents, ev)
+		}
+	}
+	if len(reasoningEvents) == 0 {
+		t.Fatalf("expected reasoning_delta events, got %#v", events)
+	}
+	// Reasoning must arrive before any answer text: the whole point of the
+	// pipeline is to surface the 30-60s think instead of a frozen screen.
+	if len(events) > 0 && events[0].Type != "reasoning_delta" {
+		t.Fatalf("first event must be reasoning_delta, got %#v", events[0])
+	}
+	if len(textEvents) == 0 {
+		t.Fatalf("expected text_delta events after reasoning, got %#v", events)
+	}
+	var reasoningText string
+	for _, ev := range reasoningEvents {
+		reasoningText += ev.Text
+	}
+	if !strings.Contains(reasoningText, "Pienso en la novela") {
+		t.Fatalf("reasoning text lost in stream: %q", reasoningText)
+	}
+	last := out.Messages[len(out.Messages)-1]
+	if last.Role != "assistant" || !strings.Contains(last.ReasoningContent, "Pienso en la novela") {
+		t.Fatalf("persisted trail must carry reasoning, got %#v", last)
+	}
+}

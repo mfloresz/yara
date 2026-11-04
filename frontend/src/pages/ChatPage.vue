@@ -104,7 +104,7 @@
                  line so long transcripts stay scannable; the final answer,
                  questions and proposals are always kept visible. -->
             <button
-              v-if="!turn.active && turn.toolCount >= 3"
+              v-if="!turn.active && turn.toolCount + turn.thinkingCount >= 3"
               type="button"
               class="turn-steps"
               :aria-expanded="!isTurnCollapsed(turn)"
@@ -115,10 +115,10 @@
                 <ChevronDownOutline v-else />
               </n-icon>
               <template v-if="isTurnCollapsed(turn)">
-                {{ turn.toolCount }} pasos · {{ formatDuration(turn.toolMs) }}
+                {{ turn.toolCount + turn.thinkingCount }} pasos · {{ formatDuration(turn.toolMs) }}
               </template>
               <template v-else>
-                Ocultar los {{ turn.toolCount }} pasos
+                Ocultar los {{ turn.toolCount + turn.thinkingCount }} pasos
               </template>
             </button>
 
@@ -191,6 +191,24 @@
                     <template #icon><n-icon :size="15"><RefreshOutline /></n-icon></template>
                   </n-button>
                 </div>
+              </div>
+
+              <div v-else-if="item.kind === 'thinking'" class="thinking-row">
+                <!-- Reasoning stays collapsed by default: the user sees that
+                     the model thought, and expands only to audit it. This
+                     is inside the v-if chain so the message branch above
+                     keeps its hidden action-bar contract. -->
+                <button
+                  type="button"
+                  class="thinking-row-main"
+                  :aria-expanded="!!item.open"
+                  @click="toggleThinking(item)"
+                >
+                  <span class="thinking-row-label">Pensamiento</span>
+                  <span class="muted small">{{ item.finishedAt ? `${item.content.length} caracteres` : "Pensando…" }}</span>
+                  <span aria-hidden="true">{{ item.open ? "▾" : "▸" }}</span>
+                </button>
+                <pre v-if="item.open" class="thinking-row-detail">{{ item.content }}</pre>
               </div>
 
               <div v-else-if="item.kind === 'tool'" class="tool-row" :class="`tool-row--${item.status}`">
@@ -434,6 +452,8 @@ import CleanupProposalCard from "@/components/CleanupProposalCard.vue";
 import CleanupProposalPanel from "@/components/CleanupProposalPanel.vue";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
+import { useStreamCoalescing } from "@/composables/useStreamCoalescing";
+import { TOOL_DETAIL_MAX, formatDuration, summarizeToolResult, toolArgsHint, toolLabel } from "@/agent/toolPresentation";
 import { MarkdownRender } from "markstream-vue";
 import "markstream-vue/index.css";
 import type { AgentChatEvent, AgentChatOption, AgentChatUsage, AgentCleanupProposal, AgentSessionMessage } from "@/api/types";
@@ -473,10 +493,20 @@ type ProposalChatItem = {
   outcome?: "applied" | "discarded";
 };
 
+type ThinkingChatItem = {
+  id: string;
+  kind: "thinking";
+  content: string;
+  open?: boolean;
+  startedAt: number;
+  finishedAt?: number;
+};
+
 type ChatItem =
   | { id: string; kind: "message"; role: "user"; content: string }
   | { id: string; kind: "message"; role: "assistant"; content: string }
   | ToolChatItem
+  | ThinkingChatItem
   | { id: string; kind: "question"; question: string; options: AgentChatOption[]; answered: boolean }
   | ProposalChatItem
   // retryRegenerate marks an error row that came from a regenerate: its retry
@@ -495,6 +525,7 @@ type Turn = {
   user: UserChatItem | null;
   agent: ChatItem[];
   toolCount: number;
+  thinkingCount: number;
   toolMs: number;
 };
 
@@ -569,26 +600,9 @@ const suggestions = [
   "¿Cómo va la traducción de la novela que estoy leyendo?",
 ];
 
-// Tool identifiers are an implementation detail of the agent loop; the UI
-// speaks the user's language, not the backend's.
-const TOOL_LABELS: Record<string, string> = {
-  list_novels: "Consultando novelas",
-  get_novel: "Leyendo la novela",
-  get_novel_stats: "Consultando el progreso",
-  get_novel_chapters: "Consultando capítulos",
-  get_chapter: "Leyendo el capítulo",
-  query_library: "Consultando la biblioteca",
-  search_chapters: "Buscando en capítulos",
-  update_novel: "Actualizando la novela",
-  update_chapter: "Actualizando el capítulo",
-  set_chapter_status: "Cambiando el estado",
-  set_chapter_excluded: "Cambiando la visibilidad",
-};
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? "Trabajando";
-}
-
+// Tool presentation lives in @/agent/toolPresentation (labels for every
+// backend tool, one-line summaries, arg previews) so new tools add one
+// entry there instead of a branch here.
 const canSend = computed(() => !streaming.value && draft.value.trim().length > 0);
 const waitingForFirstToken = computed(() => {
   const last = items.value[items.value.length - 1];
@@ -722,19 +736,25 @@ const turns = computed<Turn[]>(() => {
   let current: Turn | null = null;
   for (const item of items.value) {
     if (item.kind === "message" && item.role === "user") {
-      current = { id: item.id, active: false, user: item, agent: [], toolCount: 0, toolMs: 0 };
+      current = { id: item.id, active: false, user: item, agent: [], toolCount: 0, thinkingCount: 0, toolMs: 0 };
       list.push(current);
       continue;
     }
     if (!current) {
       // Defensive: a trail whose first stored message is an assistant one.
-      current = { id: `turn-${item.id}`, active: false, user: null, agent: [], toolCount: 0, toolMs: 0 };
+      current = { id: `turn-${item.id}`, active: false, user: null, agent: [], toolCount: 0, thinkingCount: 0, toolMs: 0 };
       list.push(current);
     }
     current.agent.push(item);
     if (item.kind === "tool") {
       current.toolCount += 1;
       // Only finished steps contribute: the turn summary is a post-hoc stat.
+      if (item.finishedAt && item.startedAt) {
+        current.toolMs += item.finishedAt - item.startedAt;
+      }
+    }
+    if (item.kind === "thinking") {
+      current.thinkingCount += 1;
       if (item.finishedAt && item.startedAt) {
         current.toolMs += item.finishedAt - item.startedAt;
       }
@@ -751,7 +771,7 @@ const turns = computed<Turn[]>(() => {
 const expandedTurns = ref<Set<string>>(new Set());
 
 function isTurnCollapsed(turn: Turn): boolean {
-  if (turn.active || turn.toolCount < 3) return false;
+  if (turn.active || turn.toolCount + turn.thinkingCount < 3) return false;
   return !expandedTurns.value.has(turn.id);
 }
 
@@ -766,11 +786,11 @@ function toggleTurn(turnId: string): void {
 }
 
 // Collapsed turns keep the final answer, questions, proposals and errors
-// visible; only the intermediate narration and the tool steps fold into the
+// visible; only the intermediate thinking and tool steps fold into the
 // "N pasos" summary chip.
 function turnVisibleItems(turn: Turn): ChatItem[] {
   if (!isTurnCollapsed(turn)) return turn.agent;
-  const kept = turn.agent.filter((item) => item.kind !== "tool");
+  const kept = turn.agent.filter((item) => item.kind !== "tool" && item.kind !== "thinking");
   let lastMessage = -1;
   for (let i = kept.length - 1; i >= 0; i -= 1) {
     if (kept[i].kind === "message") {
@@ -790,6 +810,8 @@ function itemDeps(item: ChatItem): unknown[] {
       return [item.content, item.id === tailId.value, item.id === copiedId.value];
     case "tool":
       return [item.status, item.summary, item.detail, item.open, toolTimeLabel(item)];
+    case "thinking":
+      return [item.content, item.open, item.finishedAt !== undefined];
     case "question":
       return [item.question, item.answered];
     case "proposal":
@@ -870,76 +892,8 @@ function reaskLastTurn(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Tool step presentation
+// Tool + thinking step presentation (helpers in @/agent/toolPresentation)
 // ---------------------------------------------------------------------------
-
-const TOOL_SUMMARY_MAX = 72;
-const TOOL_ARGS_MAX = 56;
-const TOOL_DETAIL_MAX = 4000;
-
-function shorten(text: string, max: number): string {
-  const t = text.trim();
-  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
-}
-
-// One-line result summary for a tool row. Tool results are JSON envelopes
-// ({"returned": n}, {"hits": [...]}, {"ok": true} …) or an "error: …" string,
-// so the summary reads the common keys and falls back to the first line.
-function summarizeToolResult(raw: string): string {
-  const text = (raw ?? "").trim();
-  if (!text) return "";
-  if (/^error:/i.test(text)) {
-    return shorten(text.replace(/^error:\s*/i, ""), TOOL_SUMMARY_MAX);
-  }
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (Array.isArray(parsed)) {
-      return `${parsed.length} ${parsed.length === 1 ? "elemento" : "elementos"}`;
-    }
-    if (parsed && typeof parsed === "object") {
-      const obj = parsed as Record<string, unknown>;
-      if (typeof obj.returned === "number") return `${obj.returned} resultados`;
-      if (typeof obj.total === "number") return `${obj.total} resultados`;
-      if (Array.isArray(obj.hits)) return `${obj.hits.length} coincidencias`;
-      if (obj.ok === false && typeof obj.error === "string") {
-        return shorten(obj.error, TOOL_SUMMARY_MAX);
-      }
-      if (obj.ok === true) return "hecho";
-    }
-    return "";
-  } catch {
-    // Not JSON — a plain sentence, take its first line below.
-  }
-  return shorten(text.split("\n")[0] ?? "", TOOL_SUMMARY_MAX);
-}
-
-// Compact preview of the call arguments, coding-agent style
-// ("Título: X · Modo: regex"). Objects are trimmed to their first entries.
-function toolArgsHint(args?: string): string {
-  const raw = (args ?? "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const entries = Object.entries(parsed as Record<string, unknown>)
-        .filter(([, v]) => v !== null && v !== undefined && v !== "")
-        .slice(0, 2)
-        .map(([k, v]) => `${k}: ${typeof v === "object" ? "…" : String(v)}`);
-      if (entries.length > 0) return shorten(entries.join(" · "), TOOL_ARGS_MAX);
-      return "";
-    }
-  } catch {
-    // Not JSON — fall through to the raw preview.
-  }
-  return shorten(raw, TOOL_ARGS_MAX);
-}
-
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "";
-  if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
-  const s = ms / 1000;
-  return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
-}
 
 function toolTimeLabel(item: ToolChatItem): string {
   if (item.status === "running") {
@@ -954,6 +908,11 @@ function toolTimeLabel(item: ToolChatItem): string {
 function toggleTool(item: ToolChatItem): void {
   if (!item.detail) return;
   item.open = !item.open;
+}
+
+function toggleThinking(item: ThinkingChatItem): void {
+  item.open = !item.open;
+  if (!item.open && !item.finishedAt) item.finishedAt = Date.now();
 }
 
 // ---------------------------------------------------------------------------
@@ -980,7 +939,8 @@ function stopTicker(): void {
 
 let turnStartedAt = 0;
 const thinkingSeconds = computed(() => {
-  if (!waitingForFirstToken.value) return 0;
+  if (!waitingForFirstToken.value && !streaming.value) return 0;
+  if (!streaming.value) return 0;
   return Math.max(0, Math.floor((now.value - turnStartedAt) / 1000));
 });
 
@@ -1120,36 +1080,15 @@ async function saveAgentSelection(): Promise<void> {
   }
 }
 
-// Streaming coalescing. Deltas arrive far faster than a frame, so mutating
-// the reactive message on every one of them re-renders the whole bubble (and
-// forces a layout for the scroll pin) dozens of times per second. Deltas are
-// accumulated into a local string and the reactive update happens once per
-// animation frame: rAF is aligned with the paint, so nothing renders into a
-// frame the compositor is about to discard, and the text lands ~45 ms sooner
-// than it did on the old 60 ms timer. Parsing itself is incremental:
-// markstream-vue handles partial markdown instead of re-running marked over
-// the whole message.
-let streamRaf: number | null = null;
-let streamDirty = false;
-
+// Streaming coalescing lives in @/composables/useStreamCoalescing: it
+// collapses high-frequency deltas to one DOM mutation per animation frame
+// so the live tail re-renders at display refresh instead of per token.
+const streamFramer = useStreamCoalescing();
 function scheduleStreamFlush(apply: () => void): void {
-  streamDirty = true;
-  if (streamRaf !== null) return;
-  streamRaf = requestAnimationFrame(() => {
-    streamRaf = null;
-    if (!streamDirty) return;
-    streamDirty = false;
-    apply();
-  });
+  streamFramer.schedule(apply);
 }
-
 function flushStreamNow(apply: () => void): void {
-  if (streamRaf !== null) {
-    cancelAnimationFrame(streamRaf);
-    streamRaf = null;
-  }
-  streamDirty = false;
-  apply();
+  streamFramer.flushNow(apply);
 }
 
 // Distance from the bottom, in px, within which the transcript still counts
@@ -1179,11 +1118,7 @@ function stopStreaming(): void {
   // pending read() rejects, which is bounded only by the server's per-turn
   // timeout — up to eight minutes of a frozen page after the user asked to
   // stop.
-  if (streamRaf !== null) {
-    cancelAnimationFrame(streamRaf);
-    streamRaf = null;
-  }
-  streamDirty = false;
+  streamFramer.cancel();
   streaming.value = false;
   settleRunningTools("cancelled");
   stopTicker();
@@ -1193,11 +1128,16 @@ function stopStreaming(): void {
 // a tool_result (a mid-stream error, an abort, a malformed ask_user) and a
 // row stuck on the spinner reads as a hang. The steps are kept — marked
 // cancelled/errored — instead of removed, so the transcript stays auditable.
+// Thinking rows have no running state, but a mid-think abort still closes
+// their timer for the turn summary.
 function settleRunningTools(status: ToolStatus): void {
   const finishedAt = Date.now();
   for (const item of items.value) {
     if (item.kind === "tool" && item.status === "running") {
       item.status = status;
+      item.finishedAt = finishedAt;
+    }
+    if (item.kind === "thinking" && !item.finishedAt) {
       item.finishedAt = finishedAt;
     }
   }
@@ -1285,9 +1225,18 @@ function mapHistory(messages: AgentSessionMessage[]): void {
       continue;
     }
     if (message.role === "assistant") {
-      // Order matters: within a persisted step the narration (content) was
-      // streamed before the tool calls it triggered, so replay text first,
-      // then the step rows — same sequence the user watched live.
+      // Reasoning was streamed before the content: replay the thinking first,
+      // then the narration, then the step rows — matching live order. The
+      // item stays collapsed; expanding is an explicit audit action.
+      if (message.reasoningContent) {
+        mapped.push({
+          id: uid(),
+          kind: "thinking",
+          content: message.reasoningContent,
+          open: false,
+          startedAt: 0,
+        });
+      }
       if (message.content) {
         mapped.push({ id: uid(), kind: "message", role: "assistant", content: message.content });
         lastQuestionIndex = -1;
@@ -1368,10 +1317,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   abortController?.abort();
-  if (streamRaf !== null) {
-    cancelAnimationFrame(streamRaf);
-    streamRaf = null;
-  }
+  streamFramer.cancel();
   stopTicker();
   if (copyTimer) clearTimeout(copyTimer);
   if (pickerDebounce) clearTimeout(pickerDebounce);
@@ -1519,6 +1465,51 @@ async function sendMessage(
   // terminal step (ask_user) is not the final answer, so the next user reply
   // starts a new assistant bubble instead of overwriting this one.
   let committedText = "";
+  let reasoningText = "";
+  let committedReasoning = "";
+  // Reasoning and answer deltas can interleave in one step (the provider
+  // does not strictly finish reasoning before the first content token).
+  // Track the two rows by reference for the CURRENT step instead of checking
+  // `items.value`'s last element: once a thinking row is inserted after an
+  // assistant bubble, "last is assistant" goes false and the next flush
+  // pushes a second bubble with the accumulated text — the duplicate the
+  // screenshot shows. Identity survives interleave; position does not matter.
+  type StepAssistantItem = Extract<ChatItem, { kind: "message"; role: "assistant" }>;
+  let thinkingItem: ThinkingChatItem | null = null;
+  let assistantItem: StepAssistantItem | null = null;
+
+  const ensureAssistantItem = (): StepAssistantItem => {
+    if (!assistantItem) {
+      assistantItem = { id: uid(), kind: "message", role: "assistant", content: assistantText };
+      items.value.push(assistantItem);
+    }
+    return assistantItem;
+  };
+
+  const ensureThinkingItem = (): ThinkingChatItem => {
+    if (!thinkingItem) {
+      thinkingItem = { id: uid(), kind: "thinking", content: reasoningText, open: false, startedAt: Date.now() };
+      // Reasoning logically precedes the answer, so a thinking row that
+      // arrives after text was committed is inserted before the assistant
+      // bubble instead of after it (which would duplicate both rows).
+      if (assistantItem) {
+        const at = items.value.indexOf(assistantItem);
+        items.value.splice(at < 0 ? items.value.length : at, 0, thinkingItem);
+      } else {
+        items.value.push(thinkingItem);
+      }
+    }
+    return thinkingItem;
+  };
+
+  const resetStepRows = (): void => {
+    assistantText = "";
+    committedText = "";
+    reasoningText = "";
+    committedReasoning = "";
+    thinkingItem = null;
+    assistantItem = null;
+  };
   let sawDone = false;
   let sawError = false;
   // Whether the re-run produced anything at all (a delta, a step, a question).
@@ -1530,20 +1521,17 @@ async function sendMessage(
     if (assistantText === committedText) return;
     committedText = assistantText;
     if (!assistantText) return;
-    const last = items.value[items.value.length - 1];
-    // Reuse the bubble already carrying this text — whether it is empty or was
-    // filled by a live delta or the `done` event. Idempotence matters here
-    // because several exit paths call this (done, error, catch, finally): the
-    // guard must match on the text, not on emptiness, or a `done` that already
-    // wrote the final answer makes the next call push a duplicate bubble.
-    if (last && last.kind === "message" && last.role === "assistant") {
-      if (!last.content) {
-        last.content = assistantText;
-        return;
-      }
-      if (last.content === assistantText) return;
-    }
-    items.value.push({ id: uid(), kind: "message", role: "assistant", content: assistantText });
+    // Reuse the step's bubble by reference. The previous "last item is an
+    // assistant message" check misfires when reasoning+text deltas
+    // interleave in one step, pushing a duplicate partial bubble per switch.
+    ensureAssistantItem().content = assistantText;
+  };
+
+  const commitReasoning = (): void => {
+    if (reasoningText === committedReasoning) return;
+    committedReasoning = reasoningText;
+    if (!reasoningText) return;
+    ensureThinkingItem().content = reasoningText;
   };
 
   // Puts a regenerate's dropped items back after the last user message. Only
@@ -1562,9 +1550,28 @@ async function sendMessage(
       case "session":
         if (event.sessionId) sessionId.value = event.sessionId;
         break;
+      case "reasoning_delta": {
+        producedContent = true;
+        reasoningText += event.reasoning ?? event.text ?? "";
+        scheduleStreamFlush(() => {
+          if (reasoningText === committedReasoning) return;
+          const pinned = isPinnedToBottom();
+          // Reasoning precedes assistant text in a step: commit any pending
+          // answer text first so the thinking row lands before it.
+          if (assistantText && assistantText !== committedText) commitAssistant();
+          commitReasoning();
+          if (pinned) scrollToBottom(true);
+        });
+        break;
+      }
       case "text_delta": {
         producedContent = true;
         assistantText += event.text ?? "";
+        // First answer token closes the thinking timer; the row stays
+        // expanded only if the user opened it.
+        for (const item of items.value) {
+          if (item.kind === "thinking" && !item.finishedAt) item.finishedAt = Date.now();
+        }
         scheduleStreamFlush(() => {
           if (assistantText === committedText) return;
           // The pin check runs against the pre-mutation geometry (the DOM
@@ -1572,12 +1579,7 @@ async function sendMessage(
           // bottom keeps following the answer and a user reading back is
           // never dragged down.
           const pinned = isPinnedToBottom();
-          const last = items.value[items.value.length - 1];
-          if (last && last.kind === "message" && last.role === "assistant") {
-            last.content = assistantText;
-          } else {
-            items.value.push({ id: uid(), kind: "message", role: "assistant", content: assistantText });
-          }
+          ensureAssistantItem().content = assistantText;
           committedText = assistantText;
           if (pinned) scrollToBottom(true);
         });
@@ -1586,8 +1588,11 @@ async function sendMessage(
       case "tool_call": {
         producedContent = true;
         flushStreamNow(commitAssistant);
-        assistantText = "";
-        committedText = "";
+        flushStreamNow(commitReasoning);
+        for (const item of items.value) {
+          if (item.kind === "thinking" && !item.finishedAt) item.finishedAt = Date.now();
+        }
+        resetStepRows();
         items.value.push({
           id: uid(),
           kind: "tool",
@@ -1623,8 +1628,8 @@ async function sendMessage(
       case "question": {
         producedContent = true;
         flushStreamNow(commitAssistant);
-        assistantText = "";
-        committedText = "";
+        flushStreamNow(commitReasoning);
+        resetStepRows();
         items.value.push({
           id: uid(),
           kind: "question",
@@ -1641,8 +1646,8 @@ async function sendMessage(
         // Nothing is applied until the user approves it in the panel.
         producedContent = true;
         flushStreamNow(commitAssistant);
-        assistantText = "";
-        committedText = "";
+        flushStreamNow(commitReasoning);
+        resetStepRows();
         if (event.proposal) {
           const item: ProposalChatItem = {
             id: uid(),
@@ -1660,13 +1665,14 @@ async function sendMessage(
         sawDone = true;
         // The final answer replaces the in-progress bubble; a terminal step
         // sends an empty content, in which case what streamed stays.
+        flushStreamNow(commitReasoning);
         flushStreamNow(() => {
           const finalText = event.message?.content || assistantText;
-          const last = items.value[items.value.length - 1];
-          if (finalText && last && last.kind === "message" && last.role === "assistant") {
-            last.content = finalText;
-          } else if (finalText) {
-            items.value.push({ id: uid(), kind: "message", role: "assistant", content: finalText });
+          if (finalText) {
+            // Same reference guard as live deltas: `done` must land in the
+            // step's existing bubble even when a thinking row sits after
+            // the last streamed bubble (reasoning+text interleave).
+            ensureAssistantItem().content = finalText;
           }
           committedText = finalText;
           assistantText = finalText;
@@ -1686,6 +1692,7 @@ async function sendMessage(
       case "error": {
         sawError = true;
         flushStreamNow(commitAssistant);
+        flushStreamNow(commitReasoning);
         if (!producedContent) restoreDropped();
         const detail = event.error || event.code || "error del servidor";
         items.value.push({
@@ -1722,6 +1729,7 @@ async function sendMessage(
     // already replaced.
     if (!controller.signal.aborted) {
       flushStreamNow(commitAssistant);
+      flushStreamNow(commitReasoning);
       if (!producedContent) restoreDropped();
       const detail =
         error instanceof Error && error.message
@@ -1737,6 +1745,7 @@ async function sendMessage(
     }
   } finally {
     flushStreamNow(commitAssistant);
+    flushStreamNow(commitReasoning);
     // A stream that ends without a done event was cut off (proxy timeout,
     // dropped connection). Without this the partial answer is left on screen
     // looking exactly like a finished one.
@@ -2217,6 +2226,57 @@ function chooseNovel(novel: PickerNovel): void {
 }
 
 .tool-row-detail {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--divide);
+  background: var(--background);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+/* Thinking row mirrors the tool row surface so reasoning reads as one more
+   audit step — collapsed by default, expandable to the raw text. */
+.thinking-row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--divide);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+.thinking-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.3125rem 0.625rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thinking-row-main:hover {
+  background: var(--mock-row);
+}
+
+.thinking-row-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.thinking-row-detail {
   margin: 0;
   padding: 0.5rem 0.75rem;
   border-top: 1px solid var(--divide);

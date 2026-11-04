@@ -36,6 +36,20 @@ func (p *GoogleProvider) chatModel(ctx context.Context) (*einogemini.ChatModel, 
 	return einogemini.NewChatModel(ctx, &einogemini.Config{Client: cli, Model: p.Model})
 }
 
+// AgentChat serves the same streaming tool loop as the OpenAI provider.
+// The Gemini eino model satisfies model.ToolCallingChatModel and emits its
+// thoughts as ReasoningContent, so the shared loop in runStreamingAgentTurn
+// drives it without a second implementation. The Gemini client keeps its
+// own HTTP timeout (as in Translate/Refine); the per-turn bounds (idle
+// timeout + API-layer deadline) still apply inside the shared loop.
+func (p *GoogleProvider) AgentChat(ctx context.Context, in AgentChatInput) (AgentChatOutput, error) {
+	m, err := p.chatModel(ctx)
+	if err != nil {
+		return AgentChatOutput{}, err
+	}
+	return runStreamingAgentTurn(ctx, m, nil, in)
+}
+
 func (p *GoogleProvider) TranslateTitle(ctx context.Context, in TranslateTitleInput) (string, error) {
 	m, err := p.chatModel(ctx)
 	if err != nil {

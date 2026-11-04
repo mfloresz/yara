@@ -218,6 +218,10 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"mistralai/ministral-14b-2512",
 		"inclusionai/ling-3.0-flash",
 		"xiaomi/mimo-v2.6-flash",
+		"liquid/lfm-2.5-2.6b:free",
+		"liquid/lfm-2.5-24b-a2b",
+		"liquid/lfm-2.5-2.6b",
+		"nvidia/nemotron-3.5-lightning",
 	}
 	if len(info.Models) != len(wantModels) {
 		t.Fatalf("unexpected model list: %v", info.Models)

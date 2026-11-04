@@ -502,6 +502,7 @@ export type WorkerToken = {
 export type AgentSessionMessage = {
   role: "user" | "assistant" | "tool";
   content?: string;
+  reasoningContent?: string;
   toolCallId?: string;
   toolName?: string;
   toolCalls?: { id: string; name: string; args: string }[];
@@ -552,6 +553,7 @@ export type AgentChatEvent = {
   type:
     | "session"
     | "text_delta"
+    | "reasoning_delta"
     | "tool_call"
     | "tool_result"
     | "question"
@@ -561,6 +563,7 @@ export type AgentChatEvent = {
   sessionId?: string;
   step?: number;
   text?: string;
+  reasoning?: string;
   tool?: string;
   args?: string;
   result?: string;

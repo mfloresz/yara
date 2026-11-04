@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino/components/model"
@@ -31,13 +32,18 @@ type AgentTool struct {
 
 // AgentMessage is one persisted conversation message. Role is "system",
 // "user", "assistant" or "tool". Assistant messages may carry ToolCalls; tool
-// results carry ToolCallID + ToolName.
+// results carry ToolCallID + ToolName. ReasoningContent carries the model's
+// visible-by-default thinking (reasoning_content / thought parts) when the
+// provider emits it; it is persisted alongside Content so replays keep the
+// thinking timeline and so providers that require reasoning to be echoed
+// back (Gemini thought signatures, DeepSeek reasoning_content) round-trip it.
 type AgentMessage struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content,omitempty"`
-	ToolCallID string          `json:"toolCallId,omitempty"`
-	ToolName   string          `json:"toolName,omitempty"`
-	ToolCalls  []AgentToolCall `json:"toolCalls,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoningContent,omitempty"`
+	ToolCallID       string          `json:"toolCallId,omitempty"`
+	ToolName         string          `json:"toolName,omitempty"`
+	ToolCalls        []AgentToolCall `json:"toolCalls,omitempty"`
 }
 
 // AgentToolCall records one assistant tool invocation, as sent by the model
@@ -49,8 +55,9 @@ type AgentToolCall struct {
 }
 
 // AgentEvent streams progress of one AgentChat turn to the caller. Type is
-// one of "text_delta", "tool_call", "tool_result". ToolName/ToolArgs travel
-// with tool events; ToolResult is a truncated preview.
+// one of "text_delta", "reasoning_delta", "tool_call", "tool_result". Text
+// carries the delta for text_delta and reasoning_delta; ToolName/ToolArgs
+// travel with tool events; ToolResult is a truncated preview.
 type AgentEvent struct {
 	Type       string
 	Step       int
@@ -122,8 +129,8 @@ func agentUsageOrNil(total AgentUsage) *AgentUsage {
 }
 
 // AgentProvider is implemented by providers that can run tool-using chat
-// turns. The Google provider (Gemma on the Gemini API) does not support the
-// tool loop, so agent mode is OpenAI-compatible providers only.
+// turns. Both eino models (OpenAI-compatible and Gemini) satisfy
+// model.ToolCallingChatModel, so the streaming loop below is shared.
 type AgentProvider interface {
 	AgentChat(ctx context.Context, in AgentChatInput) (AgentChatOutput, error)
 }
@@ -134,21 +141,39 @@ const defaultAgentMaxSteps = 15
 // results are truncated with a marker so the model knows it is partial.
 const maxToolResultChars = 8000
 
+// maxReasoningContentChars bounds the persisted reasoning per assistant
+// message. Reasoning is display-only in the UI but is echoed back on replay
+// (Gemini thought signatures require it), so it must survive; the cap keeps
+// long thinkers from blowing the session trail past its byte budget.
+const maxReasoningContentChars = 8000
+
 // maxEventToolResultChars bounds the preview sent to the UI per tool result.
-const maxEventToolResultChars = 500
+// Aligned with the frontend TOOL_DETAIL_MAX (4000): the frontend truncates
+// its own copy to the same limit, so a shorter backend preview only ever
+// hid detail the UI was already prepared to render.
+const maxEventToolResultChars = 4000
 
 // AgentChat runs the streaming tool loop over eino: stream one assistant
-// step, emit text deltas as they arrive, execute requested tools, repeat.
+// step, emit text and reasoning deltas as they arrive, execute requested
+// tools, repeat. Shared by every provider that can serve the loop.
 func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (AgentChatOutput, error) {
 	m, err := p.einoChatModel(nil)
 	if err != nil {
 		return AgentChatOutput{}, err
 	}
+	return runStreamingAgentTurn(ctx, m, p.einoCallOptions(), in)
+}
+
+// runStreamingAgentTurn is the provider-agnostic streaming loop behind
+// AgentChat. The caller supplies a ToolCallingChatModel (OpenAI-compatible
+// or Gemini) plus the provider's base options; the tool infos are appended
+// here so both adapters share one loop instead of diverging.
+func runStreamingAgentTurn(ctx context.Context, m model.ToolCallingChatModel, baseOpts []model.Option, in AgentChatInput) (AgentChatOutput, error) {
 	infos, err := einoToolInfos(in.Tools)
 	if err != nil {
 		return AgentChatOutput{}, err
 	}
-	opts := append(p.einoCallOptions(), model.WithTools(infos))
+	opts := append(baseOpts, model.WithTools(infos))
 
 	msgs := agentMessagesToEino(in.System, in.Messages)
 	maxSteps := in.MaxSteps
@@ -176,6 +201,9 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 		// only while this step has emitted nothing, so a resumed stream can
 		// never duplicate text already shown to the user.
 		chunks, err := streamWithRetry(ctx, m, msgs, opts, func(chunk *schema.Message) {
+			if chunk.ReasoningContent != "" {
+				emit(AgentEvent{Type: "reasoning_delta", Step: step + 1, Text: chunk.ReasoningContent})
+			}
 			if chunk.Content != "" {
 				emit(AgentEvent{Type: "text_delta", Step: step + 1, Text: chunk.Content})
 			}
@@ -184,11 +212,11 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 			return AgentChatOutput{}, err
 		}
 		if len(chunks) == 0 {
-			return AgentChatOutput{}, fmt.Errorf("openai agent chat: empty stream on step %d", step+1)
+			return AgentChatOutput{}, fmt.Errorf("agent chat: empty stream on step %d", step+1)
 		}
 		final, err := schema.ConcatMessages(chunks)
 		if err != nil {
-			return AgentChatOutput{}, fmt.Errorf("openai agent chat: concat stream: %w", err)
+			return AgentChatOutput{}, fmt.Errorf("agent chat: concat stream: %w", err)
 		}
 		msgs = append(msgs, final)
 		accumulateAgentUsage(&usage, final)
@@ -204,10 +232,13 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 		}
 		trail = append(trail, agentMessageFromEino(final))
 
-		terminal := false
 		for _, call := range calls {
 			emit(AgentEvent{Type: "tool_call", Step: step + 1, ToolName: call.Name, ToolArgs: call.Args})
-			result := runAgentTool(ctx, in.Tools, schema.ToolCall{ID: call.ID, Function: schema.FunctionCall{Name: call.Name, Arguments: call.Args}})
+		}
+		results := runAgentToolsParallel(ctx, in.Tools, calls)
+		terminal := false
+		for i, call := range calls {
+			result := results[i]
 			toolMsg := &schema.Message{
 				Role:       schema.Tool,
 				ToolCallID: call.ID,
@@ -222,10 +253,6 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 				ToolName:   call.Name,
 			})
 			emit(AgentEvent{Type: "tool_result", Step: step + 1, ToolName: call.Name, ToolResult: toolResultPreview(toolMsg.Content)})
-			// A FAILED terminal tool must not end the turn: the error is fed
-			// back to the model, which self-corrects exactly like with any
-			// other tool. Ending on failure would leave the user with no text,
-			// no card and no retry until the next message.
 			if t := agentToolByName(in.Tools, call.Name); t != nil && t.Terminal && !strings.HasPrefix(result, "error:") {
 				terminal = true
 			}
@@ -238,14 +265,44 @@ func (p *OpenAIProvider) AgentChat(ctx context.Context, in AgentChatInput) (Agen
 	// Step exhaustion with pending tool results: force one final no-tools
 	// call so the turn ends with an assistant message instead of dangling
 	// tool results.
-	final, err := generateWithRetry(ctx, m, msgs, p.einoCallOptions())
+	final, err := generateWithRetry(ctx, m, msgs, baseOpts)
 	if err != nil {
 		return AgentChatOutput{}, err
+	}
+	if final.ReasoningContent != "" {
+		emit(AgentEvent{Type: "reasoning_delta", Step: maxSteps, Text: final.ReasoningContent})
 	}
 	msgs = append(msgs, final)
 	trail = append(trail, agentMessageFromEino(final))
 	accumulateAgentUsage(&usage, final)
 	return AgentChatOutput{Messages: trail, Text: final.Content, Steps: maxSteps, Usage: agentUsageOrNil(usage)}, nil
+}
+
+// runAgentToolsParallel executes one step's tool calls concurrently and
+// returns the results in the original call order. The trail and the eino
+// messages are appended after all results land, in call order, because
+// providers require tool results to match their tool_calls sequence.
+// Individual tools are independent lookups/writes against the store; the
+// single-user turn lock already serializes turns, so parallel calls within
+// a step do not cross turns.
+func runAgentToolsParallel(ctx context.Context, tools []AgentTool, calls []AgentToolCall) []string {
+	results := make([]string, len(calls))
+	if len(calls) <= 1 {
+		for i, call := range calls {
+			results[i] = runAgentTool(ctx, tools, schema.ToolCall{ID: call.ID, Function: schema.FunctionCall{Name: call.Name, Arguments: call.Args}})
+		}
+		return results
+	}
+	var wg sync.WaitGroup
+	for i, call := range calls {
+		wg.Add(1)
+		go func(i int, call AgentToolCall) {
+			defer wg.Done()
+			results[i] = runAgentTool(ctx, tools, schema.ToolCall{ID: call.ID, Function: schema.FunctionCall{Name: call.Name, Arguments: call.Args}})
+		}(i, call)
+	}
+	wg.Wait()
+	return results
 }
 
 // agentToolByName finds a catalog tool by name; nil when the model invented
@@ -282,7 +339,7 @@ func agentMessageToEino(m AgentMessage) *schema.Message {
 			ToolName:   m.ToolName,
 		}
 	case "assistant":
-		msg := &schema.Message{Role: schema.Assistant, Content: m.Content}
+		msg := &schema.Message{Role: schema.Assistant, Content: m.Content, ReasoningContent: m.ReasoningContent}
 		for _, tc := range m.ToolCalls {
 			msg.ToolCalls = append(msg.ToolCalls, schema.ToolCall{
 				ID: tc.ID,
@@ -299,11 +356,21 @@ func agentMessageToEino(m AgentMessage) *schema.Message {
 }
 
 func agentMessageFromEino(m *schema.Message) AgentMessage {
-	out := AgentMessage{Role: "assistant", Content: m.Content}
+	out := AgentMessage{Role: "assistant", Content: m.Content, ReasoningContent: truncateReasoning(m.ReasoningContent)}
 	for _, tc := range m.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, AgentToolCall{ID: tc.ID, Name: tc.Function.Name, Args: tc.Function.Arguments})
 	}
 	return out
+}
+
+// truncateReasoning caps persisted reasoning at maxReasoningContentChars
+// runes. The live stream still emits every delta; only the stored trail is
+// bounded so a long thinker cannot dominate the session byte budget.
+func truncateReasoning(s string) string {
+	if utf8.RuneCountInString(s) <= maxReasoningContentChars {
+		return s
+	}
+	return truncateRunes(s, maxReasoningContentChars) + "\n…[reasoning truncated]"
 }
 
 // truncateRunes cuts s to at most maxChars runes without splitting a

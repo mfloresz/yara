@@ -152,6 +152,10 @@ type agentChatEvent struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"sessionId,omitempty"`
 	Text      string          `json:"text,omitempty"`
+	// Reasoning carries one reasoning_delta chunk. Kept separate from Text
+	// so the client can render thinking in its own collapsible surface
+	// instead of interleaving it with the answer prose.
+	Reasoning string `json:"reasoning,omitempty"`
 	Step      int             `json:"step,omitempty"`
 	Tool      string          `json:"tool,omitempty"`
 	Args      string          `json:"args,omitempty"`
@@ -306,6 +310,8 @@ func handleAgentChat(s *Server) func(*core.RequestEvent) error {
 			switch ev.Type {
 			case "text_delta":
 				writeEvent(agentChatEvent{Type: "text_delta", Step: ev.Step, Text: ev.Text})
+			case "reasoning_delta":
+				writeEvent(agentChatEvent{Type: "reasoning_delta", Step: ev.Step, Reasoning: ev.Text})
 			case "tool_call":
 				// ask_user renders as a question bubble with clickable
 				// options, not as a tool chip; fall back to the raw chip when

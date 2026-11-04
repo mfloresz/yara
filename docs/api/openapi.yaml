@@ -2665,8 +2665,8 @@ paths:
       summary: Run one assistant chat turn, streamed as NDJSON.
       description: |
         Executes one agent turn against the user's configured AI provider
-        (OpenAI-compatible providers only; the Google provider does not
-        support the tool loop). When the user set an agent provider/model
+        (OpenAI-compatible providers and the Google Gemini provider both
+        run the same streaming tool loop). When the user set an agent provider/model
         override in settings, the turn runs on that provider instead of the
         translation provider. The assistant may call novel tools that run
         server-side against the user's OWN library; ownership is enforced by
@@ -2674,8 +2674,12 @@ paths:
         A novel or session owned by another user is refused with 404 even when
         that novel is public. Responses stream as
         newline-delimited JSON events:
-        `session`, `text_delta`, `tool_call`, `tool_result`, `question`,
-        `proposal`, `done`, `error`.
+        `session`, `text_delta`, `reasoning_delta`, `tool_call`, `tool_result`, `question`,
+        `proposal`, `done`, `error`. `reasoning_delta` carries the model's
+        visible thinking (`reasoning` field, kept separate from answer `text`)
+        so clients can render it in a collapsible surface; it is also persisted
+        as `reasoningContent` on assistant messages and echoed back so providers
+        that require it (Gemini thought signatures) round-trip it.
         A `proposal` event carries a cleanup the assistant proposes (rule +
         scope + dry-run counts); the client renders it as an interactive
         approval card and the cleanup only runs if the user approves it there
@@ -3151,10 +3155,11 @@ components:
     AgentChatEvent:
       type: object
       properties:
-        type: { type: string, enum: [session, text_delta, tool_call, tool_result, question, proposal, done, error] }
+        type: { type: string, enum: [session, text_delta, reasoning_delta, tool_call, tool_result, question, proposal, done, error] }
         sessionId: { type: string }
         step: { type: integer }
         text: { type: string, description: text_delta payload }
+        reasoning: { type: string, description: reasoning_delta payload — visible thinking chunk, separate from answer text }
         tool: { type: string, description: tool_call/tool_result tool name }
         args: { type: string, description: tool_call raw JSON arguments }
         result: { type: string, description: tool_result preview }
@@ -3215,6 +3220,7 @@ components:
             properties:
               role: { type: string, enum: [user, assistant, tool] }
               content: { type: string }
+              reasoningContent: { type: string, description: assistant thinking persisted alongside content (capped), echoed back on replay }
               toolCallId: { type: string }
               toolName: { type: string }
               toolCalls:

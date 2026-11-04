@@ -29,6 +29,10 @@ Formato: número entero en tokens. Ejemplos: `128000`, `200000`, `1000000`. Si u
 | mistralai/ministral-14b-2512 | 262000 |
 | inclusionai/ling-3.0-flash | 262144 |
 | xiaomi/mimo-v2.6-flash | 524288 |
+| liquid/lfm-2.5-2.6b:free | 65536 |
+| liquid/lfm-2.5-24b-a2b | 128000 |
+| liquid/lfm-2.5-2.6b | 128000 |
+| nvidia/nemotron-3.5-lightning | 262144 |
 
 ## meta — `meta`
 

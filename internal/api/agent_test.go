@@ -433,15 +433,34 @@ func (p *proposalAgentProvider) AgentChat(ctx context.Context, in ai.AgentChatIn
 	return ai.AgentChatOutput{Messages: trail, Steps: 1}, nil
 }
 
+// nonAgentProvider satisfies ai.Provider but deliberately not
+// ai.AgentProvider, so the runner rejects it before streaming starts.
+type nonAgentProvider struct{}
+
+func (nonAgentProvider) TranslateTitle(context.Context, ai.TranslateTitleInput) (string, error) {
+	return "", fmt.Errorf("not supported")
+}
+func (nonAgentProvider) TranslateText(context.Context, ai.TranslateTextInput) (string, error) {
+	return "", fmt.Errorf("not supported")
+}
+func (nonAgentProvider) Refine(context.Context, ai.RefineInput) (ai.RefineOutput, error) {
+	return ai.RefineOutput{}, fmt.Errorf("not supported")
+}
+func (nonAgentProvider) Check(context.Context, ai.CheckInput) (ai.CheckOutput, error) {
+	return ai.CheckOutput{}, fmt.Errorf("not supported")
+}
+func (nonAgentProvider) GenerateGlossary(context.Context, ai.GenerateGlossaryInput) (ai.GenerateGlossaryOutput, error) {
+	return ai.GenerateGlossaryOutput{}, fmt.Errorf("not supported")
+}
+
 func TestAgentChatRejectsUnsupportedProviderAndBadInput(t *testing.T) {
 	env := newAPITestEnv(t)
 	alice := registerUser(t, env, "alice-agent-2@example.com", "secret123", "Alice")
 
-	// A provider that does not implement ai.AgentProvider (the Google
-	// provider is the real-world case) must fail with a clear 400 before any
-	// streaming starts.
+	// A provider that does not implement ai.AgentProvider must fail with a
+	// clear 400 before any streaming starts.
 	env.server.NewAIProvider = func(store.AISettings, string) (ai.Provider, error) {
-		return &ai.GoogleProvider{APIKey: "k", Model: "m"}, nil
+		return nonAgentProvider{}, nil
 	}
 	resp := doJSONRequest(t, env.handler, http.MethodPost, "/api/v1/agent/chat", alice.Token, map[string]any{
 		"message": "hola",
