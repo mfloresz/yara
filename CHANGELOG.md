@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.53.0] - 2026-11-04
+
+### What's new
+
+- **Visible thinking in the assistant chat.** When the model reasons, the chat now shows a collapsed *Pensamiento* row that streams the thinking live and can be expanded to audit it, instead of freezing on screen while the model thinks. Thinking is kept separate from the answer, persisted with the session, and folded into the turn-steps summary alongside tool calls.
+- **Google Gemini now supports the assistant chat.** The tool loop is no longer OpenAI-only: Gemini runs the same streaming loop, including the providers that require reasoning to be echoed back (thought signatures). Configured providers that do not implement agent chat are still rejected with a clear 400 before streaming.
+- **Faster assistant turns with several lookups at once.** Tool calls made in the same step now execute in parallel and return in call order, so chained questions finish sooner; the tool-result preview now shows up to 4000 characters instead of 500.
+- **Four new AI models:** `liquid/lfm-2.5-2.6b:free`, `liquid/lfm-2.5-24b-a2b`, `liquid/lfm-2.5-2.6b` and `nvidia/nemotron-3.5-lightning` are available in the provider registry with their context limits.
+
+### Fixes
+
+- **Duplicate assistant bubbles when thinking and answer interleave.** The stream now tracks the thinking and answer rows by reference within a step, so mixed reasoning/text deltas patch one row each instead of pushing a second partial bubble per switch.
+- **Literotica parser follows new site builds.** Author and chapter list now match by stable attributes instead of hashed class names, and the article body targets `itemprop="articleBody"` with a hashed-class fallback.
+
+### Housekeeping
+
+- Extracted tool presentation (labels, result summaries, argument hints) and requestAnimationFrame stream coalescing out of `ChatPage.vue` into shared modules.
+- Documented the `reasoning_delta` event, the `reasoning` field and persisted `reasoningContent` in `docs/api/`, and the new models in `docs/model-context-limits.md`; regenerated and re-signed the parsers manifest for the Literotica script.
+
 ## [v0.52.0] - 2026-11-01
 
 ### What's new
@@ -811,4 +830,5 @@
 [v0.50.2]: https://github.com/mfloresz/yara/compare/v0.50.1...v0.50.2
 [v0.51.0]: https://github.com/mfloresz/yara/compare/v0.50.2...v0.51.0
 [v0.52.0]: https://github.com/mfloresz/yara/compare/v0.51.0...v0.52.0
+[v0.53.0]: https://github.com/mfloresz/yara/compare/v0.52.0...v0.53.0
 [Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
