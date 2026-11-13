@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toRef } from "vue";
+import { computed, toRef, watch } from "vue";
 import { useMessage, NAlert, NButton, NCard, NCheckbox, NInput, NModal, NSelect, NSkeleton, NSwitch, NIcon } from "naive-ui";
 import { EyeOutline } from "@vicons/ionicons5";
 import type { ChapterSummary } from "@/api/types";
@@ -108,11 +108,16 @@ import { useCleanSelection, type CleanApplyTo } from "@/composables/useCleanSele
 import { useAppServices } from "@/app/services";
 import CleanDiffList from "@/components/CleanDiffList.vue";
 
-const props = defineProps<{
-  novelId: string;
-  cleanAllSummaries: ChapterSummary[];
-  cleanAllSummariesLoading: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    novelId: string;
+    cleanAllSummaries: ChapterSummary[];
+    cleanAllSummariesLoading: boolean;
+    /** When set (from the chapters list), preselect these chapter ids. */
+    selectionSeed?: { ids: string[]; nonce: number } | null;
+  }>(),
+  { selectionSeed: null },
+);
 
 const { api } = useAppServices();
 const message = useMessage();
@@ -148,6 +153,14 @@ const {
 } = useCleanSelection(
   stableNovelId,
   toRef(props, "cleanAllSummaries"),
+);
+
+watch(
+  () => props.selectionSeed?.nonce,
+  (nonce) => {
+    if (nonce == null || !props.selectionSeed) return;
+    selectedIds.value = new Set(props.selectionSeed.ids);
+  },
 );
 
 const cleanModeDescription = computed(() => CLEAN_MODE_DESCRIPTIONS[mode.value]);

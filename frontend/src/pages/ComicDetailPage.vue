@@ -126,13 +126,13 @@
         <header class="comic-main-header">
           <h1 class="comic-title">{{ getComicDisplayTitle(comic) }}</h1>
           <div class="comic-meta">
-            <span v-if="getComicDisplayAuthor(comic)" class="muted">{{ getComicDisplayAuthor(comic) }}</span>
+            <span v-if="getComicDisplayAuthor(comic)" class="muted clickable-author" @click="goToAuthor(getComicDisplayAuthor(comic) || '')">{{ getComicDisplayAuthor(comic) }}</span>
             <span
               v-if="getComicDisplaySeries(comic) || getComicDisplayNumber(comic)"
               class="comic-series muted small"
             >
               <n-icon :size="14"><BookmarkOutline /></n-icon>
-              <span v-if="getComicDisplaySeries(comic)">{{ getComicDisplaySeries(comic) }}</span>
+              <span v-if="getComicDisplaySeries(comic)" class="clickable-series" @click="goToSeries(getComicDisplaySeries(comic) || '')">{{ getComicDisplaySeries(comic) }}</span>
               <span v-if="getComicDisplaySeries(comic) && getComicDisplayNumber(comic)">·</span>
               <span v-if="getComicDisplayNumber(comic)">#{{ getComicDisplayNumber(comic) }}</span>
             </span>
@@ -144,7 +144,7 @@
             :reset-key="comic.id"
           />
           <div v-if="comic.tags?.length" class="comic-description-tags">
-            <n-tag v-for="tag in comic.tags" :key="tag" size="small" :bordered="false">
+            <n-tag v-for="tag in comic.tags" :key="tag" size="small" :bordered="false" class="clickable-tag" @click="goToTag(tag)">
               {{ tag }}
             </n-tag>
           </div>
@@ -513,6 +513,22 @@ function onRead() {
   router.push(`/comics/${comic.value.id}/read`);
 }
 
+// Llevan a la biblioteca con el filtro aplicado: /comics lee tag/author de la
+// URL y los pasa al listado (GET /api/v1/comics).
+function goToTag(tag: string) {
+  void router.push({ path: "/comics", query: { tag } });
+}
+
+function goToAuthor(author: string) {
+  if (!author) return;
+  void router.push({ path: "/comics", query: { author } });
+}
+
+function goToSeries(series: string) {
+  if (!series) return;
+  void router.push({ path: "/comics", query: { series } });
+}
+
 async function runUpdateCheck() {
   if (!comic.value) return;
   checking.value = true;
@@ -658,6 +674,36 @@ watch(
   flex-wrap: wrap;
   gap: 0.375rem;
   margin-top: 0.375rem;
+}
+
+.clickable-series {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--divide);
+}
+
+.clickable-series:hover {
+  text-decoration-color: var(--accent-link);
+}
+
+.clickable-tag {
+  cursor: pointer;
+}
+
+.clickable-tag:hover {
+  opacity: 0.85;
+}
+
+.clickable-author {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--divide);
+}
+
+.clickable-author:hover {
+  text-decoration-color: var(--accent-link);
 }
 
 .tab-panel {

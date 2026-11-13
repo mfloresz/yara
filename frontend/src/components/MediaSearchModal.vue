@@ -321,10 +321,15 @@ const flatCount = computed(() => {
     : facetMatches.value.length + visibleFacetNovels.value.length;
 });
 
-// Solo novelas: el listado completo filtrado lo renderiza la biblioteca vía
-// query params (los cómics no leen ?q en su página).
+// "Ver todos" abre la biblioteca correspondiente con el filtro en la URL:
+// novelas vía /novels (título, o la faceta activa), cómics vía /comics?q=
+// (el listado de cómics no tiene criterios separados).
 const viewAllHref = computed<{ path: string; query: Record<string, string> } | null>(() => {
-  if (media.value !== "novels") return null;
+  if (media.value === "comics") {
+    const q = query.value.trim();
+    if (comicResults.value.length === 0 || q.length < MIN_QUERY_CHARS) return null;
+    return { path: "/comics", query: { q } };
+  }
   if (criterion.value === "title") {
     const q = query.value.trim();
     if (results.value.length === 0 || q.length < 2) return null;

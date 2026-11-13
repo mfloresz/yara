@@ -60,8 +60,24 @@
     <div class="novel-sidebar-tags">
       <n-tag :type="novelStatusType(novel.status)" size="small" round>{{ novelStatusLabel(novel.status) }}</n-tag>
       <n-tag size="small" round>{{ totalChapters }} capítulos</n-tag>
-      <n-tag size="small" round>{{ translatedChapters }} traducidos</n-tag>
-      <n-tag type="success" size="small" round>{{ novel.sourceLanguage }} → {{ novel.targetLanguage }}</n-tag>
+      <n-tag size="small" round class="lang-pair-tag" :title="`Par de idiomas: ${novel.sourceLanguage} → ${novel.targetLanguage}`">{{ novel.sourceLanguage }} → {{ novel.targetLanguage }}</n-tag>
+    </div>
+    <div
+      v-if="totalChapters > 0 && !sameLanguage"
+      class="translation-progress"
+      role="progressbar"
+      :aria-valuenow="translatedChapters"
+      :aria-valuemin="0"
+      :aria-valuemax="totalChapters"
+      :aria-label="`Progreso de traducción: ${translatedChapters} de ${totalChapters} capítulos`"
+    >
+      <div class="translation-progress-head">
+        <span>{{ translatedChapters }} de {{ totalChapters }} traducidos</span>
+        <span class="translation-progress-percent mono">{{ translatedPercent }}%</span>
+      </div>
+      <div class="translation-progress-track" aria-hidden="true">
+        <div class="translation-progress-fill" :style="{ width: `${translatedPercent}%` }" />
+      </div>
     </div>
   </aside>
 </template>
@@ -125,9 +141,17 @@ const readingStatusLabel = computed(() => {
     case "reading":
       return "Leyendo";
     default:
-      return "Estado de lectura";
+      return "Sin empezar";
   }
 });
+
+const sameLanguage = computed(
+  () => props.novel.sourceLanguage.trim().toLowerCase() === props.novel.targetLanguage.trim().toLowerCase(),
+);
+
+const translatedPercent = computed(() =>
+  props.totalChapters > 0 ? Math.round((props.translatedChapters / props.totalChapters) * 100) : 0,
+);
 
 function handleReadingMenuSelect(key: string) {
   const novelId = props.novel.id;
@@ -255,6 +279,49 @@ function novelStatusType(status: NovelStatus) {
   gap: 0.5rem;
 }
 
+.lang-pair-tag {
+  color: var(--text-secondary);
+}
+
+.translation-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3125rem;
+}
+
+.translation-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.translation-progress-percent {
+  font-variant-numeric: tabular-nums;
+}
+
+.translation-progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mock-row-strong);
+  overflow: hidden;
+}
+
+.translation-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-link);
+  transition: width 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .translation-progress-fill {
+    transition: none;
+  }
+}
+
 @media (max-width: 768px) {
   .novel-sidebar {
     display: grid;
@@ -272,6 +339,10 @@ function novelStatusType(status: NovelStatus) {
   }
 
   .novel-sidebar-tags {
+    grid-column: 1 / -1;
+  }
+
+  .translation-progress {
     grid-column: 1 / -1;
   }
 }

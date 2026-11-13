@@ -2,7 +2,20 @@
   <AppLayout>
     <section class="cl-page" aria-label="Cómics">
       <header class="cl-header">
-        <h1 class="cl-title">Cómics</h1>
+        <div class="cl-title-row">
+          <h1 class="cl-title">Cómics</h1>
+          <div v-if="activeFilters.length" class="active-filters">
+            <n-tag
+              v-for="filter in activeFilters"
+              :key="filter.param"
+              type="info"
+              closable
+              @close="clearFilter(filter.param)"
+            >
+              {{ filter.label }}: {{ filter.value }}
+            </n-tag>
+          </div>
+        </div>
 
         <div class="cl-toolbar">
           <!-- El buscador del medio vive en el sidebar (palette con Ctrl+K);
@@ -34,10 +47,13 @@
       <n-empty
         v-else
         class="cl-empty"
-        description="Sin cómics todavía. Impórtalos desde una URL o un ZIP de imágenes."
+        :description="isFiltered ? 'Ningún cómic coincide con los filtros activos.' : 'Sin cómics todavía. Impórtalos desde una URL o un ZIP de imágenes.'"
       >
         <template #extra>
-          <n-button size="small" type="primary" secondary @click="urlOpen = true">
+          <n-button v-if="isFiltered" size="small" secondary @click="clearAllFilters">
+            Limpiar filtros
+          </n-button>
+          <n-button v-else size="small" type="primary" secondary @click="urlOpen = true">
             Importar cómic
           </n-button>
         </template>
@@ -85,8 +101,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
   NButton,
@@ -95,6 +111,7 @@ import {
   NModal,
   NProgress,
   NSelect,
+  NTag,
   useMessage,
 } from "naive-ui";
 import { ArchiveOutline, CloudDownloadOutline } from "@vicons/ionicons5";
@@ -108,6 +125,7 @@ import { useAppServices } from "@/app/services";
 import { getComicDisplayTitle, type Comic } from "@/domain";
 import type { PreviewUrlResult } from "@/api/types";
 
+const route = useRoute();
 const router = useRouter();
 const { api } = useAppServices();
 const message = useMessage();
@@ -115,6 +133,44 @@ const message = useMessage();
 const comics = ref<Comic[]>([]);
 const loading = ref(true);
 const sortField = ref<"title" | "created" | "lastRead">("title");
+
+// Library filters that live only in the URL — they arrive from external
+// links (tag/author clicks on the detail page, "Ver todos" in the global
+// search). Same contract as the novels library.
+const activeTagFilter = ref<string | null>(null);
+const activeAuthorFilter = ref<string | null>(null);
+const activeSeriesFilter = ref<string | null>(null);
+const activeQueryFilter = ref<string | null>(null);
+
+const activeFilters = computed(() => {
+  const out: Array<{ param: string; label: string; value: string }> = [];
+  if (activeTagFilter.value) out.push({ param: "tag", label: "Tag", value: activeTagFilter.value });
+  if (activeAuthorFilter.value) out.push({ param: "author", label: "Autor", value: activeAuthorFilter.value });
+  if (activeSeriesFilter.value) out.push({ param: "series", label: "Serie", value: activeSeriesFilter.value });
+  if (activeQueryFilter.value) out.push({ param: "q", label: "Búsqueda", value: activeQueryFilter.value });
+  return out;
+});
+
+const isFiltered = computed(() => activeFilters.value.length > 0);
+
+function applyFiltersFromRoute() {
+  activeTagFilter.value = route.query.tag?.toString() ?? null;
+  activeAuthorFilter.value = route.query.author?.toString() ?? null;
+  activeSeriesFilter.value = route.query.series?.toString() ?? null;
+  activeQueryFilter.value = route.query.q?.toString() ?? null;
+}
+
+function clearFilter(param: string) {
+  const query = { ...route.query };
+  delete query[param];
+  void router.replace({ path: route.path, query });
+}
+
+function clearAllFilters() {
+  const query = { ...route.query };
+  for (const param of ["tag", "author", "series", "q"]) delete query[param];
+  void router.replace({ path: route.path, query });
+}
 
 const sortOptions = [
   { label: "Título", value: "title" },
@@ -165,6 +221,10 @@ async function reload() {
       // reciente primero.
       order: "asc",
       limit: 500,
+      tag: activeTagFilter.value ?? undefined,
+      author: activeAuthorFilter.value ?? undefined,
+      series: activeSeriesFilter.value ?? undefined,
+      q: activeQueryFilter.value ?? undefined,
     });
     comics.value = page.items;
   } finally {
@@ -191,7 +251,20 @@ async function onZipSelected(event: Event) {
   }
 }
 
-onMounted(reload);
+onMounted(() => {
+  applyFiltersFromRoute();
+  void reload();
+});
+
+// Back/forward navigation (y los propios chips): re-aplicar el filtro
+// codificado en la URL y recargar.
+watch(
+  () => [route.query.tag, route.query.author, route.query.series, route.query.q],
+  () => {
+    applyFiltersFromRoute();
+    void reload();
+  },
+);
 </script>
 
 <style scoped>
@@ -208,6 +281,21 @@ onMounted(reload);
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+.cl-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .cl-title {

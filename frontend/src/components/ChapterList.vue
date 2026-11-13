@@ -2,8 +2,34 @@
   <div class="chapter-list">
     <div class="chapter-list-toolbar">
       <div class="chapter-list-selection">
-        <n-button size="small" quaternary @click="selectAll">Todos</n-button>
-        <n-button size="small" quaternary @click="clearSelection">Ninguno</n-button>
+        <template v-if="isOwner">
+          <template v-if="selected.length > 0">
+            <span class="chapter-list-selected-count" role="status" aria-live="polite">{{ selected.length }} seleccionado{{ selected.length === 1 ? '' : 's' }}</span>
+            <n-button size="small" secondary @click="emit('translate', selected)">
+              <template #icon><n-icon><LanguageOutline /></n-icon></template>
+              Traducir
+            </n-button>
+            <n-button size="small" secondary @click="emit('clean', selected)">
+              <template #icon><n-icon><SparklesOutline /></n-icon></template>
+              Limpiar
+            </n-button>
+            <n-button
+              v-if="selected.length > 1"
+              size="small"
+              type="error"
+              secondary
+              @click="emit('bulk-delete', $event)"
+            >
+              <template #icon><n-icon><TrashOutline /></n-icon></template>
+              Excluir {{ selected.length }}
+            </n-button>
+            <n-button size="small" secondary @click="clearSelection">Ninguno</n-button>
+          </template>
+          <template v-else>
+            <n-button size="small" secondary @click="selectAll">Todos</n-button>
+            <n-button size="small" secondary @click="clearSelection">Ninguno</n-button>
+          </template>
+        </template>
         <span v-if="totalMissingChapters > 0" class="chapter-list-gap-badge">
           <n-icon :size="14"><WarningOutline /></n-icon>
           {{ totalMissingChapters === 1 ? 'Falta 1 capítulo' : `Faltan ${totalMissingChapters} capítulos` }}
@@ -11,19 +37,9 @@
         <span v-if="showSourceGaps" class="small muted" :title="missingSourceRangesTitle">
           {{ missingSourceRanges }}
         </span>
-        <span v-if="selected.length > 0" class="small muted">{{ selected.length }} seleccionados</span>
       </div>
       <div v-if="isOwner" class="chapter-list-actions">
-        <n-button
-          v-if="selected.length > 1"
-          size="small"
-          type="error"
-          secondary
-          @click="emit('bulk-delete', $event)"
-        >
-          <template #icon><n-icon><TrashOutline /></n-icon></template>
-          Excluir {{ selected.length }}
-        </n-button>
+        <slot name="actions" />
         <n-button size="small" secondary @click="emit('import')">
           <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
           Importar
@@ -95,20 +111,21 @@
           <a
             :href="`/novels/${item.chapter.novelId}/chapters/${item.chapter.id}`"
             class="chapter-list-link"
-            :aria-label="`Ver capítulo ${chapterPosition(item.chapter)}: ${item.chapter.translatedTitle || item.chapter.title}`"
+            :aria-label="`Ver capítulo ${chapterPosition(item.chapter)}: ${displayChapterTitle(item.chapter.translatedTitle || item.chapter.title)} (${chapterStatusLabel(resolvedStatus(item.chapter))})`"
             @click.prevent="emit('open', item.chapter)"
           >
-            <span class="chapter-list-order mono small muted">#{{ String(chapterPosition(item.chapter)).padStart(2, "0") }}</span>
+            <span class="chapter-list-order mono">#{{ String(chapterPosition(item.chapter)).padStart(2, "0") }}</span>
             <span
               v-if="chapterPosition(item.chapter) !== item.chapter.chapterOrder"
-              class="chapter-list-source mono small muted"
+              class="chapter-list-source mono"
               :title="`Número de capítulo fuente: ${item.chapter.chapterOrder}`"
               >Nº {{ item.chapter.chapterOrder }}</span
             >
-            <span class="chapter-list-title line-clamp-2">{{ item.chapter.translatedTitle || item.chapter.title }}</span>
+            <span class="chapter-list-title line-clamp-2">{{ displayChapterTitle(item.chapter.translatedTitle || item.chapter.title) }}</span>
           </a>
 
           <n-tag
+            v-if="resolvedStatus(item.chapter) !== 'pending'"
             :type="chapterTagType(resolvedStatus(item.chapter))"
             size="small"
             round
@@ -118,19 +135,24 @@
           </n-tag>
 
           <div v-if="isOwner" class="chapter-list-item-actions">
-            <n-popconfirm @positive-click="emit('delete', { event: $event, chapter: item.chapter })">
+            <n-popconfirm
+              @update:show="(show: boolean) => setConfirmOpen(item.chapter.id, show)"
+              @positive-click="emit('delete', { event: $event, chapter: item.chapter })"
+            >
               <template #trigger>
                 <n-button
                   quaternary
                   circle
                   size="tiny"
-                  class="chapter-list-action-btn chapter-list-action-btn--delete touch-target"
-                  aria-label="Excluir"
+                  class="chapter-list-action-btn chapter-list-action-btn--delete"
+                  :class="{ 'is-confirm-open': confirmOpenId === item.chapter.id }"
+                  :aria-label="`Excluir capítulo ${chapterPosition(item.chapter)}`"
+                  :title="`Excluir capítulo ${chapterPosition(item.chapter)}`"
                 >
                   <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
                 </n-button>
               </template>
-              ¿Excluir el capítulo "{{ item.chapter.translatedTitle || item.chapter.title }}"? Se conservará y podrás restaurarlo.
+              ¿Excluir el capítulo "{{ displayChapterTitle(item.chapter.translatedTitle || item.chapter.title) }}"? Se conservará y podrás restaurarlo.
             </n-popconfirm>
           </div>
         </article>
@@ -162,9 +184,13 @@ import {
   AddOutline,
   WarningOutline,
   DocumentTextOutline,
+  LanguageOutline,
+  SparklesOutline,
 } from "@vicons/ionicons5";
+import { ref } from "vue";
 import type { ChapterSummary } from "@/api/types";
 import { chapterPosition } from "@/domain";
+import { displayChapterTitle } from "@/utils/chapter-title";
 import { chapterStatusLabel, chapterTagType, resolvedChapterStatus as resolvedStatus } from "@/composables/useChapterStatus";
 
 const props = defineProps<{
@@ -186,9 +212,17 @@ const emit = defineEmits<{
   (e: "create"): void;
   (e: "import"): void;
   (e: "open", chapter: ChapterSummary): void;
+  (e: "translate", chapters: ChapterSummary[]): void;
+  (e: "clean", chapters: ChapterSummary[]): void;
 }>();
 
 const selectedIds = computed(() => new Set(props.selected.map((item) => item.id)));
+
+const confirmOpenId = ref<string | null>(null);
+
+function setConfirmOpen(chapterId: string, open: boolean) {
+  confirmOpenId.value = open ? chapterId : confirmOpenId.value === chapterId ? null : confirmOpenId.value;
+}
 
 const totalMissingChapters = computed(() => {
   if (!props.gaps || props.gaps.length === 0) return 0;
@@ -291,17 +325,37 @@ function clearSelection() {
 }
 
 .chapter-list-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem 0.75rem;
   flex-wrap: wrap;
+  padding: 0.5rem 0.25rem;
+  margin: 0 -0.25rem;
+  background: color-mix(in oklab, var(--page-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .chapter-list-selection {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.chapter-list-selected-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .chapter-list-actions {
@@ -368,12 +422,19 @@ function clearSelection() {
 }
 
 .chapter-list-item:hover,
-.chapter-list-item--selected {
+.chapter-list-item--selected,
+.chapter-list-item:focus-within {
   background: var(--mock-row);
 }
 
 .chapter-list-item--skeleton {
   grid-template-columns: auto auto 1fr auto;
+}
+
+.chapter-list-checkbox {
+  padding: 0.75rem;
+  margin: -0.75rem;
+  border-radius: var(--radius-sm);
 }
 
 .chapter-list-link {
@@ -394,15 +455,17 @@ function clearSelection() {
   flex-shrink: 0;
   min-width: 4.5ch;
   font-size: 0.8125rem;
+  color: var(--text-secondary);
 }
 
 .chapter-list-source {
   flex-shrink: 0;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   padding: 0.0625rem 0.375rem;
   border: 1px solid var(--divide);
   border-radius: 999px;
   white-space: nowrap;
+  color: var(--text-secondary);
 }
 
 .chapter-list-title {
@@ -412,7 +475,8 @@ function clearSelection() {
 
 .chapter-list-status {
   flex-shrink: 0;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .chapter-list-item-actions {
@@ -424,10 +488,32 @@ function clearSelection() {
 
 .chapter-list-action-btn--delete {
   color: #dc2626 !important;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.chapter-list-item:hover .chapter-list-action-btn--delete,
+.chapter-list-item:focus-within .chapter-list-action-btn--delete,
+.chapter-list-action-btn--delete.is-confirm-open {
+  opacity: 1;
 }
 
 .chapter-list-action-btn--delete:hover {
   background: color-mix(in oklab, #dc2626 10%, transparent) !important;
+}
+
+@media (hover: none) {
+  .chapter-list-action-btn--delete {
+    opacity: 1;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chapter-list-action-btn--delete {
+    transition: none;
+  }
 }
 
 .chapter-list-footer {

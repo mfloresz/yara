@@ -74,7 +74,7 @@
             <span v-if="getNovelDisplayAuthor(novel)" class="muted clickable-author" @click="goToAuthor(getNovelDisplayAuthor(novel) || '')">{{ getNovelDisplayAuthor(novel) }}</span>
             <span v-if="getNovelDisplaySeries(novel) || getNovelDisplayNumber(novel)" class="novel-series muted small">
               <n-icon :size="14"><BookmarkOutline /></n-icon>
-              <span v-if="getNovelDisplaySeries(novel)">{{ getNovelDisplaySeries(novel) }}</span>
+              <span v-if="getNovelDisplaySeries(novel)" class="clickable-series" @click="goToSeries(getNovelDisplaySeries(novel) || '')">{{ getNovelDisplaySeries(novel) }}</span>
               <span v-if="getNovelDisplaySeries(novel) && getNovelDisplayNumber(novel)">·</span>
               <span v-if="getNovelDisplayNumber(novel)">#{{ getNovelDisplayNumber(novel) }}</span>
             </span>
@@ -102,18 +102,6 @@
         </n-tabs>
 
         <div v-show="activeTab === 'chapters'" class="stack-md tab-panel" aria-labelledby="tab-chapters">
-          <div v-if="isOwner" class="row-wrap" style="justify-content: flex-end">
-            <n-button
-              size="small"
-              secondary
-              :disabled="chapterSummaryTotal === 0"
-              :loading="chapterSummariesLoading"
-              @click="openReorder"
-            >
-              <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
-              Reordenar
-            </n-button>
-          </div>
           <ChaptersTab
             :active="true"
             :chapters="chapterSummaries"
@@ -129,8 +117,23 @@
             @create="openCreateChapter"
             @import="bulkImportOpen = true"
             @open="openChapterPreview"
+            @translate="onTranslateSelected"
+            @clean="onCleanSelected"
             @update:page="chapterPage = $event"
-          />
+          >
+            <template v-if="isOwner" #actions>
+              <n-button
+                size="small"
+                secondary
+                :disabled="chapterSummaryTotal === 0"
+                :loading="chapterSummariesLoading"
+                @click="openReorder"
+              >
+                <template #icon><n-icon><SwapVerticalOutline /></n-icon></template>
+                Reordenar
+              </n-button>
+            </template>
+          </ChaptersTab>
           <div v-if="excludedChapters.length > 0" class="stack-sm">
             <h3 class="small muted" style="margin: 0">Capítulos excluidos ({{ excludedChapters.length }})</h3>
             <n-card size="small">
@@ -170,6 +173,7 @@
           :novel-id="novelId"
           :clean-all-summaries="cleanAllSummaries"
           :clean-all-summaries-loading="cleanAllSummariesLoading"
+          :selection-seed="cleanSelectionSeed"
         />
 
         <ExportTab
@@ -329,6 +333,7 @@ import {
   type CreateNovelInput,
   type Novel,
 } from "@/domain";
+import { resolvedChapterStatus } from "@/composables/useChapterStatus";
 
 const router = useRouter();
 const route = useRoute();
@@ -347,6 +352,7 @@ const chapterPageSize = 50;
 const failedJobsLoaded = ref(false);
 const failedJobsDirty = ref(false);
 const selectedChapters = ref<ChapterSummary[]>([]);
+const cleanSelectionSeed = ref<{ ids: string[]; nonce: number } | null>(null);
 
 const {
   chapterSummaries,
@@ -557,12 +563,19 @@ async function onRead() {
 }
 
 function goToTag(tag: string) {
-  void router.push({ path: "/", query: { tag } });
+  // La biblioteca de novelas vive en /novels (/ ahora es Inicio) y es quien
+  // lee tag/author/series/q de la URL para filtrar.
+  void router.push({ path: "/novels", query: { tag } });
 }
 
 function goToAuthor(author: string) {
   if (!author) return;
-  void router.push({ path: "/", query: { author } });
+  void router.push({ path: "/novels", query: { author } });
+}
+
+function goToSeries(series: string) {
+  if (!series) return;
+  void router.push({ path: "/novels", query: { series } });
 }
 
 async function copyCurrentNovel() {
@@ -839,6 +852,41 @@ async function handleToggleOfflineCache() {
   }
 }
 
+async function onTranslateSelected(chapters: ChapterSummary[]) {
+  if (!novel.value) return;
+  const eligible = chapters.filter((chapter) => {
+    const status = resolvedChapterStatus(chapter);
+    return chapter.hasOriginalContent && (status === "pending" || status === "failed");
+  });
+  if (eligible.length === 0) {
+    message.info("Ninguno de los capítulos seleccionados es elegible para traducir.", { duration: 3500 });
+    return;
+  }
+  const ids = eligible.map((chapter) => chapter.id);
+  try {
+    await createJob(ids, {
+      operation: "translate",
+      provider: novel.value.aiOptions.provider || undefined,
+      model: novel.value.aiOptions.model || undefined,
+    });
+    patchTranslateStatus(ids);
+    markFailedJobsDirty();
+    selectedChapters.value = [];
+    const skipped = chapters.length - ids.length;
+    message.success(
+      `Traducción encolada para ${ids.length} ${ids.length === 1 ? "capítulo" : "capítulos"}${skipped > 0 ? ` (${skipped} ya traducidos, omitidos)` : ""}.`,
+      { duration: 3500 },
+    );
+  } catch (err) {
+    message.error(`Error al iniciar la traducción: ${err instanceof Error ? err.message : String(err)}`, { duration: 4000 });
+  }
+}
+
+function onCleanSelected(chapters: ChapterSummary[]) {
+  cleanSelectionSeed.value = { ids: chapters.map((chapter) => chapter.id), nonce: Date.now() };
+  activeTab.value = "clean";
+}
+
 async function createTranslateJob(targetIds: string[]) {
   if (!novel.value) return;
   await createJob(targetIds, {
@@ -922,6 +970,17 @@ void refreshNovelAndChapterMeta();
   flex-wrap: wrap;
   gap: 0.375rem;
   margin-top: 0.375rem;
+}
+
+.clickable-series {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--divide);
+}
+
+.clickable-series:hover {
+  text-decoration-color: var(--accent-link);
 }
 
 .clickable-tag {

@@ -12,45 +12,56 @@
 
       <!-- La búsqueda vive en el sidebar y abre el palette;
            es un botón, no un input. El medio lo da la sección activa. -->
-      <button
-        type="button"
-        class="shell-search"
-        :aria-label="`Buscar ${searchMediaLabel}`"
-        aria-keyshortcuts="Control+K Meta+K"
-        @click="searchOpen = true"
-      >
-        <n-icon :size="17"><SearchOutline /></n-icon>
-        <span v-if="!rail" class="shell-search-label">Buscar</span>
-        <span v-if="!rail" class="shell-search-kbd" aria-hidden="true">Ctrl K</span>
-      </button>
+      <n-tooltip :disabled="!rail" placement="right">
+        <template #trigger>
+          <button
+            type="button"
+            class="shell-search"
+            :aria-label="`Buscar ${searchMediaLabel}`"
+            aria-keyshortcuts="Control+K Meta+K"
+            @click="searchOpen = true"
+          >
+            <n-icon :size="17"><SearchOutline /></n-icon>
+            <span v-if="!rail" class="shell-search-label">Buscar</span>
+            <span v-if="!rail" class="shell-search-kbd" aria-hidden="true">Ctrl K</span>
+          </button>
+        </template>
+        Buscar
+      </n-tooltip>
 
       <nav class="shell-nav">
-        <RouterLink
-          v-for="section in topSections"
-          :key="section.to"
-          :to="section.to"
-          class="shell-nav-item"
-          :class="{ 'is-active': isActive(section) }"
-          :title="section.label"
-        >
-          <n-icon :size="21"><component :is="section.icon" /></n-icon>
-          <span v-if="!rail" class="shell-nav-label">{{ section.label }}</span>
-        </RouterLink>
+        <n-tooltip v-for="section in topSections" :key="section.to" :disabled="!rail" placement="right">
+          <template #trigger>
+            <RouterLink
+              :to="section.to"
+              class="shell-nav-item"
+              :class="{ 'is-active': isActive(section) }"
+              :aria-label="section.label"
+            >
+              <n-icon :size="21"><component :is="section.icon" /></n-icon>
+              <span v-if="!rail" class="shell-nav-label">{{ section.label }}</span>
+            </RouterLink>
+          </template>
+          {{ section.label }}
+        </n-tooltip>
 
         <span class="shell-nav-divider" aria-hidden="true" />
 
-        <RouterLink
-          v-for="section in bottomSections"
-          :key="section.to"
-          :to="section.to"
-          class="shell-nav-item"
-          :class="{ 'is-active': isActive(section) }"
-          :title="section.label"
-        >
-          <n-icon :size="21"><component :is="section.icon" /></n-icon>
-          <span v-if="!rail" class="shell-nav-label">{{ section.label }}</span>
-          <span v-if="section.to === '/operations' && hasActive" class="shell-nav-dot" />
-        </RouterLink>
+        <n-tooltip v-for="section in bottomSections" :key="section.to" :disabled="!rail" placement="right">
+          <template #trigger>
+            <RouterLink
+              :to="section.to"
+              class="shell-nav-item"
+              :class="{ 'is-active': isActive(section) }"
+              :aria-label="section.label"
+            >
+              <n-icon :size="21"><component :is="section.icon" /></n-icon>
+              <span v-if="!rail" class="shell-nav-label">{{ section.label }}</span>
+              <span v-if="section.to === '/operations' && hasActive" class="shell-nav-dot" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          {{ section.label }}
+        </n-tooltip>
       </nav>
 
       <div class="shell-sidebar-foot">
@@ -62,14 +73,19 @@
           :options="userMenuOptions"
           @select="handleUserMenuSelect"
         >
-          <button
-            type="button"
-            class="shell-user"
-            :aria-label="`Cuenta: ${userEmail}`"
-          >
-            <n-icon :size="20"><PersonCircleOutline /></n-icon>
-            <span v-if="!rail" class="shell-user-mail no-wrap">{{ userEmail }}</span>
-          </button>
+          <n-tooltip :disabled="!rail" placement="right">
+            <template #trigger>
+              <button
+                type="button"
+                class="shell-user"
+                :aria-label="`Cuenta: ${userEmail}`"
+              >
+                <n-icon :size="20"><PersonCircleOutline /></n-icon>
+                <span v-if="!rail" class="shell-user-mail no-wrap">{{ userEmail }}</span>
+              </button>
+            </template>
+            Cuenta
+          </n-tooltip>
         </n-dropdown>
         <button
           class="shell-rail-toggle touch-target"
@@ -147,7 +163,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from "vue";
 import { RouterLink, useRoute } from "vue-router";
-import { NDropdown, NIcon, NScrollbar } from "naive-ui";
+import { NDropdown, NIcon, NScrollbar, NTooltip } from "naive-ui";
 import {
   HomeOutline,
   ImagesOutline,

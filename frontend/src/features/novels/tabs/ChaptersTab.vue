@@ -16,8 +16,14 @@
       @create="emit('create')"
       @import="emit('import')"
       @open="(chapter) => emit('open', chapter)"
+      @translate="(chapters) => emit('translate', chapters)"
+      @clean="(chapters) => emit('clean', chapters)"
       @update:page="(p) => emit('update:page', p)"
-    />
+    >
+      <template #actions>
+        <slot name="actions" />
+      </template>
+    </ChapterList>
   </section>
 </template>
 
@@ -46,5 +52,7 @@ const emit = defineEmits<{
   (e: "create"): void;
   (e: "import"): void;
   (e: "open", chapter: ChapterSummary): void;
+  (e: "translate", chapters: ChapterSummary[]): void;
+  (e: "clean", chapters: ChapterSummary[]): void;
 }>();
 </script>
