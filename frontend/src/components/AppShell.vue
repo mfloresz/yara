@@ -194,12 +194,25 @@ onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
 
 const RAIL_KEY = "yara-shell-rail";
+
+function readRailPreference(): boolean {
+  try {
+    return localStorage.getItem(RAIL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 // localStorage, no sessionStorage: la preferencia sobrevive cerrar la ventana.
-const rail = ref(localStorage.getItem(RAIL_KEY) === "1");
+const rail = ref(readRailPreference());
 
 function toggleRail() {
   rail.value = !rail.value;
-  localStorage.setItem(RAIL_KEY, rail.value ? "1" : "0");
+  try {
+    localStorage.setItem(RAIL_KEY, rail.value ? "1" : "0");
+  } catch {
+    // Almacenamiento bloqueado: la preferencia vale solo para esta sesión.
+  }
 }
 
 interface ShellSection {

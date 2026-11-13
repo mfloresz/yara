@@ -708,6 +708,7 @@ function applyTypography() {
 
 .reader-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--background);
   --reader-ink: var(--foreground);
   --reader-paper: var(--background);

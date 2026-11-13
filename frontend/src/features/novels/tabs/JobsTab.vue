@@ -39,13 +39,13 @@
           </div>
         </n-alert>
         <div v-if="failedChapters(job).length > 0" class="job-failed-chapters">
-          <div class="row-between" @click="toggleJobFailedChapters(job.id)" style="cursor: pointer; user-select: none">
+          <button type="button" class="row-between row-between-button" :aria-expanded="expandedJobId === job.id" @click="toggleJobFailedChapters(job.id)">
             <div class="row-wrap">
               <n-icon :size="14"><ChevronDownOutline v-if="expandedJobId === job.id" /><ChevronForwardOutline v-else /></n-icon>
               <strong>Capítulos fallidos ({{ failedChapters(job).length }})</strong>
             </div>
             <span class="small muted">{{ expandedJobId === job.id ? 'Ocultar' : 'Ver' }} detalles</span>
-          </div>
+          </button>
           <div v-if="expandedJobId === job.id" class="stack-sm" style="margin-top: 0.5rem">
             <div v-for="chapter in failedChapters(job)" :key="chapter.id" class="job-failed-chapter-item">
               <div class="row-between" style="align-items: flex-start; gap: 0.75rem">

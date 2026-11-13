@@ -75,17 +75,11 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
+        // Datos de la API (autenticados) NO se cachean en el service worker:
+        // el offline de lectura lo hace de forma explícita useOfflineCache
+        // (IndexedDB, por novela). Cachear /api aquí duplicaba esa capa y
+        // persistía respuestas autenticadas en disco.
         runtimeCaching: [
-          {
-            urlPattern: /\/api\/.*/,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-cache",
-              cacheableResponse: {
-                statuses: [0, 200],
-              },
-            },
-          },
           {
             urlPattern: /\.(js|css|png|jpg|jpeg|svg|woff2|woff|ttf|ico)$/,
             handler: "StaleWhileRevalidate",

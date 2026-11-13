@@ -270,23 +270,33 @@ const (
 // goroutine-safe and module state must not leak between jobs, so every entry
 // point builds a fresh one.
 type invocation struct {
-	script  *Script
-	ctx     context.Context
-	vm      *goja.Runtime
-	exports *goja.Object
-	ctxObj  *goja.Object
-	nodes   map[*goja.Object]*node
-	fetches int
-	timeout time.Duration
-	timer   *time.Timer
-	stopCtx func() bool
+	script         *Script
+	ctx            context.Context
+	vm             *goja.Runtime
+	exports        *goja.Object
+	ctxObj         *goja.Object
+	nodes          map[*goja.Object]*node
+	fetches        int
+	timeout        time.Duration
+	timer          *time.Timer
+	stopCtx        func() bool
+	cancelDeadline context.CancelFunc
 }
 
+// begin starts one isolated invocation. inv.ctx carries the caller's
+// lifecycle AND a hard deadline at timeout: the deadline matters to native
+// calls (fetch/postForm/sleep), which the VM's interrupt cannot reach while
+// they run — without it a browser-worker fetch parked in a channel wait would
+// outlive the invocation's own timeout and keep dispatching page after page
+// after the job was already marked failed. The timer still fires
+// markerTimeout for JS-bound work; context.AfterFunc watches the *parent*
+// ctx only, so a parent cancel and a deadline do not race on the marker.
 func (s *Script) begin(ctx context.Context, timeout time.Duration) *invocation {
 	if timeout <= 0 {
 		timeout = s.engine.opts.Timeout
 	}
-	inv := &invocation{script: s, ctx: ctx, timeout: timeout, vm: s.engine.newVM(), nodes: map[*goja.Object]*node{}}
+	deadline, cancelDeadline := context.WithTimeout(ctx, timeout)
+	inv := &invocation{script: s, ctx: deadline, timeout: timeout, vm: s.engine.newVM(), nodes: map[*goja.Object]*node{}, cancelDeadline: cancelDeadline}
 	inv.timer = time.AfterFunc(timeout, func() { inv.vm.Interrupt(markerTimeout) })
 	inv.stopCtx = context.AfterFunc(ctx, func() { inv.vm.Interrupt(markerCanceled) })
 	return inv
@@ -298,6 +308,24 @@ func (s *Script) begin(ctx context.Context, timeout time.Duration) *invocation {
 func (inv *invocation) finish() {
 	inv.timer.Stop()
 	inv.stopCtx()
+	if inv.cancelDeadline != nil {
+		inv.cancelDeadline()
+	}
+}
+
+// interruptForContext aborts the invocation with the marker matching why
+// inv.ctx ended, so the abort carries the same taxonomy as the in-band
+// timeout: deadline → markerTimeout (parser_timeout), cancellation →
+// markerCanceled (the caller's context error). Either way the interrupt
+// escapes try/catch exactly like the wall-clock timeout and the fetch
+// budget, which is what stops a script that swallows fetch errors from
+// paging on after the job was canceled.
+func (inv *invocation) interruptForContext() {
+	if errors.Is(inv.ctx.Err(), context.DeadlineExceeded) {
+		inv.vm.Interrupt(markerTimeout)
+		return
+	}
+	inv.vm.Interrupt(markerCanceled)
 }
 
 // parserMaxCallStack bounds JavaScript recursion per VM. goja's default cap

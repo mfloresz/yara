@@ -16,7 +16,6 @@
     "@tiptap/vue-3": "^3.32.0",
     "@vicons/ionicons5": "^0.13.0",
     "dompurify": "^3.4.17",
-    "jszip": "^3.10.2",
     "marked": "^18.1.1",
     "markstream-vue": "^2.0.19",
     "naive-ui": "^2.45.3",
@@ -25,7 +24,6 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
-    "@types/dompurify": "^3.2.0",
     "@types/node": "^24.19.2",
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-vue": "^6.0.10",

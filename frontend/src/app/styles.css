@@ -222,6 +222,19 @@ body:has(.app-shell) {
     flex-wrap: wrap;
 }
 
+/* Botón con layout row-between: reset de estilos nativos del <button> */
+.row-between-button {
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+}
+
 .row-gap {
     display: flex;
     align-items: center;

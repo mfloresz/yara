@@ -85,7 +85,7 @@ import { computed, ref } from "vue";
 import { NModal, NCard, NButton, NCheckbox, NAlert, NInputNumber, NSwitch, NIcon } from "naive-ui";
 import type { ChapterUpsertInput } from "@/domain";
 import type { EpubPreviewResult } from "@/api/types";
-import { readTxtChapters } from "@/utils/epub-importer";
+import { readTxtChapters } from "@/utils/txt-importer";
 
 const props = defineProps<{
   open: boolean;

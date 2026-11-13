@@ -19,3 +19,7 @@ debug-proxy
 .zcode/
 .parsers-signing.key
 text_test/
+
+# PWA dev artifacts
+frontend/dev-dist/
+docs/images/*

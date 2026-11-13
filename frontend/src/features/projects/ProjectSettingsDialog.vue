@@ -48,17 +48,22 @@
           <div class="pane-pad stack-sm">
             <div class="identity-row">
               <div v-if="coverEditable" class="cover-editor compact">
-                <div class="cover-preview-tiny" @click="triggerFileInput">
+                <button
+                  type="button"
+                  class="cover-preview-tiny"
+                  :aria-label="displayCoverUrl ? 'Cambiar portada' : 'Subir portada'"
+                  @click="triggerFileInput"
+                >
                   <img
                     :src="displayCoverUrl || DEFAULT_COVER_URL"
-                    alt="Portada"
+                    alt=""
                     loading="lazy"
                     @error="onCoverImgError"
                   />
-                  <div class="cover-overlay">
+                  <span class="cover-overlay">
                     {{ displayCoverUrl ? 'Cambiar' : 'Subir' }}
-                  </div>
-                </div>
+                  </span>
+                </button>
                 <n-button
                   v-if="displayCoverUrl"
                   size="tiny"
@@ -1780,6 +1785,9 @@ async function save() {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  padding: 0;
+  font: inherit;
+  color: inherit;
 }
 
 .cover-preview-tiny img {

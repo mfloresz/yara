@@ -16,14 +16,14 @@
             Hay <strong>{{ preview.newChapters }}</strong> capítulos nuevos disponibles (del {{ preview.firstNewChapter }} al {{ preview.lastNewChapter }}).
           </n-alert>
 
-          <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-            <n-radio :checked="mode === 'all'" />
-            <label>Descargar los {{ preview.newChapters }} capítulos nuevos</label>
-          </div>
-          <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-            <n-radio :checked="mode === 'range'" />
-            <label>Descargar un rango específico</label>
-          </div>
+          <label class="radio-option" :class="{ active: mode === 'all' }">
+            <input v-model="mode" type="radio" name="update-url-mode" value="all" />
+            <span class="radio-option-label">Descargar los {{ preview.newChapters }} capítulos nuevos</span>
+          </label>
+          <label class="radio-option" :class="{ active: mode === 'range' }">
+            <input v-model="mode" type="radio" name="update-url-mode" value="range" />
+            <span class="radio-option-label">Descargar un rango específico</span>
+          </label>
         </div>
 
         <div v-if="mode === 'range'" class="range-fields">
@@ -69,7 +69,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useMessage, NModal, NAlert, NButton, NRadio, NSpin, NIcon } from "naive-ui";
+import { useMessage, NModal, NAlert, NButton, NSpin, NIcon } from "naive-ui";
 import { RefreshOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { useAppServices } from "@/app/services";
@@ -195,7 +195,15 @@ async function handleUpdate() {
 .radio-option.active {
   border-color: var(--accent-link);
 }
-.radio-option label {
+.radio-option input[type="radio"] {
+  accent-color: var(--accent-link);
+  margin: 0;
+  flex: 0 0 auto;
+}
+.radio-option:focus-within {
+  border-color: var(--accent-link);
+}
+.radio-option-label {
   cursor: pointer;
   font-size: 0.875rem;
 }

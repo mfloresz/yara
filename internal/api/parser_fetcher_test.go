@@ -48,8 +48,8 @@ func fakeWorker(t *testing.T, userID string) {
 // recordingEnqueuer stubs the browser worker queue, recording every requested
 // operation and answering fetches with the given page bodies (matched by
 // substring of the URL). results[i] maps to operations[i].
-func recordingEnqueuer(ops *[]string, pages map[string]string, failOps map[string]bool) func(string, string, map[string]interface{}, string) (*BrowserWorkerJobResult, error) {
-	return func(operation, url string, _ map[string]interface{}, _ string) (*BrowserWorkerJobResult, error) {
+func recordingEnqueuer(ops *[]string, pages map[string]string, failOps map[string]bool) func(context.Context, string, string, map[string]interface{}, string) (*BrowserWorkerJobResult, error) {
+	return func(_ context.Context, operation, url string, _ map[string]interface{}, _ string) (*BrowserWorkerJobResult, error) {
 		*ops = append(*ops, operation)
 		if failOps[operation] {
 			return nil, fmt.Errorf("stub %s failure", operation)

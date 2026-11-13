@@ -704,3 +704,89 @@ module.exports = {
 		t.Errorf("unexpected message: %q", scriptErr.Message)
 	}
 }
+
+// ctxBlockingFetcher parks each Fetch on ctx.Done() and reports why — the
+// shape of a browser-worker wait that observes the invocation's cancellation
+// instead of answering from the site.
+type ctxBlockingFetcher struct{ calls int }
+
+func (f *ctxBlockingFetcher) Fetch(ctx context.Context, rawURL string) (*FetchResult, error) {
+	f.calls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (f *ctxBlockingFetcher) PostForm(ctx context.Context, rawURL string, _ map[string]string) (*FetchResult, error) {
+	return f.Fetch(ctx, rawURL)
+}
+
+
+// A script that swallows fetch errors must not page on after the
+// invocation's context was canceled: the host aborts uncatchably, so the TOC
+// returns the context error instead of a plausible, silently-truncated
+// chapter list — the runaway that kept hammering a Cloudflare-protected site
+// after the update had already been marked failed.
+func TestContextCancellationAbortsSwallowingTOC(t *testing.T) {
+	fetcher := &ctxBlockingFetcher{}
+	src := `module.exports = {
+  name: "greedy-cancel", apiVersion: 1,
+  probe: () => true,
+  toc: (ctx, url) => {
+    for (var i = 0; i < 1000; i++) {
+      try { ctx.get(url + i); } catch (e) {}
+    }
+    return { novel: { title: "t" }, chapters: [] };
+  },
+  chapter: (ctx, url) => ({ title: "t", contentHtml: "<p>x</p>" })
+};`
+	path := filepath.Join(t.TempDir(), "parser.js")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script, err := NewEngine(fetcher, Options{Timeout: 30 * time.Second}).LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	_, err = script.TOC(ctx, "https://x.example/")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %T: %v", err, err)
+	}
+	if fetcher.calls != 1 {
+		t.Fatalf("expected the walk to stop at the first page, got %d fetches", fetcher.calls)
+	}
+}
+
+// The invocation's wall-clock timeout must also bound native (Go-side)
+// waits: a fetch parked on a browser-worker round trip cannot outlive the
+// invocation's deadline, so a deadline produces parser_timeout, not a hang.
+func TestDeadlineBoundsNativeFetch(t *testing.T) {
+	fetcher := &ctxBlockingFetcher{}
+	src := `module.exports = {
+  name: "greedy-deadline", apiVersion: 1,
+  probe: () => true,
+  toc: (ctx, url) => {
+    try { ctx.get(url); } catch (e) {
+      return { novel: { title: "t" }, chapters: [] };
+    }
+    return { novel: { title: "t" }, chapters: [] };
+  },
+  chapter: (ctx, url) => ({ title: "t", contentHtml: "<p>x</p>" })
+};`
+	path := filepath.Join(t.TempDir(), "parser.js")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script, err := NewEngine(fetcher, Options{Timeout: 150 * time.Millisecond}).LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err = script.TOC(context.Background(), "https://x.example/")
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("invocation took %s; the deadline must bound native fetches", elapsed)
+	}
+	assertCode(t, err, CodeParserTimeout)
+}

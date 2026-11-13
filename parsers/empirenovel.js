@@ -80,6 +80,10 @@ function fetchAllChapterRefs(ctx, firstDoc, novelURL) {
     try {
       doc = ctx.get(pageURL);
     } catch (e) {
+      // A page that fails transiently is skipped so one flaky fetch does not
+      // kill a 47-page catalog walk — but it must be visible in the server
+      // log, otherwise its chapters vanish from the TOC silently.
+      ctx.log("chapter-list page " + page + "/" + totalPages + " failed, its chapters are missing from this TOC: " + (e && e.message ? e.message : e));
       continue;
     }
     collect(ctx, doc, novelURL, seen, all);

@@ -152,6 +152,14 @@ func (inv *invocation) get(call goja.FunctionCall) goja.Value {
 	}
 	result, err := inv.script.engine.fetcher.Fetch(inv.ctx, rawURL)
 	if err != nil {
+		if inv.ctx.Err() != nil {
+			// A fetch that failed because the invocation's own context ended
+			// (client gone, job canceled, deadline) is not a site error a
+			// script may retry or swallow: abort uncatchably so a greedy
+			// try/catch loop stops here instead of paging on.
+			inv.interruptForContext()
+			return goja.Undefined()
+		}
 		return inv.throw(fmt.Errorf("fetching %s: %w", rawURL, err))
 	}
 	return inv.storeResult(rawURL, result)
@@ -178,6 +186,10 @@ func (inv *invocation) postForm(call goja.FunctionCall) goja.Value {
 	}
 	result, err := inv.script.engine.fetcher.PostForm(inv.ctx, rawURL, form)
 	if err != nil {
+		if inv.ctx.Err() != nil {
+			inv.interruptForContext()
+			return goja.Undefined()
+		}
 		return inv.throw(fmt.Errorf("posting to %s: %w", rawURL, err))
 	}
 	return inv.storeResult(rawURL, result)
@@ -279,7 +291,8 @@ func (inv *invocation) sleep(call goja.FunctionCall) goja.Value {
 	}
 	select {
 	case <-inv.ctx.Done():
-		return inv.throw(inv.ctx.Err())
+		inv.interruptForContext()
+		return goja.Undefined()
 	case <-time.After(time.Duration(ms) * time.Millisecond):
 		return goja.Undefined()
 	}

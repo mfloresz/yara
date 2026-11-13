@@ -34,10 +34,15 @@ export const authState = {
 };
 
 export function getStoredTheme(): "light" | "dark" | "system" {
-  return (
-    (localStorage.getItem(STORAGE_KEYS.theme) as "light" | "dark" | "system" | null) ||
-    "system"
-  );
+  try {
+    return (
+      (localStorage.getItem(STORAGE_KEYS.theme) as "light" | "dark" | "system" | null) ||
+      "system"
+    );
+  } catch {
+    // Almacenamiento bloqueado (p. ej. Safari con cookies deshabilitadas).
+    return "system";
+  }
 }
 
 export function applyTheme(theme: "light" | "dark" | "system") {
@@ -49,7 +54,11 @@ export function applyTheme(theme: "light" | "dark" | "system") {
   root.classList.toggle("dark", effective === "dark");
   root.style.colorScheme = effective;
   _currentTheme.value = effective;
-  localStorage.setItem(STORAGE_KEYS.theme, theme);
+  try {
+    localStorage.setItem(STORAGE_KEYS.theme, theme);
+  } catch {
+    // Almacenamiento bloqueado: el tema aplica igualmente en memoria.
+  }
 
   if (!systemThemeListenerAttached) {
     media.addEventListener("change", () => {
@@ -62,7 +71,11 @@ export function applyTheme(theme: "light" | "dark" | "system") {
 
 export function setAuth(result: AuthResponse) {
   user.value = result.user;
-  localStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(result.user));
+  try {
+    localStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(result.user));
+  } catch {
+    // Almacenamiento bloqueado: la sesión vive solo en memoria.
+  }
   applyTheme(result.user.theme || "system");
 }
 
@@ -83,6 +96,10 @@ export function setAuthReady() {
 
 export function clearAuth() {
   user.value = null;
-  localStorage.removeItem(STORAGE_KEYS.authUser);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.authUser);
+  } catch {
+    // Almacenamiento bloqueado: nada que limpiar.
+  }
   applyTheme(getStoredTheme());
 }

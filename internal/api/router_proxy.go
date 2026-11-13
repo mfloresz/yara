@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,11 +13,11 @@ import (
 // fetchViaBrowserWorker sends a fetch_page job through the browser job queue.
 // All requests are serialized (FIFO) through a single goroutine, which
 // guarantees sequential page loads — critical for Cloudflare session handling.
-func (s *Server) fetchViaBrowserWorker(url string, timeoutSec int, userID string) (*ProxyFetchResult, error) {
+func (s *Server) fetchViaBrowserWorker(ctx context.Context, url string, timeoutSec int, userID string) (*ProxyFetchResult, error) {
 	params := map[string]interface{}{
 		"timeout": timeoutSec,
 	}
-	result, err := s.EnqueueBrowserJob("fetch_page", url, params, userID)
+	result, err := s.EnqueueBrowserJob(ctx, "fetch_page", url, params, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func proxyFetch(s *Server) func(*core.RequestEvent) error {
 			return e.BadRequestError("no browser worker connected", nil)
 		}
 
-		result, err := s.fetchViaBrowserWorker(body.URL, timeout, e.Auth.Id)
+		result, err := s.fetchViaBrowserWorker(e.Request.Context(), body.URL, timeout, e.Auth.Id)
 		if err != nil {
 			if err == ErrBrowserWorkerTimeout {
 				return e.BadRequestError("timeout waiting for browser worker", nil)

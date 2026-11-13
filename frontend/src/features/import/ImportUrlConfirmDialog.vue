@@ -54,14 +54,14 @@
 
           <label class="small muted">Capítulos a descargar</label>
           <div class="stack-sm" style="margin-top: 0.375rem">
-            <div class="radio-option" :class="{ active: mode === 'all' }" @click="mode = 'all'">
-              <n-radio :checked="mode === 'all'" />
-              <label>Todos ({{ preview?.totalChapters ?? 0 }})</label>
-            </div>
-            <div class="radio-option" :class="{ active: mode === 'range' }" @click="mode = 'range'">
-              <n-radio :checked="mode === 'range'" />
-              <label>Rango específico</label>
-            </div>
+            <label class="radio-option" :class="{ active: mode === 'all' }">
+              <input v-model="mode" type="radio" name="import-url-mode" value="all" />
+              <span class="radio-option-label">Todos ({{ preview?.totalChapters ?? 0 }})</span>
+            </label>
+            <label class="radio-option" :class="{ active: mode === 'range' }">
+              <input v-model="mode" type="radio" name="import-url-mode" value="range" />
+              <span class="radio-option-label">Rango específico</span>
+            </label>
           </div>
 
           <div v-if="mode === 'range'" class="range-fields">
@@ -127,7 +127,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useMessage, NModal, NSelect, NAlert, NButton, NRadio, NIcon } from "naive-ui";
+import { useMessage, NModal, NSelect, NAlert, NButton, NIcon } from "naive-ui";
 import { ImageOutline, PersonOutline, ListOutline, LinkOutline, DownloadOutline } from "@vicons/ionicons5";
 import FieldNumber from "@/components/FieldNumber.vue";
 import { LANGUAGES } from "@/config/languages";
@@ -386,7 +386,15 @@ async function handleImport() {
 .radio-option.active {
   border-color: var(--accent-link);
 }
-.radio-option label {
+.radio-option input[type="radio"] {
+  accent-color: var(--accent-link);
+  margin: 0;
+  flex: 0 0 auto;
+}
+.radio-option:focus-within {
+  border-color: var(--accent-link);
+}
+.radio-option-label {
   cursor: pointer;
   font-size: 0.875rem;
 }

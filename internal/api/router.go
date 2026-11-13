@@ -78,8 +78,10 @@ type Server struct {
 	ComicDownloaderFactory func(userID string) *comicdownloader.Downloader
 	// BrowserJobEnqueuer overrides EnqueueBrowserJob for the parser fetcher's
 	// worker relay. Tests set it to stub the connected browser worker;
-	// production leaves it nil and jobs go through the real queue.
-	BrowserJobEnqueuer func(operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error)
+	// production leaves it nil and jobs go through the real queue. The ctx
+	// lets tests observe cancellation the same way production does; stubs
+	// that don't care may ignore it.
+	BrowserJobEnqueuer func(ctx context.Context, operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error)
 	// parserThrottle spaces parser fetches per site (URL host). It is shared
 	// rather than per-job because each script reload builds a new fetcher.
 	// Bounds are set once here from the config and never mutated afterwards

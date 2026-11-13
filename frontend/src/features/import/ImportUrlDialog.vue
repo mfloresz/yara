@@ -9,9 +9,6 @@
           :disabled="loading"
           @keydown.enter="handleSearch"
         />
-        <div class="small muted" style="margin-top: 0.35rem">
-          Sitios soportados: {{ mediaCfg.sites.join(", ") }}
-        </div>
       </div>
 
       <n-alert v-if="error" type="error">{{ error }}</n-alert>

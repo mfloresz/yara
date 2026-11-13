@@ -40,7 +40,7 @@
     {
       "name": "empirenovel",
       "file": "empirenovel.js",
-      "sha256": "bf5632c8fdf186350dcb1f1291e7804c83153d3f3c0cbf6337ad8bdc33c28d36",
+      "sha256": "4397d28d8cf371e6b0147765d5fa597cbf2ad0b6cd291f468de96f40abbd5bca",
       "requiresBrowser": true
     },
     {
@@ -218,5 +218,5 @@
       "requiresBrowser": true
     }
   ],
-  "signature": "23f6852b06d53ff9e64987051142f973e7ab0c7406465a98ed4059099146b8f89a90c70e3c116d6fa30b7056b91c1985ef4e374838395abc0c012d4960ab0605"
+  "signature": "383ad4a1f0ff2210a541c0a2fe5f3a14cf09c6d92aa47ed0b3bb432353e669c7a815238aa9837e6801d557a3b107ee16a1e588d83786fe11d748fea403719608"
 }

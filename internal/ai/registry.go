@@ -84,6 +84,8 @@ var knownProviders = []ProviderInfo{
 			"liquid/lfm-2.5-2.6b:free",
 			"liquid/lfm-2.5-24b-a2b",
 			"liquid/lfm-2.5-2.6b",
+			"liquid/lfm-3-1.7b:free",
+			"liquid/lfm-3-1.7b",
 			"nvidia/nemotron-3.5-lightning",
 		},
 		DefaultModel: "openai/gpt-5.6-luna (reasoning: medium)",
@@ -102,6 +104,8 @@ var knownProviders = []ProviderInfo{
 			"liquid/lfm-2.5-2.6b:free":                65536,
 			"liquid/lfm-2.5-24b-a2b":                  128000,
 			"liquid/lfm-2.5-2.6b":                     128000,
+			"liquid/lfm-3-1.7b:free":                  262144,
+			"liquid/lfm-3-1.7b":                       262144,
 			"nvidia/nemotron-3.5-lightning":           262144,
 		},
 		GoAIOptions: map[string]any{

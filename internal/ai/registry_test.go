@@ -221,6 +221,8 @@ func TestProviderByIDOpenRouter(t *testing.T) {
 		"liquid/lfm-2.5-2.6b:free",
 		"liquid/lfm-2.5-24b-a2b",
 		"liquid/lfm-2.5-2.6b",
+		"liquid/lfm-3-1.7b:free",
+		"liquid/lfm-3-1.7b",
 		"nvidia/nemotron-3.5-lightning",
 	}
 	if len(info.Models) != len(wantModels) {

@@ -205,7 +205,10 @@ func handleAuthLogin(s *Server) func(*core.RequestEvent) error {
 				return writeV1Error(e, http.StatusForbidden, "account_blocked", "account is blocked")
 			}
 			s.loginFailures.record(accountKey)
-			return e.BadRequestError("invalid credentials", nil)
+			// Deliberately vague: unknown email and wrong password are
+			// indistinguishable so the response cannot be used to
+			// enumerate accounts.
+			return writeV1Error(e, http.StatusBadRequest, "invalid_credentials", "Email o contraseña incorrectos")
 		}
 		s.loginFailures.reset(accountKey)
 		setAuthCookie(e, result.Token)

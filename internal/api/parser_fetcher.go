@@ -442,16 +442,23 @@ func (f *parserFetcher) fetchViaWorker(ctx context.Context, rawURL string) (*par
 	if f.livewirePattern != nil && f.livewirePattern.MatchString(rawURL) {
 		operation = "fetch_livewire"
 	}
-	result, err := f.server.enqueueBrowserJob(operation, rawURL, nil, f.userID)
+	result, err := f.server.enqueueBrowserJob(ctx, operation, rawURL, nil, f.userID)
 	if err != nil && operation != "fetch_page" {
 		// The Livewire request can fail transiently (or an older extension may
 		// not support the operation); fall back to the plain page fetch so the
 		// invocation still gets the DOM it would have had before this routing
 		// existed.
 		slog.Info("livewire worker fetch failed, falling back to fetch_page", "url", rawURL, "error", err)
-		result, err = f.server.enqueueBrowserJob("fetch_page", rawURL, nil, f.userID)
+		result, err = f.server.enqueueBrowserJob(ctx, "fetch_page", rawURL, nil, f.userID)
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			// The caller canceled or its deadline fired while the worker was
+			// churning. Return the context error, not the worker's, so callers
+			// can tell a walk that must stop from a site failure worth
+			// reporting.
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("browser worker fetch of %s: %w", rawURL, err)
 	}
 	html := getStringFromData(result.Data, "html")

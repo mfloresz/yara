@@ -498,12 +498,14 @@ func (s *Server) resolvePending(jobID string, result *BrowserWorkerJobResult) bo
 
 // enqueueBrowserJob routes worker job requests through the BrowserJobEnqueuer
 // override when one is installed, mirroring parserHTTPClient. Production
-// always goes to the real queue.
-func (s *Server) enqueueBrowserJob(operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error) {
+// always goes to the real queue. ctx carries the caller's lifecycle into the
+// queue so a canceled or timed-out caller stops waiting (and stops
+// dispatching) instead of blocking on the worker until it answers.
+func (s *Server) enqueueBrowserJob(ctx context.Context, operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error) {
 	if s.BrowserJobEnqueuer != nil {
-		return s.BrowserJobEnqueuer(operation, url, params, userID)
+		return s.BrowserJobEnqueuer(ctx, operation, url, params, userID)
 	}
-	return s.EnqueueBrowserJob(operation, url, params, userID)
+	return s.EnqueueBrowserJob(ctx, operation, url, params, userID)
 }
 
 // EnqueueBrowserJob sends a job request to the browser worker queue and
@@ -511,9 +513,25 @@ func (s *Server) enqueueBrowserJob(operation, url string, params map[string]inte
 // goroutine, which guarantees sequential execution — critical for
 // Cloudflare challenge handling where only one page can be loaded at a time.
 //
-// The caller blocks until a result arrives or the consumer goroutine
-// times out (5 minutes). The channel is always closed after dispatch.
-func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error) {
+// The caller blocks until a result arrives, ctx is done, or the safety-net
+// timeout fires (5 minutes). ctx carries the caller's lifecycle: when the
+// HTTP client walked away (or the parser invocation hit its deadline), the
+// wait ends immediately with ctx.Err() and no further requests are
+// dispatched, so a failed update stops the walk instead of queuing page
+// after page into the user's browser. The in-flight worker job itself
+// cannot be revoked over the WebSocket — it runs to completion in the
+// extension, its late result is dropped as an unknown job — but at most one
+// extra page is fetched after cancellation.
+//
+// The channel is always closed after dispatch. A nil ctx behaves like
+// context.Background().
+func (s *Server) EnqueueBrowserJob(ctx context.Context, operation, url string, params map[string]interface{}, userID string) (*BrowserWorkerJobResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.pendingBrowserJobsMu.Lock()
 	if len(s.pendingBrowserJobs) == 0 && len(s.browserQueue) == 0 {
 		s.pendingBrowserJobsMu.Unlock()
@@ -551,13 +569,26 @@ func (s *Server) EnqueueBrowserJob(operation, url string, params map[string]inte
 		s.pendingBrowserJobsMu.Unlock()
 	}()
 
-	s.browserQueue <- BrowserJob{Request: req, UserID: userID}
-
-	result, ok := <-resultCh
-	if !ok {
-		return nil, ErrBrowserWorkerTimeout
+	select {
+	case s.browserQueue <- BrowserJob{Request: req, UserID: userID}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
+	select {
+	case result, ok := <-resultCh:
+		if !ok {
+			return nil, ErrBrowserWorkerTimeout
+		}
+		return finishBrowserJobResult(result)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// finishBrowserJobResult passes a worker's ok result through and maps its
+// failure to BrowserWorkerError.
+func finishBrowserJobResult(result *BrowserWorkerJobResult) (*BrowserWorkerJobResult, error) {
 	if result.Status != "ok" {
 		errMsg := "browser worker error: " + result.Status
 		if e, ok := result.Data["error"].(string); ok {
@@ -582,7 +613,7 @@ func (s *Server) FetchImageViaWorker(ctx context.Context, imageURL string, userI
 	if timeoutSec <= 0 {
 		timeoutSec = 60
 	}
-	result, err := s.EnqueueBrowserJob("fetch_image", imageURL, map[string]interface{}{"timeout": timeoutSec}, userID)
+	result, err := s.EnqueueBrowserJob(ctx, "fetch_image", imageURL, map[string]interface{}{"timeout": timeoutSec}, userID)
 	if err != nil {
 		return nil, "", err
 	}

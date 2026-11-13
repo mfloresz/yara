@@ -32,7 +32,7 @@ func NewProxyHTTPClient(s *Server, userID string) *ProxyHTTPClient {
 }
 
 func (c *ProxyHTTPClient) Fetch(ctx context.Context, url string) ([]byte, error) {
-	result, err := c.server.enqueueBrowserJob("fetch_page", url, nil, c.userID)
+	result, err := c.server.enqueueBrowserJob(ctx, "fetch_page", url, nil, c.userID)
 	if err != nil {
 		return nil, fmt.Errorf("proxy fetch: %w", err)
 	}
@@ -68,7 +68,7 @@ func (c *ProxyHTTPClient) FetchDocument(ctx context.Context, url string) (*goque
 // valid image".
 func (c *ProxyHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	url := req.URL.String()
-	result, err := c.server.enqueueBrowserJob("fetch_image", url, map[string]interface{}{"timeout": 60}, c.userID)
+	result, err := c.server.enqueueBrowserJob(req.Context(), "fetch_image", url, map[string]interface{}{"timeout": 60}, c.userID)
 	if err != nil {
 		return nil, fmt.Errorf("proxy image fetch: %w", err)
 	}
