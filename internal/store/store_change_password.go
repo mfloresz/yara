@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -38,6 +39,24 @@ func (s *Store) ChangePassword(userID, tokenKey, currentPassword, newPassword, c
 		user.RefreshTokenKey()
 		if err := tx.Save(user); err != nil {
 			return err
+		}
+		// Outstanding admin-issued reset links must not restore access after a
+		// self-service change. Consume only this user's unused links atomically,
+		// always starting at offset zero as each batch leaves the filter.
+		for {
+			resets, err := tx.FindRecordsByFilter(PasswordResetsCollection, "user = {:user} && used_at = ''", "", 500, 0, dbx.Params{"user": userID})
+			if err != nil {
+				return err
+			}
+			if len(resets) == 0 {
+				break
+			}
+			for _, reset := range resets {
+				reset.Set("used_at", time.Now().UTC())
+				if err := tx.Save(reset); err != nil {
+					return err
+				}
+			}
 		}
 		// Browser-worker credentials are independent of PocketBase auth JWTs.
 		// Revoke them in the same transaction; page through every active token,

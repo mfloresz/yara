@@ -230,8 +230,8 @@ paths:
       description: >-
         Self-service change, not password recovery. The account is derived only
         from the authenticated session; no target user ID or email is accepted.
-        On success all sessions and browser-worker tokens are revoked and the
-        auth cookie is cleared. Sign in again with the new password.
+        On success all sessions, browser-worker tokens and unused password-reset
+        links are revoked and the auth cookie is cleared. Sign in again with the new password.
         Attempts are rate limited by account and IP.
       requestBody:
         required: true

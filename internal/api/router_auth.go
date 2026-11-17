@@ -246,6 +246,9 @@ func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
 // token key come from authenticated server state, never from the request body.
 func handleAuthChangePassword(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
+		if e.Auth == nil || e.Auth.Collection().Name != store.UsersCollection {
+			return e.UnauthorizedError("user authentication required", nil)
+		}
 		body := struct {
 			CurrentPassword    string `json:"currentPassword"`
 			NewPassword        string `json:"newPassword"`
@@ -283,17 +286,24 @@ func handleAuthChangePassword(s *Server) func(*core.RequestEvent) error {
 // Close existing extension connections too: revoking their stored credential
 // prevents reconnects, but would otherwise leave already-open sockets usable.
 func closePasswordChangeWorkers(userID string) {
+	// The exclusive snapshot waits for registrations that validated before
+	// revocation to finish publishing their identity under the read lock.
+	// Later registrations validate revoked credentials and cannot authenticate.
 	browserWorkersMu.Lock()
-	defer browserWorkersMu.Unlock()
-	for id, worker := range browserWorkers {
+	workers := make([]*BrowserWorker, 0, len(browserWorkers))
+	for _, worker := range browserWorkers {
+		workers = append(workers, worker)
+	}
+	browserWorkersMu.Unlock()
+	// Never wait for a worker's I/O mutex with the global registry locked:
+	// a blocked socket must not freeze registration or unrelated dispatch.
+	for _, worker := range workers {
 		worker.mu.Lock()
-		if worker.UserID == userID {
-			if worker.Conn != nil {
-				_ = worker.Conn.Close()
-			}
-			delete(browserWorkers, id)
-		}
+		matches := worker.UserID == userID
 		worker.mu.Unlock()
+		if matches {
+			evictWorker(worker)
+		}
 	}
 }
 
