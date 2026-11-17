@@ -112,6 +112,9 @@ func (s *Store) ValidateWorkerToken(token string) (*WorkerToken, error) {
 		return nil, fmt.Errorf("invalid or revoked token")
 	}
 
+	// A password change may revoke this token after the read above. Persist
+	// only the timestamp, never the stale revoked=false or other token fields.
+	record.IgnoreUnchangedFields(true)
 	record.Set("last_used_at", time.Now().Format(time.RFC3339))
 	if err := s.App.Save(record); err != nil {
 		return nil, fmt.Errorf("update last used: %w", err)

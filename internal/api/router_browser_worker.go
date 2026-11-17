@@ -236,8 +236,13 @@ func (s *Server) handleWorkerMessage(worker *BrowserWorker, msg *BrowserWorkerMe
 			return
 		}
 
+		// Publish the validated identity before a password-change sweep can
+		// snapshot the registry. Keep the established global -> worker order,
+		// but release the registry read lock before any socket write.
+		browserWorkersMu.RLock()
 		validated, err := s.Store.ValidateWorkerToken(payload.Token)
 		if err != nil {
+			browserWorkersMu.RUnlock()
 			slog.Warn("browser worker invalid token", "workerId", worker.ID, "error", err)
 			worker.mu.Lock()
 			worker.State = "unauthenticated"
@@ -259,6 +264,7 @@ func (s *Server) handleWorkerMessage(worker *BrowserWorker, msg *BrowserWorkerMe
 		worker.TokenID = validated.ID
 		worker.State = "authenticated"
 		worker.mu.Unlock()
+		browserWorkersMu.RUnlock()
 
 		slog.Info("browser worker registered and authenticated",
 			"workerId", worker.ID,
