@@ -225,6 +225,9 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
       logoutAll() {
         return http.post<void>("/api/v1/auth/logout-all");
       },
+      changePassword(input: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) {
+        return http.post<void>("/api/v1/auth/change-password", input);
+      },
     },
     admin: {
       async listUsers(): Promise<AdminUser[]> {

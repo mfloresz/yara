@@ -342,9 +342,57 @@
             <SettingsSection
               id="settings-account"
               title="Cuenta y sesión"
-              description="Acciones que afectan a todos tus dispositivos."
-              danger
+              description="Gestiona tu contraseña y las sesiones de tus dispositivos."
             >
+              <form class="password-form" @submit.prevent="submitPasswordChange">
+                <div>
+                  <h3 class="password-title">Cambiar contraseña</h3>
+                  <p class="small muted">Confirma tu contraseña actual. Al cambiarla, se cerrarán todas tus sesiones, incluidas las extensiones, y tendrás que iniciar sesión de nuevo.</p>
+                </div>
+                <div>
+                  <label class="small muted" for="account-current-password">Contraseña actual</label>
+                  <n-input
+                    id="account-current-password"
+                    v-model:value="currentPassword"
+                    type="password"
+                    autocomplete="current-password"
+                    show-password-on="click"
+                    :disabled="changingPassword"
+                    placeholder="Tu contraseña actual"
+                  />
+                </div>
+                <div>
+                  <label class="small muted" for="account-new-password">Nueva contraseña</label>
+                  <n-input
+                    id="account-new-password"
+                    v-model:value="newPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    show-password-on="click"
+                    :disabled="changingPassword"
+                    placeholder="Mínimo 8 caracteres"
+                  />
+                </div>
+                <div>
+                  <label class="small muted" for="account-confirm-password">Repetir nueva contraseña</label>
+                  <n-input
+                    id="account-confirm-password"
+                    v-model:value="newPasswordConfirm"
+                    type="password"
+                    autocomplete="new-password"
+                    show-password-on="click"
+                    :disabled="changingPassword"
+                    placeholder="Repite la nueva contraseña"
+                  />
+                </div>
+                <n-alert v-if="passwordError" type="error" role="alert">{{ passwordError }}</n-alert>
+                <div>
+                  <n-button type="primary" attr-type="submit" :loading="changingPassword" :disabled="changingPassword">
+                    Cambiar contraseña
+                  </n-button>
+                </div>
+              </form>
+              <n-divider />
               <SettingsRow
                 title="Cerrar sesión en todos los dispositivos"
                 description="Invalida todos los tokens de tu cuenta, incluidas otras sesiones y navegadores. Este dispositivo también se desconecta."
@@ -406,6 +454,7 @@ import ProviderKeyField from "@/components/ProviderKeyField.vue";
 import SettingsRow from "@/components/SettingsRow.vue";
 import SettingsSection from "@/components/SettingsSection.vue";
 import { applyTheme } from "@/app/auth";
+import { ApiError } from "@/api/http";
 import { useAppServices } from "@/app/services";
 import { useProviders } from "@/composables/useProviders";
 import { useRouter } from "vue-router";
@@ -413,7 +462,7 @@ import type { GeneralPromptRecord, ServerSettings, WorkerToken } from "@/api/typ
 
 const message = useMessage();
 const router = useRouter();
-const { api, loadProviders, logoutAll } = useAppServices();
+const { api, loadProviders, logoutAll, changePassword } = useAppServices();
 const { providers, byId, loading: providersLoading, reload: reloadProviders } = useProviders();
 const loading = ref(true);
 const saving = ref(false);
@@ -434,6 +483,49 @@ const revokingTokenId = ref<string | null>(null);
 const deletingTokenId = ref<string | null>(null);
 
 const loggingOutEverywhere = ref(false);
+const currentPassword = ref("");
+const newPassword = ref("");
+const newPasswordConfirm = ref("");
+const changingPassword = ref(false);
+const passwordError = ref<string | null>(null);
+
+async function submitPasswordChange() {
+  if (changingPassword.value) return;
+  passwordError.value = null;
+  if (!currentPassword.value || !newPassword.value || !newPasswordConfirm.value) {
+    passwordError.value = "Completa los tres campos de contraseña";
+    return;
+  }
+  if (newPassword.value !== newPasswordConfirm.value) {
+    passwordError.value = "Las contraseñas nuevas no coinciden";
+    return;
+  }
+  changingPassword.value = true;
+  try {
+    await changePassword({
+      currentPassword: currentPassword.value,
+      newPassword: newPassword.value,
+      newPasswordConfirm: newPasswordConfirm.value,
+    });
+    currentPassword.value = "";
+    newPassword.value = "";
+    newPasswordConfirm.value = "";
+    message.success("Contraseña actualizada. Inicia sesión con tu nueva contraseña.", { duration: 7000 });
+    await router.push("/login");
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "invalid_credentials") {
+      passwordError.value = "La contraseña actual no es correcta";
+    } else if (err instanceof ApiError && err.status === 429) {
+      passwordError.value = "Demasiados intentos. Espera unos minutos antes de volver a intentarlo.";
+    } else if (err instanceof ApiError && err.code === "validation_failed") {
+      passwordError.value = "Comprueba que la nueva contraseña tenga al menos 8 caracteres y que ambas coincidan.";
+    } else {
+      passwordError.value = err instanceof Error ? err.message : String(err);
+    }
+  } finally {
+    changingPassword.value = false;
+  }
+}
 
 const sections = [
   { id: "general", label: "General", icon: SettingsOutline },
@@ -740,6 +832,28 @@ function formatDateTime(value?: string) {
 </script>
 
 <style scoped>
+.password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 480px;
+}
+
+.password-title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.password-form p {
+  margin: 0;
+}
+
+.password-form label {
+  display: block;
+  margin-bottom: 0.375rem;
+}
+
 .settings-page {
   max-width: 1120px;
   margin: 0 auto;

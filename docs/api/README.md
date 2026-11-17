@@ -197,6 +197,7 @@ v1 errors return `Content-Type: application/problem+json`:
 | `GET` | `/api/v1/auth/me` | Return the authenticated user (includes `role`). |
 | `POST` | `/api/v1/auth/refresh` | Refresh the current session. Returns `{ user }` + re-issues the cookie. |
 | `POST` | `/api/v1/auth/logout` | Clear the cookie. Status 204. The token itself stays valid until expiry — use logout-all to revoke it. |
+| `POST` | `/api/v1/auth/change-password` | Authenticated self-service change (`{ currentPassword, newPassword, newPasswordConfirm }`). Verifies the current password and matching confirmation; new password ≥8 characters. The session alone selects the account, never a supplied user ID/email. Status 204, clears the cookie and revokes all sessions + extension tokens; sign in again. 400 `invalid_credentials` / `validation_failed`, 429 `rate_limited` (account + IP limits). Separate from administrator-issued recovery links. |
 | `POST` | `/api/v1/auth/logout-all` | Invalidate every session of the calling user (all devices) by rotating the server-side token key, and clear the cookie. Status 204. |
 
 Register, login and the invitation endpoints are rate-limited per client IP

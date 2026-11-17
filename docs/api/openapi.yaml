@@ -223,6 +223,37 @@ paths:
       responses:
         '204': { $ref: '#/components/responses/NoContent' }
 
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change the authenticated user's password after verifying the current password.
+      description: >-
+        Self-service change, not password recovery. The account is derived only
+        from the authenticated session; no target user ID or email is accepted.
+        On success all sessions and browser-worker tokens are revoked and the
+        auth cookie is cleared. Sign in again with the new password.
+        Attempts are rate limited by account and IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword, newPasswordConfirm]
+              properties:
+                currentPassword: { type: string, format: password, writeOnly: true }
+                newPassword: { type: string, format: password, minLength: 8, writeOnly: true }
+                newPasswordConfirm: { type: string, format: password, writeOnly: true, description: Must match newPassword. }
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '400':
+          description: Invalid current password (invalid_credentials) or missing, short, or mismatched fields (validation_failed).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Blocked account or rejected request origin.
+        '429':
+          description: Too many attempts (rate_limited); retry after the Retry-After interval.
+
   /auth/logout-all:
     post:
       tags: [Auth]

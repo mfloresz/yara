@@ -37,6 +37,7 @@ export type AppServices = {
   }) => Promise<AuthResponse>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
+  changePassword: (input: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => Promise<void>;
 };
 
 export const appServicesKey: InjectionKey<AppServices> = Symbol("app-services");
@@ -135,6 +136,15 @@ export function createAppServices(): AppServices {
     }
   }
 
+  async function changePassword(input: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) {
+    // Keep the session on validation/network errors; only a successful change
+    // revokes all server sessions and clears this device's cached identity.
+    await api.auth.changePassword(input);
+    clearAuth();
+    providerList.value = [];
+    defaults.value = null;
+  }
+
   const providers = computed(() => providerList.value);
   const providerById = computed(
     () => new Map(providerList.value.map((p) => [p.id, p])),
@@ -155,6 +165,7 @@ export function createAppServices(): AppServices {
     register,
     logout,
     logoutAll,
+    changePassword,
   };
 }
 
