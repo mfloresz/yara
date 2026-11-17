@@ -62,4 +62,5 @@ func registerV1AuthRoutes(v1 *pbrouter.RouterGroup[*core.RequestEvent], s *Serve
 	authed.POST("/refresh", handleAuthRefresh(s))
 	authed.POST("/logout", handleAuthLogout(s))
 	authed.POST("/logout-all", handleAuthLogoutAll(s))
+	authed.POST("/change-password", withJSONBodyLimit(maxAuthBodyBytes, withIPRateLimit(s.loginLimiter, handleAuthChangePassword(s))))
 }

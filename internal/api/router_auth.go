@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -238,6 +239,61 @@ func handleAuthRefresh(s *Server) func(*core.RequestEvent) error {
 		}
 		setAuthCookie(e, result.Token)
 		return v1Respond(e, http.StatusOK, map[string]any{"user": result.User}, nil, nil)
+	}
+}
+
+// handleAuthChangePassword is deliberately self-service only: the target and
+// token key come from authenticated server state, never from the request body.
+func handleAuthChangePassword(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		body := struct {
+			CurrentPassword    string `json:"currentPassword"`
+			NewPassword        string `json:"newPassword"`
+			NewPasswordConfirm string `json:"newPasswordConfirm"`
+		}{}
+		if err := e.BindBody(&body); err != nil {
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "invalid body")
+		}
+		// A separate namespace prevents a successful login from resetting the
+		// password-guessing ceiling; user IDs remain stable across email changes.
+		key := "change-password:" + e.Auth.Id
+		if s.loginFailures.blocked(key) {
+			e.Response.Header().Set("Retry-After", "900")
+			return writeV1Error(e, http.StatusTooManyRequests, "rate_limited", "too many failed password change attempts, try again later")
+		}
+		err := s.Store.ChangePassword(e.Auth.Id, e.Auth.TokenKey(), body.CurrentPassword, body.NewPassword, body.NewPasswordConfirm)
+		switch {
+		case errors.Is(err, store.ErrInvalidCurrentPassword):
+			s.loginFailures.record(key)
+			return writeV1Error(e, http.StatusBadRequest, "invalid_credentials", "current password is incorrect")
+		case errors.Is(err, store.ErrInvalidInput):
+			return writeV1Error(e, http.StatusBadRequest, "validation_failed", "provide the current password and a different new password matching its confirmation and password policy")
+		case errors.Is(err, store.ErrForbidden):
+			return e.UnauthorizedError("session is no longer valid", nil)
+		case err != nil:
+			return e.InternalServerError("failed to change password", err)
+		}
+		s.loginFailures.reset(key)
+		closePasswordChangeWorkers(e.Auth.Id)
+		clearAuthCookie(e)
+		return e.NoContent(http.StatusNoContent)
+	}
+}
+
+// Close existing extension connections too: revoking their stored credential
+// prevents reconnects, but would otherwise leave already-open sockets usable.
+func closePasswordChangeWorkers(userID string) {
+	browserWorkersMu.Lock()
+	defer browserWorkersMu.Unlock()
+	for id, worker := range browserWorkers {
+		worker.mu.Lock()
+		if worker.UserID == userID {
+			if worker.Conn != nil {
+				_ = worker.Conn.Close()
+			}
+			delete(browserWorkers, id)
+		}
+		worker.mu.Unlock()
 	}
 }
 

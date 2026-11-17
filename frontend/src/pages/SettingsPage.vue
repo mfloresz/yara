@@ -352,10 +352,9 @@
                 <div>
                   <label class="small muted" for="account-current-password">Contraseña actual</label>
                   <n-input
-                    id="account-current-password"
                     v-model:value="currentPassword"
                     type="password"
-                    autocomplete="current-password"
+                    :input-props="{ id: 'account-current-password', autocomplete: 'current-password' }"
                     show-password-on="click"
                     :disabled="changingPassword"
                     placeholder="Tu contraseña actual"
@@ -364,10 +363,9 @@
                 <div>
                   <label class="small muted" for="account-new-password">Nueva contraseña</label>
                   <n-input
-                    id="account-new-password"
                     v-model:value="newPassword"
                     type="password"
-                    autocomplete="new-password"
+                    :input-props="{ id: 'account-new-password', autocomplete: 'new-password' }"
                     show-password-on="click"
                     :disabled="changingPassword"
                     placeholder="Mínimo 8 caracteres"
@@ -376,10 +374,9 @@
                 <div>
                   <label class="small muted" for="account-confirm-password">Repetir nueva contraseña</label>
                   <n-input
-                    id="account-confirm-password"
                     v-model:value="newPasswordConfirm"
                     type="password"
-                    autocomplete="new-password"
+                    :input-props="{ id: 'account-confirm-password', autocomplete: 'new-password' }"
                     show-password-on="click"
                     :disabled="changingPassword"
                     placeholder="Repite la nueva contraseña"
@@ -518,7 +515,7 @@ async function submitPasswordChange() {
     } else if (err instanceof ApiError && err.status === 429) {
       passwordError.value = "Demasiados intentos. Espera unos minutos antes de volver a intentarlo.";
     } else if (err instanceof ApiError && err.code === "validation_failed") {
-      passwordError.value = "Comprueba que la nueva contraseña tenga al menos 8 caracteres y que ambas coincidan.";
+      passwordError.value = "Usa una contraseña distinta de la actual, de 8 a 71 caracteres (máximo 72 bytes), y confirma que ambas coincidan.";
     } else {
       passwordError.value = err instanceof Error ? err.message : String(err);
     }
