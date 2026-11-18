@@ -1088,6 +1088,11 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 		return nil, err
 	}
 
+	imageBlobs, err := s.getNovelImageBlobs(novelID, newImageWriteBudget())
+	if err != nil {
+		return nil, fmt.Errorf("read inline images: %w", err)
+	}
+
 	// Read cover and thumbnail blobs from the source novel's record
 	// so we can replicate the files to the clone.
 	var coverBlob []byte
@@ -1154,15 +1159,32 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 			break
 		}
 	}
+	sourceChapterIDs := make([]string, len(chapters))
 	for i := range chapters {
+		sourceChapterIDs[i] = chapters[i].ID
 		chapters[i].ID = ""
 		chapters[i].NovelID = clone.ID
 		if !useSourcePositions {
 			chapters[i].Position = i + 1
 		}
 	}
-	if _, err := s.insertChaptersBulk(clone.ID, chapters); err != nil {
+	chapterIDs, err := s.insertChaptersBulk(clone.ID, chapters)
+	if err != nil {
 		return nil, err
+	}
+	chapterMap := make(map[string]string, len(chapterIDs))
+	for i, id := range chapterIDs {
+		chapterMap[sourceChapterIDs[i]] = id
+	}
+	for i := range imageBlobs {
+		chapterID, ok := chapterMap[imageBlobs[i].ChapterID]
+		if !ok {
+			return nil, fmt.Errorf("inline image references missing source chapter")
+		}
+		imageBlobs[i].ChapterID = chapterID
+	}
+	if err := s.insertNovelImageBlobsBulk(clone.ID, imageBlobs); err != nil {
+		return nil, fmt.Errorf("copy inline images: %w", err)
 	}
 	if err := s.RecalculateNovelStats(clone.ID); err != nil {
 		return nil, err
@@ -1177,6 +1199,9 @@ func (s *Store) CopyNovel(userID, novelID string) (*Novel, error) {
 func (s *Store) ImportEpubNovel(input *ImportEpubNovelInput) (*ImportEpubNovelResult, error) {
 	if input == nil {
 		return nil, fmt.Errorf("import input required")
+	}
+	if err := validateEpubImageWrites(input.Chapters); err != nil {
+		return nil, err
 	}
 	resultNovel := &Novel{
 		SourceLanguage:     input.SourceLanguage,
@@ -1267,6 +1292,9 @@ func (s *Store) ImportUrlNovel(input *ImportUrlNovelInput) (*ImportUrlNovelResul
 func (s *Store) ImportZipNovel(input *ImportZipNovelInput) (*ImportZipNovelResult, error) {
 	if input == nil {
 		return nil, fmt.Errorf("import input required")
+	}
+	if err := validateZipImageWrites(input.Chapters); err != nil {
+		return nil, err
 	}
 	meta := struct {
 		SourceLanguage    string `json:"sourceLanguage"`
