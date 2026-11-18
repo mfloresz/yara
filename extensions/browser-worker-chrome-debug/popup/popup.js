@@ -1,5 +1,5 @@
 import { getConfig, setConfig } from '../shared/storage.js';
-import { isSupportedUrl } from '../shared/supported-sites.js';
+import { isSupportedUrl, yaraBaseUrl } from '../shared/supported-sites.js';
 
 const statusEl = document.getElementById('status-bar');
 const statusText = document.getElementById('status-text');
@@ -114,7 +114,9 @@ btnToggle.addEventListener('click', async () => {
     return;
   }
 
-  const addr = serverAddrInput.value.trim();
+  let addr;
+  try { addr = yaraBaseUrl(serverAddrInput.value.trim()); }
+  catch (e) { showError(e.message); return; }
   if (!addr) {
     showError('Configura la dirección del servidor primero');
     serverAddrInput.focus();
@@ -135,7 +137,9 @@ btnRefresh.addEventListener('click', async () => {
 });
 
 serverAddrInput.addEventListener('change', () => {
-  const addr = serverAddrInput.value.trim();
+  let addr;
+  try { addr = yaraBaseUrl(serverAddrInput.value.trim()); }
+  catch (e) { showError(e.message); return; }
   if (!addr) return;
   setConfig({ serverAddr: addr });
   statusServer.textContent = addr;

@@ -60,7 +60,16 @@ export function isSupportedUrl(rawUrl) {
 // Normalizes the configured serverAddr (host:port or full origin) to an
 // http(s) origin used to open the Yara tab.
 export function yaraBaseUrl(serverAddr) {
-  const value = String(serverAddr || '').trim().replace(/\/$/, '');
-  if (/^https?:\/\//i.test(value)) return value;
-  return `http://${value}`;
+  const value = String(serverAddr || '').trim();
+  const explicit = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
+  const parsed = new URL(explicit ? value : `https://${value}`);
+  if (parsed.protocol === 'wss:') parsed.protocol = 'https:';
+  if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  const loopback = host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\./.test(host);
+  if (!explicit && loopback) parsed.protocol = 'http:';
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password ||
+      parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error('Configura un origen HTTP(S) válido');
+  if (parsed.protocol === 'http:' && !loopback) throw new Error('Los servidores remotos requieren HTTPS');
+  return parsed.origin;
 }

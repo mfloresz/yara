@@ -17,7 +17,8 @@
     "storage",
     "scripting",
     "alarms",
-    "contextMenus"
+    "contextMenus",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"

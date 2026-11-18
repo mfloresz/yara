@@ -1,3 +1,4 @@
+import { createNetworkSafety } from '../shared/network-safety.js';
 import { MessageType, JobStatus, WorkerState, createMessage, parseMessage } from '../shared/protocol.js';
 import { getConfig, setConfig } from '../shared/storage.js';
 import { SUPPORTED_SITE_PATTERNS, isSupportedUrl, yaraBaseUrl } from '../shared/supported-sites.js';
@@ -196,13 +197,19 @@ function handleInternalMessage(msg, sender, sendResponse) {
   }
 }
 
+function browserWorkerWebSocketURL(serverAddr) {
+  const base = new URL(yaraBaseUrl(serverAddr));
+  base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+  return base.origin + '/ws/browser-worker-debug';
+}
+
 async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   const config = await getConfig();
   
   // Use debug endpoint - no token required
-  const wsUrl = `ws://${config.serverAddr}/ws/browser-worker-debug`;
+  const wsUrl = browserWorkerWebSocketURL(config.serverAddr);
   log('Connecting to:', wsUrl);
   setState(WorkerState.CONNECTING);
 
@@ -346,6 +353,7 @@ async function handleJobRequest(payload) {
 // failure or a Cloudflare challenge, no tab fallback can make it OK, so it
 // must not be swallowed by the null-on-failure contract.
 class PrivateTargetError extends Error {}
+const { safeWorkerFetch, createSafeWorkerTab, updateSafeWorkerTab } = createNetworkSafety(isPrivateFetchTarget);
 
 // True when rawUrl's host is a literal loopback/private/link-local target
 // (or a localhost-style name). The browser's URL parser has already
@@ -359,7 +367,9 @@ class PrivateTargetError extends Error {}
 function isPrivateFetchTarget(rawUrl) {
   let host;
   try {
-    host = new URL(rawUrl).hostname.toLowerCase();
+    const parsed = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return true;
+    host = parsed.hostname.toLowerCase();
   } catch {
     return true;
   }
@@ -373,6 +383,10 @@ function isPrivateFetchTarget(rawUrl) {
   if (v4) return isPrivateV4(v4.slice(1).map(Number));
   if (host.startsWith('[') && host.endsWith(']')) {
     const v6 = host.slice(1, -1);
+    // Only global unicast literals may be fetched. This also excludes the
+    // whole link-local /10, multicast, unspecified and transition ranges.
+    const [first, second] = v6.split(':').map(part => parseInt(part || '0', 16));
+    if ((first & 0xe000) !== 0x2000 || (first === 0x2001 && (second <= 0x1ff || second === 0xdb8))) return true;
     if (v6 === '::' || v6 === '::1') return true;
     if (v6.startsWith('fe80:')) return true;                     // link-local
     if (v6.startsWith('fc') || v6.startsWith('fd')) return true; // ULA
@@ -441,7 +455,7 @@ async function fetchImage(url, params = {}) {
 }
 
 async function fetchImageBackground(url) {
-  const resp = await fetch(url, {
+  const resp = await safeWorkerFetch(url, {
     credentials: 'include',
     headers: {
       'User-Agent': navigator.userAgent,
@@ -480,15 +494,15 @@ async function fetchImageViaTab(url, maxWait) {
   if (challengeTabId !== null && challengeOrigin === origin) {
     try {
       tab = await chrome.tabs.get(challengeTabId);
-      await chrome.tabs.update(tab.id, { url, active: false });
+      await updateSafeWorkerTab(tab.id, url);
     } catch {
       challengeTabId = null; challengeOrigin = null;
-      tab = await chrome.tabs.create({ url, active: false });
+      tab = await createSafeWorkerTab(url);
       challengeTabId = tab.id; challengeOrigin = origin;
     }
   } else {
     if (challengeTabId !== null) { try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ } }
-    tab = await chrome.tabs.create({ url, active: false });
+    tab = await createSafeWorkerTab(url);
     challengeTabId = tab.id; challengeOrigin = origin;
   }
 
@@ -522,7 +536,7 @@ async function fetchImageViaTab(url, maxWait) {
             func: () => {
               try {
                 const run = async () => {
-                  const resp = await fetch(self.location.href, { credentials: 'include', cache: 'force-cache' });
+                  const resp = await fetch(self.location.href, { credentials: 'include', cache: 'force-cache', redirect: 'error' });
                   if (!resp.ok) return { error: 'page fetch ' + resp.status };
                   const buf = await resp.arrayBuffer();
                   const bytes = new Uint8Array(buf);
@@ -618,11 +632,11 @@ async function fetchLivewirePage(url, params = {}) {
   if (challengeTabId !== null && challengeOrigin === origin) {
     try {
       tab = await chrome.tabs.get(challengeTabId);
-      await chrome.tabs.update(tab.id, { url, active: false });
+      await updateSafeWorkerTab(tab.id, url);
     } catch {
       challengeTabId = null;
       challengeOrigin = null;
-      tab = await chrome.tabs.create({ url, active: false });
+      tab = await createSafeWorkerTab(url);
       challengeTabId = tab.id;
       challengeOrigin = origin;
     }
@@ -630,7 +644,7 @@ async function fetchLivewirePage(url, params = {}) {
     if (challengeTabId !== null) {
       try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
     }
-    tab = await chrome.tabs.create({ url, active: false });
+    tab = await createSafeWorkerTab(url);
     challengeTabId = tab.id;
     challengeOrigin = origin;
   }
@@ -896,7 +910,7 @@ async function waitForLivewireCatalog(tabId, maxWaitMs) {
 
 async function tryBackgroundFetch(url) {
   try {
-    const resp = await fetch(url, {
+    const resp = await safeWorkerFetch(url, {
       credentials: 'include',
       headers: {
         'User-Agent': navigator.userAgent,
@@ -991,11 +1005,11 @@ async function fetchViaChallengeTab(url, maxWait) {
   if (challengeTabId !== null && challengeOrigin === origin) {
     try {
       tab = await chrome.tabs.get(challengeTabId);
-      await chrome.tabs.update(tab.id, { url, active: false });
+      await updateSafeWorkerTab(tab.id, url);
     } catch {
       challengeTabId = null;
       challengeOrigin = null;
-      tab = await chrome.tabs.create({ url, active: false });
+      tab = await createSafeWorkerTab(url);
       challengeTabId = tab.id;
       challengeOrigin = origin;
     }
@@ -1003,7 +1017,7 @@ async function fetchViaChallengeTab(url, maxWait) {
     if (challengeTabId !== null) {
       try { await chrome.tabs.remove(challengeTabId); } catch { /* ignore */ }
     }
-    tab = await chrome.tabs.create({ url, active: false });
+    tab = await createSafeWorkerTab(url);
     challengeTabId = tab.id;
     challengeOrigin = origin;
   }
