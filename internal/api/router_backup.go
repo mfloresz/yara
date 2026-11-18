@@ -96,10 +96,15 @@ func backupDownload(s *Server) func(*core.RequestEvent) error {
 }
 
 func writeBackupZip(w io.Writer, dataDir string) (int, error) {
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return 0, err
+	}
+	defer root.Close()
 	zw := zip.NewWriter(w)
 	files := 0
 
-	err := filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -114,8 +119,9 @@ func writeBackupZip(w io.Writer, dataDir string) (int, error) {
 			return nil
 		}
 
-		// skip directories (zip entries are implicit from file paths)
-		if info.IsDir() {
+		// Never archive symlinks or special files. OpenRoot also confines opens
+		// if an entry is replaced between the walk and the open.
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 
@@ -124,13 +130,18 @@ func writeBackupZip(w io.Writer, dataDir string) (int, error) {
 			return err
 		}
 
-		f, err := zw.Create(rel)
+		src, err := root.Open(rel)
 		if err != nil {
 			return err
 		}
-
-		src, err := os.Open(path)
+		openedInfo, err := src.Stat()
+		if err != nil || !openedInfo.Mode().IsRegular() {
+			src.Close()
+			return err
+		}
+		f, err := zw.Create(filepath.ToSlash(rel))
 		if err != nil {
+			src.Close()
 			return err
 		}
 		_, copyErr := io.Copy(f, src)
