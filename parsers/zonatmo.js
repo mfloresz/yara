@@ -73,6 +73,54 @@ function chapterTitle(numRaw, title) {
   return "Capítulo " + disp + " - " + title;
 }
 
+// Reader labels look like "Cap. 12 — Capítulo12:Subtitle". Normalize them into
+// the same "Capítulo N - Subtitle" shape the TOC uses, dropping a subtitle
+// that only repeats the number.
+function chapterLabel(raw) {
+  const s = clean(raw);
+  if (!s) return "";
+  const m = /^cap(?:[ií]tulo|\.)?\s*([0-9]+(?:\.[0-9]+)?)/i.exec(s);
+  const n = m ? numOf(m[1]) : -1;
+  if (n < 0) return s;
+  let sub = "";
+  const dash = /[—–]\s*(.+)$/.exec(s);
+  if (dash) sub = clean(dash[1]);
+  sub = clean(sub.replace(/^cap(?:[ií]tulo|\.)?\s*[0-9]+(?:\.[0-9]+)?\s*[:.\-]?\s*/i, ""));
+  return "Capítulo " + fmtNum(n) + (sub ? " - " + sub : "");
+}
+
+// The reader page's own chapter label (its <title> prepends the series name and
+// appends the site name). Prefer the matching entry of the chapter selector.
+function readerChapterTitle(ctx, doc, url) {
+  const target = String(url || "").replace(/\/+$/, "");
+  for (const opt of ctx.css(doc, "#chapterSelect option")) {
+    const value = String(opt.attr("value") || "").replace(/\/+$/, "");
+    if (value && value === target) {
+      const label = chapterLabel(opt.text);
+      if (label) return label;
+    }
+  }
+  const selected = ctx.css1(doc, "#chapterSelect option[selected]");
+  if (selected) {
+    const label = chapterLabel(selected.text);
+    if (label) return label;
+  }
+  let raw = "";
+  const t = ctx.css1(doc, "title");
+  if (t) raw = clean(t.text);
+  // "<series> — <chapter> — ZonaTMO" -> "<chapter>"
+  raw = raw.replace(/\s*[|—–]\s*ZonaTMO.*$/i, "");
+  raw = raw.replace(/^[^—–|]*[—–|]\s*/, "");
+  return chapterLabel(raw) || raw;
+}
+
+// Page images only: commenters' avatars render as <img> outside the reader.
+function pageImages(ctx, doc) {
+  let imgs = ctx.css(doc, "#reader-wrap .reader-img-wrap img");
+  if (imgs.length === 0) imgs = ctx.css(doc, ".reader-img-wrap img");
+  return imgs;
+}
+
 function metaContent(ctx, doc, sel) {
   const n = ctx.css1(doc, sel);
   if (!n) return "";
@@ -204,12 +252,12 @@ module.exports = {
       const doc = ctx.get(url);
       const pages = [];
       const seen = new Set();
-      for (const img of ctx.css(doc, "img[src], img[data-src]")) {
+      for (const img of pageImages(ctx, doc)) {
         let raw = img.attr("data-src");
         if (raw === null || raw === undefined || String(raw).trim() === "") raw = img.attr("src");
         if (raw === null || raw === undefined) continue;
         raw = String(raw).trim();
-        if (!raw || /favicon/i.test(raw)) continue;
+        if (!raw) continue;
         const abs = ctx.resolveUrl(url, raw);
         if (!/\.(jpg|jpeg|png|webp|avif|jxl)(\?|#|$)/i.test(abs)) continue;
         if (seen.has(abs)) continue;
@@ -217,11 +265,7 @@ module.exports = {
         pages.push(abs);
       }
       if (pages.length === 0) ctx.fail("site_layout_changed", "chapter has no pages: " + url);
-      let title = "";
-      const t = ctx.css1(doc, "title");
-      if (t) title = clean(t.text);
-      if (!title) title = url;
-      return { title, pages };
+      return { title: readerChapterTitle(ctx, doc, url) || url, pages };
     }
     const parts = pathParts(url);
     if (parts.length < 3 || parts[0] !== "manga" || !parts[1] || !parts[2]) {

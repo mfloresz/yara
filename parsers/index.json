@@ -214,9 +214,9 @@
     {
       "name": "zonatmo",
       "file": "zonatmo.js",
-      "sha256": "0eb00c7293d431b615661cebbc44dbfc21dcce9f0cb30d8f157017c4687ec3da",
+      "sha256": "9ce20b9bfc59371e86b9aa79863e040c1eed43c2324debf4af7cd917d072b6d2",
       "requiresBrowser": true
     }
   ],
-  "signature": "383ad4a1f0ff2210a541c0a2fe5f3a14cf09c6d92aa47ed0b3bb432353e669c7a815238aa9837e6801d557a3b107ee16a1e588d83786fe11d748fea403719608"
+  "signature": "a7b3262bb79cb87f5d6b0eed11fb571503bdb00c982300ab3ea68512da2a7ee096d1761d61b4a58664e6eda2700473e4927e52592877eea90a30aa005362040d"
 }
