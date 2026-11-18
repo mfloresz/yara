@@ -559,6 +559,22 @@ func (sharedChapterHandlers) reorder(s *Server) func(*core.RequestEvent) error {
 	}
 }
 
+func (sharedChapterHandlers) reindex(s *Server) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		novelID := e.Request.PathValue("novelId")
+		unlock := s.lockNovel(novelID)
+		defer unlock()
+		visible, excluded, err := s.Store.ReindexChapterPositions(e.Auth.Id, novelID)
+		if err != nil {
+			if errors.Is(err, store.ErrActiveJobs) {
+				return e.Error(http.StatusConflict, "cannot reindex chapters while jobs are active on this novel", err)
+			}
+			return notFoundOrForbidden(e, err)
+		}
+		return v1Respond(e, http.StatusOK, map[string]any{"visible": visible, "excluded": excluded}, nil, nil)
+	}
+}
+
 func (sharedChapterHandlers) visibility(s *Server) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		body := struct {
@@ -600,5 +616,6 @@ func registerV1ChapterRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s *S
 	api.GET("/novels/{novelId}/chapters/gaps", sharedChapters.gaps(s))
 	api.GET("/novels/{novelId}/chapters/excluded", sharedChapters.listExcluded(s))
 	api.PATCH("/novels/{novelId}/chapters/order", sharedChapters.reorder(s))
+	api.POST("/novels/{novelId}/chapters/reindex", sharedChapters.reindex(s))
 	api.PATCH("/novels/{novelId}/chapters/{chapterId}/visibility", sharedChapters.visibility(s))
 }

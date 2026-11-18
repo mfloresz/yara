@@ -281,6 +281,7 @@ caller cannot rotate its rate-limit key by spoofing them.
 | `GET` | `/api/v1/novels/{id}/chapters/{chapterId}` | Get one chapter (full record). `?neighbors=true` adds `neighbors: {prev, next}` summaries in reading order (`position`) for prev/next navigation without the full list. |
 | `POST` | `/api/v1/novels/{id}/chapters` | Upsert a chapter. Accepts an optional `position`. Returns 201 + `Location`. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/order` | Reorder chapters. Body `{ "chapterIds": ["id1", "id2"] }`. 409 if jobs are active on the novel. |
+| `POST` | `/api/v1/novels/{id}/chapters/reindex` | Rebuild the reading index: visible chapters are renumbered densely 1..N (current reading order), excluded chapters are parked after them. `chapterOrder` is never touched. 409 if jobs are active. Idempotent. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/{chapterId}/visibility` | Toggle logical exclusion. Body `{ "excluded": true \| false }`. |
 | `PATCH` | `/api/v1/novels/{id}/chapters/{chapterId}/status` | Body `{ "status": "pending", "errorMessage": "" }`. |
 | `POST` | `/api/v1/novels/{id}/chapters/bulk-delete` | Body `{ "ids": ["id1", "id2"] }`. Logical exclusion — chapters are hidden, not removed. |
@@ -636,8 +637,13 @@ replacement; refused while the novel has active jobs), `set_chapter_status`
 (`pending|translated|refined|done|failed`), `set_chapter_excluded`,
 `bulk_set_chapter_status` and `bulk_set_chapter_excluded` (one call per
 `fromOrder`/`toOrder` range; excluded and processing chapters are skipped),
-and `ask_user` (clarifying question with clickable options; ends the turn and
-the picked option's value arrives as the user's next message).
+`reindex_chapters` (renumbers `position` densely 1..N — visible chapters in
+reading order, excluded ones parked after them; `chapterOrder` is never
+touched) and `move_chapter` (moves one chapter to a 1-based reading position,
+restoring it first if it was excluded), and `ask_user` (clarifying question
+with clickable options; ends the turn and the picked option's value arrives
+as the user's next message). After excluding chapters the assistant asks
+whether to reindex the reading positions.
 
 Every tool result is persisted into the session trail and replayed to the
 model on later steps, so the tools return narrow projections with hard caps

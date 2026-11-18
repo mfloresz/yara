@@ -173,6 +173,7 @@ cmd/server/main.go
 /api/v1/novels/{id}/chapters/clean-preview-bulk         [auth]
 /api/v1/novels/{id}/chapters/eligible                   [auth]
 /api/v1/novels/{id}/chapters/bulk-delete                [auth]
+/api/v1/novels/{id}/chapters/reindex                    [auth]
 /api/v1/novels/{id}/chapters/gaps                       [auth]
 /api/v1/novels/{id}/chapter-summaries                   [auth]
 /api/v1/novels/{id}/chapter-stats                       [auth]

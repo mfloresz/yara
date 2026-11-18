@@ -714,6 +714,16 @@ export function createApiClient(defaultsRef: Ref<ServerDefaults | null>) {
         );
         return { items: Array.isArray(result?.items) ? result.items : [] };
       },
+      async reindex(novelId: string): Promise<{ visible: number; excluded: number }> {
+        const result = await http.post<{ visible?: number; excluded?: number }>(
+          `/api/v1/novels/${novelId}/chapters/reindex`,
+          {},
+        );
+        return {
+          visible: typeof result?.visible === "number" ? result.visible : 0,
+          excluded: typeof result?.excluded === "number" ? result.excluded : 0,
+        };
+      },
       async setVisibility(novelId: string, chapterId: string, excluded: boolean): Promise<Chapter> {
         return http.patch<Chapter>(`/api/v1/novels/${novelId}/chapters/${chapterId}/visibility`, { excluded });
       },

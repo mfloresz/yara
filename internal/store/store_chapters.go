@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -2096,35 +2097,230 @@ func (s *Store) ReorderChapters(userID, novelID string, chapterIDs []string) err
 		return ErrActiveJobs
 	}
 
-	// Two-phase write inside a transaction: first free every current position
-	// (negation is unique because the current values are unique and
-	// non-negative; a lone legacy 0 row stays 0 without colliding), then assign
-	// the dense final positions 1..N in the given order. Both phases use
-	// narrow statements: no record hydration, no full-row rewrite, no
-	// unique-index collisions.
 	// Re-check HasActiveJobs inside the transaction so a job created between
 	// the fast-path check above and the tx start is not missed.
 	return s.App.RunInTransaction(func(txApp core.App) error {
-		records, err := txApp.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
+		active, err := hasActiveJobsTx(txApp, novelID)
 		if err != nil {
 			return err
 		}
-		if len(records) > 0 {
+		if active {
 			return ErrActiveJobs
 		}
-		updated := types.NowDateTime().String()
+		return assignDenseChapterPositions(txApp, novelID, chapterIDs)
+	})
+}
+
+// hasActiveJobsTx re-checks for pending/running jobs inside the caller's
+// transaction. The fast-path check outside the transaction can miss a job
+// created between the check and the tx start.
+func hasActiveJobsTx(txApp core.App, novelID string) (bool, error) {
+	records, err := txApp.FindRecordsByFilter(JobsCollection, "novel = {:novel} && (status = 'pending' || status = 'running')", "", 1, 0, dbx.Params{"novel": novelID})
+	if err != nil {
+		return false, err
+	}
+	return len(records) > 0, nil
+}
+
+// assignDenseChapterPositions rewrites every chapter position of the novel to
+// 1..N following orderedIDs, inside the caller's transaction. Two-phase:
+// negate all positions first (negation is unique because the current values
+// are unique and non-negative; a lone legacy 0 row stays 0 without
+// colliding), then assign the dense final values. Both phases use narrow
+// statements: no record hydration, no full-row rewrite, no unique-index
+// collisions.
+func assignDenseChapterPositions(txApp core.App, novelID string, orderedIDs []string) error {
+	updated := types.NowDateTime().String()
+	if _, err := txApp.DB().NewQuery(
+		"UPDATE chapters SET position = -position, updated = {:updated} WHERE novel = {:novel}",
+	).Bind(dbx.Params{"novel": novelID, "updated": updated}).Execute(); err != nil {
+		return err
+	}
+	for i, id := range orderedIDs {
 		if _, err := txApp.DB().NewQuery(
-			"UPDATE chapters SET position = -position, updated = {:updated} WHERE novel = {:novel}",
-		).Bind(dbx.Params{"novel": novelID, "updated": updated}).Execute(); err != nil {
+			"UPDATE chapters SET position = {:pos}, updated = {:updated} WHERE id = {:id} AND novel = {:novel}",
+		).Bind(dbx.Params{"pos": i + 1, "updated": updated, "id": id, "novel": novelID}).Execute(); err != nil {
 			return err
 		}
-		for i, id := range chapterIDs {
+	}
+	return nil
+}
+
+// chapterPositionRow is the narrow projection backing the position rebuild.
+type chapterPositionRow struct {
+	ID           string  `db:"id"`
+	Position     float64 `db:"position"`
+	ChapterOrder float64 `db:"chapter_order"`
+	Excluded     bool    `db:"excluded"`
+}
+
+// loadChapterPositionRows reads id/position/chapter_order/excluded for every
+// chapter of the novel, ordered by effective reading position (position, with
+// legacy position = 0 rows falling back to chapter_order).
+func (s *Store) loadChapterPositionRows(novelID string) ([]chapterPositionRow, error) {
+	total, err := s.totalChapterCount(novelID)
+	if err != nil {
+		return nil, err
+	}
+	rows := []chapterPositionRow{}
+	if err := s.App.DB().Select("id", "position", "chapter_order", "excluded").From(ChaptersCollection).
+		Where(dbx.NewExp("novel = {:novel}", dbx.Params{"novel": novelID})).
+		Limit(int64(dynamicChapterLimit(total))).
+		All(&rows); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		pi, pj := effectiveChapterPosition(rows[i]), effectiveChapterPosition(rows[j])
+		if pi == pj {
+			return rows[i].ChapterOrder < rows[j].ChapterOrder
+		}
+		return pi < pj
+	})
+	return rows, nil
+}
+
+func effectiveChapterPosition(r chapterPositionRow) float64 {
+	if r.Position > 0 {
+		return r.Position
+	}
+	return r.ChapterOrder
+}
+
+// splitChapterPositionRows partitions rows (already in reading order) into
+// visible and excluded ids, preserving order within each group.
+func splitChapterPositionRows(rows []chapterPositionRow) (visible, excluded []string) {
+	for _, r := range rows {
+		if r.Excluded {
+			excluded = append(excluded, r.ID)
+		} else {
+			visible = append(visible, r.ID)
+		}
+	}
+	return visible, excluded
+}
+
+// ReindexChapterPositions rebuilds the reading index (position) of a novel:
+// visible chapters are renumbered densely 1..N in their current reading
+// order and excluded chapters are parked after them, keeping their relative
+// order. chapter_order (the source order) is never touched, and IDs/content/
+// status/progress stay stable. Rejected with ErrActiveJobs while the novel
+// has pending/running jobs. Returns the number of visible and excluded
+// chapters.
+func (s *Store) ReindexChapterPositions(userID, novelID string) (int, int, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return 0, 0, err
+	}
+	active, err := s.HasActiveJobsForNovel(novelID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if active {
+		return 0, 0, ErrActiveJobs
+	}
+	rows, err := s.loadChapterPositionRows(novelID)
+	if err != nil {
+		return 0, 0, err
+	}
+	visible, excluded := splitChapterPositionRows(rows)
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+	ordered := append(append([]string{}, visible...), excluded...)
+	err = s.App.RunInTransaction(func(txApp core.App) error {
+		active, err := hasActiveJobsTx(txApp, novelID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return ErrActiveJobs
+		}
+		return assignDenseChapterPositions(txApp, novelID, ordered)
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return len(visible), len(excluded), nil
+}
+
+// MoveChapterToPosition moves one chapter of the novel to the given 1-based
+// reading position, shifting the chapters after it. If the chapter is
+// excluded it is restored (excluded = false) as part of the same operation —
+// this is how an excluded chapter is re-added at a specific location.
+// Positions are rebuilt densely 1..N; excluded chapters are parked after the
+// visible range. chapter_order (the source order) is never touched. Returns
+// the assigned position. Rejected with ErrActiveJobs while the novel has
+// pending/running jobs.
+func (s *Store) MoveChapterToPosition(userID, novelID, chapterID string, targetPos int) (int, error) {
+	if _, err := s.GetOwnedNovel(userID, novelID); err != nil {
+		return 0, err
+	}
+	record, err := s.App.FindRecordById(ChaptersCollection, chapterID)
+	if err != nil || record.GetString("novel") != novelID {
+		return 0, ErrNotFound
+	}
+	active, err := s.HasActiveJobsForNovel(novelID)
+	if err != nil {
+		return 0, err
+	}
+	if active {
+		return 0, ErrActiveJobs
+	}
+	rows, err := s.loadChapterPositionRows(novelID)
+	if err != nil {
+		return 0, err
+	}
+	wasExcluded := record.GetBool("excluded")
+	visible, excluded := splitChapterPositionRows(rows)
+	// Remove the moved chapter from its group; it re-enters the visible
+	// sequence at the target slot.
+	visible = removeString(visible, chapterID)
+	excluded = removeString(excluded, chapterID)
+	insertAt := targetPos - 1
+	if insertAt < 0 {
+		insertAt = 0
+	}
+	if insertAt > len(visible) {
+		insertAt = len(visible)
+	}
+	ordered := make([]string, 0, len(rows))
+	ordered = append(ordered, visible[:insertAt]...)
+	ordered = append(ordered, chapterID)
+	ordered = append(ordered, visible[insertAt:]...)
+	ordered = append(ordered, excluded...)
+	assigned := insertAt + 1
+	err = s.App.RunInTransaction(func(txApp core.App) error {
+		active, err := hasActiveJobsTx(txApp, novelID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return ErrActiveJobs
+		}
+		if wasExcluded {
 			if _, err := txApp.DB().NewQuery(
-				"UPDATE chapters SET position = {:pos}, updated = {:updated} WHERE id = {:id} AND novel = {:novel}",
-			).Bind(dbx.Params{"pos": i + 1, "updated": updated, "id": id, "novel": novelID}).Execute(); err != nil {
+				"UPDATE chapters SET excluded = 0, updated = {:updated} WHERE id = {:id} AND novel = {:novel}",
+			).Bind(dbx.Params{"updated": types.NowDateTime().String(), "id": chapterID, "novel": novelID}).Execute(); err != nil {
 				return err
 			}
 		}
-		return nil
+		return assignDenseChapterPositions(txApp, novelID, ordered)
 	})
+	if err != nil {
+		return 0, err
+	}
+	if wasExcluded {
+		if err := s.RecalculateNovelStats(novelID); err != nil {
+			return assigned, err
+		}
+	}
+	return assigned, nil
+}
+
+func removeString(ids []string, target string) []string {
+	for i, id := range ids {
+		if id == target {
+			return append(ids[:i], ids[i+1:]...)
+		}
+	}
+	return ids
 }

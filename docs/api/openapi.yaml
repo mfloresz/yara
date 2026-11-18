@@ -919,6 +919,36 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /novels/{novelId}/chapters/reindex:
+    parameters:
+      - $ref: '#/components/parameters/NovelIdParam'
+    post:
+      tags: [Chapters]
+      summary: Rebuild the reading index.
+      description: >
+        Renumbers `position` densely 1..N: visible chapters keep their current
+        reading order, excluded chapters are parked after them (keeping their
+        relative order). `chapterOrder` (source numbering) is never touched,
+        so gap detection and source sync stay correct. Rejected with `409`
+        while jobs are active on the novel. Idempotent.
+      responses:
+        '200':
+          description: OK — returns the number of visible and excluded chapters.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SingleEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          visible: { type: integer }
+                          excluded: { type: integer }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /novels/{novelId}/chapters/{chapterId}:
     parameters:
       - $ref: '#/components/parameters/NovelIdParam'

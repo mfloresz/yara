@@ -36,6 +36,8 @@ export const TOOL_LABELS: Record<string, string> = {
   set_chapter_excluded: "Cambiando la visibilidad",
   bulk_set_chapter_status: "Actualizando estados en lote",
   bulk_set_chapter_excluded: "Actualizando visibilidad en lote",
+  reindex_chapters: "Reconstruyendo el índice",
+  move_chapter: "Moviendo el capítulo",
   update_glossary: "Actualizando el glosario",
   generate_glossary: "Generando el glosario",
   translate_novel_description: "Traduciendo la descripción",

@@ -136,8 +136,11 @@
 
           <div v-if="isOwner" class="chapter-list-item-actions">
             <n-popconfirm
+              positive-text="Excluir y reindexar"
+              negative-text="Solo excluir"
               @update:show="(show: boolean) => setConfirmOpen(item.chapter.id, show)"
-              @positive-click="emit('delete', { event: $event, chapter: item.chapter })"
+              @positive-click="emit('delete', { event: $event, chapter: item.chapter, reindex: true })"
+              @negative-click="emit('delete', { event: $event, chapter: item.chapter, reindex: false })"
             >
               <template #trigger>
                 <n-button
@@ -152,7 +155,7 @@
                   <template #icon><n-icon :size="14"><TrashOutline /></n-icon></template>
                 </n-button>
               </template>
-              ¿Excluir el capítulo "{{ displayChapterTitle(item.chapter.translatedTitle || item.chapter.title) }}"? Se conservará y podrás restaurarlo.
+              ¿Excluir el capítulo "{{ displayChapterTitle(item.chapter.translatedTitle || item.chapter.title) }}"? Se conservará y podrás restaurarlo. "Excluir y reindexar" renumera las posiciones para que la lista quede contigua.
             </n-popconfirm>
           </div>
         </article>
@@ -207,7 +210,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:page", page: number): void;
   (e: "update:selected", selected: ChapterSummary[]): void;
-  (e: "delete", payload: { event: Event; chapter: ChapterSummary }): void;
+  (e: "delete", payload: { event: Event; chapter: ChapterSummary; reindex: boolean }): void;
   (e: "bulk-delete", event: Event): void;
   (e: "create"): void;
   (e: "import"): void;

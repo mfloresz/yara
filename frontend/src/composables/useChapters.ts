@@ -145,6 +145,10 @@ export function useChapters(
     chapters.value = chapters.value.filter((item) => item.id !== chapterId);
   }
 
+  async function reindexChapters() {
+    return api.chapters.reindex(novelId.value);
+  }
+
   async function bulkDeleteChapters(chapterIds: string[]) {
     if (chapterIds.length === 0) {
       return { deleted: 0, requested: 0, missing: [] as string[] };
@@ -183,5 +187,6 @@ export function useChapters(
     bulkCreateChapters,
     deleteChapter,
     bulkDeleteChapters,
+    reindexChapters,
   };
 }

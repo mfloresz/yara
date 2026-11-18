@@ -287,7 +287,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, h, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMessage, useDialog } from "naive-ui";
 import AppLayout from "@/components/AppLayout.vue";
@@ -342,7 +342,7 @@ const dialog = useDialog();
 const { api, auth } = useAppServices();
 const { getNovel, updateNovel, replaceNovelInList } = useNovels();
 const novelId = computed(() => String(route.params.novelId || ""));
-const { listChapters, createChapter, updateChapter, bulkCreateChapters, deleteChapter, bulkDeleteChapters } = useChapters(novelId, { autoLoad: false });
+const { listChapters, createChapter, updateChapter, bulkCreateChapters, deleteChapter, bulkDeleteChapters, reindexChapters } = useChapters(novelId, { autoLoad: false });
 const { hasActive } = useActiveJobStatus();
 const { jobs: failedJobs, listJobs: listFailedJobs, createJob, updateJob } = useTranslationJobs(novelId, { failedOnly: true, autoLoad: false });
 const { isOnline, isNovelCached, getCachedNovel, downloadNovelForOffline, removeCachedNovel } = useOfflineCache(novelId);
@@ -656,11 +656,12 @@ async function saveChapter(payload: ChapterUpsertInput & { id?: string }) {
   }
 }
 
-async function confirmDeleteChapter() {
+async function confirmDeleteChapter(reindex: boolean) {
   const id = pendingDeleteChapterId.value;
   if (!id) return;
   try {
     await deleteChapter(id);
+    if (reindex) await reindexChapters();
     markAllSummariesDirty();
     await refreshChapterViews();
   } catch (err) {
@@ -670,24 +671,26 @@ async function confirmDeleteChapter() {
   }
 }
 
-function onDeleteChapter({ chapter }: { event: Event; chapter: ChapterSummary }) {
+function onDeleteChapter({ chapter, reindex }: { event: Event; chapter: ChapterSummary; reindex: boolean }) {
   pendingDeleteChapterId.value = chapter.id;
-  void confirmDeleteChapter();
+  void confirmDeleteChapter(reindex);
 }
 
 function onBulkDeleteChapters(_event: Event) {
   if (selectedChapters.value.length <= 1) return;
   const count = selectedChapters.value.length;
-  dialog.warning({
+  const d = dialog.warning({
     title: `¿Excluir ${count} capítulos?`,
-    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras.",
-    positiveText: `Excluir ${count}`,
-    negativeText: "Cancelar",
-    onPositiveClick: () => void confirmBulkDeleteChapters(),
+    content: "Los capítulos se conservarán ocultos y podrás restaurarlos cuando quieras. \"Excluir y reindexar\" renumera las posiciones para que la lista quede contigua.",
+    action: () => [
+      h(NButton, { size: "small", type: "primary", onClick: () => { d.destroy(); void confirmBulkDeleteChapters(true); } }, { default: () => "Excluir y reindexar" }),
+      h(NButton, { size: "small", onClick: () => { d.destroy(); void confirmBulkDeleteChapters(false); } }, { default: () => "Solo excluir" }),
+      h(NButton, { size: "small", quaternary: true, onClick: () => d.destroy() }, { default: () => "Cancelar" }),
+    ],
   });
 }
 
-async function confirmBulkDeleteChapters() {
+async function confirmBulkDeleteChapters(reindex: boolean) {
   const ids = selectedChapters.value.map((chapter) => chapter.id);
   if (ids.length === 0) {
     return;
@@ -695,17 +698,19 @@ async function confirmBulkDeleteChapters() {
   bulkDeleting.value = true;
   try {
     const { deleted, requested } = await bulkDeleteChapters(ids);
+    if (reindex && deleted > 0) await reindexChapters();
     markAllSummariesDirty();
     await refreshChapterViews();
     selectedChapters.value = [];
+    const reindexNote = reindex && deleted > 0 ? " Posiciones reindexadas." : "";
     if (deleted === requested) {
       message.success(
-        `Capítulos excluidos: ${deleted} ${deleted === 1 ? "capítulo excluido" : "capítulos excluidos"}.`,
+        `Capítulos excluidos: ${deleted} ${deleted === 1 ? "capítulo excluido" : "capítulos excluidos"}.${reindexNote}`,
         { duration: 3000 },
       );
     } else {
       message.warning(
-        `Exclusión parcial: ${deleted} de ${requested} capítulos excluidos.`,
+        `Exclusión parcial: ${deleted} de ${requested} capítulos excluidos.${reindexNote}`,
         { duration: 4500 },
       );
     }

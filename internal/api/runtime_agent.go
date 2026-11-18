@@ -46,12 +46,12 @@ Rules:
 - Catalog questions: list_tags lists the user's tags; list_authors lists distinct authors matching a PARTIAL name (use it before listing novels when the user half-remembers a name — "Cris" also finds "TM Cris"); list_series aggregates chapter progress per series (complete=complete answers "which series are fully translated"). Then point at the novels with list_novels and the matching field.
 - "Being translated" can mean two things: novels with active translate/refine jobs (get_active_jobs) or novels with unfinished chapters (query_library: chapters_pending > 0). Answer with the one the user means, or both when unclear.
 - Jobs run in the BACKGROUND: create_job (translate/refine/check) and update_novel_from_url enqueue work and return a jobId; report it and do not poll in loops — check get_active_jobs or get_novel_jobs once per user message. cancel_job and retry_job manage them. Downloads never go through create_job: update_novel_from_url diffs the source TOC (check_novel_updates is its read-only dry run) and enqueues the download. To re-translate chapters flagged by a query_library analysis (e.g. translations 40% shorter than the original), pass their chapter_ids to create_job — the job overwrites the previous translation.
-- Excluded chapters are logically DELETED: omit them from every analysis, count and chapter listing by default (in query_library that means is_excluded = 0). At most mention how many exist; surface the chapters themselves only when the user explicitly asks about excluded ones. set_chapter_excluded and bulk_set_chapter_excluded control the flag.
+- Excluded chapters are logically DELETED: omit them from every analysis, count and chapter listing by default (in query_library that means is_excluded = 0). At most mention how many exist; surface the chapters themselves only when the user explicitly asks about excluded ones. set_chapter_excluded and bulk_set_chapter_excluded control the flag. After excluding chapters, ask the user whether to reindex the reading positions (reindex_chapters) so the visible list is numbered 1..N without gaps; move_chapter re-adds an excluded chapter at a specific position.
 - Reading a chapter body requires get_chapter with content set to original, translated or refined; summaries from get_novel_chapters never include the body. A negative startLine counts from the end (startLine -10, lineCount 10 returns the last 10 lines), and lineCount 1 is a cheap probe that reveals a chapter's exact length (totalLines) without pulling its text.
 - search_chapters looks inside chapter titles AND bodies of one novel (literal text match, returns snippets); use it to locate where something is said before reading a whole chapter.
 - search_library does the same literal match across every novel the user owns at once, grouped by novel with snippets and pagination (novelPage / novelOffset, hasMoreNovels). Use it when you don't know which novel contains the text; then read with get_chapter or pinpoint with search_chapters inside one novel.
 - query_library runs ONE read-only analytics SELECT over the library progress views — the cheapest way to answer aggregate questions ("which novels are missing fewer than 10 chapters to be complete", counts, filters, rankings). Chapter bodies are not in SQL; use get_chapter for those. For whole-library sweeps, run a COUNT(*) first and then SELECT ... LIMIT 200 OFFSET k, raising k each call until nothing is left — never present a truncated page as the complete answer.
-- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded, bulk_set_chapter_status, bulk_set_chapter_excluded, update_glossary, set_reading_progress) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. update_novel can also edit targetAuthor, targetSeries, tags and the novel status (ongoing, completed, hiatus, cancelled); source-side metadata stays untouched. While a novel has active download/translation jobs, chapter and glossary writes are refused — say so instead of retrying.
+- Writing tools (update_novel, update_chapter, set_chapter_status, set_chapter_excluded, bulk_set_chapter_status, bulk_set_chapter_excluded, reindex_chapters, move_chapter, update_glossary, set_reading_progress) apply immediately to novels the user owns. Only call them when the user clearly asked for a change, never for exploratory suggestions; after applying, tell the user exactly what changed. update_chapter replaces the whole content field, so read the current text with get_chapter first when the user asks for modifications. update_novel can also edit targetAuthor, targetSeries, tags and the novel status (ongoing, completed, hiatus, cancelled); source-side metadata stays untouched. While a novel has active download/translation jobs, chapter and glossary writes are refused — say so instead of retrying.
 - bulk_set_chapter_status and bulk_set_chapter_excluded take fromOrder AND toOrder (inclusive) and change whole ranges in one call; they skip excluded and processing chapters.
 - The glossary tools read (get_glossary), edit (update_glossary: upsert/remove by source term) and regenerate (generate_glossary enqueues a job) a novel's term pairs.
 - For cleanups, shape the rule and call propose_cleanup: it ends the turn and the app renders an interactive approval card with the full per-chapter diff, the ONLY path a cleanup has to run. Optionally run preview_chapter_cleanup first to sanity-check how many chapters a rule touches (at most 25 per call) and iterate on the rule with the user before proposing. The user's approve/discard decision arrives as their next message ("Limpieza aplicada…" / "Limpieza descartada…"); never claim a cleanup was applied unless that confirmation arrived.
@@ -206,6 +206,8 @@ func (s *Server) agentNovelTools(userID string) []ai.AgentTool {
 		s.agentToolSetChapterExcluded(userID),
 		s.agentToolBulkSetChapterStatus(userID),
 		s.agentToolBulkSetChapterExcluded(userID),
+		s.agentToolReindexChapters(userID),
+		s.agentToolMoveChapter(userID),
 	}
 }
 
@@ -888,6 +890,64 @@ func (s *Server) agentToolSetChapterExcluded(userID string) ai.AgentTool {
 				return "", err
 			}
 			return marshalToolResult(map[string]any{"ok": true, "chapterId": strings.TrimSpace(a.ChapterID), "excluded": a.Excluded})
+		},
+	}
+}
+
+func (s *Server) agentToolReindexChapters(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "reindex_chapters",
+		Description: "Rebuild the reading index (position) of one of the user's OWN novels: visible chapters are renumbered densely 1..N in their current reading order and excluded chapters are parked after them, keeping their relative order. Use after excluding duplicate chapters so the visible list has no gaps. chapter_order (source numbering) is never touched. Refused while the novel has active jobs.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."}
+  },
+  "required": ["novelId"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID string `json:"novelId"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" {
+				return "", fmt.Errorf("invalid novelId")
+			}
+			visible, excluded, err := s.Store.ReindexChapterPositions(userID, strings.TrimSpace(a.NovelID))
+			if err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{"ok": true, "visible": visible, "excluded": excluded})
+		},
+	}
+}
+
+func (s *Server) agentToolMoveChapter(userID string) ai.AgentTool {
+	return ai.AgentTool{
+		Name:        "move_chapter",
+		Description: "Move one chapter of the user's OWN novel to a 1-based reading position, shifting the chapters after it. If the chapter is excluded it is restored (excluded=false) as part of the same operation — use this to re-add an excluded chapter at a specific location. Positions are rebuilt densely 1..N; excluded chapters are parked after the visible range. chapter_order (source numbering) is never touched. Refused while the novel has active jobs.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "novelId": {"type": "string", "description": "Novel id."},
+    "chapterId": {"type": "string", "description": "Chapter id."},
+    "position": {"type": "integer", "minimum": 1, "description": "Target 1-based reading position."}
+  },
+  "required": ["novelId", "chapterId", "position"]
+}`),
+		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				NovelID   string `json:"novelId"`
+				ChapterID string `json:"chapterId"`
+				Position  int    `json:"position"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.NovelID) == "" || strings.TrimSpace(a.ChapterID) == "" || a.Position < 1 {
+				return "", fmt.Errorf("invalid novelId/chapterId/position")
+			}
+			assigned, err := s.Store.MoveChapterToPosition(userID, strings.TrimSpace(a.NovelID), strings.TrimSpace(a.ChapterID), a.Position)
+			if err != nil {
+				return "", err
+			}
+			return marshalToolResult(map[string]any{"ok": true, "chapterId": strings.TrimSpace(a.ChapterID), "position": assigned})
 		},
 	}
 }

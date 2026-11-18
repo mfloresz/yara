@@ -84,6 +84,7 @@ func TestAgentToolCatalogIncludesNewTools(t *testing.T) {
 		"get_reading_progress", "set_reading_progress",
 		"list_novel_epubs", "build_epub", "translate_novel_description",
 		"bulk_set_chapter_status", "bulk_set_chapter_excluded",
+		"reindex_chapters", "move_chapter",
 		"ask_user",
 	} {
 		if !names[want] {
@@ -393,6 +394,53 @@ func TestAgentBulkChapterWriteTools(t *testing.T) {
 	}, nil) {
 		if !strings.Contains(result, "refused while the novel has active jobs") {
 			t.Errorf("bulk write should be refused during active jobs: %s", result)
+		}
+	}
+}
+
+func TestAgentReindexAndMoveChapterTools(t *testing.T) {
+	setup := newAgentToolsTestSetup(t, "Reindex")
+	env, alice := setup.env, setup.alice
+	chapters := setup.aliceChapters(t, 1, 2, 3, 4, 5)
+
+	// Exclude chapter 3 via the agent.
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"set_chapter_excluded","args":{"novelId":"` + setup.aliceNovel.ID + `","chapterId":"` + chapters[2].ID + `","excluded":true}}`,
+	}, nil) {
+		if strings.Contains(result, "error:") {
+			t.Fatalf("set_chapter_excluded failed: %s", result)
+		}
+	}
+
+	// Reindex via the agent: visible 1..4, excluded parked at 5.
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"reindex_chapters","args":{"novelId":"` + setup.aliceNovel.ID + `"}}`,
+	}, nil) {
+		if !strings.Contains(result, `"visible":4`) || !strings.Contains(result, `"excluded":1`) {
+			t.Errorf("reindex_chapters should report visible=4 excluded=1: %s", result)
+		}
+	}
+
+	// Re-add chapter 3 at position 2 via the agent: restored and inserted there.
+	for _, result := range runAgentTools(t, env, alice.Token, []string{
+		`{"_tool":"move_chapter","args":{"novelId":"` + setup.aliceNovel.ID + `","chapterId":"` + chapters[2].ID + `","position":2}}`,
+	}, nil) {
+		if !strings.Contains(result, `"position":2`) {
+			t.Errorf("move_chapter should assign position 2: %s", result)
+		}
+	}
+
+	wantOrder := []string{chapters[0].ID, chapters[2].ID, chapters[1].ID, chapters[3].ID, chapters[4].ID}
+	for i, id := range wantOrder {
+		got, err := env.store.GetChapterAccessible(alice.User.ID, setup.aliceNovel.ID, id)
+		if err != nil {
+			t.Fatalf("get chapter %s: %v", id, err)
+		}
+		if got.Position != i+1 {
+			t.Fatalf("expected position %d for %s, got %d", i+1, id, got.Position)
+		}
+		if got.Excluded {
+			t.Fatalf("expected chapter %s to be restored (excluded=false)", id)
 		}
 	}
 }

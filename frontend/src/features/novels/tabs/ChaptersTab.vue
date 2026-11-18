@@ -47,7 +47,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: "update:page", page: number): void;
   (e: "update:selected", selected: ChapterSummary[]): void;
-  (e: "delete", payload: { event: Event; chapter: ChapterSummary }): void;
+  (e: "delete", payload: { event: Event; chapter: ChapterSummary; reindex: boolean }): void;
   (e: "bulk-delete", event: Event): void;
   (e: "create"): void;
   (e: "import"): void;
