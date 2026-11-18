@@ -70,6 +70,7 @@ func handlePasswordResetAccept(s *Server) func(*core.RequestEvent) error {
 				return writeV1Error(e, http.StatusInternalServerError, "internal_error", "internal error")
 			}
 		}
+		CloseWorkersByUserID(user.ID)
 		slog.Info("password reset redeemed", "userId", user.ID)
 		clearAuthCookie(e)
 		return v1Respond(e, http.StatusOK, map[string]any{"email": user.Email}, nil, nil)

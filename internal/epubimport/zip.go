@@ -34,6 +34,9 @@ func newZipBudget(zr *zip.Reader) *zipBudget {
 }
 
 func (b *zipBudget) readFile(name string) ([]byte, error) {
+	if b.remaining <= 0 {
+		return nil, fmt.Errorf("epub decompressed size exceeds %d bytes", MaxDecompressedBytes)
+	}
 	for _, f := range b.zr.File {
 		if f.Name != name {
 			continue
@@ -43,14 +46,17 @@ func (b *zipBudget) readFile(name string) ([]byte, error) {
 			return nil, err
 		}
 		defer rc.Close()
-		data, err := io.ReadAll(io.LimitReader(rc, b.remaining+1))
+		remaining := b.remaining
+		data, err := io.ReadAll(io.LimitReader(rc, remaining+1))
+		// Charge every decompressed byte, including rejected reads and data
+		// returned alongside an error. Zero is sticky: no later entry is opened.
+		b.remaining = max(0, remaining-int64(len(data)))
 		if err != nil {
 			return nil, err
 		}
-		if int64(len(data)) > b.remaining {
+		if int64(len(data)) > remaining {
 			return nil, fmt.Errorf("epub decompressed size exceeds %d bytes", MaxDecompressedBytes)
 		}
-		b.remaining -= int64(len(data))
 		return data, nil
 	}
 	return nil, fmt.Errorf("file not found: %s", name)
@@ -69,6 +75,9 @@ func newImageBudget(zr *zip.Reader) *imageBudget {
 }
 
 func (b *imageBudget) read(name string) ([]byte, error) {
+	if b.remaining <= 0 {
+		return nil, fmt.Errorf("epub images exceed %d bytes in total", MaxImagesBytes)
+	}
 	for _, f := range b.zr.File {
 		if f.Name != name {
 			continue
@@ -78,17 +87,19 @@ func (b *imageBudget) read(name string) ([]byte, error) {
 			return nil, err
 		}
 		defer rc.Close()
-		data, err := io.ReadAll(io.LimitReader(rc, MaxImageBytes+1))
+		remaining := b.remaining
+		data, err := io.ReadAll(io.LimitReader(rc, min(MaxImageBytes, remaining)+1))
+		// A rejected image still consumes work and must spend the shared budget.
+		b.remaining = max(0, remaining-int64(len(data)))
 		if err != nil {
 			return nil, err
 		}
 		if int64(len(data)) > MaxImageBytes {
 			return nil, fmt.Errorf("image %s exceeds the %d byte per-image limit", name, MaxImageBytes)
 		}
-		if int64(len(data)) > b.remaining {
+		if int64(len(data)) > remaining {
 			return nil, fmt.Errorf("epub images exceed %d bytes in total", MaxImagesBytes)
 		}
-		b.remaining -= int64(len(data))
 		return data, nil
 	}
 	return nil, fmt.Errorf("file not found: %s", name)

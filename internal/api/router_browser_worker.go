@@ -731,14 +731,30 @@ func GetBrowserWorkerCount() int {
 }
 
 func CloseWorkerByTokenID(tokenID string) {
+	closeWorkersMatching(func(worker *BrowserWorker) bool { return worker.TokenID == tokenID })
+}
+
+// CloseWorkersByUserID disconnects every existing socket for a reset or blocked
+// account. Stored-token revocation prevents those sockets from reconnecting.
+func CloseWorkersByUserID(userID string) {
+	closeWorkersMatching(func(worker *BrowserWorker) bool { return worker.UserID == userID })
+}
+
+func closeWorkersMatching(matches func(*BrowserWorker) bool) {
+	// Wait for registrations that validated before revocation to publish their
+	// identity. Do not hold the registry lock while waiting for worker I/O.
 	browserWorkersMu.Lock()
-	defer browserWorkersMu.Unlock()
-	for _, w := range browserWorkers {
-		if w.TokenID == tokenID {
-			w.Conn.Close()
-			delete(browserWorkers, w.ID)
-			slog.Info("closed worker after token revocation", "workerId", w.ID, "tokenID", tokenID)
-			return
+	workers := make([]*BrowserWorker, 0, len(browserWorkers))
+	for _, worker := range browserWorkers {
+		workers = append(workers, worker)
+	}
+	browserWorkersMu.Unlock()
+	for _, worker := range workers {
+		worker.mu.Lock()
+		match := matches(worker)
+		worker.mu.Unlock()
+		if match {
+			evictWorker(worker)
 		}
 	}
 }

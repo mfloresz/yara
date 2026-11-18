@@ -88,59 +88,60 @@ func (s *Store) FindPasswordResetByToken(token string) (*PasswordReset, error) {
 	return passwordResetFromRecord(record, email), nil
 }
 
-// RedeemPasswordReset consumes the token and sets the new password. The token
-// is marked used BEFORE the change so a failure cannot leave it reusable; on
-// user-save failure the mark is rolled back best-effort. Sessions are killed
-// via RefreshTokenKey and every worker (extension) token is revoked.
+// RedeemPasswordReset atomically consumes the reset, changes the password,
+// invalidates sessions and revokes every worker credential.
 func (s *Store) RedeemPasswordReset(token, password string) (User, error) {
 	if len(password) < 8 {
 		return User{}, ErrInvalidInput
 	}
-	reset, err := s.FindPasswordResetByToken(token)
-	if err != nil {
-		return User{}, err
-	}
-	record, err := s.App.FindRecordById(PasswordResetsCollection, reset.ID)
-	if err != nil {
-		return User{}, ErrNotFound
-	}
-	record.Set("used_at", time.Now().UTC())
-	if err := s.App.Save(record); err != nil {
-		return User{}, fmt.Errorf("mark reset used: %w", err)
-	}
-	reopen := func() {
-		if rec, recErr := s.App.FindRecordById(PasswordResetsCollection, reset.ID); recErr == nil {
-			rec.Set("used_at", "")
-			_ = s.App.Save(rec)
+	var result User
+	err := s.App.RunInTransaction(func(tx core.App) error {
+		st := New(tx, s.Encryptor)
+		reset, err := st.FindPasswordResetByToken(token)
+		if err != nil {
+			return err
 		}
-	}
-	user, err := s.App.FindRecordById(UsersCollection, reset.UserID)
-	if err != nil {
-		reopen()
-		return User{}, ErrNotFound
-	}
-	user.SetPassword(password)
-	user.RefreshTokenKey()
-	if err := s.App.Save(user); err != nil {
-		reopen()
-		return User{}, fmt.Errorf("set new password: %w", err)
-	}
-	if err := s.revokeAllWorkerTokens(reset.UserID); err != nil {
-		return User{}, fmt.Errorf("revoke worker tokens: %w", err)
-	}
-	return userFromRecord(user), nil
+		record, err := tx.FindRecordById(PasswordResetsCollection, reset.ID)
+		if err != nil {
+			return ErrNotFound
+		}
+		record.Set("used_at", time.Now().UTC())
+		if err := tx.Save(record); err != nil {
+			return fmt.Errorf("mark reset used: %w", err)
+		}
+		user, err := tx.FindRecordById(UsersCollection, reset.UserID)
+		if err != nil {
+			return ErrNotFound
+		}
+		user.SetPassword(password)
+		user.RefreshTokenKey()
+		if err := tx.Save(user); err != nil {
+			return fmt.Errorf("set new password: %w", err)
+		}
+		if err := st.revokeAllWorkerTokens(reset.UserID); err != nil {
+			return fmt.Errorf("revoke worker tokens: %w", err)
+		}
+		result = userFromRecord(user)
+		return nil
+	})
+	return result, err
 }
 
 func (s *Store) revokeAllWorkerTokens(userID string) error {
-	records, err := s.App.FindRecordsByFilter(WorkerTokensCollection, "owner = {:owner} && revoked = false", "", 500, 0, dbx.Params{"owner": userID})
-	if err != nil {
-		return err
-	}
-	for _, record := range records {
-		record.Set("revoked", true)
-		if err := s.App.Save(record); err != nil {
+	// Revoked records leave the filter, so always start at offset zero.
+	for {
+		records, err := s.App.FindRecordsByFilter(WorkerTokensCollection, "owner = {:owner} && revoked = false", "", 500, 0, dbx.Params{"owner": userID})
+		if err != nil {
 			return err
 		}
+		if len(records) == 0 {
+			return nil
+		}
+		for _, record := range records {
+			record.Set("revoked", true)
+			if err := s.App.Save(record); err != nil {
+				return err
+			}
+		}
 	}
-	return nil
 }

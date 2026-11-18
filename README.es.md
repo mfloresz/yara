@@ -207,6 +207,12 @@ Orden de resolución: **flag CLI > variable de entorno > default** (ver `interna
 
 ---
 
+## Mantenimiento del almacenamiento
+
+La [guía de auditoría y remediación de imágenes EPUB/ZIP](docs/operations/image-storage-remediation.md) explica cómo revisar una instancia detenida, crear un respaldo independiente, recuperar espacio con una herramienta offline (dry-run por defecto) y revertir los cambios. No es una migración automática al arrancar el servidor.
+
+---
+
 ## API
 
 Superficie única: **`/api/v1/*`** — envelope `{data, meta, links}`, header `X-API-Version: v1` y errores `application/problem+json`. Referencia completa en [`docs/api/README.md`](docs/api/README.md) y spec machine-readable en [`docs/api/openapi.yaml`](docs/api/openapi.yaml).

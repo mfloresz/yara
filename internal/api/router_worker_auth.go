@@ -18,6 +18,7 @@ import (
 
 type pendingAuth struct {
 	ExtensionID string
+	ClientState string
 	UserID      string
 	State       string
 	CreatedAt   time.Time
@@ -56,18 +57,25 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 			return e.BadRequestError("invalid extension_id", nil)
 		}
 
+		clientState := e.Request.URL.Query().Get("client_state")
+		if !validWorkerClientState(clientState) {
+			return e.BadRequestError("client_state must be 64 lowercase hexadecimal characters", nil)
+		}
 		cookie, err := e.Request.Cookie(authCookieName)
 		if err != nil || cookie.Value == "" {
-			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID)))
+			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID, clientState)))
 		}
-		if _, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth); err != nil {
-			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID)))
+		user, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth)
+		if err != nil || user.GetBool("blocked") {
+			return e.HTML(http.StatusOK, loginRequiredHTML(authorizeURL(extensionID, clientState)))
 		}
 
 		state := generateState()
 		pendingAuthsMu.Lock()
 		pendingAuths[state] = &pendingAuth{
 			ExtensionID: extensionID,
+			ClientState: clientState,
+			UserID:      user.Id,
 			State:       state,
 			CreatedAt:   time.Now(),
 		}
@@ -108,8 +116,8 @@ func registerWorkerAuthPublicRoutes(router *pbrouter.Router[*core.RequestEvent],
 	router.GET("/api/v1/worker-auth/callback", func(e *core.RequestEvent) error {
 		token := e.Request.URL.Query().Get("token")
 		userID := e.Request.URL.Query().Get("user")
-		if token == "" || userID == "" {
-			return e.BadRequestError("missing token or user", nil)
+		if token == "" || userID == "" || !validWorkerClientState(e.Request.URL.Query().Get("client_state")) {
+			return e.BadRequestError("missing token, user or valid client_state", nil)
 		}
 
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -144,8 +152,8 @@ func registerV1WorkerAuthRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s
 			return e.BadRequestError("invalid or expired authorization request", nil)
 		}
 
-		if e.Auth == nil {
-			return e.BadRequestError("authentication required", nil)
+		if e.Auth == nil || e.Auth.Id != pending.UserID {
+			return e.BadRequestError("authorization account changed", nil)
 		}
 
 		shortID := pending.ExtensionID
@@ -158,7 +166,9 @@ func registerV1WorkerAuthRoutes(api *pbrouter.RouterGroup[*core.RequestEvent], s
 			return e.InternalServerError("failed to create token", err)
 		}
 
-		callbackURL := fmt.Sprintf("/api/v1/worker-auth/callback?token=%s&user=%s", plaintext, e.Auth.Id)
+		callbackURL := "/api/v1/worker-auth/callback?" + url.Values{
+			"token": {plaintext}, "user": {e.Auth.Id}, "client_state": {pending.ClientState},
+		}.Encode()
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		e.Response.WriteHeader(http.StatusOK)
 		page := approvalSuccessHTML(label, callbackURL)
@@ -537,8 +547,22 @@ func approvalSuccessHTML(label, callbackURL string) string {
 
 // authorizeURL rebuilds the authorize entry point so the login page can send
 // the user back to the consent screen instead of dropping the extension_id.
-func authorizeURL(extensionID string) string {
-	return "/api/v1/worker-auth/authorize?extension_id=" + url.QueryEscape(extensionID)
+func authorizeURL(extensionID, clientState string) string {
+	return "/api/v1/worker-auth/authorize?" + url.Values{
+		"extension_id": {extensionID}, "client_state": {clientState},
+	}.Encode()
+}
+
+func validWorkerClientState(state string) bool {
+	if len(state) != 64 {
+		return false
+	}
+	for _, char := range state {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 var loginRequiredTmpl = template.Must(template.New("loginRequired").Parse(`<!DOCTYPE html>

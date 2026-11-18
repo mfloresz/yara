@@ -1,11 +1,11 @@
 module translator-server
 
-go 1.27
+go 1.27.4
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/PuerkitoBio/goquery v1.10.3
-	github.com/andybalholm/brotli v1.1.0
+	github.com/andybalholm/brotli v1.2.7
 	github.com/cloudwego/eino v0.9.21
 	github.com/cloudwego/eino-ext/components/model/gemini v0.1.36
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
@@ -15,11 +15,11 @@ require (
 	github.com/meguminnnnnnnnn/go-openai v0.1.2
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.40.4
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.46.0
-	golang.org/x/net v0.59.0
-	golang.org/x/sync v0.23.0
-	golang.org/x/text v0.42.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/text v0.43.0
 	google.golang.org/genai v1.70.0
 	modernc.org/sqlite v1.57.0
 )
@@ -90,7 +90,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

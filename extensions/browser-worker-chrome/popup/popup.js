@@ -142,7 +142,9 @@ btnImport.addEventListener('click', () => importCurrentTab(btnImport, false));
 btnImportInto.addEventListener('click', () => importCurrentTab(btnImportInto, true));
 
 btnAuth.addEventListener('click', async () => {
-  const addr = serverAddrInput.value.trim();
+  let addr;
+  try { addr = yaraBaseUrl(serverAddrInput.value.trim()); }
+  catch (e) { showError(e.message); return; }
   if (!addr) {
     showError('Configura la dirección del servidor primero');
     serverAddrInput.focus();
@@ -152,13 +154,17 @@ btnAuth.addEventListener('click', async () => {
   await setConfig({ serverAddr: addr });
   statusServer.textContent = addr;
 
-  const extId = chrome.runtime.id;
-  const authURL = `${yaraBaseUrl(addr)}/api/v1/worker-auth/authorize?extension_id=${encodeURIComponent(extId)}`;
-  chrome.tabs.create({ url: authURL });
+  try {
+    yaraBaseUrl(addr); // Surface invalid/insecure origins before opening a tab.
+    const result = await chrome.runtime.sendMessage({ type: 'BEGIN_AUTH' });
+    if (!result?.ok) showError(result?.error || 'No se pudo iniciar la autorización');
+  } catch (e) { showError(e.message); }
 });
 
 btnConnect.addEventListener('click', async () => {
-  const addr = serverAddrInput.value.trim();
+  let addr;
+  try { addr = yaraBaseUrl(serverAddrInput.value.trim()); }
+  catch (e) { showError(e.message); return; }
   if (!addr) {
     showError('Configura la dirección del servidor primero');
     serverAddrInput.focus();
@@ -189,7 +195,9 @@ btnRefresh.addEventListener('click', async () => {
 });
 
 serverAddrInput.addEventListener('change', () => {
-  const addr = serverAddrInput.value.trim();
+  let addr;
+  try { addr = yaraBaseUrl(serverAddrInput.value.trim()); }
+  catch (e) { showError(e.message); return; }
   if (!addr) return;
   setConfig({ serverAddr: addr });
   statusServer.textContent = addr;

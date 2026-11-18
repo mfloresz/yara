@@ -119,7 +119,7 @@
 
           <footer class="panel-footer small muted">
             ¿Ya tienes una cuenta?
-            <button type="button" class="link-btn" @click="router.push('/login')">
+            <button type="button" class="link-btn" @click="goToLogin">
               Iniciar sesión
             </button>
           </footer>
@@ -140,6 +140,7 @@ import { clearAuth } from "@/app/auth";
 
 const route = useRoute();
 const router = useRouter();
+const goToLogin = () => router.push("/login");
 const { api } = useAppServices();
 const message = useMessage();
 

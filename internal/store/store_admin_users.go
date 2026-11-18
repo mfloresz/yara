@@ -2,6 +2,7 @@ package store
 
 import (
 	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // AdminUserNovel is the lightweight novel row shown in the admin user drawer.
@@ -74,15 +75,24 @@ func (s *Store) BlockUser(actorID, userID string) (User, error) {
 			return User{}, ErrLastAdmin
 		}
 	}
-	record.Set("blocked", true)
-	record.RefreshTokenKey()
-	if err := s.App.Save(record); err != nil {
-		return User{}, err
-	}
-	if err := s.revokeAllWorkerTokens(userID); err != nil {
-		return User{}, err
-	}
-	return userFromRecord(record), nil
+	var result User
+	err = s.App.RunInTransaction(func(tx core.App) error {
+		record, err := tx.FindRecordById(UsersCollection, userID)
+		if err != nil {
+			return err
+		}
+		record.Set("blocked", true)
+		record.RefreshTokenKey()
+		if err := tx.Save(record); err != nil {
+			return err
+		}
+		if err := New(tx, s.Encryptor).revokeAllWorkerTokens(userID); err != nil {
+			return err
+		}
+		result = userFromRecord(record)
+		return nil
+	})
+	return result, err
 }
 
 func (s *Store) UnblockUser(userID string) (User, error) {

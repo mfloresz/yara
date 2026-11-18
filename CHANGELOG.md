@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- Bind browser-worker authorization callbacks to the pending browser flow; prefer encrypted remote server connections and reject unsafe redirects before network access.
+- Revoke every worker credential and close all matching connections on token revocation, password reset and account blocking.
+- Share identical imported novel image files without changing chapter references, reuse identical image payloads during export, and charge rejected EPUB reads against decompression limits.
+- Exclude symbolic links and special files from backup archives and confine file opens to the data directory.
+- Require Go 1.27.4 or newer and update Brotli and Go HTML/network dependencies to patched versions. Rebuild existing installations; changing source alone does not update deployed binaries.
+
+### Operations
+
+- Add an offline, dry-run-first image deduplication tool and a Spanish detection, backup, repair and rollback guide for existing installations.
+
 ## [v0.53.0] - 2026-11-04
 
 ### What's new

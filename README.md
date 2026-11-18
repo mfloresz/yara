@@ -201,6 +201,12 @@ Resolution order: **CLI flag > env var > default** (see `internal/config/config.
 
 ---
 
+## Storage maintenance
+
+The [EPUB/ZIP image storage audit and remediation guide (Spanish)](docs/operations/image-storage-remediation.md) covers offline inspection, independent backups, an explicit-apply deduplication tool (dry-run by default), and rollback. It is not an automatic startup migration.
+
+---
+
 ## API
 
 A single surface: **`/api/v1/*`** — envelope `{data, meta, links}`, `X-API-Version: v1` header, and `application/problem+json` errors. Full reference in [`docs/api/README.md`](docs/api/README.md) and the machine-readable spec in [`docs/api/openapi.yaml`](docs/api/openapi.yaml).

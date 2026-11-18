@@ -302,6 +302,7 @@ func adminBlockUser(s *Server) func(*core.RequestEvent) error {
 		if err != nil {
 			return v1ServiceError(e, err)
 		}
+		CloseWorkersByUserID(user.ID)
 		slog.Info("user blocked", "actorId", e.Auth.Id, "userId", user.ID)
 		return v1Respond(e, http.StatusOK, adminUserRecord(user), nil, nil)
 	}
