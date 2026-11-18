@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.54.0] - 2026-11-18
+
+### What's new
+
+- **Reindex and move chapters.** New `reindex_chapters` and `move_chapter` tools let agents reorder chapters within a novel and move them between novels, with full API, store, and frontend support.
+- **Users can change their own password.** Added a `PUT /api/v1/auth/change-password` endpoint and UI flow so authenticated users can update their password without admin intervention.
+- **Chapter title display helper and prefix stripping.** Added a utility for normalizing chapter titles and stripping redundant prefixes (e.g. "Chapter 1:", "Capítulo 2 —") before display.
+- **Parser host gains context cancellation and deadline bounds.** The goja parser host now respects context cancellation and enforces a configurable deadline, preventing runaway scripts from hanging the server.
+- **Zonatmo parser improvements.** Chapter title normalization and smarter image selection for the zonatmo site parser.
+
+### Housekeeping
+
+- Regenerated and re-signed the parsers manifest after the zonatmo parser update.
+
 ## [v0.53.0] - 2026-11-04
 
 ### What's new
@@ -831,4 +845,5 @@
 [v0.51.0]: https://github.com/mfloresz/yara/compare/v0.50.2...v0.51.0
 [v0.52.0]: https://github.com/mfloresz/yara/compare/v0.51.0...v0.52.0
 [v0.53.0]: https://github.com/mfloresz/yara/compare/v0.52.0...v0.53.0
-[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.48.0
+[v0.54.0]: https://github.com/mfloresz/yara/compare/v0.53.0...v0.54.0
+[Previous release]: https://github.com/mfloresz/yara/releases/tag/v0.53.0
