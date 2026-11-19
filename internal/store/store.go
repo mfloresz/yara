@@ -110,10 +110,18 @@ func (s *Store) EnsureSchema() error {
 	if err := s.migrateComicChapterCascadeDelete(comicChapters); err != nil {
 		return err
 	}
-	if _, err := s.ensureComicPagesCollection(comics, comicChapters); err != nil {
+	comicPages, err := s.ensureComicPagesCollection(comics, comicChapters)
+	if err != nil {
 		return err
 	}
-	if _, err := s.ensureComicReadingProgressCollection(users, comics); err != nil {
+	if err := s.migrateComicPagesCascadeDelete(comicPages); err != nil {
+		return err
+	}
+	comicReadingProgress, err := s.ensureComicReadingProgressCollection(users, comics)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateComicReadingProgressCascadeDelete(comicReadingProgress); err != nil {
 		return err
 	}
 	jobs, err := s.ensureJobsCollection(users, novels, comics)

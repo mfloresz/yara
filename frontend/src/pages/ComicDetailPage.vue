@@ -84,6 +84,10 @@
             <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
             Buscar nuevos capítulos
           </n-button>
+          <n-button v-if="isOwner" secondary block @click="settingsOpen = true">
+            <template #icon><n-icon><SettingsOutline /></n-icon></template>
+            Configuración
+          </n-button>
           <span class="sidebar-actions-group" role="group" aria-label="Acciones del cómic">
             <n-button class="sidebar-actions-main" secondary @click="toggleVisibility">
               <template #icon><n-icon><ShareSocialOutline /></n-icon></template>
@@ -250,6 +254,16 @@
         </div>
       </div>
     </n-modal>
+
+    <ComicSettingsDialog
+      v-if="comic"
+      :open="settingsOpen"
+      :comic="comic"
+      :failed-chapters="stats.failedChapters"
+      @update:open="settingsOpen = $event"
+      @saved="onComicSaved"
+      @deleted="onComicDeleted"
+    />
   </AppLayout>
 </template>
 
@@ -275,9 +289,11 @@ import {
   BookmarkOutline,
   ChevronDownOutline,
   CloudDownloadOutline,
+  SettingsOutline,
   ShareSocialOutline,
 } from "@vicons/ionicons5";
 import AppLayout from "@/components/AppLayout.vue";
+import ComicSettingsDialog from "@/features/comics/ComicSettingsDialog.vue";
 import DescriptionBlock from "@/features/novels/DescriptionBlock.vue";
 import { useAppServices } from "@/app/services";
 import { setDocumentTitle } from "@/composables/useDocumentTitle";
@@ -297,7 +313,7 @@ import { coverSrc, onCoverError } from "@/utils/cover";
 
 const route = useRoute();
 const router = useRouter();
-const { api } = useAppServices();
+const { api, auth } = useAppServices();
 const dialog = useDialog();
 const message = useMessage();
 
@@ -310,6 +326,7 @@ const loading = ref(true);
 const activeTab = ref("chapters");
 const chapterQuery = ref("");
 const showExcluded = ref(false);
+const settingsOpen = ref(false);
 const checking = ref(false);
 const updating = ref(false);
 const updatePreviewOpen = ref(false);
@@ -387,6 +404,7 @@ function formatTime(value?: string): string {
 }
 
 const hasChapters = computed(() => chapters.value.some((ch) => !ch.excluded && ch.hasPages));
+const isOwner = computed(() => comic.value?.ownerId === auth.user.value?.id);
 const hasFailedChapters = computed(() => chapters.value.some((ch) => ch.status === "failed" || ch.status === "partial"));
 const excludedChapters = computed(() => chapters.value.filter((ch) => ch.excluded));
 
@@ -597,6 +615,18 @@ function confirmDelete() {
       router.push("/comics");
     },
   });
+}
+
+// El diálogo de configuración guarda y elimina por su cuenta: aquí solo se
+// refleja el resultado en la página.
+function onComicSaved(updated: Comic) {
+  comic.value = updated;
+  setDocumentTitle(getComicDisplayTitle(updated));
+}
+
+function onComicDeleted() {
+  message.success("Cómic eliminado.");
+  router.push("/comics");
 }
 
 async function excludeChapter(ch: ComicChapterSummary) {

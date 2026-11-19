@@ -98,6 +98,42 @@ func (s *Store) migrateComicChapterCascadeDelete(c *core.Collection) error {
 	return s.App.Save(c)
 }
 
+// migrateComicPagesCascadeDelete enables cascade delete on the "comic" and
+// "chapter" relation fields of the comic_pages collection, so that when a
+// comic or chapter is removed its pages are cleaned up automatically.
+func (s *Store) migrateComicPagesCascadeDelete(c *core.Collection) error {
+	changed := false
+
+	if rel, ok := c.Fields.GetByName("comic").(*core.RelationField); ok && rel != nil && !rel.CascadeDelete {
+		rel.CascadeDelete = true
+		c.Fields.Add(rel)
+		changed = true
+	}
+	if rel, ok := c.Fields.GetByName("chapter").(*core.RelationField); ok && rel != nil && !rel.CascadeDelete {
+		rel.CascadeDelete = true
+		c.Fields.Add(rel)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.App.Save(c)
+}
+
+// migrateComicReadingProgressCascadeDelete enables cascade delete on the
+// "comic" relation field of the comic_reading_progress collection, so that
+// when a comic is removed its reading-progress rows are cleaned up.
+func (s *Store) migrateComicReadingProgressCascadeDelete(c *core.Collection) error {
+	changed, err := enableComicCascadeDelete(c)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.App.Save(c)
+}
+
 func (s *Store) migrateEpubCascadeDelete(c *core.Collection) error {
 	changed, err := enableNovelCascadeDelete(c)
 	if err != nil {
